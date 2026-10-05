@@ -11,6 +11,8 @@ const buttonVariants = cva(
       variant: {
         default:
           "bg-primary text-primary-foreground shadow-xs hover:bg-primary/90",
+        /* DocoPDF main action color (PRD §3.1 accent/CTA) */
+        cta: "bg-cta text-cta-foreground shadow-xs hover:bg-cta/90",
         destructive:
           "bg-destructive text-white shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
@@ -25,6 +27,8 @@ const buttonVariants = cva(
         default: "h-9 px-4 py-2 has-[>svg]:px-3",
         sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5",
         lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
+        /* 44px touch target (PRD §3.4) for primary CTAs */
+        touch: "h-11 rounded-btn px-6 has-[>svg]:px-4",
         icon: "size-9",
       },
     },

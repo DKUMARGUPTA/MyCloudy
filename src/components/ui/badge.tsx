@@ -17,6 +17,15 @@ const badgeVariants = cva(
           "border-transparent bg-destructive text-white [a&]:hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
           "text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
+        /* DocoPDF mode/label badges (PRD §3.3) */
+        private:
+          "border-transparent bg-success/10 text-success dark:bg-success/15 [a&]:hover:bg-success/20",
+        server:
+          "border-transparent bg-cat-view/10 text-cat-view dark:bg-cat-view/15 [a&]:hover:bg-cat-view/20",
+        new: "border-transparent bg-primary/10 text-primary [a&]:hover:bg-primary/15",
+        pro: "border-transparent bg-cat-edit text-white [a&]:hover:bg-cat-edit/90",
+        beta:
+          "border-transparent bg-cat-create/10 text-cat-create dark:bg-cat-create/15 [a&]:hover:bg-cat-create/20",
       },
     },
     defaultVariants: {

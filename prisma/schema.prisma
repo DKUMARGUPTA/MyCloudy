@@ -1,8 +1,8 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// DocoPDF database schema — mirrors PRD §2.5 (Turso/libSQL tables).
+// Sandbox: Prisma + SQLite. Production: swap datasource to Turso (libSQL)
+// or port to Drizzle — table/column names match the PRD exactly.
+//
+// HARD RULE: metadata only. NEVER store PDF content or file names.
 
 generator client {
   provider = "prisma-client-js"
@@ -14,19 +14,165 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String    @id @default(uuid())
+  email        String?   @unique
+  name         String?
+  passwordHash String?
+  oauthId      String?
+  plan         String    @default("free")
+  locale       String    @default("en")
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  sessions      Session[]
+  subscriptions Subscription[]
+  payments      Payment[]
+
+  @@map("users")
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  expiresAt DateTime
+  uaHash    String?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model AnonUsage {
+  anonId String
+  toolId String
+  day    String // YYYY-MM-DD
+  count  Int    @default(0)
+
+  @@id([anonId, toolId, day])
+  @@map("anon_usage")
+}
+
+model UsageEvent {
+  id         String   @id @default(uuid())
+  toolId     String
+  mode       String // "D" | "S"
+  success    Boolean
+  durationMs Int
+  sizeBucket String
+  locale     String
+  day        String
+  createdAt  DateTime @default(now())
+
+  @@index([toolId, day])
+  @@map("usage_events")
+}
+
+model Feedback {
+  id            String   @id @default(uuid())
+  toolId        String
+  rating        Int
+  message       String?
+  emailOptional String?
+  createdAt     DateTime @default(now())
+
+  @@index([toolId])
+  @@map("feedback")
+}
+
+model ToolRequest {
+  id          String   @id @default(uuid())
+  title       String
+  description String
+  votes       Int      @default(0)
+  status      String   @default("open")
+  createdAt   DateTime @default(now())
+
+  voteRows RequestVote[]
+
+  @@map("tool_requests")
+}
+
+model RequestVote {
+  requestId String
+  voterHash String
+  request   ToolRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@id([requestId, voterHash])
+  @@map("request_votes")
+}
+
+model ContactMessage {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  category  String
+  message   String
+  status    String   @default("new")
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+
+  @@map("contact_messages")
+}
+
+model BlogPost {
+  slug        String
+  locale      String
+  title       String
+  excerpt     String?
+  bodyMd      String
+  tags        String? // comma-separated
+  publishedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@id([slug, locale])
+  @@map("blog_posts")
+}
+
+model Subscription {
+  id            String    @id @default(uuid())
+  userId        String
+  provider      String // "razorpay" | "stripe"
+  providerSubId String?
+  plan          String
+  status        String
+  periodEnd     DateTime?
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("subscriptions")
+}
+
+model Payment {
+  id                String   @id @default(uuid())
+  userId            String
+  providerPaymentId String?
+  amount            Int // minor units (paise / cents)
+  currency          String   @default("INR")
+  status            String
+  invoiceNo         String?
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("payments")
+}
+
+model Job {
+  id         String    @id @default(uuid())
+  toolId     String
+  status     String    @default("queued")
+  createdAt  DateTime  @default(now())
+  finishedAt DateTime?
+  errorCode  String?
+
+  @@index([status])
+  @@map("jobs")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actor     String
+  action    String
+  metaJson  String?
+  createdAt DateTime @default(now())
+
+  @@map("audit_log")
 }

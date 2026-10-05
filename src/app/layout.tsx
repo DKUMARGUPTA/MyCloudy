@@ -1,38 +1,80 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-import { Toaster } from "@/components/ui/toaster";
+import type { Metadata, Viewport } from "next";
+import localFont from "next/font/local";
+import { ThemeProvider } from "next-themes";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+import { Toaster } from "@/components/ui/toaster";
+import { LocaleProvider } from "@/components/providers/locale-provider";
+
+import "./globals.css";
+
+/*
+ * Self-hosted fonts (PRD §3.2 / hard rule: no third-party CDNs).
+ * Files: src/fonts/InterVariable.woff2 (official Inter variable, full charset)
+ *        src/fonts/NotoSansDevanagari-Variable.woff2 (Devanagari subset,
+ *        variable) — used as the fallback face for Hindi text.
+ * Both are served from this origin via next/font/local with font-display swap.
+ */
+const inter = localFont({
+  src: "../fonts/InterVariable.woff2",
+  weight: "100 900",
+  style: "normal",
+  display: "swap",
+  variable: "--font-inter",
+  preload: true,
+  fallback: ["ui-sans-serif", "system-ui", "Segoe UI", "sans-serif"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+const notoSansDevanagari = localFont({
+  src: "../fonts/NotoSansDevanagari-Variable.woff2",
+  weight: "100 900",
+  style: "normal",
+  display: "swap",
+  variable: "--font-noto-devanagari",
+  preload: true,
+  fallback: ["ui-sans-serif", "system-ui", "sans-serif"],
 });
 
 export const metadata: Metadata = {
-  title: "Z.ai Code Scaffold - AI-Powered Development",
-  description: "Modern Next.js scaffold optimized for AI-powered development with Z.ai. Built with TypeScript, Tailwind CSS, and shadcn/ui.",
-  keywords: ["Z.ai", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "AI development", "React"],
-  authors: [{ name: "Z.ai Team" }],
+  metadataBase: new URL("https://docopdf.com"),
+  title: {
+    default: "DocoPDF — Every PDF tool, one place. Free, fast and private.",
+    template: "%s · DocoPDF",
+  },
+  description:
+    "Free, fast and private PDF tools. Most tools run right in your browser — your files stay on your device. English + हिंदी.",
+  applicationName: "DocoPDF",
+  keywords: [
+    "PDF tools",
+    "merge PDF",
+    "split PDF",
+    "compress PDF",
+    "sign PDF",
+    "PDF converter",
+    "DocoPDF",
+  ],
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: [{ url: "/logo.svg", type: "image/svg+xml" }],
   },
   openGraph: {
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
-    url: "https://chat.z.ai",
-    siteName: "Z.ai",
     type: "website",
+    siteName: "DocoPDF",
+    title: "DocoPDF — Every PDF tool, one place",
+    description:
+      "Free, fast and private PDF tools. Most tools run right in your browser.",
   },
-  twitter: {
-    card: "summary_large_image",
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
+  robots: {
+    index: true,
+    follow: true,
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#FFFFFF" },
+    { media: "(prefers-color-scheme: dark)", color: "#0B1220" },
+  ],
 };
 
 export default function RootLayout({
@@ -43,10 +85,19 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
+        className={`${inter.variable} ${notoSansDevanagari.variable} font-sans antialiased bg-background text-foreground`}
       >
-        {children}
-        <Toaster />
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <LocaleProvider>
+            {children}
+            <Toaster />
+          </LocaleProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

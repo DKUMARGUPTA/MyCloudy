@@ -1,0 +1,121 @@
+{
+  "common": {
+    "close": "Close",
+    "cancel": "Cancel",
+    "gotIt": "Got it",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu",
+    "skipToContent": "Skip to content"
+  },
+  "header": {
+    "tools": "Tools",
+    "categories": "Categories",
+    "why": "Why DocoPDF",
+    "getPro": "Get Pro"
+  },
+  "theme": {
+    "label": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "switchTo": "Switch theme to {theme}"
+  },
+  "language": {
+    "label": "Language",
+    "en": "English",
+    "hi": "हिंदी",
+    "switchTo": "Switch language to {language}",
+    "changedTo": "Language changed to {language}"
+  },
+  "banner": {
+    "phase0": "The foundation is live — tools are rolling out phase by phase.",
+    "dismiss": "Dismiss announcement"
+  },
+  "hero": {
+    "eyebrowBadge": "Private • Free • No signup",
+    "title1": "Every PDF tool, one place.",
+    "title2": "Free, fast, and private.",
+    "subtitle": "Most tools run right in your browser — no uploads, no waiting.",
+    "primaryCta": "Explore categories",
+    "secondaryCta": "How it works",
+    "toolsPlanned": "{count} tools planned",
+    "bilingual": "English + हिंदी",
+    "badgePrivate": "Private — stays on your device",
+    "badgeNoSignup": "No signup",
+    "badgeFree": "Free forever",
+    "badgeOffline": "Works offline"
+  },
+  "steps": {
+    "title": "How it works",
+    "subtitle": "Three steps, three clicks — the same simple flow for every tool.",
+    "s1title": "Select",
+    "s1desc": "Pick files from your device, or simply drop them in.",
+    "s2title": "Choose",
+    "s2desc": "Set your options with a live preview before running.",
+    "s3title": "Download",
+    "s3desc": "Save, share, or chain straight into the next tool."
+  },
+  "categories": {
+    "title": "Explore the toolbox",
+    "subtitle": "{count} tools planned across 9 categories — with an honest mode badge on every tool.",
+    "plannedCount": "{count} tools",
+    "openCategory": "View {category} tools",
+    "sheetTitle": "{category} tools",
+    "sheetSubtitle": "Planned tools — rolling out phase by phase.",
+    "badgePrivate": "Private",
+    "badgeServer": "Server",
+    "phaseNote": "Roadmap order: device-only tools first, server tools last.",
+    "names": {
+      "organize": "Organize",
+      "edit": "Edit",
+      "convert-to": "Convert to PDF",
+      "convert-from": "Convert from PDF",
+      "security": "Security",
+      "optimize": "Optimize",
+      "create": "Create",
+      "invoices": "Invoices",
+      "view": "View"
+    }
+  },
+  "why": {
+    "title": "Why DocoPDF?",
+    "subtitle": "Honest, private, and built mobile-first for India.",
+    "privateTitle": "Private by design",
+    "privateDesc": "Device-only tools never send your files anywhere. What's yours stays yours.",
+    "fastTitle": "Fast where it counts",
+    "fastDesc": "No upload wait — processing happens on your own device, even offline.",
+    "freeTitle": "Free, no strings",
+    "freeDesc": "No signup, no watermarks, no hidden limits on device tools. Ever."
+  },
+  "modes": {
+    "title": "Two honest modes",
+    "subtitle": "Every tool tells you exactly where your file goes — nothing hidden.",
+    "tabDevice": "Private tools",
+    "tabServer": "Server tools",
+    "deviceBadge": "Private — stays on your device",
+    "deviceDesc": "The whole job runs in your browser using Web Workers. Your file never touches the network.",
+    "devicePoint1": "Merge, split, compress, sign, edit and much more",
+    "devicePoint2": "Works offline once installed as an app",
+    "devicePoint3": "Zero upload time — great for batches",
+    "serverBadge": "Server processing — deleted right after",
+    "serverDesc": "Only for jobs a browser can't do well (like Office ↔ PDF). Files are deleted immediately after processing — never stored.",
+    "serverPoint1": "Deleted right after the job (15-minute fail-safe)",
+    "serverPoint2": "No file names or contents in any log",
+    "serverPoint3": "Clear limits: 10 free server tasks per day"
+  },
+  "pro": {
+    "title": "Pro is coming",
+    "body": "Paid features arrive in a later phase. Device-only tools will always stay free — that's a promise.",
+    "action": "Got it"
+  },
+  "footer": {
+    "tagline": "Har PDF kaam, ek jagah.",
+    "trust": "Most tools run inside your browser. Your files stay on your device.",
+    "categoriesLabel": "Categories",
+    "phaseNote": "DocoPDF is being built in phases — the design system is live, tools are next.",
+    "rights": "© {year} DocoPDF. All rights reserved."
+  },
+  "a11y": {
+    "logoLabel": "DocoPDF home"
+  }
+}

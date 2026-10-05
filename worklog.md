@@ -6,9 +6,10 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: PRE-PHASE-0** — master-prompt intake complete. No product code written yet (the user
-  instructed: reply READY and wait for the Phase 0 prompt). This worklog + review cron are the only
-  artifacts so far.
+- **Phase: 0 COMPLETE (P0.1)** — scaffold shipped and QA-verified via agent-browser.
+  Landing page live at `/` (hero, steps, categories+sheet, why, modes, footer, Pro modal).
+  The interactive user remains the driver for formal phase prompts; the review loop
+  continues with the next pending phase (1: layout + discovery) when stable.
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
@@ -37,8 +38,17 @@
 
 ## 3. Current goals / completed modifications / verification results
 
-- Completed: PRD intake; environment verification; this worklog; 15-minute `webDevReview` cron armed.
-- Verified: `curl http://localhost:3000` → 200; `dev.log` clean; all 45+ shadcn/ui components present.
+- Completed (P0.1): design tokens light+dark (PRD §3.1 exact colors + category colors),
+  self-hosted fonts (Inter + Noto Sans Devanagari via next/font/local), i18n en/hi with
+  LocaleProvider (useSyncExternalStore), theme system (next-themes, no-flash), base components
+  (Badge private/server/new/pro/beta, Button cta/touch, Modal, BottomSheet, EmptyState, ThemeToggle,
+  LanguageSwitch, Logo), landing page sections, Prisma schema (13 tables mirroring §2.5) + db push,
+  CSP + security headers in next.config, .env.example, README, CI workflow, services/worker
+  placeholder, docs/PRD-v2.md.
+- Verified: agent-browser — page renders, a11y tree correct, dark-mode toggle applies `.dark`,
+  Hindi switch sets `html[lang=hi]` + Devanagari hero, category sheet lists 12 tools with mode
+  badges, Pro modal opens, 360px viewport has no horizontal scroll, mobile hamburger sheet works,
+  console + page errors ZERO, CSP/headers served, fonts preload self-hosted. `bun run lint` clean.
 - Goal now: execute the phase plan below in strict order, one phase (or sub-phase) per round.
 
 ## 4. Phase plan (user's chat phases → PRD mapping)
@@ -82,9 +92,10 @@
 
 ## 6. Unresolved issues / risks / next-phase priorities
 
-1. **NEXT: Phase 0 scaffold** (per plan above). The interactive user drives phases via chat prompts;
-   review-loop agents should continue with the next pending phase only when the site is stable
-   (bugs first!), and must update this file before + after each round.
+1. **NEXT: Phase 1 discovery** — typed tool registry with EVERY §7 tool (id, slug, category, mode,
+   phase, icon, i18n name/desc keys, Hindi names, tags), header mega-menu + Ctrl+K fuzzy search,
+   cookie banner (analytics OFF), full home (§6.1 smart drop zone), All Tools page (§6.2 favorites/
+   last-used from localStorage), category pages, 404/500/offline, SEO (sitemap, hreflang).
 2. qpdf WASM build source + exact version + license must be verified before Phase 4
    (VERIFY: npm `qpdf-wasm` availability; PRD §2.3 expects Apache-2.0 qpdf).
 3. HEIC decoder WASM license flagged "verify" in PRD §2.3 — confirm before HEIC tools.
@@ -122,3 +133,28 @@ Work Log:
 Stage Summary:
 - Status: PRE-PHASE-0. No app code yet; `/` still shows the default scaffold page.
 - Next: Phase 0 scaffold (tokens, fonts, i18n skeleton, base components, Prisma schema §2.5, CSP, README) — driven by the user's next prompt, or by the review loop if the site is stable and no user prompt is pending.
+
+---
+Task ID: P0.1
+Agent: Z.ai Code (webDevReview cron round 1, job 437069)
+Task: Scheduled review round — baseline QA passed (no bugs), so executed the next pending phase: PHASE 0 SCAFFOLD (PRD §2, §3) per the user's master-prompt phase plan.
+
+Work Log:
+- Baseline QA via agent-browser: scaffold rendered, zero errors → proceeded to Phase 0.
+- Downloaded + verified self-hosted fonts: src/fonts/InterVariable.woff2 (352 KB, official rsms build) and src/fonts/NotoSansDevanagari-Variable.woff2 (121 KB, GF devanagari subset); wired via next/font/local in layout.tsx (replaced next/font/google Geist — CDN rule).
+- globals.css: full token rewrite — PRD §3.1 light/dark colors (primary #2563EB/#60A5FA, CTA #F97316/#FB923C, bg/surface, text, success, danger), 8 category color tokens, semantic radii (card 16px, btn 12px, chip 999px), font stack with Devanagari fallback, selection/scrollbar utilities, prefers-reduced-motion, scroll-padding for sticky header.
+- i18n: src/i18n/{en,hi}.json catalogs (~90 keys each, real Hindi) + translate() with {param} interpolation; LocaleProvider with useSyncExternalStore (localStorage external store, hydration-safe); <html lang> synced.
+- Base components: Badge variants private/server/new/pro/beta; Button variant cta + size touch (44px); Modal (Dialog wrapper); BottomSheet (vaul Drawer wrapper); EmptyState; ThemeToggle (cycle light→dark→system, next-themes, no flash); LanguageSwitch (EN|हिं segmented, toast on change); Logo/LogoMark + public/logo.svg (brand gradient mark).
+- Landing page at /: AnnouncementBanner (dismissible, localStorage), sticky header w/ mobile sheet, Hero (trust badges, gradient title), Steps (3-step), Categories (9 PRD §7 categories, 94 planned tools, bottom sheet w/ Private/Server mode badges), Why (3 cards), Modes (Tabs: device vs server, PRD §2.2), Footer (trust line, category chips), Pro modal. Mobile-first, skip-to-content link, aria labels, focus rings.
+- Data: src/data/catalog-summary.ts (all 9 categories + tool names + D/S modes from PRD §7).
+- DB: prisma/schema.prisma rewritten to 13 models mirroring PRD §2.5 (users, sessions, anon_usage, usage_events, feedback, tool_requests, request_votes, contact_messages, blog_posts, subscriptions, payments, jobs, audit_log; @@map snake_case names); `bun run db:push` OK; db.ts logging reduced to error/warn (privacy rule).
+- Security: next.config.ts — CSP (self-only, blob for workers/thumbnails, dev-only unsafe-eval), X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy (camera self for future Scan tool), HSTS; allowedDevOrigins for the sandbox preview proxy; REMOVED invalid `eslint` key (Next 16 dropped it — found via dev.log warning).
+- Repo files: .env.example (DATABASE_URL + TURSO_* placeholders), README.md (stack, structure, Vercel+Turso deploy steps, phase status), services/worker/README.md (Phase-11 placeholder), .github/workflows/ci.yml (lint/typecheck/build; Vitest step deferred — sandbox forbids test code, documented), docs/PRD-v2.md (copy of extract).
+- Fixed 3 lint errors (react-hooks/set-state-in-effect) by replacing setState-in-effect patterns with useSyncExternalStore (use-mounted hook, provider store, banner store).
+- QA (agent-browser): renders; a11y tree correct; dark toggle applies .dark; Hindi → html lang=hi + Devanagari H1; category sheet 12 tools + badges; Pro modal; 360px no horizontal scroll; mobile menu works; console/page errors ZERO; CSP+headers verified via curl; lint clean; dev.log clean after config fix.
+
+Stage Summary:
+- Phase 0 COMPLETE. `/` now shows the branded DocoPDF landing with full token system, dark mode, EN/हिं switching, and the PRD §7 catalog preview (94 tools / 9 categories).
+- Screenshots: download/qa-p0-desktop-light.png, -dark.png, -hindi.png, -sheet.png, -modal.png, -mobile.png, -mobile-menu.png, -final-full.png.
+- Deviations handled: Prisma/SQLite stands in for Turso/Drizzle (names match §2.5); locale = app state on / (only / visible in sandbox); Vitest deferred (no test code in sandbox); fonts fetched at build time from official sources (rsms.me + Google Fonts) and served self-hosted (no runtime CDN).
+- Next: Phase 1 (registry + header search + all-tools + category pages + 404/500/offline + SEO) — user prompt or next review round when stable.
