@@ -6,19 +6,22 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: 1 COMPLETE (P1.1)** — discovery layer shipped and QA-verified.
-  Typed registry (97 tools × PRD §7), fuzzy search (EN/HI/typo), All Tools +
-  category views, Ctrl+K palette, mega-menu, cookie banner, mobile tab bar —
-  all driven by the registry. Next: Phase 2 (ToolShell engine).
+- **Phase: 2 COMPLETE (P2.1)** — PDF core + ToolShell engine shipped and QA-verified.
+  The first live tool (rotate-pdf-pages) runs 100% on-device through the shared
+  ToolShell (Landing → Workspace → Processing → Result), with OPFS working copies,
+  IndexedDB recent files (metadata + thumbnails only), self-hosted pdf.js
+  thumbnails, a real worker pool (progress/cancel), chain mode, and the home
+  Smart Drop Zone. Next: Phase 3 (first tool batch, one at a time, starting with Merge).
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
   (regenerate with: `pandoc /home/z/my-project/upload/DocoPDF-PRD-v2.docx -t gfm --wrap=none -o /home/z/my-project/upload/DocoPDF-PRD-v2.md`)
 - Environment verified: Next.js **16.1.3** (App Router, Turbopack) dev server running on **port 3000**
-  (HTTP 200), `dev.log` clean (no errors, only `GET / 200`).
+  (HTTP 200), `dev.log` clean (only 200s + expected 400s from API validation tests).
 - Available stack (from package.json): TypeScript 5 (strict), Tailwind CSS 4 + full shadcn/ui set in
   `src/components/ui` (New York), Prisma 6 + SQLite (`db/custom.db`, client via `import { db } from '@/lib/db'`),
   next-intl, next-themes, zod, zustand, framer-motion, lucide-react, sonner, vaul, dnd-kit.
+  **Phase 2 additions (exact pins):** `pdf-lib@1.17.1`, `pdfjs-dist@4.10.38`, `fflate@0.8.2`.
 - PRD section map (line numbers in the .md extract): §1 Vision (18), §2 Architecture (68),
   §3 Design System (203), §4 Sitemap (255), §5 Global Elements (270), §6 Core Pages (314),
   §7 Tool Catalog (534), §8 Tool Specs (685), §9 Static Pages (1048), §10 Errors/Copy (1183),
@@ -38,28 +41,55 @@
 
 ## 3. Current goals / completed modifications / verification results
 
-- Completed (P1.1): registry (97 tools, EN+HI names/descs/tags, modes, phases, popularity,
-  accepts, icons — all lucide exports verified via bun), fuzzy search (word-boundary substring
-  + word-level dice with length guard; typo/Hinglish/Devanagari tested), hash router
-  (useSyncExternalStore; home/tools/category + ?q=; anchors), favorites + last-used stores,
-  All Tools view (search, sticky chips, mode/input filters, Popular/A–Z, empty state +
-  Request-a-tool modal w/ localStorage queue), Category views (intro + stats + related),
-  Ctrl+K palette (cmdk, shouldFilter=false since we filter ourselves), mega-menu
-  (NavigationMenu, 6 columns + more), cookie banner (analytics OFF, customize, privacy
-  settings re-open), mobile bottom tab bar (Home/Tools/Search), i18n expanded (~+150 keys
-  en/hi), sitemap.xml + robots.txt.
-- Verified via agent-browser: home + tools views render; 97 cards; search "merge"→21,
-  "merg"→9, "jodein"→14 top=merge-pdf, "जोड़"→1 exact, "password"→11 (password tools
-  first), "word"→17 (password noise gone), "photo 100kb"→1; favorites add/filter chip;
-  category view 12 tools (organize); palette Ctrl+K + Enter nav + See-all → ?q= flow;
-  back button works; Hindi UI full (सभी टूल + Devanagari names); mobile 360px no h-scroll,
-  tab bar works; mega-menu 46 links; cookie reject stores {analytics:false}; lint clean;
-  zero page errors; dev.log clean.
-- Fixed during QA: Settings2 missing import; getCategory(object) misuse ×3 files;
-  useSyncExternalStore unstable-getSnapshot infinite loop (now createLocalSnapshot
-  raw-keyed cache); router.push doesn't fire hashchange → navigateToHash(); cmdk
-  built-in filter hiding See-all item → commandProps.shouldFilter=false; dice padding
-  cross-word noise → word-level dice + length guard + word-boundary substring.
+- Completed (P2.1): pinned deps (pdf-lib/pdfjs-dist/fflate) + pdf.js assets
+  self-hosted in /public/pdfjs (lib+worker+cmaps+standard_fonts, 4.1MB);
+  storage layer (idb.ts wrapper, opfs.ts with IDB-Blob fallback + storage
+  estimate, recent-files.ts with 20/30-day cap + serialized write queue +
+  removeRecentFilesByMeta); pdf layer (lazy self-hosted pdf.js loader via
+  non-literal dynamic import + turbopackIgnore, thumbnail render queue max 2
+  with OffscreenCanvas + DOM-canvas fallback, magic-byte %PDF- sniff);
+  worker protocol (run/progress/result/error + parsePageSpec) + ToolWorkerPool
+  (idle reuse per tool, hardware-concurrency cap 2-4, one-shot slot
+  accounting, instant terminate on cancel + OPFS cleanup); config-driven
+  tool system (config-types, configs aggregator, tools/rotate-pdf-pages
+  config+worker); ToolShell 4 states with DropZone (magic bytes, 50MB
+  mobile/200MB desktop, count limits, paste, low-storage warn), FileCard
+  (thumbnail/pages/reorder/remove), OptionsPanel (select/number/text/switch/
+  pages from schema), StageStepper, ProcessingView (real % + page x/y +
+  cancel), ResultView (download/FSA save-picker/share/ZIP/rename w/ locked
+  extension/size delta/what-next chain/feedback thumbs+reasons/remove from
+  device/privacy line); #/tool/<id> hash routing + ToolCard/palette/mega-menu
+  navigation to live tools; Hero Smart Drop Zone (type detect → suggestions,
+  handoff to tool); home Recent files strip (thumbnails from IDB, Clear,
+  hidden when empty); /api/feedback (zod, honeypot, in-memory rate limit
+  10/min, Prisma insert, best-effort); i18n +~130 keys en/hi; tsconfig now
+  excludes examples/skills/tests scaffold dirs.
+- Verified via agent-browser: full golden path (home smart-drop upload →
+  suggestion → #/tool/rotate-pdf-pages workspace with chain handoff → options
+  (direction + pages "1-2") → run → result "Your file is ready!" + renamed
+  "my rotated doc.pdf" + toast); direct landing state (dropzone/how/FAQ/
+  features/related); 400-page PDF (346KB→338KB output, <1s); feedback click →
+  POST /api/feedback 200 → SQLite row; disabled chain targets toast "coming
+  soon" w/o navigation; Hindi full tool UI + Devanagari result; mobile 360px
+  no h-scroll + bottom-sheet options + sticky CTA + tab bar hidden in tool
+  view; recent strip (thumbnail blob from IDB, "Clear", honest reselect
+  toast); remove-from-device → OPFS work dir [] + recent 0 + toast; StrictMode
+  single-recent-entry regression test (1 upload = 1 entry); network filter =
+  ZERO non-local requests across the whole session (privacy §2.2 rule);
+  fresh-context page errors = 0; eslint src+tools clean; tsc --noEmit clean;
+  dev.log clean. Cancel path code-verified (terminate+reject+cleanup) — the
+  400-page file completes in <600ms so the browser can't catch mid-flight
+  state; retest with a multi-MB scanned file when Merge ships.
+- Fixed during QA: react-hooks/set-state-in-effect ×4 (thumbnail/objectURL
+  effects now update inside promise callbacks; chain handoff consumed via
+  lazy useState initializer + key-remount); react-hooks/refs (removed
+  phaseRef); react-hooks/immutability (replaced recentIdsRef with
+  removeRecentFilesByMeta label+size matching); StrictMode duplicate
+  setFiles-updater side effects (moved out of updater — React double-invokes
+  updaters); getSnapshot unstable empty array (EMPTY_ENTRIES const); recent
+  add/remove race (serialized write queue); TDZ ordering (chainIn before
+  use); hero browseAll {count} interpolation; tsc ClipboardEvent DOM vs
+  React type; tsconfig scaffold-dir exclusions.
 - Goal now: execute the phase plan below in strict order, one phase (or sub-phase) per round.
 
 ## 4. Phase plan (user's chat phases → PRD mapping)
@@ -103,17 +133,24 @@
 
 ## 6. Unresolved issues / risks / next-phase priorities
 
-1. **NEXT: Phase 2 PDF core + ToolShell** — OPFS helpers + IndexedDB fallback, recent files
-   (max 20, 30 days), self-hosted pdf.js (copy worker/cmaps to /public/pdfjs + script), thumbnail
-   render queue, worker pool (progress/result/error/cancel), ToolShell 4 states, DropZone/
-   FileCard/OptionsPanel/sticky bar/Stepper, result page (download/share/rename/size delta/chain/
-   ZIP/remove), /api/feedback stub (Turso), demo tool rotate-90° (registry enabled flag).
-2. qpdf WASM build source + exact version + license must be verified before Phase 4
+1. **NEXT: Phase 3 — first tools ONE AT A TIME** (order per plan §4): Merge
+   → Split → PageGrid family (Rotate/Rearrange/Remove/Extract with drag grid)
+   → Images to PDF → PDF→JPG/PNG → PDF→Text → Watermark → Page numbers +
+   Header/footer → Crop → Doc info + Remove metadata → Fill out → View →
+   Compress (device) → Generate password → Scan → HEIC/WEBP. Each = config +
+   worker under tools/<id>/ + registry `enabled: true` + i18n. Merge needs a
+   dnd-kit reorder FileCard list (registry maxFiles=50).
+2. Cancel path not yet caught mid-flight in browser (tool <600ms even on 400
+   pages) — retest with a multi-MB scanned file in Phase 3.
+3. qpdf WASM build source + exact version + license must be verified before Phase 4
    (VERIFY: npm `qpdf-wasm` availability; PRD §2.3 expects Apache-2.0 qpdf).
-3. HEIC decoder WASM license flagged "verify" in PRD §2.3 — confirm before HEIC tools.
-4. Fabric.js vs Konva decision at editor phase (both MIT; PRD allows either).
-5. Turso/Drizzle/Vercel deliverables = config + README text in this sandbox (no external services).
-6. PRD §17.2 open questions (trademark, pricing, worker host) are business decisions — do not invent.
+4. HEIC decoder WASM license flagged "verify" in PRD §2.3 — confirm before HEIC tools.
+5. Fabric.js vs Konva decision at editor phase (both MIT; PRD allows either).
+6. Turso/Drizzle/Vercel deliverables = config + README text in this sandbox (no external services).
+7. PRD §17.2 open questions (trademark, pricing, worker host) are business decisions — do not invent.
+8. cron webDevReview re-armed 5 Oct as job **437196** with priority=1 (low) after
+   job 437069 failed twice with "model glm-5.3 concurrency limit exceeded";
+   low-priority scheduling + 15-min retry self-heals transient failures.
 
 ## Append template (copy for every new entry)
 
@@ -196,3 +233,28 @@ Stage Summary:
 - Phase 1 COMPLETE: full discovery layer driven by the 97-tool registry; bilingual search (typo + Hinglish + Devanagari); favorites; filters; request queue; consent; mobile tab bar; hash routing with back/forward support.
 - Deviations: 10th "images" category for §7.10 (PRD §4 lists 9 category URLs); tool strings in registry locale maps (not JSON catalogs) for type safety; mega-menu shows top-6 per column (PRD says all tools — full list lives in All Tools view); tab bar has Home/Tools/Search only until Recent/Account exist; 404/500/offline pages skipped (sandbox single-route; noted for deploy); Smart Drop Zone deferred to Phase 2 (needs OPFS + ToolShell to be real).
 - Next: PHASE 2 — ToolShell engine + OPFS + pdf.js + worker pool + demo rotate tool.
+---
+Task ID: P2.1
+Agent: Z.ai Code (main session — user-directed continuation after 2 cron rounds failed with "model glm-5.3 concurrency limit exceeded")
+Task: Fix the failed cron (re-arm webDevReview) and execute the pending PHASE 2: PDF CORE + TOOLSHELL + STORAGE (PRD §2.3, 2.4, 6.3, 6.4, 6.6) per the master-prompt phase plan.
+
+Work Log:
+- Fixed cron failure: deleted failed job 437069, recreated as 437196 (fixed_rate 900s, priority=1 low) so review rounds no longer collide with active sessions; any future failure self-heals next tick.
+- Deps (exact pins): pdf-lib@1.17.1, pdfjs-dist@4.10.38, fflate@0.8.2 (PRD §2.3; fflate = PRD-specified ZIP lib). Copied pdf.js lib+worker+cmaps+standard_fonts (4.1MB) from node_modules into /public/pdfjs — zero runtime CDN.
+- Storage (§2.4): src/lib/storage/idb.ts (promise wrapper, blobs+recent stores), opfs.ts (OPFS-first working copies w/ IDB-Blob fallback, clearWorkingFiles, storage.estimate low-space check), recent-files.ts (max 20 / 30 days, metadata+thumbnail only, external-store subscribe + serialized write queue + removeRecentFilesByMeta).
+- PDF layer: src/lib/pdf/pdfjs.ts (lazy same-origin runtime import with webpack+turbopack ignore comments, workerSrc/cMaps/standardFonts self-hosted) + thumbnails.ts (WeakMap doc cache, 2-slot render queue, OffscreenCanvas w/ DOM fallback, %PDF- magic-byte sniff within first 1024 bytes).
+- Workers: protocol.ts (run/progress/result/error messages, page-range parser) + pool.ts (ToolWorkerPool: per-tool idle reuse, min(hw-1,4) cap, one-shot slot accounting, cancel = instant terminate + OPFS clear).
+- Tool system: config-types.ts + configs.ts aggregator + tools/rotate-pdf-pages/{config.ts,worker.ts} (pdf-lib /Rotate deltas, real per-page progress, sanitized output names, typed error codes for i18n).
+- ToolShell family (§6.3/6.4): tool-view + tool-shell (4 states, chain via lazy-initializer peek + key remount, working-copy lifecycle) + drop-zone (magic bytes/limits/paste/low-storage) + file-card + page-thumbnail + options-panel (schema-driven) + stepper + processing-view + result-view (download/FSA save-as/share/ZIP/rename/size delta/what-next chain/feedback/remove-from-device).
+- Discovery wiring: hash route #/tool/<id> (+ROUTES.tool), ToolCard/palette/mega-menu navigate to live tools, registry rotate-pdf-pages enabled:true.
+- Home (§6.1): Hero Smart Drop Zone (type detect -> suggestions; honest "coming soon" for future tools; handoff to enabled tool via chain store) + Recent files strip (IDB thumbnails, Clear, hidden when empty, honest reselect toast).
+- API (§2.5): POST /api/feedback — zod (toolId/rating/reason enum/honeypot), in-memory 10/min rate limit, Prisma insert, no PII.
+- i18n: +~130 keys (dropzone/tool/result/feedback/recent/smartDrop/nav) in en + real Hindi.
+- QA (agent-browser): golden path smart-drop -> tool -> options -> run -> result + rename + toast; direct landing; page-range 1-2; 400-page 346KB file <1s; feedback 200 -> SQLite row; disabled chain = toast, no nav; Hindi UI; mobile 360px (no h-scroll, bottom-sheet options, sticky CTA, tab bar hidden); recent strip + Clear; remove-from-device = OPFS [] + recent 0; StrictMode race regression test (1 upload = 1 entry); network filter ZERO non-local requests; fresh-context errors 0; eslint+tsc clean; dev.log clean.
+- Fixes during QA: set-state-in-effect x4 (promise-callback pattern; chain handoff via lazy useState + key remount), phaseRef removed, recentIdsRef replaced by removeRecentFilesByMeta (react-hooks/immutability), setFiles-updater side effects moved out (StrictMode double-invoke), EMPTY_ENTRIES stable snapshot, serialized recent writes, TDZ chainIn ordering, hero {count} params, DOM ClipboardEvent type, tsconfig excludes examples/skills/tests.
+- Regenerated bilingual catalogs via node scripts after a MultiEdit anchor mismatch on the "•" bullet produced a non-atomic partial apply (en.json a11y group was clobbered and restored; verified JSON validity + all key groups present in both locales).
+
+Stage Summary:
+- Phase 2 COMPLETE: full on-device tool pipeline live; only enabled tool = rotate-pdf-pages (the phase plan's demo tool). Screenshot evidence: download/qa-p2-*.png (13 files).
+- Deviations: none new beyond the documented sandbox set (tools/ at app root mirrors PRD monorepo layout; result preview opens a blob tab until the §6.5 viewer phase; cancel is terminate-based per PRD).
+- Next: Phase 3 first tools one at a time, starting with Merge PDF (needs dnd-kit reorder list, maxFiles=50).

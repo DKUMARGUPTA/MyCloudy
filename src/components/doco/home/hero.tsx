@@ -1,18 +1,18 @@
 "use client";
 
-import { ArrowRight, BadgeCheck, Lock, UserX, WifiOff } from "lucide-react";
+import { BadgeCheck, Lock, UserX, WifiOff } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { SmartDropZone } from "@/components/doco/home/smart-drop-zone";
 import { useI18n } from "@/components/providers/locale-provider";
 import { totalToolCount } from "@/lib/tools/registry";
 import { ROUTES } from "@/hooks/use-hash-route";
 
 /**
- * Home hero (PRD §6.1).
- * The interactive Smart Drop Zone arrives with Phase 2 (it needs OPFS +
- * the ToolShell to route a dropped file) — until then the hero carries the
- * honest value proposition + trust badges and links into the discovery views.
+ * Home hero (PRD §6.1): H1 + subtitle + the interactive Smart Drop Zone
+ * (file type detected by magic bytes → relevant tool suggestions) and the
+ * trust badges. Files stay on the device — the zone hands the file to the
+ * chosen tool, nothing is uploaded.
  */
 export function Hero() {
   const { t } = useI18n();
@@ -57,27 +57,18 @@ export function Hero() {
           {t("hero.subtitle")}
         </p>
 
-        <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <Button
-            asChild
-            size="touch"
-            variant="default"
-            className="w-full px-8 text-base sm:w-auto"
-          >
-            <a href={ROUTES.tools}>
-              {t("hero.primaryCta")}
-              <ArrowRight className="size-4" aria-hidden="true" />
-            </a>
-          </Button>
-          <Button
-            asChild
-            size="touch"
-            variant="outline"
-            className="w-full px-8 text-base sm:w-auto"
-          >
-            <a href="#how">{t("hero.secondaryCta")}</a>
-          </Button>
+        <div className="mt-8">
+          <SmartDropZone />
         </div>
+
+        <p className="mt-4 text-xs text-muted-foreground">
+          <a
+            href={ROUTES.tools}
+            className="rounded-btn font-medium text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          >
+            {t("hero.browseAll", { count: totalToolCount })}
+          </a>
+        </p>
 
         <ul className="mt-8 flex flex-wrap items-center justify-center gap-2">
           {trustBadges.map(({ icon: Icon, label, variant }) => (

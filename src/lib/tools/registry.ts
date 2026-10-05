@@ -323,6 +323,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: RotateCw,
     popularity: 68,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Rotate PDF pages", hi: "पेज घुमाएँ" },
     description: {
       en: "Turn all or selected pages 90° left or right, sideways scans fixed.",

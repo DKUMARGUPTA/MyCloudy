@@ -12,7 +12,9 @@ import { Steps } from "@/components/doco/home/steps";
 import { Categories } from "@/components/doco/home/categories";
 import { Why } from "@/components/doco/home/why";
 import { Modes } from "@/components/doco/home/modes";
+import { RecentFiles } from "@/components/doco/home/recent-files";
 import { ToolsView } from "@/components/doco/tools/tools-view";
+import { ToolView } from "@/components/doco/tool/tool-view";
 import { SearchPalette } from "@/components/doco/search/search-palette";
 import { CookieBanner } from "@/components/doco/cookie-banner";
 import { BottomTabBar } from "@/components/doco/bottom-tab-bar";
@@ -55,8 +57,11 @@ export default function Home() {
             <Steps />
             <Categories />
             <Why />
+            <RecentFiles />
             <Modes />
           </>
+        ) : route.view === "tool" ? (
+          <ToolView toolId={route.toolId ?? ""} />
         ) : (
           <ToolsView
             categoryId={route.category}
@@ -66,7 +71,9 @@ export default function Home() {
       </main>
 
       <SiteFooter />
-      <BottomTabBar route={route} onOpenSearch={openSearch} />
+      {route.view === "tool" ? null : (
+        <BottomTabBar route={route} onOpenSearch={openSearch} />
+      )}
       <CookieBanner />
       <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
 

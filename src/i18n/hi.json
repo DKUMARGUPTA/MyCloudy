@@ -56,7 +56,8 @@
     "badgePrivate": "प्राइवेट — फ़ाइल डिवाइस पर रहती है",
     "badgeNoSignup": "बिना साइन-अप",
     "badgeFree": "हमेशा मुफ़्त",
-    "badgeOffline": "ऑफ़लाइन चलता है"
+    "badgeOffline": "ऑफ़लाइन चलता है",
+    "browseAll": "या सभी {count} टूल देखें →"
   },
   "steps": {
     "title": "यह कैसे चलता है",
@@ -198,6 +199,125 @@
     "rights": "© {year} DocoPDF। सर्वाधिकार सुरक्षित।"
   },
   "a11y": {
-    "logoLabel": "DocoPDF होम"
+    "logoLabel": "DocoPDF होम",
+    "breadcrumb": "ब्रेडक्रंब"
+  },
+  "nav": {
+    "home": "होम"
+  },
+  "dropzone": {
+    "dropHint": "या फ़ाइलें यहाँ छोड़ें",
+    "pasteHint": "क्लिपबोर्ड से पेस्ट करने के लिए",
+    "limits": "PDF {size} तक · {count} फ़ाइलें तक",
+    "errTooManyTitle": "बहुत ज़्यादा फ़ाइलें",
+    "errTooManyDesc": "इस टूल में एक बार में {count} फ़ाइलें चलती हैं।",
+    "errTooLargeTitle": "फ़ाइल बहुत बड़ी है",
+    "errTooLargeDesc": "इस डिवाइस पर सीमा {size} प्रति फ़ाइल है।",
+    "errNotPdfTitle": "यह PDF नहीं है",
+    "errNotPdfDesc": "हमने फ़ाइल का कंटेंट जाँचा — यह मान्य PDF नहीं है।",
+    "warnLowSpaceTitle": "डिवाइस में जगह कम है",
+    "warnLowSpaceDesc": "आपका ब्राउज़र स्टोरेज लगभग भर चुका है। थोड़ी जगह खाली करें।"
+  },
+  "tool": {
+    "selectPdfFiles": "PDF फ़ाइलें चुनें",
+    "addMoreFiles": "और फ़ाइलें जोड़ें",
+    "freeBadge": "मुफ़्त",
+    "back": "वापस",
+    "clearAll": "सब हटाएँ",
+    "helpLabel": "मदद",
+    "helpTitle": "यह टूल कैसे काम करता है",
+    "helpPrivacy": "सब कुछ इसी डिवाइस पर होता है। फ़ाइल कहीं अपलोड नहीं होती, और काम पूरा होते ही वर्किंग कॉपी मिट जाती है।",
+    "optionsTitle": "विकल्प",
+    "optionsButton": "विकल्प",
+    "summary": "{count} फ़ाइलें · ~{size}",
+    "chainFrom": "{tool} से जुड़ा",
+    "ctaArrow": "→",
+    "howTitle": "यह कैसे काम करता है",
+    "how1": "एक या कई PDF फ़ाइलें चुनें — ये आपके डिवाइस पर ही रहती हैं।",
+    "how2": "विकल्प सेट करें और चलाने से पहले प्रीव्यू देखें।",
+    "how3": "नतीजा डाउनलोड करें, शेयर करें, या अगले टूल में भेजें।",
+    "featuresTitle": "आपको क्या मिलता है",
+    "relatedTitle": "मिलते-जुलते टूल",
+    "faqTitle": "अक्सर पूछे जाने वाले सवाल",
+    "fileThumbnailAlt": "{name} का पहला पेज",
+    "pageCount": "{count} पेज",
+    "pagesFieldBadge": "रेंज चलेगी",
+    "filePosition": "फ़ाइल {index} / {total}",
+    "moveUpLabel": "{name} को ऊपर ले जाएँ",
+    "moveDownLabel": "{name} को नीचे ले जाएँ",
+    "removeFileLabel": "{name} हटाएँ",
+    "removeFile": "हटाएँ",
+    "stagesLabel": "प्रोसेसिंग चरण",
+    "stage": {
+      "reading": "पढ़ा जा रहा है",
+      "processing": "प्रोसेस हो रहा है",
+      "saving": "सेव हो रहा है"
+    },
+    "processingTitle": "{tool}: आपकी फ़ाइलों पर काम चल रहा है…",
+    "progressLabel": "कुल प्रगति",
+    "pageOf": "पेज {page} / {pages}",
+    "pagesCount": "{count} पेज",
+    "cancel": "रद्द करें",
+    "cancelledToast": "रद्द किया — कुछ नहीं बदला",
+    "keepTabOpen": "सुझाव: यह टैब खुला रखें। दूसरे टैब में साइट इस्तेमाल कर सकते हैं।",
+    "errorTitle": "कुछ गड़बड़ हो गई",
+    "errorGeneric": "टूल में अचानक गड़बड़ हुई। फिर कोशिश करें। {detail}",
+    "errorInvalidPages": "यह पेज चयन मान्य नहीं है। 1-3, 5 जैसी रेंज लिखें।",
+    "errorEncrypted": "यह PDF पासवर्ड से सुरक्षित है। पहले अनलॉक करें, फिर कोशिश करें।",
+    "errorCorrupt": "यह PDF पढ़ी नहीं जा सकी — शायद ख़राब है।",
+    "notFoundTitle": "यह टूल अभी लाइव नहीं है",
+    "notFoundDesc": "यह रोडमैप पर है। तब तक टूलबॉक्स देखें।",
+    "notFoundAction": "सभी टूल देखें"
+  },
+  "result": {
+    "title": "आपकी फ़ाइल तैयार है!",
+    "sizeDelta": "{before} → {after} — {percent}% छोटी",
+    "sizeFlat": "कुल {after}",
+    "savedChip": "{percent}% छोटी",
+    "download": "डाउनलोड",
+    "saveToFiles": "Files में सेव करें",
+    "share": "शेयर…",
+    "downloadZip": "सब डाउनलोड करें (ZIP)",
+    "openPreview": "प्रीव्यू खोलें",
+    "openPreviewLabel": "फ़ाइल प्रीव्यू नए टैब में खोलें",
+    "renameLabel": "फ़ाइल का नाम बदलें",
+    "renameConfirm": "नाम पक्का करें",
+    "renamedToast": "नया नाम: {name}",
+    "whatNext": "अब आगे क्या?",
+    "privacyLine": "यह फ़ाइल सिर्फ़ आपके डिवाइस पर है — कुछ भी अपलोड नहीं हुआ।",
+    "removeFromDevice": "इस डिवाइस से हटाएँ",
+    "removedToast": "इस डिवाइस से हटा दिया"
+  },
+  "feedback": {
+    "prompt": "यह टूल काम आया?",
+    "upLabel": "उपयोगी",
+    "downLabel": "उपयोगी नहीं",
+    "reasonPrompt": "क्या गड़बड़ थी? (वैकल्पिक)",
+    "reasonSlow": "धीमा था",
+    "reasonWrong": "नतीजा ग़लत",
+    "reasonConfusing": "समझ नहीं आया",
+    "reasonOther": "कुछ और",
+    "thanks": "फ़ीडबैक के लिए धन्यवाद!"
+  },
+  "recent": {
+    "title": "हाल की फ़ाइलें",
+    "note": "सिर्फ़ मेटाडेटा और थंबनेल, इसी डिवाइस पर — फ़ाइल का कंटेंट कभी नहीं रखा जाता।",
+    "clear": "साफ़ करें",
+    "clearedToast": "हाल की फ़ाइलें साफ़ हो गईं",
+    "reselectToast": "फ़ाइल का कंटेंट स्टोर नहीं होता (प्राइवेसी) — फ़ाइल फिर चुनें।"
+  },
+  "smartDrop": {
+    "selectLabel": "PDF यहाँ छोड़ें — या फ़ाइल चुनें",
+    "whatNext": "आप क्या करना चाहते हैं?",
+    "chooseDifferent": "दूसरी फ़ाइल चुनें",
+    "imagesToPdf": "तस्वीरें → PDF",
+    "wordToPdf": "वर्ड → PDF",
+    "officeNote": "ऑफ़िस रूपांतरण सर्वर पर होते हैं — बाद के चरण में आएँगे।",
+    "catOrganize": "व्यवस्थित करें",
+    "catEdit": "संपादित करें",
+    "catOptimize": "छोटा करें",
+    "catSecurity": "सुरक्षित करें",
+    "catConvert": "बदलें",
+    "catImages": "तस्वीर टूल"
   }
 }

@@ -76,7 +76,7 @@ export function SearchPalette({
   const openTool = (tool: ToolDef) => {
     handleOpenChange(false);
     if (tool.enabled) {
-      navigateToHash(`#/?tool=${tool.id}`);
+      navigateToHash(ROUTES.tool(tool.id));
       return;
     }
     toast({

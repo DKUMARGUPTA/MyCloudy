@@ -13,6 +13,7 @@ import {
   type ToolDef,
 } from "@/lib/tools/registry";
 import { toggleFavorite, useFavoriteIds } from "@/lib/tools/favorites";
+import { ROUTES, navigateToHash } from "@/hooks/use-hash-route";
 import { cn } from "@/lib/utils";
 
 interface ToolCardProps {
@@ -36,6 +37,7 @@ export function ToolCard({ tool, onOpen }: ToolCardProps) {
 
   const handleOpen = () => {
     if (tool.enabled) {
+      navigateToHash(ROUTES.tool(tool.id));
       onOpen?.(tool);
       return;
     }

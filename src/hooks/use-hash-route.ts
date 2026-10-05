@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
  * Routes:  "#/"            -> home
  *          "#/tools"       -> all tools   (optional ?q=<search>)
  *          "#/tools/<cat>" -> category    (optional ?q=<search>)
+ *          "#/tool/<id>"   -> tool workspace (ToolShell; ?q ignored)
  * Anchors: "#<id>" (not starting with "#/") -> home view + scroll to <id>.
  * Works with browser back/forward via the hashchange event, modeled as an
  * external store (useSyncExternalStore) — hydration-safe, no effects
@@ -16,9 +17,11 @@ import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
  */
 
 export interface HashRoute {
-  view: "home" | "tools";
+  view: "home" | "tools" | "tool";
   category?: string;
   query?: string;
+  /** Enabled tool id for the "#/tool/<id>" view. */
+  toolId?: string;
   /** Anchor id when the hash is a plain "#section" link. */
   anchor?: string;
 }
@@ -39,6 +42,9 @@ export function parseHash(hash: string): HashRoute {
   if (path === "tools") return { view: "tools", query };
   if (path.startsWith("tools/")) {
     return { view: "tools", category: path.slice("tools/".length), query };
+  }
+  if (path.startsWith("tool/")) {
+    return { view: "tool", toolId: path.slice("tool/".length) };
   }
   return { view: "home" };
 }
@@ -112,5 +118,6 @@ export const ROUTES = {
   home: "#/",
   tools: "#/tools",
   category: (categoryId: string) => `#/tools/${categoryId}`,
+  tool: (toolId: string) => `#/tool/${toolId}`,
   toolsWithQuery: (query: string) => `#/tools?q=${encodeURIComponent(query)}`,
 } as const;

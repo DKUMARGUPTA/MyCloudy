@@ -109,7 +109,11 @@ export function MegaMenu() {
                         return (
                           <li key={tool.id}>
                             <a
-                              href={ROUTES.category(categoryId)}
+                              href={
+                                tool.enabled
+                                  ? ROUTES.tool(tool.id)
+                                  : ROUTES.category(categoryId)
+                              }
                               onClick={(event) =>
                                 onToolClick(
                                   event,
