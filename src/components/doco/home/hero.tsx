@@ -5,12 +5,14 @@ import { ArrowRight, BadgeCheck, Lock, UserX, WifiOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/components/providers/locale-provider";
-import { totalPlannedTools } from "@/data/catalog-summary";
+import { totalToolCount } from "@/lib/tools/registry";
+import { ROUTES } from "@/hooks/use-hash-route";
 
 /**
- * Home hero (PRD §6.1, Phase 0 scope).
- * The interactive Smart Drop Zone arrives with Phase 1/2 — until then the
- * hero shows the honest value proposition + trust badges.
+ * Home hero (PRD §6.1).
+ * The interactive Smart Drop Zone arrives with Phase 2 (it needs OPFS +
+ * the ToolShell to route a dropped file) — until then the hero carries the
+ * honest value proposition + trust badges and links into the discovery views.
  */
 export function Hero() {
   const { t } = useI18n();
@@ -62,7 +64,7 @@ export function Hero() {
             variant="default"
             className="w-full px-8 text-base sm:w-auto"
           >
-            <a href="#categories">
+            <a href={ROUTES.tools}>
               {t("hero.primaryCta")}
               <ArrowRight className="size-4" aria-hidden="true" />
             </a>
@@ -92,7 +94,7 @@ export function Hero() {
         </ul>
 
         <p className="mt-6 text-xs text-muted-foreground">
-          {t("hero.toolsPlanned", { count: totalPlannedTools })} ·{" "}
+          {t("hero.toolsPlanned", { count: totalToolCount })} ·{" "}
           {t("hero.bilingual")}
         </p>
       </div>

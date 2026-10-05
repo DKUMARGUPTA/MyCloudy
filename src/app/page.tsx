@@ -12,18 +12,25 @@ import { Steps } from "@/components/doco/home/steps";
 import { Categories } from "@/components/doco/home/categories";
 import { Why } from "@/components/doco/home/why";
 import { Modes } from "@/components/doco/home/modes";
+import { ToolsView } from "@/components/doco/tools/tools-view";
+import { SearchPalette } from "@/components/doco/search/search-palette";
+import { CookieBanner } from "@/components/doco/cookie-banner";
+import { BottomTabBar } from "@/components/doco/bottom-tab-bar";
 import { useI18n } from "@/components/providers/locale-provider";
+import { useHashRoute } from "@/hooks/use-hash-route";
 
 /**
- * DocoPDF home (Phase 0 scope).
- * Live: design tokens, dark mode, EN/हिं i18n, base components,
- * category preview from the PRD §7 catalog.
- * Next phases add: Smart Drop Zone, tool registry pages, ToolShell.
+ * DocoPDF app shell on the single visible route "/" (sandbox note: path
+ * routes are restored at deploy time). Hash router switches between the
+ * home view and the tools discovery views, driven entirely by the registry.
  */
 export default function Home() {
   const { t } = useI18n();
+  const { route } = useHashRoute();
   const [proOpen, setProOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const openPro = useCallback(() => setProOpen(true), []);
+  const openSearch = useCallback(() => setSearchOpen(true), []);
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -35,17 +42,33 @@ export default function Home() {
       </a>
 
       <AnnouncementBanner />
-      <SiteHeader onGetPro={openPro} />
+      <SiteHeader
+        onGetPro={openPro}
+        onOpenSearch={openSearch}
+        route={route}
+      />
 
-      <main id="main" className="flex-1">
-        <Hero />
-        <Steps />
-        <Categories />
-        <Why />
-        <Modes />
+      <main id="main" className="flex-1 pb-16 md:pb-0">
+        {route.view === "home" ? (
+          <>
+            <Hero />
+            <Steps />
+            <Categories />
+            <Why />
+            <Modes />
+          </>
+        ) : (
+          <ToolsView
+            categoryId={route.category}
+            query={route.query}
+          />
+        )}
       </main>
 
       <SiteFooter />
+      <BottomTabBar route={route} onOpenSearch={openSearch} />
+      <CookieBanner />
+      <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
 
       <Modal
         open={proOpen}

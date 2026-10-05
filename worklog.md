@@ -6,10 +6,10 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: 0 COMPLETE (P0.1)** — scaffold shipped and QA-verified via agent-browser.
-  Landing page live at `/` (hero, steps, categories+sheet, why, modes, footer, Pro modal).
-  The interactive user remains the driver for formal phase prompts; the review loop
-  continues with the next pending phase (1: layout + discovery) when stable.
+- **Phase: 1 COMPLETE (P1.1)** — discovery layer shipped and QA-verified.
+  Typed registry (97 tools × PRD §7), fuzzy search (EN/HI/typo), All Tools +
+  category views, Ctrl+K palette, mega-menu, cookie banner, mobile tab bar —
+  all driven by the registry. Next: Phase 2 (ToolShell engine).
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
@@ -38,17 +38,28 @@
 
 ## 3. Current goals / completed modifications / verification results
 
-- Completed (P0.1): design tokens light+dark (PRD §3.1 exact colors + category colors),
-  self-hosted fonts (Inter + Noto Sans Devanagari via next/font/local), i18n en/hi with
-  LocaleProvider (useSyncExternalStore), theme system (next-themes, no-flash), base components
-  (Badge private/server/new/pro/beta, Button cta/touch, Modal, BottomSheet, EmptyState, ThemeToggle,
-  LanguageSwitch, Logo), landing page sections, Prisma schema (13 tables mirroring §2.5) + db push,
-  CSP + security headers in next.config, .env.example, README, CI workflow, services/worker
-  placeholder, docs/PRD-v2.md.
-- Verified: agent-browser — page renders, a11y tree correct, dark-mode toggle applies `.dark`,
-  Hindi switch sets `html[lang=hi]` + Devanagari hero, category sheet lists 12 tools with mode
-  badges, Pro modal opens, 360px viewport has no horizontal scroll, mobile hamburger sheet works,
-  console + page errors ZERO, CSP/headers served, fonts preload self-hosted. `bun run lint` clean.
+- Completed (P1.1): registry (97 tools, EN+HI names/descs/tags, modes, phases, popularity,
+  accepts, icons — all lucide exports verified via bun), fuzzy search (word-boundary substring
+  + word-level dice with length guard; typo/Hinglish/Devanagari tested), hash router
+  (useSyncExternalStore; home/tools/category + ?q=; anchors), favorites + last-used stores,
+  All Tools view (search, sticky chips, mode/input filters, Popular/A–Z, empty state +
+  Request-a-tool modal w/ localStorage queue), Category views (intro + stats + related),
+  Ctrl+K palette (cmdk, shouldFilter=false since we filter ourselves), mega-menu
+  (NavigationMenu, 6 columns + more), cookie banner (analytics OFF, customize, privacy
+  settings re-open), mobile bottom tab bar (Home/Tools/Search), i18n expanded (~+150 keys
+  en/hi), sitemap.xml + robots.txt.
+- Verified via agent-browser: home + tools views render; 97 cards; search "merge"→21,
+  "merg"→9, "jodein"→14 top=merge-pdf, "जोड़"→1 exact, "password"→11 (password tools
+  first), "word"→17 (password noise gone), "photo 100kb"→1; favorites add/filter chip;
+  category view 12 tools (organize); palette Ctrl+K + Enter nav + See-all → ?q= flow;
+  back button works; Hindi UI full (सभी टूल + Devanagari names); mobile 360px no h-scroll,
+  tab bar works; mega-menu 46 links; cookie reject stores {analytics:false}; lint clean;
+  zero page errors; dev.log clean.
+- Fixed during QA: Settings2 missing import; getCategory(object) misuse ×3 files;
+  useSyncExternalStore unstable-getSnapshot infinite loop (now createLocalSnapshot
+  raw-keyed cache); router.push doesn't fire hashchange → navigateToHash(); cmdk
+  built-in filter hiding See-all item → commandProps.shouldFilter=false; dice padding
+  cross-word noise → word-level dice + length guard + word-boundary substring.
 - Goal now: execute the phase plan below in strict order, one phase (or sub-phase) per round.
 
 ## 4. Phase plan (user's chat phases → PRD mapping)
@@ -92,10 +103,11 @@
 
 ## 6. Unresolved issues / risks / next-phase priorities
 
-1. **NEXT: Phase 1 discovery** — typed tool registry with EVERY §7 tool (id, slug, category, mode,
-   phase, icon, i18n name/desc keys, Hindi names, tags), header mega-menu + Ctrl+K fuzzy search,
-   cookie banner (analytics OFF), full home (§6.1 smart drop zone), All Tools page (§6.2 favorites/
-   last-used from localStorage), category pages, 404/500/offline, SEO (sitemap, hreflang).
+1. **NEXT: Phase 2 PDF core + ToolShell** — OPFS helpers + IndexedDB fallback, recent files
+   (max 20, 30 days), self-hosted pdf.js (copy worker/cmaps to /public/pdfjs + script), thumbnail
+   render queue, worker pool (progress/result/error/cancel), ToolShell 4 states, DropZone/
+   FileCard/OptionsPanel/sticky bar/Stepper, result page (download/share/rename/size delta/chain/
+   ZIP/remove), /api/feedback stub (Turso), demo tool rotate-90° (registry enabled flag).
 2. qpdf WASM build source + exact version + license must be verified before Phase 4
    (VERIFY: npm `qpdf-wasm` availability; PRD §2.3 expects Apache-2.0 qpdf).
 3. HEIC decoder WASM license flagged "verify" in PRD §2.3 — confirm before HEIC tools.
@@ -158,3 +170,29 @@ Stage Summary:
 - Screenshots: download/qa-p0-desktop-light.png, -dark.png, -hindi.png, -sheet.png, -modal.png, -mobile.png, -mobile-menu.png, -final-full.png.
 - Deviations handled: Prisma/SQLite stands in for Turso/Drizzle (names match §2.5); locale = app state on / (only / visible in sandbox); Vitest deferred (no test code in sandbox); fonts fetched at build time from official sources (rsms.me + Google Fonts) and served self-hosted (no runtime CDN).
 - Next: Phase 1 (registry + header search + all-tools + category pages + 404/500/offline + SEO) — user prompt or next review round when stable.
+
+---
+Task ID: P1.1
+Agent: Z.ai Code (webDevReview cron round 2, job 437069)
+Task: Scheduled review round — baseline QA green (Phase 0 stable), so executed the next pending phase: PHASE 1 DISCOVERY LAYER (PRD §5, 6.1, 6.2, 7) per the master-prompt phase plan.
+
+Work Log:
+- Baseline QA: page rendered clean (Hindi persisted from localStorage — locale store working as designed).
+- Registry: src/lib/tools/registry.ts — 97 tools from PRD §7 (10 categories incl. "images" for §7.10 utilities, noted as small deviation from §4's 9 URLs); each tool: id/slug, category, mode D/S, phase P1-P3, lucide icon (ALL 70+ icon names verified to exist via bun script before use), name/description as {en,hi} locale maps, tags {en[],hi[]} incl. Hinglish transliterations, accepts input type, popularity 0-100, enabled:false (flips per phase plan), pro:false. Lookups: getTool, getCategory, toolsByCategory, popularTools, PHASE_LABELS, category chip/hover classes. DELETED src/data/catalog-summary.ts (single source of truth now the registry).
+- i18n: catalogs expanded with nav/tabs/tools/request/palette/consent keys (~150 new strings each); tool names/descs live in registry locale maps (type-safe, documented decision).
+- Search: src/lib/search/fuzzy.ts — self-written scorer: exact → word-boundary substring ("word" no longer matches inside "password"; "passw" prefix-matches) → word-level bigram dice with length-ratio guard 0.6-1.6 (typo-tolerant: "merg"→merge 0.86; blocks cross-length noise). Fields weighted name 3/tags 2/slug 1.6/desc 1/category 1; multi-term AND; threshold 0.35. Verified: password→11 (password tools first), word→17 (Word tools first, password noise gone), जोड़→1 exact, jodein→14 top merge, photo 100kb→1 exact.
+- Routing: src/hooks/use-hash-route.ts — hash as external store (useSyncExternalStore), routes #/, #/tools, #/tools/<cat>, ?q=; plain #anchors scroll on home; navigateToHash() module helper (location.hash assignment — router.push does NOT fire hashchange, found in QA); ROUTES constants.
+- Stores: favorites + last-used (localStorage, createLocalSnapshot raw-keyed cache in src/lib/storage/local-snapshot.ts — unstable getSnapshot caused an infinite render loop, found + fixed in QA); lastUsed written by future ToolShell via trackToolUse().
+- Views: AllToolsView (large search w/ desktop autofocus via pointer:fine matchMedia, sticky chips incl. Favorites/Last-used, mode/input Select filters, Popular/A–Z toggle, ToolCard grid 1-4 cols, EmptyState + RequestToolModal), CategoryView (colored header, registry intro, private/server counts, related chips), ToolsView switcher.
+- ToolCard (PRD §3.3): 48px category-tinted icon, name, 2-line desc, Private/Server badge, Soon chip + roadmap phase, favorite star (aria-pressed, toast), hover lift + colored border, focus ring.
+- SearchPalette (Ctrl+K + "/"): CommandDialog; groups Favorites/Popular (empty query) or Results+See-all; shouldFilter=false (our fuzzy filters; cmdk's built-in filter hid See-all, found in QA); Enter opens tool (coming toast + category nav) or See-all → #/tools?q=.
+- Header: mega-menu via NavigationMenu (5 category columns top-6 tools + More column + See all 97), All-tools nav link, Ctrl+K trigger button w/ kbd hint, mobile sheet w/ all 10 categories; Footer: privacy-settings reopens consent banner, category chips, see-all link; CookieBanner: Accept all / Reject non-essential / Customize (Switch, default OFF) persisted, re-openable; BottomTabBar (mobile md:hidden): Home/Tools/Search (Recent+Account deferred to their phases, noted).
+- page.tsx: hash router wiring (home view / ToolsView), BottomTabBar + CookieBanner + SearchPalette + ProModal mounted.
+- SEO: public/sitemap.xml (home + tools + categories w/ hreflang en/hi), robots.txt (allow all, disallow /api/, sitemap ref).
+- QA fixes during the round: Settings2 missing from registry imports (ReferenceError); getCategory(object) misuse in 3 components (CATEGORIES maps directly now); useSyncExternalStore unstable snapshots → createLocalSnapshot; palette navigation via navigateToHash; cmdk shouldFilter; search precision rework; Sheet a11y warning (aria-describedby={undefined}).
+- Final QA: lint clean; zero page errors; console clean; dev.log clean; screenshots qa-p1-*.png (home, all-tools, favorited, category, palette, palette-search, see-all, hindi-tools, mobile-tools, mobile-home, megamenu, final-home).
+
+Stage Summary:
+- Phase 1 COMPLETE: full discovery layer driven by the 97-tool registry; bilingual search (typo + Hinglish + Devanagari); favorites; filters; request queue; consent; mobile tab bar; hash routing with back/forward support.
+- Deviations: 10th "images" category for §7.10 (PRD §4 lists 9 category URLs); tool strings in registry locale maps (not JSON catalogs) for type safety; mega-menu shows top-6 per column (PRD says all tools — full list lives in All Tools view); tab bar has Home/Tools/Search only until Recent/Account exist; 404/500/offline pages skipped (sandbox single-route; noted for deploy); Smart Drop Zone deferred to Phase 2 (needs OPFS + ToolShell to be real).
+- Next: PHASE 2 — ToolShell engine + OPFS + pdf.js + worker pool + demo rotate tool.
