@@ -263,7 +263,9 @@
     "errorCorrupt": "This PDF couldn't be read — it may be damaged.",
     "notFoundTitle": "This tool isn't live yet",
     "notFoundDesc": "It's on the roadmap. Browse the toolbox meanwhile.",
-    "notFoundAction": "Browse all tools"
+    "notFoundAction": "Browse all tools",
+    "dragHandleLabel": "Drag to reorder {name}",
+    "summaryMinFiles": "Add at least {count} files to continue"
   },
   "result": {
     "title": "Your file is ready!",
@@ -282,7 +284,8 @@
     "whatNext": "What next?",
     "privacyLine": "This file is only on your device — nothing was uploaded.",
     "removeFromDevice": "Remove from this device",
-    "removedToast": "Removed from this device"
+    "removedToast": "Removed from this device",
+    "summaryFilesPages": "{files} files, {pages} pages"
   },
   "feedback": {
     "prompt": "Was this tool useful?",
@@ -319,5 +322,23 @@
   "a11y": {
     "logoLabel": "DocoPDF home",
     "breadcrumb": "Breadcrumb"
+  },
+  "merge": {
+    "panelTitle": "Files & pages",
+    "fileCount": "{count} files",
+    "emptyHint": "Add files to set pages and order.",
+    "sortLabel": "Sort files",
+    "sortAZ": "A→Z",
+    "sortZA": "Z→A",
+    "sortDate": "By date",
+    "rangePlaceholder": "all",
+    "rangeLabel": "Pages to merge from {name}",
+    "rangeHint": "Leave empty to include the whole file. Ranges like 1-3, 5.",
+    "outputNameLabel": "Output name",
+    "outputNamePlaceholder": "auto: <first file>-merged.pdf",
+    "blankBetweenLabel": "Blank page between files",
+    "blankBetweenHint": "Separates each file's pages with one empty page.",
+    "flattenLabel": "Flatten form fields",
+    "flattenHint": "Best effort: locks filled values into the page. Some complex forms may keep their fields."
   }
 }

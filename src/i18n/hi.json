@@ -267,7 +267,9 @@
     "errorCorrupt": "यह PDF पढ़ी नहीं जा सकी — शायद ख़राब है।",
     "notFoundTitle": "यह टूल अभी लाइव नहीं है",
     "notFoundDesc": "यह रोडमैप पर है। तब तक टूलबॉक्स देखें।",
-    "notFoundAction": "सभी टूल देखें"
+    "notFoundAction": "सभी टूल देखें",
+    "dragHandleLabel": "{name} को खींचकर क्रम बदलें",
+    "summaryMinFiles": "आगे बढ़ने के लिए कम से कम {count} फ़ाइलें जोड़ें"
   },
   "result": {
     "title": "आपकी फ़ाइल तैयार है!",
@@ -286,7 +288,8 @@
     "whatNext": "अब आगे क्या?",
     "privacyLine": "यह फ़ाइल सिर्फ़ आपके डिवाइस पर है — कुछ भी अपलोड नहीं हुआ।",
     "removeFromDevice": "इस डिवाइस से हटाएँ",
-    "removedToast": "इस डिवाइस से हटा दिया"
+    "removedToast": "इस डिवाइस से हटा दिया",
+    "summaryFilesPages": "{files} फ़ाइलें, {pages} पेज"
   },
   "feedback": {
     "prompt": "यह टूल काम आया?",
@@ -319,5 +322,23 @@
     "catSecurity": "सुरक्षित करें",
     "catConvert": "बदलें",
     "catImages": "तस्वीर टूल"
+  },
+  "merge": {
+    "panelTitle": "फ़ाइलें और पेज",
+    "fileCount": "{count} फ़ाइलें",
+    "emptyHint": "पेज और क्रम सेट करने के लिए फ़ाइलें जोड़ें।",
+    "sortLabel": "फ़ाइलें क्रम में लगाएँ",
+    "sortAZ": "A→Z",
+    "sortZA": "Z→A",
+    "sortDate": "तारीख़ से",
+    "rangePlaceholder": "all",
+    "rangeLabel": "{name} से जोड़ने वाले पेज",
+    "rangeHint": "पूरी फ़ाइल शामिल करने के लिए ख़ाली छोड़ें। 1-3, 5 जैसी रेंज चलती है।",
+    "outputNameLabel": "आउटपुट का नाम",
+    "outputNamePlaceholder": "ऑटो: <पहली फ़ाइल>-merged.pdf",
+    "blankBetweenLabel": "फ़ाइलों के बीच ख़ाली पेज",
+    "blankBetweenHint": "हर फ़ाइल के पेजों के बीच एक ख़ाली पेज जोड़ता है।",
+    "flattenLabel": "फ़ॉर्म फ़ील्ड फ़्लैटन करें",
+    "flattenHint": "बेस्ट-एफ़र्ट: भरे मान पेज में स्थिर हो जाते हैं। कुछ जटिल फ़ॉर्म फ़ील्ड बने रह सकते हैं।"
   }
 }

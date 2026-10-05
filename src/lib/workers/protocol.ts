@@ -26,6 +26,11 @@ export interface StageDetail {
   pages?: number;
 }
 
+export interface RunDetail {
+  files?: number;
+  pages?: number;
+}
+
 export interface ToolOutput {
   /** Download display name (worker sanitizes; UI re-validates on rename). */
   name: string;
@@ -39,6 +44,8 @@ export interface WorkerRunRequest {
   toolId: string;
   options: OptionValues;
   files: File[];
+  /** Workspace file ids aligned with `files` (per-file options, e.g. merge ranges). */
+  fileIds?: string[];
 }
 
 export type WorkerResponse =
@@ -49,7 +56,13 @@ export type WorkerResponse =
       stage: RunStage;
       detail?: StageDetail;
     }
-  | { type: "result"; runId: number; outputs: ToolOutput[] }
+  | {
+      type: "result";
+      runId: number;
+      outputs: ToolOutput[];
+      /** Run summary for the result view (PRD §8.1: "5 files, 42 pages"). */
+      detail?: RunDetail;
+    }
   | { type: "error"; runId: number; code: string; detail?: string };
 
 export function isWorkerResponse(data: unknown): data is WorkerResponse {

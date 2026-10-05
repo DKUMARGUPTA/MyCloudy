@@ -50,7 +50,7 @@ export function FileCard({
   }, [item.file]);
 
   return (
-    <li
+    <div
       className={cn(
         "group relative flex gap-3 rounded-card border border-border bg-card p-3 transition-colors",
         "hover:border-primary/30 focus-within:ring-[3px] focus-within:ring-ring/50"
@@ -134,6 +134,6 @@ export function FileCard({
       <span className="sr-only">
         {t("tool.filePosition", { index: index + 1, total })}
       </span>
-    </li>
+    </div>
   );
 }

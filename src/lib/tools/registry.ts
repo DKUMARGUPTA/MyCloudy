@@ -287,6 +287,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Combine,
     popularity: 100,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Merge PDF", hi: "पीडीएफ़ जोड़ें" },
     description: {
       en: "Combine up to 50 PDFs into one, reorder files, pick page ranges.",

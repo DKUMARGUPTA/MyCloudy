@@ -3,11 +3,14 @@ import type { OptionValues } from "@/lib/tools/config-types";
 import { clearWorkingFiles } from "@/lib/storage/opfs";
 import {
   isWorkerResponse,
+  type RunDetail,
   type RunStage,
   type StageDetail,
   type ToolOutput,
   type WorkerResponse,
 } from "./protocol";
+
+export type { RunDetail } from "./protocol";
 
 /**
  * Worker pool for device-only tools (PRD §2.6 "lib/pdf … worker pool").
@@ -47,13 +50,19 @@ export interface RunProgress {
   detail?: StageDetail;
 }
 
+export interface ToolRunResult {
+  outputs: ToolOutput[];
+  /** Optional run summary (e.g. "5 files, 42 pages" for Merge). */
+  detail?: RunDetail;
+}
+
 export interface RunHandle {
   cancel(): void;
-  promise: Promise<ToolOutput[]>;
+  promise: Promise<ToolRunResult>;
 }
 
 interface PendingRun {
-  resolve: (outputs: ToolOutput[]) => void;
+  resolve: (result: ToolRunResult) => void;
   reject: (error: unknown) => void;
   onProgress: (progress: RunProgress) => void;
 }
@@ -77,7 +86,8 @@ class ToolWorkerPool {
     toolId: string,
     options: OptionValues,
     files: File[],
-    onProgress: (progress: RunProgress) => void
+    onProgress: (progress: RunProgress) => void,
+    fileIds?: string[]
   ): RunHandle {
     const config = TOOL_CONFIGS[toolId];
     if (!config) {
@@ -114,15 +124,15 @@ class ToolWorkerPool {
       pendingRun?.reject(error);
     };
 
-    const settleSuccess = (outputs: ToolOutput[]) => {
+    const settleSuccess = (result: ToolRunResult) => {
       if (settled) return;
       settled = true;
       const pendingRun = this.pending.get(runId);
       this.pending.delete(runId);
-      pendingRun?.resolve(outputs);
+      pendingRun?.resolve(result);
     };
 
-    const promise = new Promise<ToolOutput[]>((resolve, reject) => {
+    const promise = new Promise<ToolRunResult>((resolve, reject) => {
       this.pending.set(runId, { resolve, reject, onProgress });
 
       void (async () => {
@@ -151,7 +161,10 @@ class ToolWorkerPool {
           if (worker) this.returnWorker(toolId, worker);
           releaseSlotOnce();
           if (response.type === "result") {
-            settleSuccess(response.outputs);
+            settleSuccess({
+              outputs: response.outputs,
+              detail: response.detail,
+            });
           } else {
             settleWith(new ToolRunError(response.code, response.detail));
           }
@@ -162,7 +175,14 @@ class ToolWorkerPool {
           releaseSlotOnce();
           settleWith(new ToolRunError("worker-crash"));
         };
-        worker.postMessage({ type: "run", runId, toolId, options, files });
+        worker.postMessage({
+          type: "run",
+          runId,
+          toolId,
+          options,
+          files,
+          fileIds,
+        });
       })();
     });
 

@@ -53,6 +53,7 @@ export function ResultView({
   tool,
   outputs,
   inputBytes,
+  runSummary,
   chainFromName,
   chainTargets,
   onChain,
@@ -61,6 +62,8 @@ export function ResultView({
   tool: ToolDef;
   outputs: ToolOutput[];
   inputBytes: number;
+  /** Worker run summary (PRD §8.1: "5 files, 42 pages"). */
+  runSummary?: { files?: number; pages?: number } | null;
   chainFromName?: string;
   chainTargets: ToolDef[];
   onChain: (nextTool: ToolDef, files: File[]) => void;
@@ -153,12 +156,20 @@ export function ResultView({
 
       <div className="flex flex-col items-center gap-2 text-center">
         <CheckCircle2
-          className="size-11 text-emerald-500"
+          className="size-11 animate-in fade-in-50 zoom-in-75 text-emerald-500 duration-300"
           aria-hidden="true"
         />
         <h2 className="text-xl font-bold text-foreground sm:text-2xl">
           {t("result.title")}
         </h2>
+        {runSummary?.files ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.summaryFilesPages", {
+              files: runSummary.files,
+              pages: runSummary.pages ?? 0,
+            })}
+          </p>
+        ) : null}
         <p className="text-sm text-muted-foreground">
           {shrinkable
             ? t("result.sizeDelta", {

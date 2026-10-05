@@ -6,12 +6,11 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: 2 COMPLETE (P2.1)** — PDF core + ToolShell engine shipped and QA-verified.
-  The first live tool (rotate-pdf-pages) runs 100% on-device through the shared
-  ToolShell (Landing → Workspace → Processing → Result), with OPFS working copies,
-  IndexedDB recent files (metadata + thumbnails only), self-hosted pdf.js
-  thumbnails, a real worker pool (progress/cancel), chain mode, and the home
-  Smart Drop Zone. Next: Phase 3 (first tool batch, one at a time, starting with Merge).
+- **Phase: 3 IN PROGRESS (P3.1)** — Merge PDF shipped (first Phase-3 tool) on top of the
+  P2 core. Live tools now: merge-pdf + rotate-pdf-pages, both 100% on-device.
+  Merge brings dnd-kit drag-reorder, per-file page ranges, sort A→Z/Z→A/date,
+  blank-page-between, best-effort flatten, custom output name, and the
+  "N files, M pages" result summary. Next: Split PDF (7 modes per §8.1).
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
@@ -133,13 +132,14 @@
 
 ## 6. Unresolved issues / risks / next-phase priorities
 
-1. **NEXT: Phase 3 — first tools ONE AT A TIME** (order per plan §4): Merge
-   → Split → PageGrid family (Rotate/Rearrange/Remove/Extract with drag grid)
-   → Images to PDF → PDF→JPG/PNG → PDF→Text → Watermark → Page numbers +
-   Header/footer → Crop → Doc info + Remove metadata → Fill out → View →
-   Compress (device) → Generate password → Scan → HEIC/WEBP. Each = config +
-   worker under tools/<id>/ + registry `enabled: true` + i18n. Merge needs a
-   dnd-kit reorder FileCard list (registry maxFiles=50).
+1. **NEXT: Phase 3 continues — Split PDF** (§8.1: 7 modes — by range, every N,
+   bookmarks, size, visual, odd/even, blank-separator; ZIP output via fflate).
+   Then PageGrid family (Rotate preset gets a live page grid), Images to PDF,
+   PDF→JPG/PNG, PDF→Text, Watermark, Page numbers, Crop, Doc info, Fill, View,
+   Compress, Generate password, Scan, HEIC/WEBP — one per round.
+   Merge follow-ups (deferred, noted): images-in-merge (needs Images-to-PDF
+   engine), per-file bookmarks (pdf-lib low-level outline — VERIFY API),
+   card-click page-grid expand (PageGrid round), per-file Unlock (qpdf round).
 2. Cancel path not yet caught mid-flight in browser (tool <600ms even on 400
    pages) — retest with a multi-MB scanned file in Phase 3.
 3. qpdf WASM build source + exact version + license must be verified before Phase 4
@@ -258,3 +258,25 @@ Stage Summary:
 - Phase 2 COMPLETE: full on-device tool pipeline live; only enabled tool = rotate-pdf-pages (the phase plan's demo tool). Screenshot evidence: download/qa-p2-*.png (13 files).
 - Deviations: none new beyond the documented sandbox set (tools/ at app root mirrors PRD monorepo layout; result preview opens a blob tab until the §6.5 viewer phase; cancel is terminate-based per PRD).
 - Next: Phase 3 first tools one at a time, starting with Merge PDF (needs dnd-kit reorder list, maxFiles=50).
+---
+Task ID: P3.1
+Agent: Z.ai Code (webDevReview cron round, job 437196 — first successful round after the concurrency failures)
+Task: Scheduled review — baseline QA passed (0 errors), so advanced the next pending phase item: PHASE 3 TOOL #1, MERGE PDF (PRD §8.1) per the worklog's next-step priority. Also fixed a UX bug found during QA.
+
+Work Log:
+- Baseline QA: home + tool pages 0 errors, dev.log clean → proceeded to Merge PDF.
+- Protocol/pool (additive): run requests now carry `fileIds` (aligned per-file options); results carry optional `detail` {files, pages} for the PRD §8.1 summary; pool resolves ToolRunResult {outputs, detail}.
+- tools/merge-pdf/worker.ts: pdf-lib copyPages per file with per-file ranges (JSON map in options.fileRanges keyed by workspace id), blank page between files, best-effort form flatten (pdf-lib 1.17.1 API verified at runtime: PDFForm.flatten() — NOT flattenFields), sanitized output name (custom or <first>-merged.pdf), real per-file/per-page progress, encrypted/corrupt/invalid-range typed error codes, detail {files, pages}.
+- tools/merge-pdf/config.ts: minFiles 2, maxFiles 50, options (blankBetween, flatten w/ honest hint, outputName), features + FAQ (en/hi); bookmarks-per-file deferred (pdf-lib outline is low-level — VERIFY before building; documented in FAQ honestly).
+- Custom panel system (PRD §2.6 Panel.tsx): src/lib/tools/panel-types.ts (ToolPanelProps) + panels.tsx registry + tools/merge-pdf/panel.tsx (sort A→Z/Z→A/date buttons + per-file range inputs with a11y labels); ToolShell renders CustomPanel above the schema OptionsPanel in BOTH the desktop aside and the mobile bottom sheet (direct TOOL_PANELS[tool.id] map lookup — react-hooks/static-components rejects function-call lookups).
+- Drag-reorder (PRD §8.1 preview): src/components/doco/tool/file-list.tsx — dnd-kit DndContext (PointerSensor distance 6, TouchSensor 200ms long-press, KeyboardSensor with sortableKeyboardCoordinates), rectSortingStrategy, restrictToParentElement modifier; grip handle button (GripVertical, cursor-grab/grabbing, touch-none, focus ring); drag styles: z-20 + scale-[1.02] + shadow-lg on active, ring-primary/40 on drop target; up/down buttons retained as the always-available keyboard path.
+- Styling polish: success check animate-in zoom-in (reduced-motion respected globally), result summary chip (bg-primary/10), sticky-CTA min-files hint in primary color, options aside now max-h-[calc(100vh-11.5rem)] + internal scrollbar + mb-20 (height budget: sticky header + CTA bar).
+- QA fixes found in the round: (1) FileCard root was <li> → nested inside FileList's sortable <li> = invalid HTML li>li hydration errors → root changed to <div>; (2) sticky CTA bar overlapped the bottom of the options aside on short viewports (577px innerHeight) → aside max-h accounts for the bar + internal scroll; (3) pool RunDetail needed re-export; (4) panels.tsx relative path depth (../../../tools).
+- Verified via agent-browser (fresh context, 0 page errors, 0 console errors): merge landing; 2-file upload → custom panel (FILES & PAGES + sort + ranges); A→Z and Z→A reorder the grid; dnd drag aaa↔test-input reorder works; per-file range "1-2" on test-input → result "2 files, 5 pages" (3+2) + aaa-merged.pdf naming; full merge no ranges → 8 pages; blank-page-between → 9 pages (3+5+1); range "1-3" → 6 pages; invalid range "abc" → error toast + stays in workspace; Download click 0 errors; Hindi full merge UI (फ़ाइलें और पेज, खींचकर क्रम बदलें); mobile 360px no h-scroll + bottom sheet renders custom panel; rotate tool regression after pool refactor → result OK; eslint src+tools clean; tsc clean; dev.log clean.
+- bun add @dnd-kit/modifiers@9.0.0 (pinned; core/sortable/utilities were preinstalled).
+
+Stage Summary:
+- Merge PDF COMPLETE and live (#/tool/merge-pdf, registry enabled). Live tools: 2 (merge, rotate). Screenshots: download/qa-p3-*.png (7).
+- Architecture win: custom-panel pattern proven — tools can now ship schema options AND rich per-tool panels without leaving the config-driven system.
+- Deferred honestly: images-in-merge, per-file bookmarks (VERIFY pdf-lib outline), page-grid card expand, per-file unlock (qpdf phase).
+- Next: Split PDF (§8.1) — 7 modes, ZIP output; reuses FileList + protocol detail.

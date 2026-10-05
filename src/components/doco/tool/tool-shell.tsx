@@ -60,15 +60,18 @@ import {
   toolRunner,
   RunCancelledError,
   ToolRunError,
+  type RunDetail,
   type RunHandle,
   type RunProgress,
 } from "@/lib/workers/pool";
 import type { ToolOutput } from "@/lib/workers/protocol";
 import { DropZone } from "./drop-zone";
-import { FileCard, type WorkspaceFile } from "./file-card";
+import { FileList } from "./file-list";
+import type { WorkspaceFile } from "./file-card";
 import { OptionsPanel } from "./options-panel";
 import { ProcessingView } from "./processing-view";
 import { ResultView } from "./result-view";
+import { TOOL_PANELS } from "@/lib/tools/panels";
 import { cn } from "@/lib/utils";
 
 /**
@@ -121,6 +124,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   });
   const [outputs, setOutputs] = useState<ToolOutput[]>([]);
   const [inputBytes, setInputBytes] = useState(0);
+  const [runSummary, setRunSummary] = useState<RunDetail | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -156,6 +160,17 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   }, [chainIn, tool.id]);
 
   const runHandleRef = useRef<RunHandle | null>(null);
+
+  // Optional custom options panel (PRD §2.6 Panel.tsx pattern). Direct
+  // map lookup — a stable module-level reference, never created in render.
+  const CustomPanel = TOOL_PANELS[tool.id];
+
+  const handleOptionChange = useCallback(
+    (id: string, value: string | number | boolean) => {
+      setOptions((prev) => ({ ...prev, [id]: value }));
+    },
+    []
+  );
 
   const relatedTools = useMemo(
     () =>
@@ -260,14 +275,16 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
       tool.id,
       options,
       files.map((item) => item.file),
-      setProgress
+      setProgress,
+      files.map((item) => item.id)
     );
     runHandleRef.current.promise
       .then((result) => {
         runHandleRef.current = null;
         // Working copies of the INPUTS die with the run (PRD §2.4);
         // results live in memory + can chain into the next tool.
-        setOutputs(result);
+        setOutputs(result.outputs);
+        setRunSummary(result.detail ?? null);
         setPhase("result");
         void clearWorkingFiles().catch(() => undefined);
       })
@@ -545,20 +562,9 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           </div>
 
           <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_320px]">
-            {/* Preview list */}
+            {/* Preview list (drag-reorder via dnd-kit; PRD §8.1) */}
             <div className="flex flex-col gap-3">
-              <ul className="grid gap-3 sm:grid-cols-2">
-                {files.map((item, index) => (
-                  <FileCard
-                    key={item.id}
-                    item={item}
-                    index={index}
-                    total={files.length}
-                    onRemove={removeFile}
-                    onMove={moveFile}
-                  />
-                ))}
-              </ul>
+              <FileList items={files} onMove={moveFile} onRemove={removeFile} />
               <DropZone
                 labelKey="tool.addMoreFiles"
                 multiple={config.maxFiles > 1}
@@ -570,25 +576,39 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
               />
             </div>
 
-            {/* Options: desktop side panel / mobile bottom sheet */}
+            {/* Options: desktop side panel / mobile bottom sheet.
+                Height budget: sticky header (top-20) + sticky CTA bar at the
+                bottom — so the panel never slides under the CTA bar. */}
             <aside className="hidden lg:block">
-              <div className="sticky top-20 rounded-card border border-border bg-card p-5">
-                <h2 className="text-sm font-semibold text-foreground">
-                  {t("tool.optionsTitle")}
-                </h2>
-                <OptionsPanel
-                  fields={config.options}
-                  values={options}
-                  onChange={(id, value) =>
-                    setOptions((prev) => ({ ...prev, [id]: value }))
-                  }
-                  className="mt-4"
-                />
-                <p className="mt-5 border-t border-border pt-3 text-[11px] text-muted-foreground">
-                  {t("tool.summary", {
-                    count: files.length,
-                    size: formatBytes(totalSize),
-                  })}
+              <div className="sticky top-20 mb-20 flex max-h-[calc(100vh-11.5rem)] flex-col gap-5 overflow-y-auto scrollbar-thin rounded-card border border-border bg-card p-5">
+                <div>
+                  <h2 className="text-sm font-semibold text-foreground">
+                    {t("tool.optionsTitle")}
+                  </h2>
+                  {CustomPanel ? (
+                    <div className="mt-4">
+                      <CustomPanel
+                        files={files}
+                        values={options}
+                        onChange={handleOptionChange}
+                        setFileOrder={setFiles}
+                      />
+                    </div>
+                  ) : null}
+                  <OptionsPanel
+                    fields={config.options}
+                    values={options}
+                    onChange={handleOptionChange}
+                    className="mt-4"
+                  />
+                </div>
+                <p className="border-t border-border pt-3 text-[11px] text-muted-foreground">
+                  {files.length > 0 && files.length < config.minFiles
+                    ? t("tool.summaryMinFiles", { count: config.minFiles })
+                    : t("tool.summary", {
+                        count: files.length,
+                        size: formatBytes(totalSize),
+                      })}
                 </p>
               </div>
             </aside>
@@ -598,11 +618,20 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85">
             <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs text-muted-foreground">
-                  {t("tool.summary", {
-                    count: files.length,
-                    size: formatBytes(totalSize),
-                  })}
+                <p
+                  className={cn(
+                    "truncate text-xs",
+                    files.length > 0 && files.length < config.minFiles
+                      ? "font-medium text-primary"
+                      : "text-muted-foreground"
+                  )}
+                >
+                  {files.length > 0 && files.length < config.minFiles
+                    ? t("tool.summaryMinFiles", { count: config.minFiles })
+                    : t("tool.summary", {
+                        count: files.length,
+                        size: formatBytes(totalSize),
+                      })}
                 </p>
                 {chainFrom ? (
                   <p className="truncate text-[11px] text-primary">
@@ -653,12 +682,20 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
               </Button>
             }
           >
+            {CustomPanel ? (
+              <div className="mb-4">
+                <CustomPanel
+                  files={files}
+                  values={options}
+                  onChange={handleOptionChange}
+                  setFileOrder={setFiles}
+                />
+              </div>
+            ) : null}
             <OptionsPanel
               fields={config.options}
               values={options}
-              onChange={(id, value) =>
-                setOptions((prev) => ({ ...prev, [id]: value }))
-              }
+              onChange={handleOptionChange}
             />
           </BottomSheet>
         </section>
@@ -677,6 +714,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           tool={tool}
           outputs={outputs}
           inputBytes={inputBytes}
+          runSummary={runSummary}
           chainFromName={chainFrom ? chainFrom.name[locale] : undefined}
           chainTargets={chainTargets}
           onChain={handleChain}
