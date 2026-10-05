@@ -91,6 +91,24 @@ export async function getPdfPageAspect(
   return viewport.width / height;
 }
 
+/**
+ * Pixel dimensions a page will have when rasterized at `scale`
+ * (pdf-to-jpg/pdf-to-png live preview). Viewport-only — no render.
+ */
+export async function getPdfPagePixelSize(
+  file: File | Blob,
+  scale: number,
+  pageIndex = 0
+): Promise<{ width: number; height: number }> {
+  const doc = await openDocument(file);
+  const page = await doc.getPage(pageIndex + 1); // 1-based in pdf.js
+  const viewport = page.getViewport({ scale });
+  return {
+    width: Math.max(1, Math.round(viewport.width)),
+    height: Math.max(1, Math.round(viewport.height)),
+  };
+}
+
 /* --------------------------- Render queue --------------------------- */
 
 const MAX_CONCURRENT_RENDERS = 2;

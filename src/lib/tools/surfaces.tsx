@@ -4,9 +4,10 @@ import type { ComponentType } from "react";
 
 import type { ToolSurfaceProps } from "./panel-types";
 import { GridSurface } from "../../../tools/pagegrid/grid-surface";
+import { ImageGridSurface } from "../../../tools/imagegrid/image-grid-surface";
 
 /**
- * Workspace surface registry (PageGrid family, PRD §8.1).
+ * Workspace surface registry (PageGrid + ImageGrid families, PRD §8.1/§8.6).
  *
  * A surface renders in the ToolShell's MAIN column (full width, mobile
  * included) and owns the file presentation — the classic FileList is
@@ -38,6 +39,10 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "rearrange-pdf-pages": RearrangeGridSurface,
   "remove-pdf-pages": RemoveGridSurface,
   "extract-pdf-pages": ExtractGridSurface,
+  "images-to-pdf": ImageGridSurface,
+  "jpg-to-pdf": ImageGridSurface,
+  "png-to-pdf": ImageGridSurface,
+  "webp-to-pdf": ImageGridSurface,
 };
 
 export function getToolSurface(

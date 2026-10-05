@@ -187,7 +187,7 @@ export function ResultView({
         {outputs.map((output, index) => (
           <li
             key={`${output.name}-${index}`}
-            className="flex flex-col gap-3 rounded-card border border-border bg-card p-4 sm:flex-row sm:items-center"
+            className="flex flex-col gap-3 rounded-card border border-border bg-card p-4 transition-all duration-200 hover:border-primary/25 hover:shadow-md sm:flex-row sm:items-center"
           >
             <div className="w-16 shrink-0 self-start sm:self-center">
               <button

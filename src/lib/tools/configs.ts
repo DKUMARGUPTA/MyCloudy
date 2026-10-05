@@ -5,6 +5,12 @@ import { config as splitPdf } from "../../../tools/split-pdf/config";
 import { config as rearrangePdfPages } from "../../../tools/rearrange-pdf-pages/config";
 import { config as removePdfPages } from "../../../tools/remove-pdf-pages/config";
 import { config as extractPdfPages } from "../../../tools/extract-pdf-pages/config";
+import { config as imagesToPdf } from "../../../tools/images-to-pdf/config";
+import { config as jpgToPdf } from "../../../tools/jpg-to-pdf/config";
+import { config as pngToPdf } from "../../../tools/png-to-pdf/config";
+import { config as webpToPdf } from "../../../tools/webp-to-pdf/config";
+import { config as pdfToJpg } from "../../../tools/pdf-to-jpg/config";
+import { config as pdfToPng } from "../../../tools/pdf-to-png/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -20,6 +26,12 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [rearrangePdfPages.toolId]: rearrangePdfPages,
   [removePdfPages.toolId]: removePdfPages,
   [extractPdfPages.toolId]: extractPdfPages,
+  [imagesToPdf.toolId]: imagesToPdf,
+  [jpgToPdf.toolId]: jpgToPdf,
+  [pngToPdf.toolId]: pngToPdf,
+  [webpToPdf.toolId]: webpToPdf,
+  [pdfToJpg.toolId]: pdfToJpg,
+  [pdfToPng.toolId]: pdfToPng,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

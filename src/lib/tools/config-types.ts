@@ -80,6 +80,12 @@ export interface ToolConfig {
   /** File count limits for the DropZone (PRD §6.3 "up to N files"). */
   minFiles: number;
   maxFiles: number;
+  /**
+   * Curated "what next?" chain tool ids (PRD §6.4). Omit to use the
+   * default PDF-result suggestions; image-output tools MUST point at
+   * image-accepting tools so chains never hand a JPG to a PDF-only tool.
+   */
+  chainToolIds?: string[];
 }
 
 /** Default option values from a schema (used to initialize the workspace). */

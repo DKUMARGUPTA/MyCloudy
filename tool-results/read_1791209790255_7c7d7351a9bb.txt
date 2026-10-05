@@ -1,0 +1,263 @@
+   201→
+   202→---
+   203→Task ID: P0.1
+   204→Agent: Z.ai Code (webDevReview cron round 1, job 437069)
+   205→Task: Scheduled review round — baseline QA passed (no bugs), so executed the next pending phase: PHASE 0 SCAFFOLD (PRD §2, §3) per the user's master-prompt phase plan.
+   206→
+   207→Work Log:
+   208→- Baseline QA via agent-browser: scaffold rendered, zero errors → proceeded to Phase 0.
+   209→- Downloaded + verified self-hosted fonts: src/fonts/InterVariable.woff2 (352 KB, official rsms build) and src/fonts/NotoSansDevanagari-Variable.woff2 (121 KB, GF devanagari subset); wired via next/font/local in layout.tsx (replaced next/font/google Geist — CDN rule).
+   210→- globals.css: full token rewrite — PRD §3.1 light/dark colors (primary #2563EB/#60A5FA, CTA #F97316/#FB923C, bg/surface, text, success, danger), 8 category color tokens, semantic radii (card 16px, btn 12px, chip 999px), font stack with Devanagari fallback, selection/scrollbar utilities, prefers-reduced-motion, scroll-padding for sticky header.
+   211→- i18n: src/i18n/{en,hi}.json catalogs (~90 keys each, real Hindi) + translate() with {param} interpolation; LocaleProvider with useSyncExternalStore (localStorage external store, hydration-safe); <html lang> synced.
+   212→- Base components: Badge variants private/server/new/pro/beta; Button variant cta + size touch (44px); Modal (Dialog wrapper); BottomSheet (vaul Drawer wrapper); EmptyState; ThemeToggle (cycle light→dark→system, next-themes, no flash); LanguageSwitch (EN|हिं segmented, toast on change); Logo/LogoMark + public/logo.svg (brand gradient mark).
+   213→- Landing page at /: AnnouncementBanner (dismissible, localStorage), sticky header w/ mobile sheet, Hero (trust badges, gradient title), Steps (3-step), Categories (9 PRD §7 categories, 94 planned tools, bottom sheet w/ Private/Server mode badges), Why (3 cards), Modes (Tabs: device vs server, PRD §2.2), Footer (trust line, category chips), Pro modal. Mobile-first, skip-to-content link, aria labels, focus rings.
+   214→- Data: src/data/catalog-summary.ts (all 9 categories + tool names + D/S modes from PRD §7).
+   215→- DB: prisma/schema.prisma rewritten to 13 models mirroring PRD §2.5 (users, sessions, anon_usage, usage_events, feedback, tool_requests, request_votes, contact_messages, blog_posts, subscriptions, payments, jobs, audit_log; @@map snake_case names); `bun run db:push` OK; db.ts logging reduced to error/warn (privacy rule).
+   216→- Security: next.config.ts — CSP (self-only, blob for workers/thumbnails, dev-only unsafe-eval), X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy (camera self for future Scan tool), HSTS; allowedDevOrigins for the sandbox preview proxy; REMOVED invalid `eslint` key (Next 16 dropped it — found via dev.log warning).
+   217→- Repo files: .env.example (DATABASE_URL + TURSO_* placeholders), README.md (stack, structure, Vercel+Turso deploy steps, phase status), services/worker/README.md (Phase-11 placeholder), .github/workflows/ci.yml (lint/typecheck/build; Vitest step deferred — sandbox forbids test code, documented), docs/PRD-v2.md (copy of extract).
+   218→- Fixed 3 lint errors (react-hooks/set-state-in-effect) by replacing setState-in-effect patterns with useSyncExternalStore (use-mounted hook, provider store, banner store).
+   219→- QA (agent-browser): renders; a11y tree correct; dark toggle applies .dark; Hindi → html lang=hi + Devanagari H1; category sheet 12 tools + badges; Pro modal; 360px no horizontal scroll; mobile menu works; console/page errors ZERO; CSP+headers verified via curl; lint clean; dev.log clean after config fix.
+   220→
+   221→Stage Summary:
+   222→- Phase 0 COMPLETE. `/` now shows the branded DocoPDF landing with full token system, dark mode, EN/हिं switching, and the PRD §7 catalog preview (94 tools / 9 categories).
+   223→- Screenshots: download/qa-p0-desktop-light.png, -dark.png, -hindi.png, -sheet.png, -modal.png, -mobile.png, -mobile-menu.png, -final-full.png.
+   224→- Deviations handled: Prisma/SQLite stands in for Turso/Drizzle (names match §2.5); locale = app state on / (only / visible in sandbox); Vitest deferred (no test code in sandbox); fonts fetched at build time from official sources (rsms.me + Google Fonts) and served self-hosted (no runtime CDN).
+   225→- Next: Phase 1 (registry + header search + all-tools + category pages + 404/500/offline + SEO) — user prompt or next review round when stable.
+   226→
+   227→---
+   228→Task ID: P1.1
+   229→Agent: Z.ai Code (webDevReview cron round 2, job 437069)
+   230→Task: Scheduled review round — baseline QA green (Phase 0 stable), so executed the next pending phase: PHASE 1 DISCOVERY LAYER (PRD §5, 6.1, 6.2, 7) per the master-prompt phase plan.
+   231→
+   232→Work Log:
+   233→- Baseline QA: page rendered clean (Hindi persisted from localStorage — locale store working as designed).
+   234→- Registry: src/lib/tools/registry.ts — 97 tools from PRD §7 (10 categories incl. "images" for §7.10 utilities, noted as small deviation from §4's 9 URLs); each tool: id/slug, category, mode D/S, phase P1-P3, lucide icon (ALL 70+ icon names verified to exist via bun script before use), name/description as {en,hi} locale maps, tags {en[],hi[]} incl. Hinglish transliterations, accepts input type, popularity 0-100, enabled:false (flips per phase plan), pro:false. Lookups: getTool, getCategory, toolsByCategory, popularTools, PHASE_LABELS, category chip/hover classes. DELETED src/data/catalog-summary.ts (single source of truth now the registry).
+   235→- i18n: catalogs expanded with nav/tabs/tools/request/palette/consent keys (~150 new strings each); tool names/descs live in registry locale maps (type-safe, documented decision).
+   236→- Search: src/lib/search/fuzzy.ts — self-written scorer: exact → word-boundary substring ("word" no longer matches inside "password"; "passw" prefix-matches) → word-level bigram dice with length-ratio guard 0.6-1.6 (typo-tolerant: "merg"→merge 0.86; blocks cross-length noise). Fields weighted name 3/tags 2/slug 1.6/desc 1/category 1; multi-term AND; threshold 0.35. Verified: password→11 (password tools first), word→17 (Word tools first, password noise gone), जोड़→1 exact, jodein→14 top merge, photo 100kb→1 exact.
+   237→- Routing: src/hooks/use-hash-route.ts — hash as external store (useSyncExternalStore), routes #/, #/tools, #/tools/<cat>, ?q=; plain #anchors scroll on home; navigateToHash() module helper (location.hash assignment — router.push does NOT fire hashchange, found in QA); ROUTES constants.
+   238→- Stores: favorites + last-used (localStorage, createLocalSnapshot raw-keyed cache in src/lib/storage/local-snapshot.ts — unstable getSnapshot caused an infinite render loop, found + fixed in QA); lastUsed written by future ToolShell via trackToolUse().
+   239→- Views: AllToolsView (large search w/ desktop autofocus via pointer:fine matchMedia, sticky chips incl. Favorites/Last-used, mode/input Select filters, Popular/A–Z toggle, ToolCard grid 1-4 cols, EmptyState + RequestToolModal), CategoryView (colored header, registry intro, private/server counts, related chips), ToolsView switcher.
+   240→- ToolCard (PRD §3.3): 48px category-tinted icon, name, 2-line desc, Private/Server badge, Soon chip + roadmap phase, favorite star (aria-pressed, toast), hover lift + colored border, focus ring.
+   241→- SearchPalette (Ctrl+K + "/"): CommandDialog; groups Favorites/Popular (empty query) or Results+See-all; shouldFilter=false (our fuzzy filters; cmdk's built-in filter hid See-all, found in QA); Enter opens tool (coming toast + category nav) or See-all → #/tools?q=.
+   242→- Header: mega-menu via NavigationMenu (5 category columns top-6 tools + More column + See all 97), All-tools nav link, Ctrl+K trigger button w/ kbd hint, mobile sheet w/ all 10 categories; Footer: privacy-settings reopens consent banner, category chips, see-all link; CookieBanner: Accept all / Reject non-essential / Customize (Switch, default OFF) persisted, re-openable; BottomTabBar (mobile md:hidden): Home/Tools/Search (Recent+Account deferred to their phases, noted).
+   243→- page.tsx: hash router wiring (home view / ToolsView), BottomTabBar + CookieBanner + SearchPalette + ProModal mounted.
+   244→- SEO: public/sitemap.xml (home + tools + categories w/ hreflang en/hi), robots.txt (allow all, disallow /api/, sitemap ref).
+   245→- QA fixes during the round: Settings2 missing from registry imports (ReferenceError); getCategory(object) misuse in 3 components (CATEGORIES maps directly now); useSyncExternalStore unstable snapshots → createLocalSnapshot; palette navigation via navigateToHash; cmdk shouldFilter; search precision rework; Sheet a11y warning (aria-describedby={undefined}).
+   246→- Final QA: lint clean; zero page errors; console clean; dev.log clean; screenshots qa-p1-*.png (home, all-tools, favorited, category, palette, palette-search, see-all, hindi-tools, mobile-tools, mobile-home, megamenu, final-home).
+   247→
+   248→Stage Summary:
+   249→- Phase 1 COMPLETE: full discovery layer driven by the 97-tool registry; bilingual search (typo + Hinglish + Devanagari); favorites; filters; request queue; consent; mobile tab bar; hash routing with back/forward support.
+   250→- Deviations: 10th "images" category for §7.10 (PRD §4 lists 9 category URLs); tool strings in registry locale maps (not JSON catalogs) for type safety; mega-menu shows top-6 per column (PRD says all tools — full list lives in All Tools view); tab bar has Home/Tools/Search only until Recent/Account exist; 404/500/offline pages skipped (sandbox single-route; noted for deploy); Smart Drop Zone deferred to Phase 2 (needs OPFS + ToolShell to be real).
+   251→- Next: PHASE 2 — ToolShell engine + OPFS + pdf.js + worker pool + demo rotate tool.
+   252→---
+   253→Task ID: P2.1
+   254→Agent: Z.ai Code (main session — user-directed continuation after 2 cron rounds failed with "model glm-5.3 concurrency limit exceeded")
+   255→Task: Fix the failed cron (re-arm webDevReview) and execute the pending PHASE 2: PDF CORE + TOOLSHELL + STORAGE (PRD §2.3, 2.4, 6.3, 6.4, 6.6) per the master-prompt phase plan.
+   256→
+   257→Work Log:
+   258→- Fixed cron failure: deleted failed job 437069, recreated as 437196 (fixed_rate 900s, priority=1 low) so review rounds no longer collide with active sessions; any future failure self-heals next tick.
+   259→- Deps (exact pins): pdf-lib@1.17.1, pdfjs-dist@4.10.38, fflate@0.8.2 (PRD §2.3; fflate = PRD-specified ZIP lib). Copied pdf.js lib+worker+cmaps+standard_fonts (4.1MB) from node_modules into /public/pdfjs — zero runtime CDN.
+   260→- Storage (§2.4): src/lib/storage/idb.ts (promise wrapper, blobs+recent stores), opfs.ts (OPFS-first working copies w/ IDB-Blob fallback, clearWorkingFiles, storage.estimate low-space check), recent-files.ts (max 20 / 30 days, metadata+thumbnail only, external-store subscribe + serialized write queue + removeRecentFilesByMeta).
+   261→- PDF layer: src/lib/pdf/pdfjs.ts (lazy same-origin runtime import with webpack+turbopack ignore comments, workerSrc/cMaps/standardFonts self-hosted) + thumbnails.ts (WeakMap doc cache, 2-slot render queue, OffscreenCanvas w/ DOM fallback, %PDF- magic-byte sniff within first 1024 bytes).
+   262→- Workers: protocol.ts (run/progress/result/error messages, page-range parser) + pool.ts (ToolWorkerPool: per-tool idle reuse, min(hw-1,4) cap, one-shot slot accounting, cancel = instant terminate + OPFS clear).
+   263→- Tool system: config-types.ts + configs.ts aggregator + tools/rotate-pdf-pages/{config.ts,worker.ts} (pdf-lib /Rotate deltas, real per-page progress, sanitized output names, typed error codes for i18n).
+   264→- ToolShell family (§6.3/6.4): tool-view + tool-shell (4 states, chain via lazy-initializer peek + key remount, working-copy lifecycle) + drop-zone (magic bytes/limits/paste/low-storage) + file-card + page-thumbnail + options-panel (schema-driven) + stepper + processing-view + result-view (download/FSA save-as/share/ZIP/rename/size delta/what-next chain/feedback/remove-from-device).
+   265→- Discovery wiring: hash route #/tool/<id> (+ROUTES.tool), ToolCard/palette/mega-menu navigate to live tools, registry rotate-pdf-pages enabled:true.
+   266→- Home (§6.1): Hero Smart Drop Zone (type detect -> suggestions; honest "coming soon" for future tools; handoff to enabled tool via chain store) + Recent files strip (IDB thumbnails, Clear, hidden when empty, honest reselect toast).
+   267→- API (§2.5): POST /api/feedback — zod (toolId/rating/reason enum/honeypot), in-memory 10/min rate limit, Prisma insert, no PII.
+   268→- i18n: +~130 keys (dropzone/tool/result/feedback/recent/smartDrop/nav) in en + real Hindi.
+   269→- QA (agent-browser): golden path smart-drop -> tool -> options -> run -> result + rename + toast; direct landing; page-range 1-2; 400-page 346KB file <1s; feedback 200 -> SQLite row; disabled chain = toast, no nav; Hindi UI; mobile 360px (no h-scroll, bottom-sheet options, sticky CTA, tab bar hidden); recent strip + Clear; remove-from-device = OPFS [] + recent 0; StrictMode race regression test (1 upload = 1 entry); network filter ZERO non-local requests; fresh-context errors 0; eslint+tsc clean; dev.log clean.
+   270→- Fixes during QA: set-state-in-effect x4 (promise-callback pattern; chain handoff via lazy useState + key remount), phaseRef removed, recentIdsRef replaced by removeRecentFilesByMeta (react-hooks/immutability), setFiles-updater side effects moved out (StrictMode double-invoke), EMPTY_ENTRIES stable snapshot, serialized recent writes, TDZ chainIn ordering, hero {count} params, DOM ClipboardEvent type, tsconfig excludes examples/skills/tests.
+   271→- Regenerated bilingual catalogs via node scripts after a MultiEdit anchor mismatch on the "•" bullet produced a non-atomic partial apply (en.json a11y group was clobbered and restored; verified JSON validity + all key groups present in both locales).
+   272→
+   273→Stage Summary:
+   274→- Phase 2 COMPLETE: full on-device tool pipeline live; only enabled tool = rotate-pdf-pages (the phase plan's demo tool). Screenshot evidence: download/qa-p2-*.png (13 files).
+   275→- Deviations: none new beyond the documented sandbox set (tools/ at app root mirrors PRD monorepo layout; result preview opens a blob tab until the §6.5 viewer phase; cancel is terminate-based per PRD).
+   276→- Next: Phase 3 first tools one at a time, starting with Merge PDF (needs dnd-kit reorder list, maxFiles=50).
+   277→---
+   278→Task ID: P3.1
+   279→Agent: Z.ai Code (webDevReview cron round, job 437196 — first successful round after the concurrency failures)
+   280→Task: Scheduled review — baseline QA passed (0 errors), so advanced the next pending phase item: PHASE 3 TOOL #1, MERGE PDF (PRD §8.1) per the worklog's next-step priority. Also fixed a UX bug found during QA.
+   281→
+   282→Work Log:
+   283→- Baseline QA: home + tool pages 0 errors, dev.log clean → proceeded to Merge PDF.
+   284→- Protocol/pool (additive): run requests now carry `fileIds` (aligned per-file options); results carry optional `detail` {files, pages} for the PRD §8.1 summary; pool resolves ToolRunResult {outputs, detail}.
+   285→- tools/merge-pdf/worker.ts: pdf-lib copyPages per file with per-file ranges (JSON map in options.fileRanges keyed by workspace id), blank page between files, best-effort form flatten (pdf-lib 1.17.1 API verified at runtime: PDFForm.flatten() — NOT flattenFields), sanitized output name (custom or <first>-merged.pdf), real per-file/per-page progress, encrypted/corrupt/invalid-range typed error codes, detail {files, pages}.
+   286→- tools/merge-pdf/config.ts: minFiles 2, maxFiles 50, options (blankBetween, flatten w/ honest hint, outputName), features + FAQ (en/hi); bookmarks-per-file deferred (pdf-lib outline is low-level — VERIFY before building; documented in FAQ honestly).
+   287→- Custom panel system (PRD §2.6 Panel.tsx): src/lib/tools/panel-types.ts (ToolPanelProps) + panels.tsx registry + tools/merge-pdf/panel.tsx (sort A→Z/Z→A/date buttons + per-file range inputs with a11y labels); ToolShell renders CustomPanel above the schema OptionsPanel in BOTH the desktop aside and the mobile bottom sheet (direct TOOL_PANELS[tool.id] map lookup — react-hooks/static-components rejects function-call lookups).
+   288→- Drag-reorder (PRD §8.1 preview): src/components/doco/tool/file-list.tsx — dnd-kit DndContext (PointerSensor distance 6, TouchSensor 200ms long-press, KeyboardSensor with sortableKeyboardCoordinates), rectSortingStrategy, restrictToParentElement modifier; grip handle button (GripVertical, cursor-grab/grabbing, touch-none, focus ring); drag styles: z-20 + scale-[1.02] + shadow-lg on active, ring-primary/40 on drop target; up/down buttons retained as the always-available keyboard path.
+   289→- Styling polish: success check animate-in zoom-in (reduced-motion respected globally), result summary chip (bg-primary/10), sticky-CTA min-files hint in primary color, options aside now max-h-[calc(100vh-11.5rem)] + internal scrollbar + mb-20 (height budget: sticky header + CTA bar).
+   290→- QA fixes found in the round: (1) FileCard root was <li> → nested inside FileList's sortable <li> = invalid HTML li>li hydration errors → root changed to <div>; (2) sticky CTA bar overlapped the bottom of the options aside on short viewports (577px innerHeight) → aside max-h accounts for the bar + internal scroll; (3) pool RunDetail needed re-export; (4) panels.tsx relative path depth (../../../tools).
+   291→- Verified via agent-browser (fresh context, 0 page errors, 0 console errors): merge landing; 2-file upload → custom panel (FILES & PAGES + sort + ranges); A→Z and Z→A reorder the grid; dnd drag aaa↔test-input reorder works; per-file range "1-2" on test-input → result "2 files, 5 pages" (3+2) + aaa-merged.pdf naming; full merge no ranges → 8 pages; blank-page-between → 9 pages (3+5+1); range "1-3" → 6 pages; invalid range "abc" → error toast + stays in workspace; Download click 0 errors; Hindi full merge UI (फ़ाइलें और पेज, खींचकर क्रम बदलें); mobile 360px no h-scroll + bottom sheet renders custom panel; rotate tool regression after pool refactor → result OK; eslint src+tools clean; tsc clean; dev.log clean.
+   292→- bun add @dnd-kit/modifiers@9.0.0 (pinned; core/sortable/utilities were preinstalled).
+   293→
+   294→Stage Summary:
+   295→- Merge PDF COMPLETE and live (#/tool/merge-pdf, registry enabled). Live tools: 2 (merge, rotate). Screenshots: download/qa-p3-*.png (7).
+   296→- Architecture win: custom-panel pattern proven — tools can now ship schema options AND rich per-tool panels without leaving the config-driven system.
+   297→- Deferred honestly: images-in-merge, per-file bookmarks (VERIFY pdf-lib outline), page-grid card expand, per-file unlock (qpdf phase).
+   298→- Next: Split PDF (§8.1) — 7 modes, ZIP output; reuses FileList + protocol detail.
+   299→
+   300→---
+   301→Task ID: P3.2
+   302→Agent: main (Z.ai Code session)
+   303→
+   304→Task: Ship Split PDF — 2nd Phase-3 tool, PRD §8.1 (7 modes + live preview + ZIP output).
+   305→
+   306→Work Log:
+   307→- Read worklog + PRD §8.1 split spec + studied merge-pdf tool (config/worker/panel)
+   308→  as the architecture reference; confirmed ResultView already handles multi-output
+   309→  ZIP + individual downloads (fflate), so split only needs to emit N outputs.
+   310→- tools/split-pdf/plan.ts — NEW pure shared module: parseRangeList ("1-5, 8, 10-end",
+   311→  open "N-", case-insensitive "end", clamped + overlap-friendly), rangesOverlap,
+   312→  computeSplitPlan for all 7 modes (range w/ one-file-per-range union, everyN chunks,
+   313→  bookmark starts w/ leading part, size estimate 0.92 margin, visual cuts-after,
+   314→  oddEven labeled parts, blanks-as-removed-separators), parseNumberListOption,
+   315→  fileKey (name|size identity for detected lists).
+   316→- src/lib/pdf/thumbnails.ts — added getPdfTopLevelOutline (pdf.js getOutline +
+   317→  dest resolution to 1-based start pages; unresolvable/external bookmarks skipped)
+   318→  and detectBlankPages (text-content gate + 24px queued render, <0.1% dark pixels
+   319→  = blank; unreadable pages treated as content) with onProgress.
+   320→- tools/split-pdf/config.ts — ToolConfig, options schema EMPTY (panel owns all
+   321→  interactive values; worker defaults defensively), minFiles/maxFiles 1, features +
+   322→  FAQ per PRD copy, outputKind pdf.
+   323→- tools/split-pdf/worker.ts — pdf-lib worker: loads once, computes authoritative
+   324→  plan via shared plan.ts, builds each part (per-page progress posts), size mode
+   325→  re-saves real bytes and halves oversized parts recursively, guards: bookmarks/
+   326→  blanks detection must be "done" AND fileKey-matched (else tool.splitWaitingDetect),
+   327→  no bookmarks → tool.splitNoBookmarks, no blanks found → tool.splitNoBlanks;
+   328→  naming <base>_part1.pdf, <base>-split.pdf (single), <base>_odd/_even.pdf.
+   329→- tools/split-pdf/panel.tsx — custom panel: role=tablist with 7 mode tabs
+   330→  (arrow-key nav, bookmarks tab disabled when outline empty), per-mode inputs
+   331→  (ranges + one-file switch + overlap warning chip, N, MB, clear-cuts), live
+   332→  PREVIEW box with color-coded parts (blue/purple/emerald/amber cycle), dashed
+   333→  cut markers w/ Scissors icon, live count "N files will be created /
+   334→  फ़ाइलें बनेंगी", "≈ estimated" chip for size mode, visual mode = thumbnail strip
+   335→  (queued 112px renders) with 44px scissors toggle buttons, bookmarks list with
+   336→  titles + start pages, blanks detection with % progress + found chips (strikethrough).
+   337→  All detection results reach the worker as plain options (JSON + fileKey), never
+   338→  stale-across-files.
+   339→- Registered: registry split-pdf enabled:true, TOOL_CONFIGS, TOOL_PANELS.
+   340→- i18n: +49 keys ×2 locales (split.* section incl. rangePrompt; tool.split*
+   341→  error codes), real Devanagari throughout.
+   342→- QA (agent-browser, split-test.pdf = 12 pages w/ blanks @4,9 + bookmarks @1,5,10):
+   343→  range "1-3, 5-7"→2 files & "10-end" keyword & overlap warning & one-file union;
+   344→  everyN 4→3 files; bookmarks→3 parts (4/5/3 pages); size 0.002MB→preview "≈1 est" →
+   345→  real run refined to 4 parts each under limit; visual scissors toggle→cut count +
+   346→  clear; oddEven→_odd/_even (6+6); blanks→2 found/removed, 3 files 10 pages;
+   347→  result view "2 files, 6 pages" + ZIP button click clean; Hindi end-to-end incl.
+   348→  "2 फ़ाइलें बनेंगी"; mobile 360px no h-scroll, bottom sheet full panel + run from
+   349→  sheet CTA; network 148 req / 0 non-local; page errors 0; eslint src+tools clean;
+   350→  tsc --noEmit clean; dev.log only 200s.
+   351→- Fixed during QA: pdf-lib copyPages direction (src.copyPages(src)→dest.copyPages
+   352→  (src) — caught via captured "couldn't be read" toast, verified all 7 modes with a
+   353→  bun smoke script before browser re-test); empty-vs-invalid ranges preview copy
+   354→  (muted prompt vs red error); lucide icon name (Bookmark not Bookmarks); plan
+   355→  import path (./plan from inside the tool folder).
+   356→- Dev-server note: the sandbox reaps plain background processes between commands;
+   357→  use the python double-fork daemon (see git history of this entry) to keep
+   358→  `bun run dev` alive across tool calls.
+   359→
+   360→Stage Summary:
+   361→- Live tools: merge-pdf, rotate-pdf-pages, split-pdf (all mode D, on-device).
+   362→- Split covers PRD §8.1 completely: 7 modes, thumbnail strip preview w/ cut
+   363→  markers + color-coded parts, live file count, validations (in-range, overlap
+   364→  warning, bookmarks tab disabled when none), naming + ZIP output.
+   365→- New shared assets for future tools: top-level outline reader, blank-page
+   366→  detector, pure split-plan module, VisualStrip thumbnail pattern.
+   367→- Screenshots: download/qa-p32-split-{landing,workspace,visual,visual-cut,
+   368→  result,result-final,hindi,mobile,mobile-visual,mobile-cut,mobile-sheet,
+   369→  mobile-result,final-desktop}.png
+   370→- Next: PageGrid family round (reuses VisualStrip thumbnails + plan patterns).
+   371→
+   372→---
+   373→Task ID: P3.3
+   374→Agent: main (Z.ai Code session — webDevReview-style round: baseline QA passed, advanced the next pending phase item)
+   375→
+   376→Task: Ship the PageGrid family (PRD §8.1 "Rotate / Rearrange / Remove / Extract") — one shared interactive
+   377→page-grid with select/drag/undo-redo/zoom/virtualization, 4 preset-tuned tools on top of it.
+   378→
+   379→Work Log:
+   380→- Baseline QA first (per review protocol): home/tools/tool pages 0 errors; rotate + merge golden
+   381→  paths re-run clean; 0 non-local network requests; mobile 360px no h-scroll → no bugs → advanced.
+   382→- Verified the risky pdf-lib APIs with a bun smoke script BEFORE building: copyPages with
+   383→  DUPLICATE indices returns independent copies ✓, rotation delta on copied pages ✓, blank pages
+   384→  with explicit size ✓ (re-ran after wiring to verify full rebuild: 12 pages all 270°).
+   385→- tools/pagegrid/model.ts — pure shared model: GridPage {uid, source, rotation}, serializeGrid/
+   386→  parseGridOption (compact [[source,rotation]] tuples), parseNumberListOption, and ALL ops pure:
+   387→  rotateIndices, deleteIndices, duplicateIndices (each right after itself), insertBlankAfter,
+   388→  moveEntry (drag), moveSelectionByOne (block move), odd/evenIndices, parseGridRange (strict,
+   389→  in-range only), gridStats. VIRTUALIZE_ABOVE = 150. Same module feeds panel AND worker.
+   390→- tools/pagegrid/worker.ts — ONE shared worker for all 4 tools: loads pdf-lib, resolves entries
+   391→  (whole grid, or extract's selection), copyPages in bulk, applies rotation deltas, inserts real
+   392→  blank pages sized from the first real page (A4 fallback), posts real per-page progress, naming
+   393→  per toolId (-rotated/-rearranged/-pages-removed/-extracted, _pageN for one-per-file), detail
+   394→  {files, pages}. Defensive empty-grid error (safety net behind the CTA gate).
+   395→- tools/pagegrid/use-grid-history.ts — undo/redo as a pure useReducer (100-deep snapshot stack);
+   396→  wrappers compute the next state through the SAME reducer so callers can serialize for options
+   397→  immediately. Rewritten after react-hooks/refs flagged ref-during-render in the first draft.
+   398→- tools/pagegrid/grid-surface.tsx — the surface: file header (name/size/pages/remove), toolbar
+   399→  (selection chip + range input + Select all/Clear; scope segmented All|Selected|Odd|Even —
+   400→  odd/even rotate-preset only; rotate L/R; duplicate/insert-blank/delete; remove-blanks w/
+   401→  detection progress (remove preset); move earlier/later; undo/redo; zoom slider 88-168 step 16),
+   402→  hint line, and the grid itself. Selection: click (single), ctrl+click (toggle), shift+click
+   403→  (range from anchor), Ctrl+A, Esc, Del/Backspace, arrow-key cell focus (roving tabindex).
+   404→  Virtualization above 150 pages: row windowing from scrollTop/viewportH/ResizeObserver, spacer
+   405→  div with computed height, translateY window (400 pages → ~30 mounted cells); drag disabled
+   406→  there with an honest amber hint + move buttons remain. All mutations flow through apply() →
+   407→  history.commit + onChange("grid"/"selected") + CTA-blocked sync — event-context only, zero
+   408→  setState-in-effect.
+   409→- tools/pagegrid/grid-cell.tsx — cell: aspect-ratio letterbox thumb with LIVE CSS rotation,
+   410→  lazy render via per-cell IntersectionObserver (300px rootMargin) + revoke on unmount, position
+   411→  badge with "from page N" provenance tooltip once reordered, amber rotation badge, selected
+   412→  check (zoom-in anim), per-cell rotate L/R + delete actions on selected cells, dnd grip
+   413→  (Pointer/Touch/Keyboard sensors) when fully mounted. Blank pages render as dashed emerald
+   414→  placeholder.
+   415→- tools/pagegrid/summary-panel.tsx — aside/mobile-sheet panel: live stats (pages out / removed /
+   416→  rotated / blanks / selected) parsed from the same serialized grid + keyboard cheat sheet.
+   417→- Surface registry concept: src/lib/tools/surfaces.tsx (TOOL_SURFACES, named wrapper components)
+   418→  + ToolSurfaceProps in panel-types.ts (setRunBlocked). ToolShell renders the surface in the
+   419→  MAIN column instead of FileList+DropZone when registered; CTA gating via runBlockedKey (amber
+   420→  TriangleAlert + reason text in the sticky bar; disabled on both desktop CTA and sheet CTA).
+   421→- Tool configs: rotate-pdf-pages REWRITTEN (empty schema, shared worker, preset features/FAQ,
+   422→  old per-file worker.ts deleted); rearrange/remove/extract NEW (extract carries the
+   423→  onePerPage schema switch). Registry: 3 new tools enabled. configs.ts/panels.tsx updated.
+   424→- i18n: +71 keys ×2 (grid.* section incl. fromPage) via python JSON round-trip (P2 lesson:
+   425→  never MultiEdit the catalogs); real Devanagari throughout.
+   426→- getPdfPageAspect() added to lib/pdf/thumbnails.ts (viewport-only, no render).
+   427→- eslint config: public/** added to ignores — the vendored pdf.js minified assets were throwing
+   428→  ~1500 pre-existing warnings/8 errors into `bun run lint` (they predate this round; src+tools
+   429→  were always clean).
+   430→- QA (agent-browser, fresh context, 0 page errors, 0 console errors, 0 non-local requests):
+   431→  rotate: 12-cell grid, thumbs lazy, select/check/actions, rotate-all → 12 amber badges + live
+   432→  img transform rotate(270deg), undo clears, run → result + summary; remove: range "2,5-7" → 4
+   433→  selected, delete → 8 cells, insert blank → renders, remove-blanks → "Removed 2 blank pages"
+   434→  toast + correct math (12-4-2+1=7), run → -pages-removed.pdf; extract: CTA blocked + hint with
+   435→  no selection, shift-click → 4 selected, run → "1 files, 4 pages" -extracted.pdf, Ctrl+A +
+   436→  one-per-file → 12 outputs + ZIP button; rearrange: pointer drag p1→p3 = [p2,p3,p1,p4,p5]
+   437→  PROVEN by "from page" labels, undo restores, move-earlier moves selection with the page;
+   438→  virtualization: 400-page file → 30 cells, scroll to 7000px → window at Page 181 + 20 lazy
+   439→  thumbs, range "200-202" + scope Selected → exactly 3 rotated, run → 400 pages; safety:
+   440→  delete-all → CTA disabled + amber warning; Hindi end-to-end (aria labels, blank-detect toast
+   441→  in Devanagari); mobile 360px no h-scroll + bottom sheet (stats + shortcuts + CTA); zoom
+   442→  slider 120→152 with cells growing; regressions: merge Hindi golden path + split landing +
+   443→  home + all-tools card navigation all clean; tsc + eslint fully clean; dev.log clean after
+   444→  compile (one transient Fast-Refresh reload during mid-edit states, resolved).
+   445→
+   446→Stage Summary:
+   447→- Live tools: 6 (merge, split, rotate [REBASED on the grid], rearrange, remove, extract) — all
+   448→  mode D, on-device. The PRD §8.1 PageGrid family is COMPLETE: common actions (select
+   449→  click/shift/Ctrl+A/range, drag reorder, rotate per page or scope, delete, duplicate, insert
+   450→  blank, undo/redo, zoom), preset extras (odd/even scope, blank auto-detect, one-page-per-file),
+   451→  large-doc virtualization + lazy thumbnails, and the all-deleted Apply safety.
+   452→- Architecture: shared pure model + ONE worker + ONE surface + per-tool thin configs — the
+   453→  pattern for every future grid-based tool. Surface registry extends the config-driven system
+   454→  without breaking panels (merge/split untouched).
+   455→- Cell provenance labels ("Page 3, from page 1") double as UX polish and QA ground truth.
+   456→- Screenshots: download/qa-p33-*.png (13).
+   457→- Dev-server note repeated: the sandbox reaps plain background processes; the python double-fork
+   458→  daemon (see P3.2 entry) keeps `bun run dev` alive across tool calls.
+   459→- Next per the phase plan: Images to PDF (needs an image-handling DropZone path + jpeg/png
+   460→  embedding worker), then PDF→JPG/PNG, PDF→Text, Watermark, Page numbers, Crop, Doc info,
+   461→  Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per round. Split/merge
+   462→  deferred follow-ups unchanged (see section 6).
+   463→

@@ -88,6 +88,7 @@ export function SmartDropZone() {
   };
 
   const rotateTool = getTool("rotate-pdf-pages");
+  const imagesTool = getTool("images-to-pdf");
 
   if (picked) {
     return (
@@ -160,21 +161,20 @@ export function SmartDropZone() {
           </div>
         ) : kind === "image" ? (
           <div className="mt-3 flex flex-col gap-2">
-            <Button
-              type="button"
-              size="touch"
-              variant="outline"
-              className="w-full justify-between rounded-btn sm:w-auto sm:min-w-64"
-              onClick={() => openComing("jpg-to-pdf", "convert-to")}
-            >
-              <span className="flex items-center gap-2">
-                <ImageIcon className="size-4" aria-hidden="true" />
-                {t("smartDrop.imagesToPdf")}
-              </span>
-              <Badge variant="outline" className="rounded-chip text-[10px]">
-                {t("tools.soonBadge")}
-              </Badge>
-            </Button>
+            {imagesTool?.enabled ? (
+              <Button
+                type="button"
+                size="touch"
+                className="w-full justify-between rounded-btn font-semibold sm:w-auto sm:min-w-64"
+                onClick={() => handoffTo(imagesTool)}
+              >
+                <span className="flex items-center gap-2">
+                  <ImageIcon className="size-4" aria-hidden="true" />
+                  {imagesTool.name[locale]}
+                </span>
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </Button>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"

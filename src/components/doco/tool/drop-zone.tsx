@@ -187,9 +187,9 @@ export function DropZone({
       }}
       onDrop={handleDrop}
       className={cn(
-        "relative rounded-card border-2 border-dashed transition-colors",
+        "relative rounded-card border-2 border-dashed transition-all duration-200",
         dragOver
-          ? "border-primary bg-primary/5"
+          ? "scale-[1.01] border-primary bg-primary/5 ring-4 ring-primary/10"
           : "border-border bg-card hover:border-primary/40",
         className
       )}
@@ -201,14 +201,14 @@ export function DropZone({
         <span
           aria-hidden="true"
           className={cn(
-            "flex size-14 items-center justify-center rounded-full border transition-colors",
+            "flex size-14 items-center justify-center rounded-full border transition-all duration-200",
             dragOver
-              ? "border-primary bg-primary/10 text-primary"
+              ? "border-primary bg-primary/10 text-primary scale-110"
               : "border-border bg-muted/50 text-muted-foreground"
           )}
         >
           {dragOver ? (
-            <FileUp className="size-6" />
+            <FileUp className="size-6 animate-in fade-in-50 zoom-in-75" />
           ) : (
             <FolderOpen className="size-6" />
           )}

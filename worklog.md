@@ -6,19 +6,26 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: 3 IN PROGRESS (P3.3)** — PageGrid family shipped: ONE shared interactive
-  page-grid (tools/pagegrid/) powering FOUR tools — rotate-pdf-pages (REBASED: live
-  thumbnail rotation, all/selected/odd/even scope), rearrange-pdf-pages (drag +
-  move buttons + provenance labels), remove-pdf-pages (range select "2,5-7" +
-  auto blank-page detect), extract-pdf-pages (selection picker + one-page-per-file
-  + ZIP). Common actions per PRD §8.1: select click/shift-click/Ctrl+A/range input,
-  drag reorder, rotate 90 L/R per page or scope, delete, duplicate, insert blank,
-  undo/redo (Ctrl+Z / Ctrl+Shift+Z), zoom slider; large docs (>150 pages) render
-  virtualized rows w/ lazy IntersectionObserver thumbnails (400 pages → ~30 cells);
-  all-deleted safety disables Apply. Live tools now: 6 (merge, split, rotate,
-  rearrange, remove, extract), all 100% on-device.
-  Next: Images to PDF, then PDF→JPG/PNG, PDF→Text, Watermark, Page numbers, Crop,
-  Doc info, Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per round.
+- **Phase: 3 IN PROGRESS (P3.4)** — Image conversion pair shipped: Images→PDF
+  family (ONE shared interactive image-grid in tools/imagegrid/ powering
+  images-to-pdf + jpg/png/webp-to-pdf presets: drag reorder, per-image 90°
+  rotate w/ live CSS rotation, remove, A→Z sort, add-more zone, all-removed
+  CTA gating) and PDF→images pair (pdf-to-jpg + pdf-to-png on ONE worker:
+  pdf.js fake-worker mode INSIDE the tool worker — document.baseURI shim,
+  DPI 72/150/300/600, page ranges, JPG quality, PNG transparent bg via
+  render background:"rgba(0,0,0,0)", single/multi naming + ZIP). Verified
+  byte-level: unrotated JPG/PNG embed ORIGINAL bytes, WEBP→PNG transcode,
+  RGBA preserved, two-up + page numbers + dark bg correct page geometry.
+  CANCEL PATH CAUGHT MID-FLIGHT (600 DPI × 400 pages at 6% → Cancel →
+  workspace + toast) — closes the old deferred item.
+  Live tools now: **13** (merge, split, rotate, rearrange, remove, extract,
+  images-to-pdf, jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png), all 100%
+  on-device. Infra: DropZone acceptKind driven by tool.accepts, image
+  fast-path thumbnails (inputs + outputs + recent strip), chainToolIds
+  (image outputs chain to image tools only), smart-drop image → direct
+  images-to-pdf handoff.
+  Next: PDF→Text, Watermark, Page numbers, Crop, Doc info, Fill, View,
+  Compress, Generate password, Scan, HEIC/WEBP — one per round.
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
@@ -140,33 +147,39 @@
 
 ## 6. Unresolved issues / risks / next-phase priorities
 
-1. **NEXT: Phase 3 continues — Images to PDF** (§8.1: multi-image DropZone path
-   (jpg/png/webp accept + magic bytes), reorderable image list, page-size/fit/
-   margins options, jpeg/png embedding worker via pdf-lib embedJpg/embedPng,
-   WEBP→PNG transcode). Then PDF→JPG/PNG, PDF→Text, Watermark, Page numbers,
-   Crop, Doc info, Fill, View, Compress, Generate password, Scan, HEIC/WEBP —
-   one per round.
-   PageGrid follow-ups (deferred, noted): virtualized drag stays off above 150
-   pages (move buttons cover it; dnd-on-virtualized is a known hard problem);
-   selection indices after undo are clamped, not remapped (predictable, undoable).
-   Split follow-ups (deferred, noted): per-part bookmark-title file naming
-   (kept PRD-exact `_part1` for now), blank detection uses 0.1% dark-pixel
-   tolerance at 24px (tune if users report false blanks on noisy scans).
-   Merge follow-ups still deferred from P3.1: images-in-merge (needs
-   Images-to-PDF engine), per-file bookmarks (pdf-lib outline — VERIFY API),
-   per-file Unlock (qpdf round); card-click page-grid expand = navigate to the
-   grid tools (shipped this round as surfaces).
-2. Cancel path not yet caught mid-flight in browser (tool <600ms even on 400
-   pages) — retest with a multi-MB scanned file in Phase 3.
+1. **NEXT: Phase 3 continues — PDF→Text** (§8.6: pdf.js text extraction,
+   reading-order options, keep-layout toggle; device-only). Then Watermark,
+   Page numbers, Crop, Doc info, Fill, View, Compress, Generate password,
+   Scan, HEIC/WEBP — one per round.
+   ImageGrid follow-ups (deferred, noted): per-image CROP UI (PRD §8.6 input
+   row mentions "crop each" — needs a crop modal; rotate/reorder shipped);
+   SVG/TIFF inputs unsupported (createImageBitmap cannot decode them in
+   Chromium — honest error already shown; needs a WASM decoder later);
+   images-in-merge auto-convert (PRD merge row) now UNBLOCKED — merge worker
+   can reuse the imagegrid embed engine.
+   PageGrid follow-ups (deferred, unchanged): virtualized drag stays off
+   above 150 pages; selection indices after undo are clamped, not remapped.
+   Split follow-ups (deferred, unchanged): per-part bookmark-title naming;
+   blank detection 0.1% tolerance tuning.
+   Merge follow-ups still deferred from P3.1: per-file bookmarks (pdf-lib
+   outline — VERIFY API), per-file Unlock (qpdf round).
+2. ~~Cancel path not yet caught mid-flight~~ **DONE in P3.4**: caught at 6%
+   on a 600 DPI × 400-page pdf-to-jpg run; Cancel → workspace + toast ✓.
 3. qpdf WASM build source + exact version + license must be verified before Phase 4
    (VERIFY: npm `qpdf-wasm` availability; PRD §2.3 expects Apache-2.0 qpdf).
-4. HEIC decoder WASM license flagged "verify" in PRD §2.3 — confirm before HEIC tools.
+4. HEIC decoder WASM license flagged "verify" in PRD §2.3 — confirm before HEIC tools
+   (browser-native HEIC decode works in Safari today; Chromium fails with the
+   honest error copy — qa'd in P3.4).
 5. Fabric.js vs Konva decision at editor phase (both MIT; PRD allows either).
 6. Turso/Drizzle/Vercel deliverables = config + README text in this sandbox (no external services).
 7. PRD §17.2 open questions (trademark, pricing, worker host) are business decisions — do not invent.
 8. cron webDevReview re-armed 5 Oct as job **437196** with priority=1 (low) after
    job 437069 failed twice with "model glm-5.3 concurrency limit exceeded";
    low-priority scheduling + 15-min retry self-heals transient failures.
+9. agent-browser lesson (P3.4): its `click` command is flaky on freshly
+   re-rendered React buttons (hit-test lands pre-flush); use eval `.click()`
+   + delayed reads for reliable automation. Toast capture needs a
+   MutationObserver — toasts vanish before later evals.
 
 ## Append template (copy for every new entry)
 
@@ -460,3 +473,124 @@ Stage Summary:
   embedding worker), then PDF→JPG/PNG, PDF→Text, Watermark, Page numbers, Crop, Doc info,
   Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per round. Split/merge
   deferred follow-ups unchanged (see section 6).
+
+---
+Task ID: P3.4
+Agent: main (Z.ai Code session — webDevReview cron round: baseline QA passed, advanced the next pending phase item)
+
+Task: Ship the Images↔PDF conversion pair (PRD §8.6): the ImageGrid family
+(images-to-pdf + jpg/png/webp-to-pdf presets) and the PDF→images pair
+(pdf-to-jpg + pdf-to-png), plus the shared infra those need (image-aware
+thumbnails, accept-kind routing, output-kind chains). Mandatory styling pass
+included.
+
+Work Log:
+- Baseline QA first (review protocol): home + rotate golden path + network
+  filter (0 non-local) + mobile 375px no h-scroll + 0 console/page errors
+  → stable → advanced. One transient finding: grid toolbar button click
+  intercepted during async thumbnail layout shift (not reproducible in
+  steady state; noted, not a bug).
+- Infra (shared):
+  - DropZone acceptKind now driven by tool.accepts (image → image/* sniff,
+    pdf → %PDF- sniff); per-kind labels (tool.selectImageFiles/addMoreImages).
+  - makeFileThumbnail (lib/files/thumbnail.ts): images → createImageBitmap
+    downscale ≤160px; PDFs → existing queued render. Recent entries carry
+    kind image/pdf correctly; home strip shows image thumbs (lazy-verified).
+  - useThumbnail image fast path: image blobs are their own preview (object
+    URL direct) — fixes FileCard for image inputs AND ResultView for image
+    outputs (jpg/png pages render as thumbs, no pdf.js attempt).
+  - ToolConfig.chainToolIds + ToolShell support: pdf-to-jpg/png chain to
+    image-accepting tools only (images-to-pdf, webp/heic-to-pdf w/ Soon
+    badge) — never hand a JPG to a PDF-only tool.
+  - ToolSurfaceProps.addFiles: surfaces can embed their own add-more drop
+    zone reusing the shell pipeline (limits, OPFS copy, recent entries).
+  - Smart Drop Zone: image branch now hands off DIRECTLY to the enabled
+    images-to-pdf tool (was "coming soon" toast).
+  - getPdfPagePixelSize (viewport-only) for the live DPI preview panel.
+- tools/imagegrid/ (NEW shared module):
+  - model.ts — pure ops (rotate/delete/move/sortAz-by-name numeric-aware/
+    reconcile-vs-files/serialize [[source,rotation] tuples]) feeding BOTH
+    the surface and the worker (pagegrid pattern).
+  - image-grid-surface.tsx — dnd-kit sortable card grid (Pointer/Touch/
+    Keyboard), per-card rotate 90° L/R with LIVE CSS rotation + amber badge,
+    move buttons, remove, A→Z sort (the IMG_101/IMG_100 fixer), stats chip
+    row (count/size/rotated), compact add-more DropZone, all-removed safety
+    (setRunBlocked + amber hint; CTA disabled), hover lift + thumbnail zoom
+    (rotate+scale via CSS var), grip always visible on touch (max-lg).
+  - worker.ts — magic-byte sniff (jpeg/png/webp/gif/heic), unrotated JPG/PNG
+    embed ORIGINAL bytes (no re-compression), PNG dims via IHDR parse (no
+    decode), rotated/other formats → createImageBitmap → OffscreenCanvas
+    (rotated) → JPEG 0.92 (photos) / PNG (alpha-capable) → embed; page
+    assembly: a4/letter/fit + auto/portrait/landscape + margins none/small/
+    big + one/two-up (2-col grid) + white/soft/dark background + page
+    numbers "n / total" (Helvetica 9pt gray); honest per-file error codes
+    (unsupported/decode w/ file name detail — client-side only).
+- tools/pdf-to-images/ (NEW shared worker for pdf-to-jpg + pdf-to-png):
+  - pdf.js runs INSIDE the tool worker: pre-import /pdfjs/pdf.worker.min.mjs
+    sets globalThis.pdfjsWorker → pdf.js detects it (#Ts) → fake-worker mode
+    on our own thread (no nested worker, no window access). CRITICAL FIX
+    found by QA: pdf.js's default CMap/StandardFont factories resolve URLs
+    against document.baseURI (absent in workers → "document is not defined")
+    — fixed with a one-property globalThis.document = { baseURI:
+    self.location.href } shim, verified by a raw-worker probe BEFORE the
+    fix failed identically and after it rendered 1240×1754 JPEGs.
+  - Transparent PNG: pdf.js beginDrawing ALWAYS fills background||"#ffffff"
+    → pass render background:"rgba(0,0,0,0)" when transparent (verified
+    alpha (0,255) on a no-background circle PDF).
+  - Sequential page render, one canvas at a time (memory-safe), real
+    per-page progress, DPI 72/150/300/600 (scale=dpi/72), page range via
+    parsePageSpec, JPG quality 40-100, naming: single page → base.ext,
+    multi → base_pageN.ext, ZIP via ResultView.
+  - panel.tsx — live "Page 1 at N DPI → W×H px" preview (viewport math
+    only, no render) + note that all pages keep this sharpness.
+- Tool configs: images-to-pdf (full 6-option schema), jpg/png/webp-to-pdf
+  (thin presets, tuned copy), pdf-to-jpg (dpi/pages/quality), pdf-to-png
+  (dpi/pages/transparent). Registry: 6 tools flipped enabled:true →
+  13 live. configs.ts/panels.tsx/surfaces.tsx registrations.
+- i18n: +30 keys ×2 locales (tool.images.* errors, igrid.* surface,
+  pdfimg.* panel) via python JSON round-trip; real Devanagari throughout.
+- QA (agent-browser, fresh contexts, 0 page errors, 0 console errors,
+  0 non-local requests across all runs):
+  images-to-pdf: 3 mixed images (jpg+png-alpha+webp) → cards w/ thumbs+dims,
+  rotate 180° (badge + live transform), sort A→Z, move buttons, pageNumbers
+  on → run → "1 files, 3 pages" → pypdf-inspected output: correct order,
+  alpha PNG embedded RGBA, WEBP transcoded PNG, photo ORIGINAL JPEG bytes,
+  "1 / 3" texts, page sizes match orientation logic (square→portrait, wide
+  →landscape); two-up + dark bg: 4 images → 2 landscape pages × 2 images
+  verified; jpg-to-pdf alias golden path + add-more inside workspace (2→3
+  cards) + all-removed → CTA disabled + amber reason; smart-drop image →
+  direct handoff (file lands in workspace); pdf-to-jpg: preview panel
+  "1240 × 1754 px" at 150 DPI, range "1-3" → 3 JPGs 21-22 KB + ZIP,
+  downloaded page1 = 1240×1754 RGB; pdf-to-png: single page "5" →
+  split-test.png (no suffix), transparent → alpha (0,255) verified;
+  12-page full run "12 files"; CANCEL: 600 DPI × 400-page file at 6% →
+  Cancel → workspace + toast (deferred item closed); Hindi end-to-end
+  (chip "2 तस्वीरें", sort "A→Z क्रम", hint, result "1 फ़ाइलें, 2 पेज");
+  mobile 375px no h-scroll + bottom sheet w/ Hindi options; regressions:
+  rotate grid (12 cells), split + merge landings, all-tools page (6 new
+  tools listed), home; eslint + tsc clean; dev.log clean.
+- Styling pass (mandatory): image cards hover lift + shadow + thumbnail
+  zoom (rotate+scale composed via CSS var), grip visible on touch, position
+  + rotation badges w/ shadow; DropZone drag-over ring-4 glow + scale +
+  animated icon; ResultView output cards hover elevation; recent-strip
+  lazy-load verified.
+- Test assets added to download/: qa-img-photo.jpg / qa-img-alpha.png /
+  qa-img-stripes.webp / qa-img-portrait.jpg (PIL-generated), qa-transparent.pdf
+  (pdf-lib circle-only), qa-p34-*.png screenshots (16).
+
+Stage Summary:
+- Live tools: 13 — merge, split, rotate, rearrange, remove, extract,
+  images-to-pdf, jpg-to-pdf, png-to-pdf, webp-to-pdf, pdf-to-jpg,
+  pdf-to-png. PRD §8.6 image conversion pair COMPLETE for browser-decodable
+  formats (SVG/TIFF deferred — needs WASM decoders; HEIC works where the
+  browser can decode, honest error otherwise).
+- Architecture win: pdf.js-in-tool-worker recipe (fake-worker mode +
+  document.baseURI shim + transparent-background render param) is the
+  foundation for OCR (Phase 9) and every future rasterizing tool.
+- ImageGrid = the second reusable surface family (after PageGrid); future
+  image-input tools (scan-to-pdf, heic-to-pdf) reuse it via preset configs.
+- Cancel-mid-flight finally PROVEN (the P2-era deferred risk item).
+- Next per the phase plan: PDF→Text (§8.6), then Watermark, Page numbers,
+  Crop, Doc info, Fill, View, Compress, Generate password, Scan, HEIC/WEBP
+  — one per round. Merge "images also allowed" is now unblocked (reuse the
+  imagegrid embed engine).

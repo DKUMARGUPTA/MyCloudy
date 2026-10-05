@@ -55,7 +55,7 @@ import {
   clearWorkingFiles,
   writeWorkingFile,
 } from "@/lib/storage/opfs";
-import { renderPdfThumbnail } from "@/lib/pdf/thumbnails";
+import { makeFileThumbnail } from "@/lib/files/thumbnail";
 import { formatBytes } from "@/lib/storage/recent-files";
 import {
   toolRunner,
@@ -139,6 +139,15 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
     if (chainIn) clearChainHandoff();
   }, [chainIn]);
 
+  // Input kind drives the DropZone sniffing + accept filter + labels.
+  const acceptKind =
+    tool.accepts === "image" ? "image" : tool.accepts === "pdf" ? "pdf" : "any";
+  const selectLabelKey =
+    tool.accepts === "image" ? "tool.selectImageFiles" : "tool.selectPdfFiles";
+  const addMoreLabelKey =
+    tool.accepts === "image" ? "tool.addMoreImages" : "tool.addMoreFiles";
+  const recentKind = tool.accepts === "image" ? "image" : "pdf";
+
   // Chain/SmartDrop files get the same treatment as dropped files (PRD
   // §6.1): OPFS working copy + a metadata-only recent entry with thumbnail.
   // External-system sync only — no React state is touched here.
@@ -146,20 +155,20 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
     if (!chainIn) return;
     for (const item of chainIn.items) {
       void writeWorkingFile(item.id, item.file).catch(() => undefined);
-      void renderPdfThumbnail(item.file, { maxDim: 160 })
-        .then(({ blob }) =>
+      void makeFileThumbnail(item.file, 160)
+        .then((blob) =>
           addRecentFile({
             id: item.id,
-            kind: "pdf",
+            kind: recentKind as "pdf" | "image",
             label: item.file.name,
             size: item.file.size,
             toolId: tool.id,
-            thumbnail: blob,
+            thumbnail: blob ?? undefined,
           })
         )
         .catch(() => undefined);
     }
-  }, [chainIn, tool.id]);
+  }, [chainIn, recentKind, tool.id]);
 
   const runHandleRef = useRef<RunHandle | null>(null);
 
@@ -197,19 +206,22 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   );
 
   const chainTargets = useMemo(() => {
-    // PRD §6.4 "Ab aage kya?" — the natural next steps for a PDF result.
-    const suggestionIds = [
-      "compress-pdf",
-      "protect-pdf",
-      "sign-pdf",
-      "split-pdf",
-      "edit-pdf",
-    ];
+    // PRD §6.4 "Ab aage kya?" — natural next steps. Image outputs chain
+    // to image-accepting tools (the PDF default set would be a type lie);
+    // configs can override with their own curated list.
+    const suggestionIds =
+      config.chainToolIds ?? [
+        "compress-pdf",
+        "protect-pdf",
+        "sign-pdf",
+        "split-pdf",
+        "edit-pdf",
+      ];
     const resolved = suggestionIds
       .map((id) => getTool(id))
       .filter((item): item is ToolDef => item !== undefined && item.id !== tool.id);
     return resolved.slice(0, 5);
-  }, [tool.id]);
+  }, [config.chainToolIds, tool.id]);
 
   // Working copies are cleared when the tool session ends (PRD §2.4).
   useEffect(
@@ -241,15 +253,15 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
       for (const item of items) {
         void writeWorkingFile(item.id, item.file).catch(() => undefined);
         // Recent entry: metadata + thumbnail only, never the bytes.
-        void renderPdfThumbnail(item.file, { maxDim: 160 })
-          .then(async ({ blob }) => {
+        void makeFileThumbnail(item.file, 160)
+          .then(async (blob) => {
             await addRecentFile({
               id: item.id,
-              kind: "pdf" as const,
+              kind: recentKind as "pdf" | "image",
               label: item.file.name,
               size: item.file.size,
               toolId: tool.id,
-              thumbnail: blob,
+              thumbnail: blob ?? undefined,
             });
           })
           .catch(() => undefined);
@@ -258,7 +270,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
       setFiles((prev) => [...prev, ...items]);
       setPhase("workspace");
     },
-    [config.maxFiles, files.length, t, toast, tool.id]
+    [config.maxFiles, files.length, recentKind, t, toast, tool.id]
   );
 
   const removeFile = useCallback((id: string) => {
@@ -428,10 +440,10 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           </header>
 
           <DropZone
-            labelKey="tool.selectPdfFiles"
+            labelKey={selectLabelKey}
             multiple={config.maxFiles > 1}
             maxFiles={config.maxFiles}
-            acceptKind="pdf"
+            acceptKind={acceptKind}
             onAccept={addFiles}
             currentCount={files.length}
           />
@@ -589,6 +601,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                   onChange={handleOptionChange}
                   setFileOrder={setFiles}
                   setRunBlocked={handleRunBlocked}
+                  addFiles={addFiles}
                 />
               ) : (
                 <>
@@ -598,10 +611,10 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                     onRemove={removeFile}
                   />
                   <DropZone
-                    labelKey="tool.addMoreFiles"
+                    labelKey={addMoreLabelKey}
                     multiple={config.maxFiles > 1}
                     maxFiles={config.maxFiles}
-                    acceptKind="pdf"
+                    acceptKind={acceptKind}
                     onAccept={addFiles}
                     currentCount={files.length}
                     className="border-dashed py-4"

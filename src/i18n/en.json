@@ -260,7 +260,7 @@
     "errorGeneric": "The tool hit an unexpected error. Please try again. {detail}",
     "errorInvalidPages": "That page selection isn't valid. Use ranges like 1-3, 5.",
     "errorEncrypted": "This PDF is password-protected. Unlock it first, then try again.",
-    "errorCorrupt": "This PDF couldn't be read — it may be damaged.",
+    "errorCorrupt": "This PDF couldn't be read — it may be damaged",
     "notFoundTitle": "This tool isn't live yet",
     "notFoundDesc": "It's on the roadmap. Browse the toolbox meanwhile.",
     "notFoundAction": "Browse all tools",
@@ -269,7 +269,14 @@
     "splitWaitingDetect": "Split inputs are still being detected — try again in a moment.",
     "splitNoBookmarks": "This PDF has no bookmarks to split by.",
     "splitNoBlanks": "No blank pages found — nothing to split at.",
-    "splitNoParts": "These split settings produce no files — adjust them and try again."
+    "splitNoParts": "These split settings produce no files — adjust them and try again.",
+    "selectImageFiles": "Add your images",
+    "addMoreImages": "Add more images",
+    "images": {
+      "errorUnsupported": "This image format can't be read here ({detail}). Convert it to JPG or PNG first.",
+      "errorDecode": "Couldn't decode {detail} — the file may be damaged or unsupported on this browser.",
+      "errorNoImages": "No images left to convert."
+    }
   },
   "result": {
     "title": "Your file is ready!",
@@ -468,5 +475,31 @@
     "toastNoUndo": "Nothing to undo",
     "toastNoRedo": "Nothing to redo",
     "fromPage": "from page {page}"
+  },
+  "igrid": {
+    "surfaceLabel": "Image grid",
+    "imageCount": "{count} images",
+    "rotatedCount": "{count} rotated",
+    "sortAz": "Sort A→Z",
+    "sortAzLabel": "Sort images by file name (A→Z)",
+    "rotateAllLeft": "Rotate all images 90° left",
+    "rotateAllRight": "Rotate all images 90° right",
+    "hint": "Drag cards to reorder · rotate or remove per image · add more below",
+    "emptyHint": "All images removed — add at least one back before you run.",
+    "ctaNoImages": "Add at least one image first",
+    "addMore": "Add more images",
+    "cardPosition": "Image {index} of {total}",
+    "rotateLeftLabel": "Rotate {name} 90° left",
+    "rotateRightLabel": "Rotate {name} 90° right",
+    "moveEarlierLabel": "Move {name} earlier",
+    "moveLaterLabel": "Move {name} later",
+    "removeLabel": "Remove {name}",
+    "dragLabel": "Drag to reorder {name}"
+  },
+  "pdfimg": {
+    "previewTitle": "Output preview",
+    "previewSize": "Page 1 at {dpi} DPI → {w} × {h} px",
+    "previewNote": "Every selected page keeps this sharpness.",
+    "previewLoading": "Reading page size…"
   }
 }

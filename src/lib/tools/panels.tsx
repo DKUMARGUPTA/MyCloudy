@@ -6,6 +6,7 @@ import type { ToolPanelProps } from "./panel-types";
 import { MergePanel } from "../../../tools/merge-pdf/panel";
 import { SplitPanel } from "../../../tools/split-pdf/panel";
 import { GridSummaryPanel } from "../../../tools/pagegrid/summary-panel";
+import { PdfToImagesPanel } from "../../../tools/pdf-to-images/panel";
 
 /**
  * Custom tool panels (PRD §2.6 "Panel.tsx per tool").
@@ -39,6 +40,8 @@ export const TOOL_PANELS: Record<string, ComponentType<ToolPanelProps>> = {
   "rearrange-pdf-pages": RearrangeSummaryPanel,
   "remove-pdf-pages": RemoveSummaryPanel,
   "extract-pdf-pages": ExtractSummaryPanel,
+  "pdf-to-jpg": PdfToImagesPanel,
+  "pdf-to-png": PdfToImagesPanel,
 };
 
 export function getToolPanel(

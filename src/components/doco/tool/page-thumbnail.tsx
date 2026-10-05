@@ -6,9 +6,12 @@ import { renderPdfThumbnail } from "@/lib/pdf/thumbnails";
 import { cn } from "@/lib/utils";
 
 /**
- * PDF page thumbnail with skeleton + error states (PRD §2.8: queued renders).
- * The render queue inside lib/pdf/thumbnails keeps only 2 renders in flight,
- * so a grid of these never blocks the main thread.
+ * File/page thumbnail with skeleton + error states (PRD §2.8: queued renders).
+ *
+ * Two paths:
+ * - image blobs (image inputs, JPG/PNG tool outputs) are their own preview —
+ *   the object URL is created directly, no render queue needed
+ * - PDFs render page 1 through the queue in lib/pdf/thumbnails (2 in flight)
  */
 
 export type ThumbnailStatus = "loading" | "ready" | "error";
@@ -31,11 +34,15 @@ export function useThumbnail(
       .then(() => {
         if (cancelled) return null;
         setState({ status: "loading", url: null });
-        return renderPdfThumbnail(file, { maxDim });
+        // Image fast path: the blob IS the preview.
+        if (file.type.startsWith("image/")) return file;
+        return renderPdfThumbnail(file, { maxDim }).then(
+          (result) => result?.blob ?? null
+        );
       })
-      .then((result) => {
-        if (cancelled || !result) return;
-        objectUrl = URL.createObjectURL(result.blob);
+      .then((blob) => {
+        if (cancelled || !blob) return;
+        objectUrl = URL.createObjectURL(blob);
         setState({ status: "ready", url: objectUrl });
       })
       .catch(() => {

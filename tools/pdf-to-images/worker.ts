@@ -1,0 +1,172 @@
+import type { OptionValues } from "@/lib/tools/config-types";
+import {
+  parsePageSpec,
+  type WorkerRunRequest,
+  type WorkerResponse,
+} from "@/lib/workers/protocol";
+
+/**
+ * PDF → images worker (PRD §8.6) — shared by pdf-to-jpg and pdf-to-png.
+ *
+ * pdf.js runs IN THIS WORKER: we pre-import the self-hosted worker module
+ * (/pdfjs/pdf.worker.min.mjs), which sets `globalThis.pdfjsWorker` — pdf.js
+ * then detects it and uses fake-worker mode on our own thread (no nested
+ * worker, no window dependency). Renders are sequential + one canvas at a
+ * time, so a 300-DPI 200-page document never spikes memory.
+ *
+ * Device-only: the File arrives by structured clone, image Blobs go back.
+ */
+
+type PdfjsModule = typeof import("pdfjs-dist");
+
+let pdfjsPromise: Promise<PdfjsModule> | null = null;
+
+async function loadPdfjsInWorker(): Promise<PdfjsModule> {
+  if (!pdfjsPromise) {
+    pdfjsPromise = (async () => {
+      // pdf.js's default CMap/StandardFont factories resolve URLs against
+      // `document.baseURI`, which does not exist inside Web Workers. A
+      // one-property shim (same-origin base) keeps the self-hosted build
+      // working without touching its internals.
+      if (typeof (globalThis as { document?: unknown }).document === "undefined") {
+        (globalThis as { document?: unknown }).document = {
+          baseURI: self.location.href,
+        };
+      }
+      const libUrl = "/pdfjs/pdf.min.mjs";
+      const workerUrl = "/pdfjs/pdf.worker.min.mjs";
+      const lib = (await import(
+        /* webpackIgnore: true */ /* turbopackIgnore: true */ libUrl
+      )) as PdfjsModule;
+      // Pre-load the worker module into THIS thread → fake-worker mode
+      // (pdf.js then runs on our own thread — no nested worker needed).
+      await import(
+        /* webpackIgnore: true */ /* turbopackIgnore: true */ workerUrl
+      );
+      return lib;
+    })();
+  }
+  return pdfjsPromise;
+}
+
+function post(response: WorkerResponse): void {
+  self.postMessage(response);
+}
+
+/** Output format per tool — fixed by the tool identity, not an option. */
+const FORMAT: Record<string, { mime: string; ext: string; alpha: boolean }> = {
+  "pdf-to-jpg": { mime: "image/jpeg", ext: "jpg", alpha: false },
+  "pdf-to-png": { mime: "image/png", ext: "png", alpha: true },
+};
+
+async function run(request: WorkerRunRequest): Promise<void> {
+  const { runId, toolId, options, files } = request;
+  const format = FORMAT[toolId] ?? FORMAT["pdf-to-jpg"];
+
+  const dpi = Number(options.dpi ?? 150);
+  const scale = Math.max(0.5, Math.min(8, dpi / 72));
+  const quality = Math.max(0.4, Math.min(1, Number(options.quality ?? 85) / 100));
+  const transparent = options.transparent === true && format.alpha;
+
+  const pdfjs = await loadPdfjsInWorker();
+  const outputs: { name: string; mime: string; blob: Blob }[] = [];
+  let renderedPages = 0;
+
+  for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+    const file = files[fileIndex];
+    const base = file.name
+      .replace(/\.(pdf)$/i, "")
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+      .slice(0, 120);
+
+    const data = new Uint8Array(await file.arrayBuffer());
+    const doc = await pdfjs.getDocument({
+      data,
+      cMapUrl: "/pdfjs/cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "/pdfjs/standard_fonts/",
+    }).promise;
+
+    const pageNumbers = parsePageSpec(
+      String(options.pages ?? "all"),
+      doc.numPages
+    );
+    if (pageNumbers === null || pageNumbers.length === 0) {
+      post({ type: "error", runId, code: "tool.errorInvalidPages" });
+      return;
+    }
+
+    for (let i = 0; i < pageNumbers.length; i += 1) {
+      const pageNumber = pageNumbers[i] + 1; // 1-based in pdf.js
+      const page = await doc.getPage(pageNumber);
+      const viewport = page.getViewport({ scale });
+      const width = Math.max(1, Math.round(viewport.width));
+      const height = Math.max(1, Math.round(viewport.height));
+
+      const canvas = new OffscreenCanvas(width, height);
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("canvas-2d-unavailable");
+      // pdf.js ALWAYS fills the page background (opaque white by default —
+      // beginDrawing: fillStyle = background || "#ffffff"). Transparent
+      // exports pass a fully transparent background instead.
+      if (!transparent) {
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, width, height);
+      }
+      await page.render({
+        canvasContext: context as unknown as CanvasRenderingContext2D,
+        viewport,
+        background: transparent ? "rgba(0,0,0,0)" : undefined,
+      }).promise;
+      page.cleanup();
+
+      const blob = await canvas.convertToBlob({
+        type: format.mime,
+        quality: format.alpha ? undefined : quality,
+      });
+      renderedPages += 1;
+      outputs.push({
+        name:
+          pageNumbers.length === 1
+            ? `${base}.${format.ext}`
+            : `${base}_page${pageNumber}.${format.ext}`,
+        mime: format.mime,
+        blob,
+      });
+
+      post({
+        type: "progress",
+        runId,
+        pct: Math.round(
+          ((fileIndex + (i + 1) / pageNumbers.length) / files.length) * 95
+        ),
+        stage: "processing",
+        detail: { page: i + 1, pages: pageNumbers.length },
+      });
+    }
+
+    doc.cleanup();
+  }
+
+  post({ type: "progress", runId, pct: 97, stage: "saving" });
+  post({
+    type: "result",
+    runId,
+    outputs,
+    detail: { files: outputs.length, pages: renderedPages },
+  });
+}
+
+self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
+  const data = event.data;
+  if (data?.type !== "run") return;
+  run(data).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = /password/i.test(message)
+      ? "tool.errorEncrypted"
+      : /canvas/i.test(message)
+        ? "tool.errorGeneric"
+        : "tool.errorCorrupt";
+    post({ type: "error", runId: data.runId, code });
+  });
+};
