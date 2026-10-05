@@ -1,0 +1,1373 @@
+     1→**DocoPDF.com**
+     2→
+     3→Product Requirements Document (PRD)
+     4→
+     5→*Har PDF kaam, ek jagah. Fast, free, private.*
+     6→
+     7→| **Field** | **Detail**                                                                                                                    |
+     8→|-----------|-------------------------------------------------------------------------------------------------------------------------------|
+     9→| Version   | v2.0 (detailed, all tools)                                                                                                    |
+    10→| Date      | 5 October 2026                                                                                                                |
+    11→| Product   | Online PDF tools website, English + Hindi                                                                                     |
+    12→| Stack     | GitHub (code), Vercel (hosting), Turso (database), files sirf user ke device par                                              |
+    13→| Status    | Draft for build planning                                                                                                      |
+    14→| Note      | Is document me license, legal aur pricing ke points planning ke liye hain. Launch se pehle lawyer se review zaroor karwayein. |
+    15→
+    16→**Contents**
+    17→
+    18→1\. Vision, Goals aur Principles
+    19→
+    20→1.1 Vision
+    21→
+    22→DocoPDF ek aisi website hai jahan user ko har PDF kaam (merge, split, compress, edit, sign, convert, OCR, secure) ek hi jagah, bina signup, tez aur private tareeke se mile. PDF24 jaise tools ki range, iLovePDF jaisa simple flow, aur PDFSimpli se behtar editor.
+    23→
+    24→1.2 Competitor gap
+    25→
+    26→| **Competitor** | **Kya achha**              | **Kya weak (hamara mauka)**                                                                |
+    27→|----------------|----------------------------|--------------------------------------------------------------------------------------------|
+    28→| PDF24 Tools    | 100+ free tools, no signup | UI purani aur crowded, tool pages me bahut text, editor basic, files server par jaati hain |
+    29→| iLovePDF       | Clean 3-step flow, fast    | Editing weak, free limits, upload zaroori, signup nudges                                   |
+    30→| PDFSimpli      | Editor aur templates       | Paywall aur subscription complaints, aggressive upsell, kam free tools                     |
+    31→
+    32→1.3 Goals (measurable)
+    33→
+    34→- **Privacy:** zyada-tar tools browser me chalein, file kabhi server par na jaaye (Device-only badge).
+    35→
+    36→- **Speed:** upload se download tak 30 second se kam (typical 5 MB file).
+    37→
+    38→- **Simplicity:** har tool 3 click me complete (Select, Option, Download).
+    39→
+    40→- **Editor:** Edit PDF Word jaisa easy ho, mobile par bhi chale.
+    41→
+    42→- **Coverage:** PDF24 ke saare tool categories + India-specific tools (GST invoice, Aadhaar/PAN redact, Hindi OCR).
+    43→
+    44→- **Growth:** SEO se organic traffic, har tool ka apna optimized page.
+    45→
+    46→1.4 Product principles
+    47→
+    48→- Privacy-first aur honest: jo tool server par chalta hai usse clearly "Server processing" badge dein, jhooth na bolen.
+    49→
+    50→- No dark patterns: forced signup nahi, hidden subscription nahi, cancel ek click me.
+    51→
+    52→- Mobile-first: India me zyada traffic mobile se hai. Touch targets 44px+, low-end Android par chale.
+    53→
+    54→- Bilingual from day one: English aur Hindi (Devanagari), baad me aur languages.
+    55→
+    56→- Self-hosted assets: fonts, icons, pdf.js, WASM, OCR language data sab apne domain se. Koi third-party CDN nahi.
+    57→
+    58→1.5 Target users
+    59→
+    60→| **Persona**                      | **Kaam**                                    | **Zaruratein**                            |
+    61→|----------------------------------|---------------------------------------------|-------------------------------------------|
+    62→| Student                          | Notes merge, assignment compress, form fill | Free, mobile, fast                        |
+    63→| Job seeker / Office worker       | Resume, documents sign, Word-PDF            | Edit, sign, convert                       |
+    64→| Small business / CA / Shop owner | GST invoice, scan, merge, protect           | Invoice tools, batch, Hindi               |
+    65→| Government form bharne wale      | Aadhaar/PAN size compress, photo-to-PDF     | 100KB/200KB target compress, image to PDF |
+    66→| Power user / Freelancer          | Edit, compare, redact, OCR                  | Pro editor, large files, batch            |
+    67→
+    68→2\. Architecture aur Technical Decisions
+    69→
+    70→2.1 Chune gaye platforms
+    71→
+    72→| **Layer**    | **Tool**                             | **Kaam**                                                  | **Dhyan dene wali baat**                                                                                                 |
+    73→|--------------|--------------------------------------|-----------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
+    74→| Code         | GitHub                               | Repo, PR, GitHub Actions CI                               | Monorepo; main = production                                                                                              |
+    75→| Hosting      | Vercel                               | Next.js pages, SSG/SSR, light API, CDN, preview deploys   | Hobby plan non-commercial hai, ads/Pro ke liye Vercel Pro chahiye. Request body ~4.5MB limit; heavy binaries nahi chalte |
+    76→| Database     | Turso (libSQL)                       | Users, usage, feedback, blog, payments metadata           | Sirf metadata. PDF ka content ya filename kabhi nahi                                                                     |
+    77→| File storage | User ka device                       | OPFS, IndexedDB, download/share                           | Server par file storage nahi                                                                                             |
+    78→| Heavy worker | Apna Docker server (VPS/Fly/Railway) | Office conversion, strong OCR/compress, PDF/A, validation | Stateless: memory/temp me process, turant delete. Phase 3                                                                |
+    79→
+    80→2.2 Do processing modes
+    81→
+    82→| **Mode**            | **Badge (UI)**                          | **Kya hota hai**                                                                         | **Privacy claim**                                                 |
+    83→|---------------------|-----------------------------------------|------------------------------------------------------------------------------------------|-------------------------------------------------------------------|
+    84→| D = Device-only     | Private - stays on your device          | Pura kaam browser me Web Worker me. File network par jaati hi nahi                       | "Your files never leave your device"                              |
+    85→| S = Server-assisted | Server processing - deleted right after | File worker server par jaati hai, process hoti hai, result milta hai, file turant delete | "Deleted immediately after processing" (max 15 min fail-safe TTL) |
+    86→
+    87→**Rule:** Device-only tool par kabhi server call nahi honi chahiye. CI me ek test hoga jo in tools ke network requests check kare (file upload endpoint hit na ho).
+    88→
+    89→2.3 Libraries (sab self-hosted)
+    90→
+    91→| **Kaam**                                         | **Library**                                       | **License**      | **Note**                                                                       |
+    92→|--------------------------------------------------|---------------------------------------------------|------------------|--------------------------------------------------------------------------------|
+    93→| PDF render, preview, text layer                  | pdf.js (Mozilla)                                  | Apache 2.0       | Worker file bhi self-host. Thumbnails ke liye low-res render                   |
+    94→| PDF modify (merge, split, draw, forms, metadata) | pdf-lib                                           | MIT              | Encryption support NAHI. Isliye Protect/Unlock ke liye qpdf-wasm               |
+    95→| Encrypt/decrypt, repair, linearize               | qpdf (WASM build)                                 | Apache 2.0       | Browser me AES-256, repair, web-optimize                                       |
+    96→| Editor canvas / objects                          | Fabric.js ya Konva                                | MIT              | Object select, resize, rotate, undo                                            |
+    97→| OCR (browser)                                    | Tesseract.js + traineddata                        | Apache 2.0       | eng, hin aur other languages self-host; model files badi hoti hain (lazy-load) |
+    98→| Office to PDF, PDF to Office (server)            | LibreOffice headless                              | MPL 2.0          | Worker server par. PDF to Word quality limited, expectation set karein         |
+    99→| Server compress/optimize                         | qpdf + pdfcpu                                     | Apache 2.0       | Ghostscript/MuPDF AGPL hain, avoid ya commercial license                       |
+   100→| PDF/A validate (server)                          | veraPDF                                           | GPL/MPL dual     | Java service; license lawyer se check karein                                   |
+   101→| Zip output                                       | fflate                                            | MIT              | Multiple output files ke liye                                                  |
+   102→| Image decode                                     | Browser APIs; UTIF.js (TIFF); heic decoder (WASM) | MIT / LGPL check | HEIC library license verify karein                                             |
+   103→| Markdown, QR, charts                             | marked, qrcode generator                          | MIT              |                                                                                |
+   104→| Digital signature verify/sign                    | pkijs / node-forge                                | BSD              | PAdES basic, Phase 3                                                           |
+   105→
+   106→**License warning:** AGPL libraries (Ghostscript, MuPDF) use karne par aapko apna source open karna pad sakta hai ya commercial license lena padega. Default stack me inhe shamil nahi kiya gaya hai.
+   107→
+   108→2.4 Device par storage
+   109→
+   110→| **Kaam**                                           | **Technology**                                                      | **Rule**                                                     |
+   111→|----------------------------------------------------|---------------------------------------------------------------------|--------------------------------------------------------------|
+   112→| Badi file ka working copy                          | OPFS                                                                | Tool ke baad ya "Clear" par delete                           |
+   113→| Recent files (metadata + thumbnail), editor drafts | IndexedDB                                                           | Max 20 recent, 30 din; user "Clear all" kar sake             |
+   114→| Saved signatures, settings, favorites              | IndexedDB / localStorage                                            | Sirf device par, account me sync Phase 3 (opt-in, encrypted) |
+   115→| Result save                                        | File System Access API; fallback download; mobile par Web Share API | iOS Safari me download/Share sheet ka fallback               |
+   116→| Offline                                            | PWA + Service Worker                                                | Device-only tools offline chalein                            |
+   117→
+   118→- iPhone Safari kuch din na kholne par storage saaf kar sakta hai. PWA install prompt dein aur result hamesha download/share karwayein.
+   119→
+   120→- Upload se pehle navigator.storage.estimate() check karein; space kam ho to warning.
+   121→
+   122→- Low-end phone par RAM limit: Web Worker, page-by-page processing, file size limit (device-wise: 50MB mobile, 200MB desktop default, adjustable).
+   123→
+   124→- Editor draft sirf us browser me hai, ye note editor me dikhayein.
+   125→
+   126→2.5 Turso database schema
+   127→
+   128→| **Table**        | **Columns**                                                                   | **Use**                                                           |
+   129→|------------------|-------------------------------------------------------------------------------|-------------------------------------------------------------------|
+   130→| users            | id, email, name, password_hash/oauth_id, plan, locale, created_at, deleted_at | Login (Phase 2/3)                                                 |
+   131→| sessions         | id, user_id, expires_at, ua_hash                                              | Auth sessions                                                     |
+   132→| anon_usage       | id (signed cookie id), tool_id, day, count                                    | Daily limit server-assisted tools par                             |
+   133→| usage_events     | id, tool_id, mode, success, duration_ms, size_bucket, locale, day             | Aggregate analytics, koi filename/content nahi                    |
+   134→| feedback         | id, tool_id, rating, message, email_optional, created_at                      | Result page feedback                                              |
+   135→| tool_requests    | id, title, description, votes, status                                         | Request a tool + roadmap vote                                     |
+   136→| request_votes    | request_id, voter_hash                                                        | Duplicate vote rokna                                              |
+   137→| contact_messages | id, name, email, category, message, status, created_at                        | Contact form                                                      |
+   138→| blog_posts       | slug, locale, title, excerpt, body_md, tags, published_at, updated_at         | Blog / guides                                                     |
+   139→| subscriptions    | id, user_id, provider, provider_sub_id, plan, status, period_end              | Razorpay/Stripe                                                   |
+   140→| payments         | id, user_id, provider_payment_id, amount, currency, status, invoice_no        | Billing history                                                   |
+   141→| jobs             | id, tool_id, status, created_at, finished_at, error_code                      | Server tools status (file keys nahi, kyunki file store nahi hoti) |
+   142→| audit_log        | id, actor, action, meta_json, created_at                                      | Admin actions                                                     |
+   143→
+   144→- Turso me dev aur prod alag database. Token sirf Vercel environment variables me.
+   145→
+   146→- Drizzle ORM + migrations GitHub me.
+   147→
+   148→- Personal data minimum: email aur payment metadata. DPDP Act 2023 ke hisaab se retention aur deletion flow.
+   149→
+   150→2.6 Repo structure
+   151→
+   152→Monorepo layout
+   153→
+   154→docopdf/
+   155→
+   156→apps/web/ Next.js + TypeScript + Tailwind (Vercel)
+   157→
+   158→app/\[locale\]/ pages: home, tools, tool pages, blog, legal
+   159→
+   160→components/ DropZone, PageGrid, Viewer, Editor, ResultCard, ToolShell
+   161→
+   162→tools/\<tool-id\>/ config.ts (meta, options schema), worker.ts, Panel.tsx
+   163→
+   164→lib/pdf/ pdf-lib + pdf.js + qpdf wrappers, worker pool
+   165→
+   166→lib/storage/ OPFS, IndexedDB helpers
+   167→
+   168→public/pdfjs/ wasm/ tessdata/ fonts/ self-hosted assets
+   169→
+   170→db/ Drizzle schema + Turso client
+   171→
+   172→services/worker/ Docker: LibreOffice, qpdf, pdfcpu, Tesseract (Phase 3)
+   173→
+   174→.github/workflows/ lint, typecheck, unit, e2e (Playwright), license-check
+   175→
+   176→docs/ PRD, tool specs, runbooks
+   177→
+   178→**Tool config pattern:** har tool ek config object se define ho (id, slug, category, mode, accepted types, options schema, worker entry, SEO copy keys). Isse 100+ tool pages ek hi template se bante hain aur naya tool jodna aasan hota hai.
+   179→
+   180→2.7 Server worker flow (S-mode tools)
+   181→
+   182→- Browser Vercel API se short-lived signed token leta hai (daily limit check hota hai).
+   183→
+   184→- Browser file seedha worker domain (jaise api.docopdf.com) ko bhejta hai. Vercel ki 4.5MB limit bypass hoti hai.
+   185→
+   186→- Worker job queue me process karta hai, result stream karta hai, aur temp files turant delete karta hai. Fail-safe cleanup har 5 minute me, max TTL 15 minute.
+   187→
+   188→- Worker par ClamAV scan, rate limit, size limit, aur sandbox (no network, resource limits).
+   189→
+   190→- Worker kuch log nahi karta jo file ka content ya naam ho. Sirf job id, tool, size bucket, duration, error code.
+   191→
+   192→2.8 Performance targets
+   193→
+   194→| **Metric**                                | **Target**                                          |
+   195→|-------------------------------------------|-----------------------------------------------------|
+   196→| Home LCP (4G mobile)                      | \< 2.0 s (desktop \< 1.2 s)                         |
+   197→| Initial JS (home)                         | \< 150 KB gzip                                      |
+   198→| Tool page initial JS (before file select) | \< 120 KB; pdf.js/pdf-lib lazy-load on file select  |
+   199→| Thumbnail render                          | \< 100 ms per page, virtualized list for 100+ pages |
+   200→| Merge 10 files x 5MB (mid-range phone)    | \< 10 s                                             |
+   201→| CLS / INP                                 | \< 0.1 / \< 200 ms                                  |
+   202→
+   203→3\. Design System
+   204→
+   205→3.1 Colors
+   206→
+   207→| **Token**    | **Light**           | **Dark**            | **Use**                               |
+   208→|--------------|---------------------|---------------------|---------------------------------------|
+   209→| primary      | \#2563EB            | \#60A5FA            | Links, active states, primary buttons |
+   210→| accent / CTA | \#F97316            | \#FB923C            | Main action button (Download, Merge)  |
+   211→| success      | \#16A34A            | \#4ADE80            | Done states, Private badge            |
+   212→| danger       | \#DC2626            | \#F87171            | Errors, destructive                   |
+   213→| bg / surface | \#FFFFFF / \#F8FAFC | \#0B1220 / \#111827 | Backgrounds                           |
+   214→| text / muted | \#0F172A / \#64748B | \#E5E7EB / \#94A3B8 | Text                                  |
+   215→
+   216→Category colors: Organize = Blue, Edit = Purple, Convert = Green, Security = Red, Optimize = Orange, Create = Teal, Invoices = Amber, View = Slate. Dark mode day-one (system default + manual toggle).
+   217→
+   218→3.2 Typography aur spacing
+   219→
+   220→- Fonts: Inter (English), Noto Sans Devanagari (Hindi), JetBrains Mono (code/shortcuts). Sab self-hosted, font-display: swap.
+   221→
+   222→- Scale: H1 36/40, H2 28/34, H3 20/28, body 16/24, small 14/20. Mobile H1 28.
+   223→
+   224→- Spacing 4/8 grid. Radius: cards 16px, buttons 12px, chips 999px. Soft shadows, borders 1px.
+   225→
+   226→- Icons: ek consistent line icon set (self-hosted SVG sprite), 24px grid. Tool icons custom, category color ke saath.
+   227→
+   228→3.3 Core components
+   229→
+   230→| **Component**        | **Spec**                                                                                                                                                            |
+   231→|----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   232→| Tool Card            | Icon (48px), naam, 1-line description, mode badge (Private / Server), favorite star, hover lift, focus ring                                                         |
+   233→| Drop Zone            | Dashed border, drag-over highlight, "Select files" primary button, paste support (Ctrl+V), camera/scan option on mobile, accepted types aur size hint, error inline |
+   234→| File Card            | Thumbnail, name (editable), pages, size, status (ready/locked/error), actions (rotate, remove, unlock)                                                              |
+   235→| Page Thumbnail       | Page number, selection checkbox, rotate/delete on hover (always visible on touch), drag handle                                                                      |
+   236→| Options Panel        | Right side desktop, bottom sheet mobile; grouped fields, live summary                                                                                               |
+   237→| Sticky Action Bar    | Primary CTA full-width on mobile, shows what will happen ("Merge 3 files, 24 pages")                                                                                |
+   238→| Progress             | Determinate % with stage text, Cancel button, estimated time                                                                                                        |
+   239→| Toast / Banner       | Success, info, warning, error; auto-dismiss except error                                                                                                            |
+   240→| Modal / Sheet        | Focus trap, ESC close, mobile bottom sheet                                                                                                                          |
+   241→| Stepper              | Upload \> Options \> Download (read-only indicator)                                                                                                                 |
+   242→| Badges               | Private, Server, New, Pro, Beta                                                                                                                                     |
+   243→| Empty / Error states | Illustration + 1 line + action button                                                                                                                               |
+   244→
+   245→3.4 Interaction rules
+   246→
+   247→- Touch target minimum 44x44px; drag-reorder ke saath up/down buttons (accessibility).
+   248→
+   249→- Motion subtle (150-250ms); prefers-reduced-motion respect.
+   250→
+   251→- WCAG 2.2 AA contrast, visible focus, keyboard-operable har tool.
+   252→
+   253→- Har destructive action par Undo toast (confirm modal ke bajay) jahan possible.
+   254→
+   255→4\. Sitemap aur URL Structure
+   256→
+   257→| **Section**       | **URLs**                                                                                                                                            |
+   258→|-------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+   259→| Core              | / /tools /search /install-app                                                                                                                       |
+   260→| Tool pages (EN)   | /merge-pdf /split-pdf /compress-pdf /edit-pdf /sign-pdf /word-to-pdf /pdf-to-word ... (har tool ka apna slug, Section 7 ki table dekhein)           |
+   261→| Hindi             | /hi/ prefix. Example: /hi/pdf-jodein (merge), /hi/pdf-compress-karein. hreflang en/hi                                                               |
+   262→| Categories        | /tools/organize /tools/edit /tools/convert-to-pdf /tools/convert-from-pdf /tools/security /tools/optimize /tools/create /tools/invoices /tools/view |
+   263→| Company           | /about /contact /security /press /careers (optional)                                                                                                |
+   264→| Help              | /help /help/\[article\] /faq /request-a-tool /roadmap /changelog /status                                                                            |
+   265→| Content           | /blog /blog/\[slug\] /guides/\[slug\]                                                                                                               |
+   266→| Pricing & account | /pricing /login /signup /account /account/billing /account/signatures /account/delete                                                               |
+   267→| Legal             | /privacy-policy /terms /cookie-policy /refund-policy /dmca /report-abuse /grievance /accessibility                                                  |
+   268→| System            | /404 /500 /offline /maintenance /sitemap.xml /robots.txt /manifest.webmanifest                                                                      |
+   269→
+   270→5\. Global Elements
+   271→
+   272→5.1 Header (sticky)
+   273→
+   274→Desktop header
+   275→
+   276→\[Logo DocoPDF\] \[All Tools v\] Merge Split Compress Edit Sign \[Search Ctrl+K\] \[Moon\] \[EN\|हिं\] \[Login\] \[Get Pro\]
+   277→
+   278→- **Mega-menu:** 5-6 columns (Organize, Edit, Convert to PDF, Convert from PDF, Security, Create & more). Har tool icon + naam; bottom me "See all tools". Keyboard navigable.
+   279→
+   280→- **Search (Ctrl+K / "/"):** tool naam, tags (jpg, word, resume, gst), Hindi keywords; typo-tolerant (client-side index, tool-search.json). Recent aur popular suggestions.
+   281→
+   282→- **Mobile:** hamburger menu (full-screen sheet) + bottom tab bar: Home, Tools, Recent, Account. Language switch aur dark mode menu me.
+   283→
+   284→- Header ke upar thin banner sirf announcements ke liye (dismissible).
+   285→
+   286→5.2 Footer
+   287→
+   288→- 4 columns: Popular tools \| Categories \| Company (About, Contact, Blog, Careers) \| Legal (Privacy, Terms, Cookies, Refund, DMCA, Grievance).
+   289→
+   290→- Language switcher, social links, install app link, status link.
+   291→
+   292→- Trust line: "Most tools run inside your browser. Your files stay on your device."
+   293→
+   294→- Copyright aur company/registered details (legal ke liye).
+   295→
+   296→5.3 Cookie / consent banner
+   297→
+   298→Minimal bottom banner: Accept all / Reject non-essential / Customize. Default: analytics OFF. Consent choice storage me save, footer me "Privacy settings" link se badal sakte hain. DPDP/GDPR friendly copy.
+   299→
+   300→5.4 Global behaviors
+   301→
+   302→- Language: URL prefix se; user ka choice remember.
+   303→
+   304→- Theme: system / light / dark.
+   305→
+   306→- Offline indicator: "You are offline. Device-only tools still work."
+   307→
+   308→- Update toast jab naya service worker available.
+   309→
+   310→- Error boundary: tool crash par friendly message + "Report this problem" (koi file content nahi bheji jaati).
+   311→
+   312→- Feedback widget (floating, minimal) har page par.
+   313→
+   314→6\. Core Page Specifications
+   315→
+   316→6.1 Home Page
+   317→
+   318→Home wireframe (desktop)
+   319→
+   320→+--------------------------------------------------------------------------+
+   321→
+   322→\| Header \|
+   323→
+   324→+--------------------------------------------------------------------------+
+   325→
+   326→\| H1: Sab PDF tools, ek jagah. Free, fast aur private. \|
+   327→
+   328→\| Sub: Zyada-tar tools aapke browser me chalte hain - file upload nahi. \|
+   329→
+   330→\| +--------------------------------------------------------------+ \|
+   331→
+   332→\| \| \[ Drop PDF here / Select files \] (Paste, Camera) \| \|
+   333→
+   334→\| \| After drop: "Aap kya karna chahte hain?" \| \|
+   335→
+   336→\| \| \[Edit\] \[Compress\] \[Merge\] \[Convert\] \[Sign\] \[Protect\] \| \|
+   337→
+   338→\| +--------------------------------------------------------------+ \|
+   339→
+   340→\| Badges: \[Private\] \[No signup\] \[Free\] \[Works offline\] \|
+   341→
+   342→+--------------------------------------------------------------------------+
+   343→
+   344→\| Quick tools (8 cards): Merge Split Compress Edit Sign Word\>PDF PDF\>JPG.. \|
+   345→
+   346→+--------------------------------------------------------------------------+
+   347→
+   348→\| Category tabs: All \| Organize \| Edit \| Convert \| Security \| Create \| ... \|
+   349→
+   350→\| Tool grid (cards) \|
+   351→
+   352→+--------------------------------------------------------------------------+
+   353→
+   354→\| Why DocoPDF: \[Private\] \[Fast\] \[No signup\] \|
+   355→
+   356→\| Pro editor showcase (demo video / interactive) \|
+   357→
+   358→\| How it works: 1 Select 2 Choose 3 Download \|
+   359→
+   360→\| India special: GST invoice, 100KB compress, Aadhaar redact, Hindi OCR \|
+   361→
+   362→\| Recent files / Favorites (this device only) \|
+   363→
+   364→\| Testimonials / numbers (real only) \|
+   365→
+   366→\| FAQ (schema) + Final CTA \|
+   367→
+   368→+--------------------------------------------------------------------------+
+   369→
+   370→| **Section**            | **Requirement**                                                                                                                                                                                                                        |
+   371→|------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   372→| Hero + Smart Drop Zone | File drop karte hi file type detect karke relevant tools suggest (PDF: edit/compress/merge/split/sign; image: Images to PDF; Word: Word to PDF). File OPFS me rakhi jaati hai aur selected tool ko pass hoti hai (dobara upload nahi). |
+   373→| Quick tools            | 8 sabse popular tools, usage data se auto-order (default curated)                                                                                                                                                                      |
+   374→| Category tabs          | Tab change instant (client), URL hash update; keyboard arrow navigation                                                                                                                                                                |
+   375→| Why DocoPDF            | 3 cards: Private (device-only), Fast (no upload wait), No signup/watermark                                                                                                                                                             |
+   376→| India special strip    | GST Invoice, Compress to 100KB/200KB, Photo+Signature size tool, Aadhaar/PAN redact, Hindi OCR                                                                                                                                         |
+   377→| Recent files           | Sirf local metadata + thumbnails; "Clear" button; empty state hidden                                                                                                                                                                   |
+   378→| FAQ                    | 8-10 questions with FAQPage schema                                                                                                                                                                                                     |
+   379→| Performance            | Hero server-rendered; tool grid SSG; images lazy; no layout shift                                                                                                                                                                      |
+   380→
+   381→6.2 All Tools Page
+   382→
+   383→- Top: large search box (autofocus on desktop) + sticky category chips (Favorites, Last used, Frequently used, Organize, Edit, Convert, Security, Optimize, Create, Invoices, View).
+   384→
+   385→- Views toggle: Grid (default) / List. Sort: Popular / A-Z.
+   386→
+   387→- Tool card: icon, naam, 1 line, favorite star, badge Private/Server/New/Pro.
+   388→
+   389→- Favorites aur Last used localStorage se (device-only), pehli visit par hidden.
+   390→
+   391→- Filters (desktop sidebar): Mode (Private / Server), Input type (PDF, Word, Image...), Free vs Pro.
+   392→
+   393→- Search no result: "Tool nahi mila" + \[Request a tool\] button + popular tools.
+   394→
+   395→- Page par SEO text minimal; category pages (/tools/organize) par detailed intro.
+   396→
+   397→6.3 Universal Tool Page (4 states)
+   398→
+   399→Sab tools ek template (ToolShell) use karte hain. Har tool ka config UI aur options inject karta hai.
+   400→
+   401→State 1 - Landing / Upload
+   402→
+   403→Breadcrumb: Home \> Organize \> Merge PDF
+   404→
+   405→+--------------------------------------------------------------+
+   406→
+   407→\| H1: Merge PDF \|
+   408→
+   409→\| Ek line description. \[Private - stays on your device\] \|
+   410→
+   411→\| +--------------------------------------------------------+ \|
+   412→
+   413→\| \| \[ Select PDF files \] or drop here \| \|
+   414→
+   415→\| \| Paste (Ctrl+V) \| Camera \| (Drive/Dropbox P3) \| \|
+   416→
+   417→\| \| PDF up to 200MB - up to 50 files \| \|
+   418→
+   419→\| +--------------------------------------------------------+ \|
+   420→
+   421→+--------------------------------------------------------------+
+   422→
+   423→How it works (3 steps) \| Features (4-6) \| FAQ \| Related tools \| SEO text
+   424→
+   425→State 2 - Workspace (Preview + Options)
+   426→
+   427→+------------------------------------------------------------------------+
+   428→
+   429→\| \< Back \[+ Add files\] \[Undo\]\[Redo\] \[Clear all\] Help (?) \|
+   430→
+   431→+---------------------------------------------------+--------------------+
+   432→
+   433→\| Preview / Thumbnail grid (pdf.js) \| OPTIONS PANEL \|
+   434→
+   435→\| \[file1\] \[file2\] \[file3\] ... drag to reorder \| - Mode \|
+   436→
+   437→\| zoom - / + , page nav, select \| - Settings \|
+   438→
+   439→\| \| - Output name \|
+   440→
+   441→\| \| Summary: 3 files \|
+   442→
+   443→+---------------------------------------------------+--------------------+
+   444→
+   445→\| STICKY: \[ Merge PDF -\> \] (shows count and estimated size) \|
+   446→
+   447→+------------------------------------------------------------------------+
+   448→
+   449→Mobile: preview full width, options in bottom sheet, CTA sticky bottom.
+   450→
+   451→State 3 - Processing
+   452→
+   453→+---------------------------------------------+
+   454→
+   455→\| Merging your files... 62% \|
+   456→
+   457→\| \[=============----------\] Page 31 of 50 \|
+   458→
+   459→\| Stage: Reading \> Processing \> Saving \|
+   460→
+   461→\| \[ Cancel \] Tip: tab band na karein. \|
+   462→
+   463→+---------------------------------------------+
+   464→
+   465→- Real progress (worker se messages). Cancel immediately worker terminate karta hai aur temp OPFS clean karta hai.
+   466→
+   467→- S-mode: stages "Uploading", "Processing", "Downloading result". Network error par automatic retry (2 times) phir clear message.
+   468→
+   469→- Tab hidden ho to progress notification (jaha allowed).
+   470→
+   471→6.4 Result Page
+   472→
+   473→State 4 - Result
+   474→
+   475→+-------------------------------------------------------------------+
+   476→
+   477→\| (check) Aapki file taiyar hai! \|
+   478→
+   479→\| merged.pdf \[rename\] 12.4 MB -\> 3.2 MB (74% chhota) \|
+   480→
+   481→\| \[ Download \] \[ Share... \] \[ Save to Files \] \|
+   482→
+   483→\| Preview thumbnail (first page) - click to open full preview \|
+   484→
+   485→+-------------------------------------------------------------------+
+   486→
+   487→\| Ab aage kya? \[Compress\] \[Protect\] \[Sign\] \[Split\] \[Edit\] (chain) \|
+   488→
+   489→+-------------------------------------------------------------------+
+   490→
+   491→\| Feedback: \[Thumbs up\] \[Thumbs down\] \| Privacy: file sirf aapke \|
+   492→
+   493→\| device par hai. \[Is device se hatayein\] \|
+   494→
+   495→\| Soft Pro note (non-intrusive) \| Related tools \|
+   496→
+   497→+-------------------------------------------------------------------+
+   498→
+   499→| **Element**        | **Behavior**                                                                                                                   |
+   500→|--------------------|--------------------------------------------------------------------------------------------------------------------------------|
+   501→| Download           | Primary CTA. File System Access API available ho to "Save as" dialog, warna browser download. Auto-download nahi (user click). |
+   502→| Share              | navigator.share({files}) mobile par; desktop par hidden ya "Copy"                                                              |
+   503→| Rename             | Inline edit, invalid characters block, extension fixed                                                                         |
+   504→| Size delta         | Before \> After, % saving; negative ho to "File already optimized"                                                             |
+   505→| Chain mode         | Result file OPFS me hai; next tool bina dobara select kiye khulta hai. Breadcrumb "Merge \> Compress"                          |
+   506→| Multiple outputs   | List with individual download + \[Download all (ZIP)\]                                                                         |
+   507→| Remove from device | OPFS aur recent entry delete; confirmation toast                                                                               |
+   508→| Feedback           | 1 click rating; thumbs down par optional reason chips                                                                          |
+   509→| S-mode tools       | Line: "Server se file delete ho chuki hai"                                                                                     |
+   510→| Pro note           | Sirf jab free limit ke paas ho; kabhi popup nahi                                                                               |
+   511→
+   512→6.5 Preview / Viewer Page (/view-pdf aur full-screen preview)
+   513→
+   514→- Full-screen viewer (pdf.js): continuous scroll, single page, two-page spread, fit width / fit page, zoom 25-400%, rotate view, dark reading mode.
+   515→
+   516→- Left sidebar: thumbnails, outline/bookmarks, attachments, annotations list. Search (Ctrl+F) with highlight and result list.
+   517→
+   518→- Tools in viewer: Print, Download, Open in Editor, Compress, Share. Text select aur copy. Go to page. Presentation mode.
+   519→
+   520→- Keyboard: arrows, PageUp/Down, +/-, Ctrl+F, G (go to page).
+   521→
+   522→- Large file: lazy page render, only visible +/-2 pages in memory.
+   523→
+   524→- Password-protected file: password prompt (stays local).
+   525→
+   526→6.6 Batch / Multi-file handling
+   527→
+   528→- Single-file tools par multiple files drop karein to "Batch mode" (queue): sab ek hi settings se process, output ZIP.
+   529→
+   530→- Free users: batch 5 files, Pro: 50+.
+   531→
+   532→- Queue panel: per-file progress, failed items retry, "Download all".
+   533→
+   534→7\. Complete Tool Catalog
+   535→
+   536→**Legend:** Mode D = Device-only (browser), S = Server-assisted (stateless worker). Phase P1 = MVP, P2 = Editor aur advanced client tools, P3 = Server tools aur niche tools. Free/Pro limits Section 11 me.
+   537→
+   538→7.1 Organize
+   539→
+   540→| **Tool**                                          | **URL**              | **Mode** | **Engine**            | **Phase** |
+   541→|---------------------------------------------------|----------------------|----------|-----------------------|-----------|
+   542→| Merge PDF                                         | /merge-pdf           | D        | pdf-lib               | P1        |
+   543→| Assemble PDF (multi-doc, move pages between)      | /assemble-pdf        | D        | pdf-lib + pdf.js      | P2        |
+   544→| Split PDF                                         | /split-pdf           | D        | pdf-lib               | P1        |
+   545→| Rearrange PDF pages                               | /rearrange-pdf-pages | D        | pdf-lib               | P1        |
+   546→| Remove PDF pages                                  | /remove-pdf-pages    | D        | pdf-lib               | P1        |
+   547→| Extract PDF pages                                 | /extract-pdf-pages   | D        | pdf-lib               | P1        |
+   548→| Rotate PDF pages                                  | /rotate-pdf-pages    | D        | pdf-lib               | P1        |
+   549→| Pages per sheet (N-up)                            | /pages-per-sheet     | D        | pdf-lib               | P2        |
+   550→| Halve PDF pages                                   | /halve-pdf-pages     | D        | pdf-lib               | P2        |
+   551→| Bookmark PDF                                      | /bookmark-pdf        | D        | pdf-lib               | P2        |
+   552→| Extract PDF images                                | /extract-images      | D        | pdf.js                | P2        |
+   553→| Copy from PDF (text, tables, pictures; scans too) | /copy-from-pdf       | D        | pdf.js + Tesseract.js | P2        |
+   554→
+   555→7.2 Edit
+   556→
+   557→| **Tool**                        | **URL**               | **Mode** | **Engine**                | **Phase** |
+   558→|---------------------------------|-----------------------|----------|---------------------------|-----------|
+   559→| Edit PDF (full editor)          | /edit-pdf             | D        | pdf.js + Fabric + pdf-lib | P2        |
+   560→| Annotate PDF                    | /annotate-pdf         | D        | Editor core               | P2        |
+   561→| Fill out PDF forms              | /fill-out-pdf         | D        | pdf-lib forms             | P1        |
+   562→| Make PDF fillable               | /make-pdf-fillable    | D        | pdf-lib                   | P2        |
+   563→| Add watermark                   | /add-watermark        | D        | pdf-lib                   | P1        |
+   564→| Add page numbers                | /add-page-numbers     | D        | pdf-lib                   | P1        |
+   565→| Header & footer                 | /add-header-footer    | D        | pdf-lib                   | P1        |
+   566→| Overlay PDF                     | /overlay-pdf          | D        | pdf-lib                   | P2        |
+   567→| Crop PDF                        | /crop-pdf             | D        | pdf-lib                   | P1        |
+   568→| Change PDF page size            | /change-pdf-page-size | D        | pdf-lib                   | P2        |
+   569→| Change PDF document information | /change-pdf-doc-info  | D        | pdf-lib                   | P1        |
+   570→
+   571→7.3 Create
+   572→
+   573→| **Tool**                             | **URL**                   | **Mode** | **Engine**                 | **Phase** |
+   574→|--------------------------------------|---------------------------|----------|----------------------------|-----------|
+   575→| Create PDF (blank/design)            | /create-pdf               | D        | Editor core                | P2        |
+   576→| Write PDF (word-processor style)     | /write-pdf                | D        | Rich text editor + pdf-lib | P2        |
+   577→| Scan to PDF (camera)                 | /scan-pdf                 | D        | Camera API + edge detect   | P1        |
+   578→| Webpage to PDF                       | /webpage-to-pdf           | S        | Headless Chromium (worker) | P3        |
+   579→| Images to PDF                        | /images-to-pdf            | D        | pdf-lib                    | P1        |
+   580→| Create photo collage                 | /create-photo-collage     | D        | Canvas                     | P3        |
+   581→| Create card (postcards, invitations) | /create-card              | D        | Canvas + pdf-lib           | P3        |
+   582→| Create PDF form                      | /create-fillable-pdf-form | D        | pdf-lib                    | P3        |
+   583→| Create resume / job application      | /create-resume            | D        | Templates + pdf-lib        | P3        |
+   584→| Generate QR code                     | /generate-qr-code         | D        | qrcode lib                 | P2        |
+   585→
+   586→7.4 Invoices (India-focused)
+   587→
+   588→| **Tool**                                     | **URL**                    | **Mode** | **Engine**             | **Phase** |
+   589→|----------------------------------------------|----------------------------|----------|------------------------|-----------|
+   590→| Create invoice (GST ready)                   | /create-invoice            | D        | Templates + pdf-lib    | P3        |
+   591→| Create invoice visually                      | /create-invoice-visually   | D        | Editor core            | P3        |
+   592→| Create electronic invoice (Factur-X/ZUGFeRD) | /create-electronic-invoice | S        | Worker (PDF/A-3 + XML) | P3        |
+   593→| PDF invoice to e-invoice                     | /pdf-to-e-invoice          | S        | Worker                 | P3        |
+   594→| XML e-invoice to PDF                         | /xml-invoice-to-pdf        | D        | XML parse + pdf-lib    | P3        |
+   595→| Validate e-invoice                           | /validate-e-invoice        | S        | Worker                 | P3        |
+   596→
+   597→7.5 Optimize & Repair
+   598→
+   599→| **Tool**                                         | **URL**               | **Mode**      | **Engine**                                    | **Phase** |
+   600→|--------------------------------------------------|-----------------------|---------------|-----------------------------------------------|-----------|
+   601→| Compress PDF                                     | /compress-pdf         | D (+S strong) | Canvas re-encode, pdf-lib; worker qpdf/pdfcpu | P1        |
+   602→| Compress to target size (100KB / 200KB / custom) | /compress-pdf-to-size | D             | Iterative compress                            | P2        |
+   603→| Web optimize (linearize)                         | /web-optimize-pdf     | D             | qpdf-wasm                                     | P3        |
+   604→| PDF OCR (searchable)                             | /ocr-pdf              | D             | Tesseract.js                                  | P2        |
+   605→| Repair PDF                                       | /repair-pdf           | D             | qpdf-wasm (fallback S)                        | P3        |
+   606→| Rasterize PDF                                    | /rasterize-pdf        | D             | pdf.js + pdf-lib                              | P2        |
+   607→| Flatten PDF                                      | /flatten-pdf          | D             | pdf-lib                                       | P2        |
+   608→| PDF to PDF/A                                     | /pdf-to-pdfa          | S             | Worker                                        | P3        |
+   609→
+   610→7.6 Security & Privacy
+   611→
+   612→| **Tool**                                | **URL**              | **Mode** | **Engine**                  | **Phase** |
+   613→|-----------------------------------------|----------------------|----------|-----------------------------|-----------|
+   614→| Protect PDF (password, permissions)     | /lock-pdf            | D        | qpdf-wasm AES-256           | P1        |
+   615→| Unlock PDF                              | /unlock-pdf          | D        | qpdf-wasm                   | P1        |
+   616→| Sign PDF (visual signature)             | /sign-pdf            | D        | Editor core                 | P1        |
+   617→| Digital signature (certificate, PAdES)  | /digital-signature   | D        | pkijs                       | P3        |
+   618→| Redact PDF                              | /redact-pdf          | D        | pdf.js + rasterize pipeline | P3        |
+   619→| Remove PDF metadata                     | /remove-pdf-metadata | D        | pdf-lib                     | P1        |
+   620→| Generate password                       | /generate-password   | D        | Web Crypto                  | P1        |
+   621→| Request signature (send link to others) | /request-signature   | S        | Worker + Turso (Pro)        | P3        |
+   622→
+   623→7.7 View & Check
+   624→
+   625→| **Tool**                    | **URL**                     | **Mode** | **Engine**       | **Phase** |
+   626→|-----------------------------|-----------------------------|----------|------------------|-----------|
+   627→| View PDF                    | /view-pdf                   | D        | pdf.js           | P1        |
+   628→| Compare PDFs                | /compare-pdf                | D        | pdf.js + diff    | P3        |
+   629→| Search in PDFs (many files) | /search-pdf                 | D        | pdf.js text      | P2        |
+   630→| Check PDF/A & PDF/UA        | /validate-pdfa              | S        | veraPDF (worker) | P3        |
+   631→| Verify PDF signatures       | /verify-pdf-signatures      | D        | pkijs            | P3        |
+   632→| Set viewer preferences      | /set-pdf-viewer-preferences | D        | pdf-lib          | P2        |
+   633→
+   634→7.8 Convert to PDF
+   635→
+   636→| **Tool**                                 | **URL**            | **Mode** | **Engine**            | **Phase** |
+   637→|------------------------------------------|--------------------|----------|-----------------------|-----------|
+   638→| Word to PDF (DOC, DOCX)                  | /word-to-pdf       | S        | LibreOffice           | P3        |
+   639→| PowerPoint to PDF (PPT, PPTX)            | /powerpoint-to-pdf | S        | LibreOffice           | P3        |
+   640→| Excel to PDF (XLS, XLSX)                 | /excel-to-pdf      | S        | LibreOffice           | P3        |
+   641→| Publisher to PDF (PUB)                   | /publisher-to-pdf  | S        | LibreOffice (limited) | P3        |
+   642→| OpenDocument to PDF (ODT, ODS, ODP, ODG) | /odt-to-pdf etc.   | S        | LibreOffice           | P3        |
+   643→| RTF to PDF                               | /rtf-to-pdf        | S        | LibreOffice           | P3        |
+   644→| EPUB to PDF                              | /epub-to-pdf       | S        | Worker                | P3        |
+   645→| Text to PDF                              | /txt-to-pdf        | D        | pdf-lib + fonts       | P2        |
+   646→| Markdown to PDF                          | /markdown-to-pdf   | D        | marked + pdf-lib      | P2        |
+   647→| HTML to PDF                              | /html-to-pdf       | S        | Headless Chromium     | P3        |
+   648→| JPG to PDF                               | /jpg-to-pdf        | D        | pdf-lib               | P1        |
+   649→| PNG to PDF                               | /png-to-pdf        | D        | pdf-lib               | P1        |
+   650→| WEBP to PDF                              | /webp-to-pdf       | D        | Canvas + pdf-lib      | P1        |
+   651→| HEIC to PDF                              | /heic-to-pdf       | D        | HEIC WASM decoder     | P2        |
+   652→| SVG to PDF                               | /svg-to-pdf        | D        | Canvas + pdf-lib      | P2        |
+   653→| TIFF to PDF                              | /tiff-to-pdf       | D        | UTIF + pdf-lib        | P2        |
+   654→| Universal converter page                 | /convert-to-pdf    | D/S      | Routes by file type   | P1        |
+   655→
+   656→7.9 Convert from PDF
+   657→
+   658→| **Tool**                            | **URL**                    | **Mode**    | **Engine**                 | **Phase** |
+   659→|-------------------------------------|----------------------------|-------------|----------------------------|-----------|
+   660→| PDF to Word (DOCX)                  | /pdf-to-word               | S           | LibreOffice / custom       | P3        |
+   661→| PDF to PowerPoint (PPTX)            | /pdf-to-powerpoint         | S           | Worker                     | P3        |
+   662→| PDF to Excel (XLSX)                 | /pdf-to-excel              | S           | Table extraction (worker)  | P3        |
+   663→| PDF to JPG                          | /pdf-to-jpg                | D           | pdf.js canvas              | P1        |
+   664→| PDF to PNG                          | /pdf-to-png                | D           | pdf.js canvas              | P1        |
+   665→| PDF to WEBP / TIFF                  | /pdf-to-webp, /pdf-to-tiff | D           | Canvas / UTIF              | P2        |
+   666→| PDF to SVG                          | /pdf-to-svg                | S           | Worker (pdftocairo-like)   | P3        |
+   667→| PDF to Text                         | /pdf-to-txt                | D           | pdf.js (OCR optional)      | P1        |
+   668→| PDF to HTML                         | /pdf-to-html               | D basic / S | pdf.js text layer / worker | P3        |
+   669→| PDF to Markdown                     | /pdf-to-markdown           | D           | pdf.js heuristics          | P3        |
+   670→| PDF to ODT / ODS / ODP / RTF / EPUB | /pdf-to-odt etc.           | S           | Worker                     | P3        |
+   671→| Universal converter page            | /convert-from-pdf          | D/S         | Routes by target format    | P1        |
+   672→
+   673→7.10 Convert images and utilities
+   674→
+   675→| **Tool**                                                      | **URL**                    | **Mode** | **Engine**   | **Phase** |
+   676→|---------------------------------------------------------------|----------------------------|----------|--------------|-----------|
+   677→| HEIC to JPG / PNG                                             | /heic-to-jpg, /heic-to-png | D        | WASM decoder | P1        |
+   678→| WEBP to JPG / PNG                                             | /webp-to-jpg, /webp-to-png | D        | Canvas       | P1        |
+   679→| Resize / compress image to KB (photo and signature for forms) | /resize-image-kb           | D        | Canvas       | P2        |
+   680→| Passport photo maker (India sizes)                            | /passport-photo            | D        | Canvas       | P3        |
+   681→| Scan to PDF (camera)                                          | /scan-pdf                  | D        | Camera API   | P1        |
+   682→
+   683→**Total:** lagbhag 100+ tool pages (formats ke variants ko alag SEO pages mante hue), lekin core engines sirf ~25. Isliye ToolShell + config pattern zaroori hai.
+   684→
+   685→8\. Detailed Tool Specifications
+   686→
+   687→Har spec me: input, options, preview, validation, errors, output. Common behavior jo sab tools par lagu: file type check magic bytes se (extension par bharosa nahi), encrypted PDF par password prompt, corrupt file par Repair suggest, output name default "\<original\>-\<tool\>.pdf".
+   688→
+   689→8.1 Organize tools
+   690→
+   691→Merge PDF
+   692→
+   693→|                      |                                                                                                                                                                                  |
+   694→|----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   695→| **Input**            | 2 se 50 PDF (images bhi allowed: auto Images to PDF). Total size device limit tak.                                                                                               |
+   696→| **Preview**          | File cards grid: thumbnail pehla page, naam, pages, size. Drag-reorder (touch par long-press + up/down buttons). Card click karne par page-level expand (pages select/deselect). |
+   697→| **Per-file actions** | Rotate, Remove, Select page range (1-3, 5), Unlock (agar encrypted), Replace.                                                                                                    |
+   698→| **Options**          | Merge all / selected pages; Sort A-Z, Z-A, date; Add bookmarks per file; Insert blank page between files; Keep form fields or flatten; Output name.                              |
+   699→| **Validations**      | Kam se kam 2 files (ya 1 file ke multiple page ranges); locked file par password zaroori; unsupported file alert.                                                                |
+   700→| **Errors**           | File corrupt: "Ye file khul nahi rahi" + Repair option; memory kam: "File badi hai, kam files select karein".                                                                    |
+   701→| **Output**           | Single merged PDF; summary "5 files, 42 pages".                                                                                                                                  |
+   702→
+   703→Split PDF
+   704→
+   705→|                  |                                                                                                                                                                                                                                                                                                                               |
+   706→|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   707→| **Modes (tabs)** | 1\) By range: "1-5, 8, 10-end" (custom ranges list, har range alag file ya ek file). 2) Every N pages. 3) By bookmarks (top-level). 4) By file size (max MB per part). 5) Visual select: thumbnails me page ke beech scissors icon click karke cut points. 6) Odd/Even. 7) Extract blank-page separators (blank page detect). |
+   708→| **Preview**      | Thumbnail strip with cut markers and color-coded parts; live count "3 files banengi".                                                                                                                                                                                                                                         |
+   709→| **Validations**  | Range page count ke andar; overlap warning; bookmarks na ho to tab disabled.                                                                                                                                                                                                                                                  |
+   710→| **Output**       | 1 file = direct download; multiple = ZIP (fflate) + individual download list. Naming: name_part1.pdf.                                                                                                                                                                                                                         |
+   711→
+   712→Rotate / Rearrange / Remove / Extract (Page-grid family)
+   713→
+   714→|                    |                                                                                                                                                      |
+   715→|--------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+   716→| **Component**      | Ek hi PageGrid component, alag presets. Sab pages thumbnails me.                                                                                     |
+   717→| **Common actions** | Select (click/shift-click/Ctrl+A, range input), drag reorder, rotate 90 left/right per page ya selected, delete, duplicate, insert blank, undo/redo. |
+   718→| **Rotate preset**  | Rotate all / selected / odd / even buttons; live thumbnail rotation.                                                                                 |
+   719→| **Remove preset**  | Select to delete, ya type "2,5-7"; "Remove blank pages" auto-detect.                                                                                 |
+   720→| **Extract preset** | Selected pages se naya PDF; option "ek page = ek file".                                                                                              |
+   721→| **Large docs**     | Virtualized grid; thumbnails lazy; zoom slider for thumbnail size.                                                                                   |
+   722→| **Safety**         | Sab pages delete ho to Apply disabled.                                                                                                               |
+   723→
+   724→Assemble PDF
+   725→
+   726→|             |                                                                                                                                                    |
+   727→|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
+   728→| **Concept** | Multiple documents ek hi screen me, columns ki tarah. Pages ek document se doosre me drag; new document column banayein; sabko alag save ya merge. |
+   729→| **Options** | Zipper merge (alternate pages, jaise front/back scans), reverse, save all as ZIP.                                                                  |
+   730→
+   731→Pages per sheet / Halve / Overlay / Crop / Page size
+   732→
+   733→|                      |                                                                                                                |
+   734→|----------------------|----------------------------------------------------------------------------------------------------------------|
+   735→| **Pages per sheet**  | 2, 4, 6, 9, 16 per sheet; orientation, order (row/column), margins, spacing, borders; live preview of sheet.   |
+   736→| **Halve pages**      | Vertical ya horizontal cut; scanned book pages (left/right order, reverse).                                    |
+   737→| **Overlay**          | Base PDF aur overlay PDF; page mapping (all / first / odd / custom); position, opacity; foreground/background. |
+   738→| **Crop**             | Visual crop box drag; margins numeric; apply to all / selected; auto-detect margins; shows before/after.       |
+   739→| **Change page size** | A3/A4/A5/Letter/Legal/custom mm; scale content (fit/fill/none); unify mixed sizes.                             |
+   740→
+   741→Bookmark PDF / Extract images / Copy from PDF
+   742→
+   743→|                    |                                                                                                                                 |
+   744→|--------------------|---------------------------------------------------------------------------------------------------------------------------------|
+   745→| **Bookmark**       | Tree editor: add, rename, nest (drag), set target page, import existing, remove all.                                            |
+   746→| **Extract images** | Sab embedded images grid; select; format original/PNG/JPG; min size filter; ZIP download.                                       |
+   747→| **Copy from PDF**  | Click paragraph/table/list/picture on page to select; copy as text, Markdown, CSV/Excel (tables). Scan pages par OCR on-demand. |
+   748→
+   749→8.2 Edit tools
+   750→
+   751→8.2.1 Edit PDF (flagship editor)
+   752→
+   753→Editor layout (desktop)
+   754→
+   755→+--------------------------------------------------------------------------------+
+   756→
+   757→\| Logo \| File name (rename) \| Undo Redo \| Zoom \[-\] 100% \[+\] Fit \| Pages 3/12 \| \[Download\]\|
+   758→
+   759→+--------------------------------------------------------------------------------+
+   760→
+   761→\| TOOLBAR: Select \| Text \| Image \| Shape \| Draw \| Highlight \| Whiteout \| Sign \| Form \|
+   762→
+   763→\| Link \| Note \| Stamp \| Page ops \| Find&Replace \| More \|
+   764→
+   765→+--------+------------------------------------------------------+----------------+
+   766→
+   767→\| Thumbs \| \| PROPERTIES \|
+   768→
+   769→\| p1 \| CANVAS (page render + objects) \| Font, size \|
+   770→
+   771→\| p2 \| \| Color, bold \|
+   772→
+   773→\| p3 \| \[floating mini toolbar over selected obj\] \| Align, opacity \|
+   774→
+   775→\| + page \| \| Layer order \|
+   776→
+   777→+--------+------------------------------------------------------+----------------+
+   778→
+   779→\| Status: Draft saved on this device \| Shortcuts (?) \|
+   780→
+   781→+--------------------------------------------------------------------------------+
+   782→
+   783→| **Tool**                               | **Behavior**                                                                                                                                                                                                                                                                                                                                           |
+   784→|----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   785→| Select / Move                          | Click object select, drag move, handles resize/rotate, shift for aspect ratio, multi-select box, arrow-key nudge, snap guides.                                                                                                                                                                                                                         |
+   786→| Edit existing text                     | Text layer (pdf.js) detect karke click par text block edit mode. Approach: original text area whiteout + naya text same position par, font match (standard fonts, embedded font agar subset allow kare, warna closest font suggest). Limit: paragraph reflow auto nahi; line-by-line edit. UI me clear message "Is text ka font mil gaya / nahi mila". |
+   787→| Add text                               | Click-to-type, drag box. Font family (Noto Sans, Noto Sans Devanagari, Serif, Mono, Handwriting), size, color, bold/italic/underline, align, line spacing, opacity, background fill, border.                                                                                                                                                           |
+   788→| Images                                 | Upload/paste; resize, rotate, crop, flip, opacity, replace, send to back/front. Background remove (Pro, optional P3).                                                                                                                                                                                                                                  |
+   789→| Shapes                                 | Rectangle, ellipse, line, arrow, polygon, checkmark/cross; fill, stroke, width, dash.                                                                                                                                                                                                                                                                  |
+   790→| Draw                                   | Freehand pen, pressure smoothing, color/width; eraser for strokes.                                                                                                                                                                                                                                                                                     |
+   791→| Highlight / Underline / Strike         | Text select karke apply; color presets; real PDF annotations (editable in other readers).                                                                                                                                                                                                                                                              |
+   792→| Whiteout / Erase                       | Rectangle fill (page background color eyedropper); option "Permanently remove underlying text" (redact-lite).                                                                                                                                                                                                                                          |
+   793→| Sticky note / Comment                  | Note icon + popup text; comment list in sidebar.                                                                                                                                                                                                                                                                                                       |
+   794→| Forms                                  | Text field, checkbox, radio group, dropdown, date, signature field; name/required/default/tab order.                                                                                                                                                                                                                                                   |
+   795→| Links                                  | URL, email, go-to-page; shape ya text par.                                                                                                                                                                                                                                                                                                             |
+   796→| Sign                                   | Draw/Type/Upload saved signatures, initials, date, name auto-field.                                                                                                                                                                                                                                                                                    |
+   797→| Stamps                                 | Approved, Rejected, Draft, Confidential, Paid, Received, Custom date stamp; custom image stamp.                                                                                                                                                                                                                                                        |
+   798→| Page operations (thumbnail panel)      | Add blank, insert from another PDF, delete, duplicate, rotate, reorder (drag).                                                                                                                                                                                                                                                                         |
+   799→| Find & Replace                         | Text search across document; replace one/all (same font rules as text edit).                                                                                                                                                                                                                                                                           |
+   800→| Header/Footer, Page numbers, Watermark | Quick access menu linking to those tool panels inside editor.                                                                                                                                                                                                                                                                                          |
+   801→| Layers panel                           | Objects list per page, lock, hide, reorder.                                                                                                                                                                                                                                                                                                            |
+   802→
+   803→Editor UX rules
+   804→
+   805→|                               |                                                                                                                                                                                         |
+   806→|-------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   807→| **Undo/Redo**                 | Unlimited (command stack), Ctrl+Z / Ctrl+Shift+Z, har action grouped.                                                                                                                   |
+   808→| **Autosave**                  | Har 5 second ya change par IndexedDB me draft (objects JSON + original file reference). Reopen par "Resume draft?"                                                                      |
+   809→| **Shortcuts**                 | V select, T text, I image, H highlight, D draw, Delete, Ctrl+C/V/D, Ctrl+A, +/- zoom, ? shows cheat sheet.                                                                              |
+   810→| **Context menu**              | Right-click: copy, paste, duplicate, bring front/back, lock, delete, properties. Mobile: long-press.                                                                                    |
+   811→| **Mobile mode**               | Simplified bottom toolbar (Text, Sign, Draw, Image, More), pinch-zoom, two-finger pan, properties in bottom sheet, larger handles.                                                      |
+   812→| **Accessibility**             | Keyboard object navigation (Tab), arrow nudge, ARIA labels, screen reader text for toolbar.                                                                                             |
+   813→| **Export**                    | Download PDF: objects pdf-lib se native PDF content/annotations me convert. Options: Flatten annotations, Keep editable, Compress on save.                                              |
+   814→| **Hindi support**             | Devanagari shaping correct (embedded Noto Sans Devanagari with proper shaping engine such as fontkit/HarfBuzz WASM), RTL not in v1.                                                     |
+   815→| **Limitations (honest copy)** | Scanned PDF ka text edit OCR ke baad hi; complex layouts/embedded subset fonts me exact match na ho sake; password-protected edit restrictions respect (owner password hai to warning). |
+   816→| **Performance**               | Sirf visible pages render; objects per page Fabric canvas; max 500 pages editor me (beyond: warn).                                                                                      |
+   817→
+   818→Fill out PDF / Make PDF fillable
+   819→
+   820→|                      |                                                                                                                                                                                  |
+   821→|----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   822→| **Fill out**         | Existing form fields highlight; Tab navigation; checkbox/radio/dropdown; date picker; auto-fill saved info (name, address, email) from local profile; Flatten after fill option. |
+   823→| **Non-fillable PDF** | "Add text anywhere" mode with auto field-detect (lines/boxes) suggestion.                                                                                                        |
+   824→| **Make fillable**    | Auto-detect likely fields (underlines, boxes) + manual add; field properties; export as AcroForm.                                                                                |
+   825→
+   826→Watermark / Page numbers / Header & footer
+   827→
+   828→|                     |                                                                                                                                                          |
+   829→|---------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+   830→| **Input**           | Single PDF.                                                                                                                                              |
+   831→| **Watermark**       | Text (font, size, color, opacity, rotation, position 9-grid, tile) ya image/logo; behind or over content; layout all/odd/even/range/first-page-excluded. |
+   832→| **Page numbers**    | Formats: 1, Page 1, 1/N, Page 1 of N, i, I, a; start number; position 9-grid + margins; font; skip first page; Hindi digits optional.                    |
+   833→| **Header & footer** | Left/center/right text with variables: {page}, {pages}, {date}, {filename}, {title}.                                                                     |
+   834→| **Preview**         | Live canvas preview on selected sample page; thumbnails strip.                                                                                           |
+   835→
+   836→Change document information
+   837→
+   838→|            |                                                                                                 |
+   839→|------------|-------------------------------------------------------------------------------------------------|
+   840→| **Fields** | Title, Author, Subject, Keywords, Creator, Producer, dates; "Remove all metadata" quick toggle. |
+   841→
+   842→8.3 Security tools
+   843→
+   844→Protect PDF
+   845→
+   846→|                |                                                                                                                                                                                           |
+   847→|----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   848→| **Options**    | Open password (strength meter, show/hide, generate button), Owner password, permissions (print, copy, edit, annotate, fill forms, accessibility), encryption AES-256 (default) / AES-128. |
+   849→| **Validation** | Password min 6 characters (recommend 12+); confirm field; warns "Password bhool gaye to recover nahi hoga".                                                                               |
+   850→| **Note**       | qpdf-wasm se encrypt; pdf-lib encryption support nahi karta.                                                                                                                              |
+   851→
+   852→Unlock PDF
+   853→
+   854→|            |                                                                                                                                               |
+   855→|------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+   856→| **Modes**  | 1\) Open password maloom hai: enter and remove. 2) Owner restrictions (print/copy/edit disabled) hatana jab PDF bina open-password khulta ho. |
+   857→| **Policy** | Unknown open-password crack karne ka feature NAHI. Disclaimer: "Sirf apni files ya jinki aapko permission hai unhe unlock karein."            |
+   858→
+   859→Sign PDF
+   860→
+   861→|                                 |                                                                                                                                                                                            |
+   862→|---------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   863→| **Create signature**            | Draw (mouse/touch/stylus), Type (8 script fonts incl. Hindi style), Upload image (background auto-remove). Save multiple, device par encrypted storage.                                    |
+   864→| **Place**                       | Click to place, drag/resize/rotate; apply on multiple pages; auto fields: Initials, Date, Name, Text, Checkmark.                                                                           |
+   865→| **Output**                      | Flatten signature into page. Option "Add signature field" (visual).                                                                                                                        |
+   866→| **Digital signature (P3)**      | Certificate (.pfx/.p12) upload se PAdES basic signature, reason/location/contact, visible/invisible, timestamp (apna ya optional TSA).                                                     |
+   867→| **Request signature (P3, Pro)** | Doc link (encrypted, expiring) doosre ko bhejna, signing order, reminders, audit trail. Yeh S-mode tool hai aur file server par rehti hai jab tak sign na ho; alag consent screen zaroori. |
+   868→
+   869→Redact PDF
+   870→
+   871→|                  |                                                                                                                                                                                            |
+   872→|------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   873→| **Methods**      | 1\) Draw box. 2) Search text/regex. 3) Pattern presets: Aadhaar (12 digits), PAN, phone, email, IFSC, account number, date of birth.                                                       |
+   874→| **Preview**      | Marked areas dikhte hain (red overlay); review list with check/uncheck.                                                                                                                    |
+   875→| **Secure apply** | Default "Secure mode": affected pages ko image (rasterize) me convert karke black box burn-in, taaki underlying text recover na ho. Option "Keep text elsewhere" (selective rasterize) P3. |
+   876→| **Warning**      | "Redaction permanent hai. Original file alag save rakhein."                                                                                                                                |
+   877→| **Verification** | Output me redacted text search test auto-run: "0 matches found".                                                                                                                           |
+   878→
+   879→Remove metadata / Generate password
+   880→
+   881→|                       |                                                                                                                                                      |
+   882→|-----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+   883→| **Remove metadata**   | Preview of found metadata (author, software, GPS from images optional, XMP) aur remove all; output with before/after list.                           |
+   884→| **Generate password** | Length 8-64, character sets, pronounceable, passphrase (Hindi/English word list), copy button, strength meter. Web Crypto (random), kuch store nahi. |
+   885→
+   886→8.4 Optimize tools
+   887→
+   888→Compress PDF
+   889→
+   890→|                          |                                                                                                                                                                                                       |
+   891→|--------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   892→| **Presets**              | Low compression (best quality), Recommended, Extreme; Custom: image quality slider (30-95), downscale DPI (72/96/150/200/300), grayscale, remove metadata, remove embedded thumbnails/unused objects. |
+   893→| **Target size**          | "Compress to under 100 KB / 200 KB / 500 KB / 1 MB / custom": iterative quality+DPI loop with progress; fail message agar possible nahi ("Is size tak nahi ja sakta, closest 140 KB").                |
+   894→| **Preview**              | Estimated size, before/after quality compare slider on a sample page.                                                                                                                                 |
+   895→| **Device mode**          | Images canvas se re-encode (JPEG/WebP), pdf-lib object streams. Text-only PDF me kam saving; "Already optimized" message agar \<5% saving.                                                            |
+   896→| **Server mode (strong)** | Optional "Better compression (server)": qpdf + pdfcpu + image downsampling on worker; clear badge.                                                                                                    |
+   897→| **Output**               | Result page me size delta aur % saving; agar bada ho gaya to original return.                                                                                                                         |
+   898→
+   899→PDF OCR
+   900→
+   901→|                        |                                                                                                                                                                                                                          |
+   902→|------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   903→| **Input**              | Scanned PDF ya images.                                                                                                                                                                                                   |
+   904→| **Options**            | Languages (English, Hindi, Marathi, Bengali, Tamil, Telugu, Gujarati, Urdu... multi-select; model files lazy download), page range, deskew, rotate auto, DPI 150/300; output: Searchable PDF / Text / Word-like (S, P3). |
+   905→| **Preview**            | Per-page OCR confidence, text overlay toggle.                                                                                                                                                                            |
+   906→| **Notes**              | Mobile par slow; progress per page; background Web Worker; tip box accuracy ke liye (300 DPI, straight scan).                                                                                                            |
+   907→| **Download of models** | First use par "Hindi OCR data (12 MB) download ho raha hai" (cached for offline).                                                                                                                                        |
+   908→
+   909→Rasterize / Flatten / Repair / Web optimize / PDF/A
+   910→
+   911→|                  |                                                                                                   |
+   912→|------------------|---------------------------------------------------------------------------------------------------|
+   913→| **Rasterize**    | Pages ko images banakar naya PDF (non-editable); DPI choice.                                      |
+   914→| **Flatten**      | Form fields aur annotations ko page content me merge.                                             |
+   915→| **Repair**       | qpdf rebuild xref; agar fail ho to S-mode more aggressive; result report "Recovered 18/20 pages". |
+   916→| **Web optimize** | Linearize for fast web view.                                                                      |
+   917→| **PDF/A**        | Level 1b/2b/3b choose; embedded fonts, color profile; conformance report (S-mode).                |
+   918→
+   919→8.5 View & Check tools
+   920→
+   921→Compare PDFs
+   922→
+   923→|              |                                                                                         |
+   924→|--------------|-----------------------------------------------------------------------------------------|
+   925→| **Input**    | Two PDFs (Original, Revised).                                                           |
+   926→| **Views**    | Side-by-side (sync scroll), Overlay (red/green diff), Text-diff list.                   |
+   927→| **Controls** | Sensitivity, ignore whitespace/case, page mapping, change list jump, export report PDF. |
+   928→
+   929→Search in PDFs / Viewer preferences / Verify signatures / Check PDF/A
+   930→
+   931→|                         |                                                                                                                               |
+   932→|-------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+   933→| **Search in PDFs**      | Multiple PDFs select, query ya regex, results with page and context snippet, click to open at page. Index in-memory (device). |
+   934→| **Viewer preferences**  | Initial page layout, zoom, window title show, hide toolbars, fullscreen.                                                      |
+   935→| **Verify signatures**   | Signer, time, certificate chain status, "document modified after signing?" indicator.                                         |
+   936→| **Check PDF/A, PDF/UA** | Report with pass/fail rules grouped, page references.                                                                         |
+   937→
+   938→8.6 Convert tools
+   939→
+   940→Images to PDF (JPG, PNG, WEBP, HEIC, TIFF, SVG)
+   941→
+   942→|             |                                                                                                                                                                       |
+   943→|-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   944→| **Input**   | Multiple images; reorder; rotate; crop each.                                                                                                                          |
+   945→| **Options** | Page size (A4, Letter, Fit to image), orientation, margin (none/small/big), image quality, one image per page or multiple (grid), background color, add page numbers. |
+   946→| **Mobile**  | Camera capture multiple; auto edge detection (scan mode).                                                                                                             |
+   947→
+   948→PDF to images (JPG, PNG, WEBP, TIFF)
+   949→
+   950→|             |                                                                                                                                |
+   951→|-------------|--------------------------------------------------------------------------------------------------------------------------------|
+   952→| **Options** | Format, DPI (72/150/300/600), page range or selected, transparent background (PNG), quality; extract-embedded vs render pages. |
+   953→| **Output**  | Single page direct; multiple ZIP; progress per page; memory-safe sequential render.                                            |
+   954→
+   955→Office to PDF (Word, Excel, PowerPoint, ODF, RTF, Publisher)
+   956→
+   957→|             |                                                                                                                                      |
+   958→|-------------|--------------------------------------------------------------------------------------------------------------------------------------|
+   959→| **Mode**    | S-mode (LibreOffice). Badge "Server processing - file deleted right after".                                                          |
+   960→| **Options** | Excel: fit sheet to page width, all sheets/selected; PowerPoint: slides per page/notes; Word: PDF/A option, quality (standard/high). |
+   961→| **Limits**  | Size 50MB free; timeout 120 s; fonts note ("Custom fonts ho to layout badal sakta hai"), macros disabled.                            |
+   962→| **Errors**  | Password-protected Office file: error + instruction; unsupported features: warning.                                                  |
+   963→
+   964→PDF to Office (Word, Excel, PowerPoint)
+   965→
+   966→|                 |                                                                                                                                                 |
+   967→|-----------------|-------------------------------------------------------------------------------------------------------------------------------------------------|
+   968→| **Mode**        | S-mode.                                                                                                                                         |
+   969→| **Word**        | Options: "Keep layout exact" (text boxes) vs "Editable flow text"; OCR toggle for scanned.                                                      |
+   970→| **Excel**       | Table detection, each table to sheet; merge pages; number cleanup.                                                                              |
+   971→| **PowerPoint**  | Page = slide; text editable where possible; else image.                                                                                         |
+   972→| **Honest note** | "PDF se Word 100% perfect nahi hota. Complex layout me thoda formatting fix karna pad sakta hai." Quality preview before download (first page). |
+   973→
+   974→PDF to Text / HTML / Markdown / EPUB / RTF / SVG
+   975→
+   976→|                            |                                                                                          |
+   977→|----------------------------|------------------------------------------------------------------------------------------|
+   978→| **Text**                   | Device: pdf.js text extraction, reading-order options, keep layout toggle, OCR fallback. |
+   979→| **HTML / Markdown**        | Heading/list heuristics; images extraction ZIP.                                          |
+   980→| **EPUB / RTF / ODT / SVG** | S-mode worker.                                                                           |
+   981→
+   982→Universal converter pages
+   983→
+   984→|                                           |                                                                                                        |
+   985→|-------------------------------------------|--------------------------------------------------------------------------------------------------------|
+   986→| **/convert-to-pdf and /convert-from-pdf** | Drop any file; format auto-detect; target picker; routes to right tool; recommended for Home hero too. |
+   987→
+   988→8.7 Create tools
+   989→
+   990→Create PDF / Write PDF
+   991→
+   992→|                |                                                                                                                                                                                                                   |
+   993→|----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+   994→| **Create PDF** | Blank page or template (Letter, Notes, Planner, Invoice, Resume); opens in Editor with page size options.                                                                                                         |
+   995→| **Write PDF**  | Rich text editor: headings, bold/italic/underline, lists, tables, images, page breaks, header/footer, fonts (Hindi), page numbers; templates (letter, application, offer, report); live page preview; export PDF. |
+   996→
+   997→Scan to PDF (camera)
+   998→
+   999→|            |                                                                                                                                                                      |
+  1000→|------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1001→| **Flow**   | Camera access, auto edge detect and perspective correct, filters (Original, Magic color, B&W, Grayscale), multi-page capture, reorder, crop, OCR toggle, export PDF. |
+  1002→| **Mobile** | Primary use case; also "Upload from gallery".                                                                                                                        |
+  1003→
+  1004→Webpage to PDF / HTML to PDF
+  1005→
+  1006→|             |                                                                                                                                |
+  1007→|-------------|--------------------------------------------------------------------------------------------------------------------------------|
+  1008→| **Input**   | URL (or pasted HTML).                                                                                                          |
+  1009→| **Options** | Page size, orientation, margins, include background, remove ads/cookie banners (best effort), screenshot full page, wait time. |
+  1010→| **Mode**    | S-mode; SSRF protection (block private IPs), URL allowlist rules, timeout 30 s.                                                |
+  1011→
+  1012→Photo collage / Create card / Create PDF form / Resume
+  1013→
+  1014→|              |                                                                                                               |
+  1015→|--------------|---------------------------------------------------------------------------------------------------------------|
+  1016→| **Collage**  | Templates grid, passport-photo sheets, polaroid, text and stickers, export PDF/JPG/PNG.                       |
+  1017→| **Card**     | Greeting, invitation, voucher templates; Hindi festival templates; folded print layouts; mail merge from CSV. |
+  1018→| **PDF form** | Visual form builder with calculations and validation.                                                         |
+  1019→| **Resume**   | Step-by-step form, 8 templates, live preview, PDF export; no signup; data local.                              |
+  1020→
+  1021→Generate QR code
+  1022→
+  1023→|           |                                                                          |
+  1024→|-----------|--------------------------------------------------------------------------|
+  1025→| **Types** | URL, text, WiFi, UPI payment, vCard, email, phone, WhatsApp link.        |
+  1026→| **Style** | Colors, dot style, logo in center, error correction; output PNG/SVG/PDF. |
+  1027→
+  1028→8.8 Invoice tools (GST ready)
+  1029→
+  1030→Create invoice
+  1031→
+  1032→|                |                                                                                                                                                                                                                                                                                                                        |
+  1033→|----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1034→| **Fields**     | Seller details (name, GSTIN, address, logo), buyer (name, GSTIN, billing/shipping), invoice no/date/due date, place of supply, items (description, HSN/SAC, qty, unit, rate, discount, GST% CGST/SGST/IGST auto by state), totals, round-off, amount in words (English/Hindi), bank details, UPI QR, terms, signature. |
+  1035→| **Behavior**   | Calculations live, multiple tax slabs summary, templates (4-6), currency INR (others optional), save business profile on device, duplicate previous invoice from local history, auto invoice numbering.                                                                                                                |
+  1036→| **Output**     | PDF; optional Excel/CSV export of items.                                                                                                                                                                                                                                                                               |
+  1037→| **Legal note** | Government e-invoice (IRN) portal integration is out of scope; tool sirf invoice document banata hai. Disclaimer dikhayein.                                                                                                                                                                                            |
+  1038→
+  1039→E-invoice tools
+  1040→
+  1041→|                    |                                                                                          |
+  1042→|--------------------|------------------------------------------------------------------------------------------|
+  1043→| **Create/convert** | Factur-X/ZUGFeRD/XRechnung (EU standards) ke liye PDF/A-3 + XML embed (S-mode).          |
+  1044→| **XML to PDF**     | Readable PDF from e-invoice XML (UBL/CII), device-only.                                  |
+  1045→| **Validate**       | Rules check and error list (S-mode).                                                     |
+  1046→| **Priority**       | India users ke liye low priority; EU users ke liye SEO opportunity. P3 me decide karein. |
+  1047→
+  1048→9\. Static aur Supporting Pages
+  1049→
+  1050→About (/about)
+  1051→
+  1052→|                        |                                                                                                                                                                                                       |
+  1053→|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1054→| **Purpose**            | Trust aur brand story.                                                                                                                                                                                |
+  1055→| **Content / Sections** | Mission, kahani (kyun banaya), privacy-first approach explained simply (diagram: file browser se bahar nahi jaati), numbers (real), team, tech principles, contact link, "Made in India" (agar lage). |
+  1056→
+  1057→Contact (/contact)
+  1058→
+  1059→|                        |                                                                                                                                                                                                                                                                                                                                                                                                               |
+  1060→|------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1061→| **Purpose**            | Support aur business queries.                                                                                                                                                                                                                                                                                                                                                                                 |
+  1062→| **Content / Sections** | Form: Name, Email, Category (Bug, Feature request, Billing, Business/API, Legal/DMCA, Other), Message, Optional screenshot attach (client-validated; file size limit), consent checkbox. Spam protection (self-hosted honeypot + rate limit; CAPTCHA third-party avoid). Support email, response time (24-48h), social links, office address (legal), Turso me contact_messages. Success page with ticket id. |
+  1063→
+  1064→Help Center / FAQ (/help, /faq)
+  1065→
+  1066→|                        |                                                                                                                                                                                                                                             |
+  1067→|------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1068→| **Purpose**            | Self-service support.                                                                                                                                                                                                                       |
+  1069→| **Content / Sections** | Search, categories (Getting started, Each tool guides, Account & billing, Privacy & security, Troubleshooting), article template with steps + screenshots + related, video how-tos, "Was this helpful?", contact CTA. FAQ page with schema. |
+  1070→
+  1071→Pricing (/pricing)
+  1072→
+  1073→|                        |                                                                                                                                                                                                                                   |
+  1074→|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1075→| **Purpose**            | Conversion.                                                                                                                                                                                                                       |
+  1076→| **Content / Sections** | Free vs Pro table, monthly/yearly toggle, INR (UPI/cards via Razorpay) aur USD (Stripe), feature comparison, limits transparent, FAQ (cancel anytime, refund), team/business contact, "Device-only tools hamesha free" statement. |
+  1077→
+  1078→Security & Trust (/security)
+  1079→
+  1080→|                        |                                                                                                                                                                                                                                                                        |
+  1081→|------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1082→| **Purpose**            | Privacy USP proof.                                                                                                                                                                                                                                                     |
+  1083→| **Content / Sections** | How it works (device-only vs server tools), data flow diagram, encryption (HTTPS/HSTS), auto-delete, no logging of file content, third-party list (none), open-source libraries acknowledgements, vulnerability disclosure (security.txt), certifications (jab milen). |
+  1084→
+  1085→Privacy Policy (/privacy-policy)
+  1086→
+  1087→|                        |                                                                                                                                                                                                                                                                                                                         |
+  1088→|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1089→| **Purpose**            | Legal compliance.                                                                                                                                                                                                                                                                                                       |
+  1090→| **Content / Sections** | Data collected (email, usage aggregates, payment metadata, cookies), what is NOT collected (file content), purposes, retention, sharing (payment providers), user rights (access, correction, erasure, grievance), children, DPDP Act 2023 aur GDPR clauses, cross-border, contact/Data Protection contact, change log. |
+  1091→
+  1092→Terms of Service (/terms)
+  1093→
+  1094→|                        |                                                                                                                                                                                                                                                                       |
+  1095→|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1096→| **Purpose**            | Legal.                                                                                                                                                                                                                                                                |
+  1097→| **Content / Sections** | Acceptance, service description, acceptable use (no illegal/copyright violation, no abuse), user content ownership, no warranty on conversion accuracy, limitation of liability, account/billing terms, termination, governing law (India) and jurisdiction, changes. |
+  1098→
+  1099→Cookie Policy (/cookie-policy)
+  1100→
+  1101→|                        |                                                                                        |
+  1102→|------------------------|----------------------------------------------------------------------------------------|
+  1103→| **Purpose**            | Transparency.                                                                          |
+  1104→| **Content / Sections** | Cookie table (name, purpose, duration), essential vs analytics, how to change consent. |
+  1105→
+  1106→Refund & Cancellation (/refund-policy)
+  1107→
+  1108→|                        |                                                                                                                             |
+  1109→|------------------------|-----------------------------------------------------------------------------------------------------------------------------|
+  1110→| **Purpose**            | Billing trust.                                                                                                              |
+  1111→| **Content / Sections** | Free trial (if any), refund window (e.g. 7 days), cancellation steps, pro-rata rules, payment failure, contact for billing. |
+  1112→
+  1113→DMCA / Report abuse (/dmca, /report-abuse)
+  1114→
+  1115→|                        |                                                                                                                                                              |
+  1116→|------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1117→| **Purpose**            | Legal safe-harbor.                                                                                                                                           |
+  1118→| **Content / Sections** | Takedown notice requirements, counter notice, report form, designated agent, response timeline. (Server-assisted share/signature features hone par zaroori.) |
+  1119→
+  1120→Grievance Officer (/grievance)
+  1121→
+  1122→|                        |                                                                                        |
+  1123→|------------------------|----------------------------------------------------------------------------------------|
+  1124→| **Purpose**            | India IT Rules 2021 compliance (lawyer se confirm karein).                             |
+  1125→| **Content / Sections** | Officer ka naam, designation, email, address, timeline for acknowledgement/resolution. |
+  1126→
+  1127→Accessibility statement (/accessibility)
+  1128→
+  1129→|                        |                                                     |
+  1130→|------------------------|-----------------------------------------------------|
+  1131→| **Purpose**            | Inclusion.                                          |
+  1132→| **Content / Sections** | WCAG 2.2 AA target, known issues, feedback contact. |
+  1133→
+  1134→Blog and Guides (/blog)
+  1135→
+  1136→|                        |                                                                                                                                                                                                                          |
+  1137→|------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1138→| **Purpose**            | SEO engine.                                                                                                                                                                                                              |
+  1139→| **Content / Sections** | Categories (How-to, Tips, India guides like "Aadhaar PDF 100KB kaise banayein", Compare), post template (TOC, steps, tool CTA inline, related), author, updated date, search, RSS, Hindi posts, schema (Article, HowTo). |
+  1140→
+  1141→Changelog, Roadmap, Status
+  1142→
+  1143→|                        |                                                                                                                                                      |
+  1144→|------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1145→| **Purpose**            | Transparency.                                                                                                                                        |
+  1146→| **Content / Sections** | Changelog (versioned entries), public roadmap with votes (tool_requests), status page (uptime of worker, incident history; self-hosted simple page). |
+  1147→
+  1148→Request a Tool / Feedback (/request-a-tool)
+  1149→
+  1150→|                        |                                                                                                                   |
+  1151→|------------------------|-------------------------------------------------------------------------------------------------------------------|
+  1152→| **Purpose**            | Product discovery.                                                                                                |
+  1153→| **Content / Sections** | Form (title, description, use case), list of existing requests with vote button (hashed voter id), status labels. |
+  1154→
+  1155→Install App (/install-app)
+  1156→
+  1157→|                        |                                                                                                            |
+  1158→|------------------------|------------------------------------------------------------------------------------------------------------|
+  1159→| **Purpose**            | PWA adoption.                                                                                              |
+  1160→| **Content / Sections** | Install steps for Android Chrome, iOS Safari (Add to Home Screen), desktop; offline benefits; screenshots. |
+  1161→
+  1162→Login / Signup / Account (Phase 2-3)
+  1163→
+  1164→|                        |                                                                                                                                                                                                                                                                                           |
+  1165→|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1166→| **Purpose**            | Optional accounts for Pro.                                                                                                                                                                                                                                                                |
+  1167→| **Content / Sections** | Email+password (argon2) and Google/Apple optional (self-managed OAuth), magic link, forgot password; Account: profile, plan, billing history/invoices (GST invoice for Indian customers), saved signatures sync (opt-in), usage, API keys, delete account (full erase flow), data export. |
+  1168→
+  1169→System pages (404, 500, offline, maintenance)
+  1170→
+  1171→|                        |                                                                                                                                           |
+  1172→|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
+  1173→| **Purpose**            | Graceful failures.                                                                                                                        |
+  1174→| **Content / Sections** | 404: illustration, search box, popular tools. 500: apology, retry, status link. Offline: lists tools that work offline. Maintenance: ETA. |
+  1175→
+  1176→Legal/brand pages (Press kit, Sitemap page)
+  1177→
+  1178→|                        |                                                                               |
+  1179→|------------------------|-------------------------------------------------------------------------------|
+  1180→| **Purpose**            | Optional.                                                                     |
+  1181→| **Content / Sections** | Logo downloads, brand guidelines, HTML sitemap listing all tools by category. |
+  1182→
+  1183→10\. States, Errors aur Copy
+  1184→
+  1185→| **Case**               | **Message (EN / Hinglish)**                                                       | **Action**                                       |
+  1186→|------------------------|-----------------------------------------------------------------------------------|--------------------------------------------------|
+  1187→| Wrong file type        | This file type is not supported here. / Ye file type is tool me support nahi hai. | Suggest correct tool                             |
+  1188→| File too large         | File is larger than your device limit (X MB). / File bahut badi hai.              | Suggest Compress / Split / Pro                   |
+  1189→| Password protected     | This PDF is locked. Enter password to continue.                                   | Password field, Unlock tool link                 |
+  1190→| Corrupt file           | We could not open this file. It may be damaged.                                   | Try Repair PDF                                   |
+  1191→| Out of memory          | Your device ran out of memory. Try fewer or smaller files.                        | Reduce selection, desktop suggestion             |
+  1192→| Storage full           | Not enough storage on this device.                                                | Clear recent files link                          |
+  1193→| Cancelled              | Processing cancelled. Nothing was saved.                                          | Back to options                                  |
+  1194→| Network error (S-mode) | Connection lost. Retrying...                                                      | Auto retry 2x, then manual                       |
+  1195→| Daily limit            | You reached today's free limit for server tools.                                  | Reset time, Pro option, Device-only alternatives |
+  1196→| Unsupported browser    | Please update your browser for this tool.                                         | List supported versions                          |
+  1197→| Empty state            | No files yet. Drop a PDF to begin.                                                | Select button                                    |
+  1198→
+  1199→Sab messages i18n keys me; Hindi translation native speaker se review. Error ke saath hamesha "Report this problem" (sirf tool id, error code, browser info bhejta hai).
+  1200→
+  1201→11\. Monetization aur Limits
+  1202→
+  1203→| **Feature**                                                        | **Free**                                   | **Pro**               |
+  1204→|--------------------------------------------------------------------|--------------------------------------------|-----------------------|
+  1205→| Device-only tools                                                  | Unlimited                                  | Unlimited             |
+  1206→| Server-assisted tasks                                              | 10 per day                                 | Unlimited (fair use)  |
+  1207→| File size (device tools)                                           | Device limit (50MB mobile / 200MB desktop) | Up to 500MB (desktop) |
+  1208→| File size (server tools)                                           | 50 MB                                      | 500 MB                |
+  1209→| Batch                                                              | 5 files                                    | 100 files             |
+  1210→| OCR languages                                                      | English + Hindi                            | All                   |
+  1211→| Editor extras (templates, background remove, cloud signature sync) | Basic                                      | Full                  |
+  1212→| Ads                                                                | Tool landing pages par limited             | No ads                |
+  1213→| Watermark on output                                                | Kabhi nahi                                 | Kabhi nahi            |
+  1214→| API                                                                | \-                                         | Business plan (P3)    |
+  1215→
+  1216→- Payments: Razorpay (UPI, cards, netbanking) + Stripe (international). GST invoice automatic.
+  1217→
+  1218→- Ads sirf landing pages par, privacy-friendly self-served ya limited network; workspace aur result par kabhi nahi. Ads ke saath consent integration zaroori (and Vercel Pro plan).
+  1219→
+  1220→- Pricing numbers launch se pehle market test karke tay karein.
+  1221→
+  1222→12\. SEO, Accessibility, i18n, PWA
+  1223→
+  1224→12.1 SEO
+  1225→
+  1226→- Har tool ka unique URL, title (max 60 chars), meta description, H1, 600+ words helpful copy (steps, FAQ, use cases).
+  1227→
+  1228→- Schema: SoftwareApplication, HowTo, FAQPage, BreadcrumbList, Article (blog).
+  1229→
+  1230→- Internal linking: related tools, "next step" tools, category hubs.
+  1231→
+  1232→- sitemap.xml (en/hi), hreflang, canonical, robots, OpenGraph images per tool.
+  1233→
+  1234→- Core Web Vitals green; SSG for tool pages.
+  1235→
+  1236→- India long-tail pages: "compress pdf to 100kb", "aadhaar pdf password", "jpg to pdf for form".
+  1237→
+  1238→12.2 Accessibility
+  1239→
+  1240→- Full keyboard operation including editor and drag-reorder alternatives.
+  1241→
+  1242→- Screen reader labels, live regions for progress/results, focus management on state change.
+  1243→
+  1244→- Contrast AA, text resize 200%, reduced motion, no color-only cues.
+  1245→
+  1246→12.3 Internationalization
+  1247→
+  1248→- English + Hindi at launch; message catalog (ICU), pluralization, number/date format.
+  1249→
+  1250→- Tool names and SEO slugs localized; Devanagari fonts self-hosted.
+  1251→
+  1252→- Future: Bengali, Tamil, Telugu, Marathi, Gujarati, Urdu (RTL support planning).
+  1253→
+  1254→12.4 PWA
+  1255→
+  1256→- Installable, offline for Device-only tools, cached WASM/pdf.js, offline page, update prompt.
+  1257→
+  1258→- File handlers: open PDF with DocoPDF (where supported), Share Target (receive files from Android share sheet).
+  1259→
+  1260→13\. Analytics, Privacy aur Success Metrics
+  1261→
+  1262→- Self-hosted privacy-friendly analytics (Plausible/Matomo self-hosted ya apni Turso events table). Google Analytics nahi.
+  1263→
+  1264→- Events (no content, no filename): tool_view, file_selected (type, size bucket, pages bucket), options_changed (names only), process_start/success/fail (duration, error code), download_click, chain_click, feedback, pro_cta_click.
+  1265→
+  1266→- Consent ke bina sirf aggregate server-side counts.
+  1267→
+  1268→| **Metric**                                | **Target**                                  |
+  1269→|-------------------------------------------|---------------------------------------------|
+  1270→| Tool completion rate (select to download) | \> 70%                                      |
+  1271→| Median time to download                   | \< 30 s                                     |
+  1272→| Error rate per tool                       | \< 2%                                       |
+  1273→| Mobile share of completions               | Track; mobile completion \>= 60% of desktop |
+  1274→| Pro conversion (of active users)          | 2-3%                                        |
+  1275→| NPS / thumbs-up                           | \> 50 / \> 85%                              |
+  1276→| Organic traffic growth                    | Monthly +15% (first 12 months)              |
+  1277→| Core Web Vitals pass                      | \> 90% pages                                |
+  1278→
+  1279→14\. Non-Functional Requirements
+  1280→
+  1281→| **Area**        | **Requirement**                                                                                                                                                                                    |
+  1282→|-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  1283→| Browser support | Latest 2 versions: Chrome, Edge, Firefox, Safari (iOS 16+), Samsung Internet. Graceful fallback if OPFS/File System Access missing.                                                                |
+  1284→| Devices         | Android low-end (3GB RAM), iPhone, tablets, desktop. Test matrix in CI (Playwright + real device checks).                                                                                          |
+  1285→| Security        | HTTPS+HSTS, strict CSP (no third-party scripts), SRI for own assets, rate limits, input validation, ZIP-bomb/PDF-bomb limits, sandboxed worker, dependency scan, secrets in env, regular pen-test. |
+  1286→| Privacy         | No file content in logs, no filenames in analytics, data deletion within 30 days of request, DPDP compliance register.                                                                             |
+  1287→| Reliability     | Uptime 99.9% (Vercel); worker autoscale or queue with clear "busy" message; graceful degradation to Device-only tools.                                                                             |
+  1288→| Observability   | Error tracking self-hosted (GlitchTip/Sentry self-host) without payload; worker metrics; uptime checks.                                                                                            |
+  1289→| Compliance      | DPDP Act 2023, IT Rules 2021 (grievance officer), GDPR-ready, PCI via payment provider.                                                                                                            |
+  1290→| Licensing       | CI license scanner; no AGPL/GPL in shipped client bundle without review.                                                                                                                           |
+  1291→
+  1292→15\. Acceptance Criteria aur QA
+  1293→
+  1294→- Har Device-only tool par network panel me file upload request zero (automated test).
+  1295→
+  1296→- 100-page, 50MB PDF par merge/split/rotate complete bina tab crash (mid-range Android).
+  1297→
+  1298→- Hindi text editor aur watermark me sahi render (matras/conjuncts).
+  1299→
+  1300→- Redacted text ko extract/search karne par 0 results.
+  1301→
+  1302→- Protected PDF Adobe Reader, Chrome, Preview me password maangta hai.
+  1303→
+  1304→- Compress: size kam, text selectable agar originally selectable; quality compare slider kaam kare.
+  1305→
+  1306→- Result page par Download, Rename, Chain tool, Remove from device sab kaam kare.
+  1307→
+  1308→- Lighthouse: Performance \>= 90 (mobile), Accessibility \>= 95, SEO \>= 95 tool pages par.
+  1309→
+  1310→- Keyboard-only user poora Merge flow complete kar sake.
+  1311→
+  1312→- Offline mode me Merge/Split/Rotate chale (PWA).
+  1313→
+  1314→- Corrupt, encrypted, huge, zero-page, mixed-size PDFs ke test corpus par koi crash nahi.
+  1315→
+  1316→16\. Roadmap aur Phases
+  1317→
+  1318→Samay anumaan team size par depend karta hai (1-2 developers ke liye lamba). Ye approximate hain.
+  1319→
+  1320→| **Phase**              | **Scope**                                                                                                                                                                                                                                                                                                                                                                                                         | **Approx. time** |
+  1321→|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------|
+  1322→| P0 Setup               | Domain, GitHub repo, Vercel project, Turso DBs, design system, ToolShell, DropZone, worker infra for D-mode, CI, legal draft                                                                                                                                                                                                                                                                                      | 2-3 weeks        |
+  1323→| P1 MVP                 | Home, All tools, Result page, static pages (About, Contact, Privacy, Terms, Cookies, 404). Tools: Merge, Split, Rotate, Rearrange, Remove, Extract, Images/JPG/PNG/WEBP to PDF, PDF to JPG/PNG/Text, Watermark, Page numbers, Header/footer, Crop, Doc info, Remove metadata, Protect, Unlock, Sign, Fill out, View, Compress (device), Scan to PDF, Generate password, HEIC/WEBP converters, Universal converter | 8-10 weeks       |
+  1324→| P2 Editor and advanced | Edit PDF full, Annotate, Make fillable, OCR (Hindi), Compress to size, N-up, Halve, Overlay, Page size, Bookmarks, Extract images, Copy from PDF, Assemble, Flatten, Rasterize, Search PDFs, Text/Markdown/SVG/HEIC/TIFF to PDF, QR, Write PDF, Create PDF, Hindi UI, Login/Pro/payments, Help center, Blog, Pricing                                                                                              | 10-12 weeks      |
+  1325→| P3 Server and niche    | Worker (Office to/from PDF, strong compress, PDF/A, repair, web-optimize, webpage/HTML to PDF), Redact, Compare, Digital signature, Verify signatures, Request signature, Invoice suite, Collage, Cards, Resume, Passport photo, API, more languages                                                                                                                                                              | 12-16 weeks      |
+  1326→
+  1327→17\. Risks aur Open Questions
+  1328→
+  1329→17.1 Risks
+  1330→
+  1331→| **Risk**                                        | **Mitigation**                                                                                    |
+  1332→|-------------------------------------------------|---------------------------------------------------------------------------------------------------|
+  1333→| AGPL/GPL libraries                              | Avoid; license scanner in CI; commercial license if needed; lawyer review                         |
+  1334→| Copying competitors                             | Sirf inspiration; apna design, icons, text. Trademark search for "DocoPDF" before buying/branding |
+  1335→| Browser memory crashes                          | Web Workers, chunking, limits per device, clear error messages                                    |
+  1336→| Quality expectations of PDF to Word / text edit | Honest copy, preview before download, feedback loop                                               |
+  1337→| Server cost spikes (worker)                     | Daily limits, queue, autoscale caps, Pro plan, abuse protection                                   |
+  1338→| Abuse (malware, spam, SSRF)                     | ClamAV, sandbox, rate limits, URL filtering, size/time limits                                     |
+  1339→| Vercel plan limits / cost                       | Static-heavy design; Pro plan when commercial; monitor bandwidth                                  |
+  1340→| iOS storage eviction                            | Always download/share result, PWA install prompt, warn for drafts                                 |
+  1341→| Legal compliance                                | Lawyer reviews Privacy/Terms/Grievance; DPDP register                                             |
+  1342→| Scope too big                                   | Config-driven tools, strict phases, ship P1 first                                                 |
+  1343→
+  1344→17.2 Open questions (aapse confirm karne hain)
+  1345→
+  1346→- DocoPDF naam ka trademark/domain availability check ho gaya?
+  1347→
+  1348→- Worker server kahan host karna hai (VPS/Fly/Railway/Oracle) aur budget?
+  1349→
+  1350→- Pro pricing aur free limits final karne hain (market test).
+  1351→
+  1352→- Accounts P2 me chahiye ya P3 me?
+  1353→
+  1354→- Ads rakhne hain ya sirf Pro revenue?
+  1355→
+  1356→- Pehle Hindi launch ke saath ya baad me?
+  1357→
+  1358→- E-invoice (EU) tools rakhne hain ya India GST invoice par focus?
+  1359→
+  1360→- Team size aur timeline?
+  1361→
+  1362→17.3 Next deliverables
+  1363→
+  1364→- Wireframes (HTML) for Home, Tool workspace, Result, Editor.
+  1365→
+  1366→- Field-level spec for each tool (validations, i18n strings).
+  1367→
+  1368→- Drizzle schema, API contracts, worker API spec.
+  1369→
+  1370→- Design tokens file (Tailwind config) aur component library plan.
+  1371→
+  1372→- SEO content plan: 100 tool pages + 50 blog topics.
+  1373→
