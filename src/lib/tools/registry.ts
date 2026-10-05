@@ -306,6 +306,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Split,
     popularity: 95,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Split PDF", hi: "पीडीएफ़ बाँटें" },
     description: {
       en: "Split by ranges, every N pages, bookmarks, size or visually.",

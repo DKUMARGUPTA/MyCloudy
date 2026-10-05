@@ -6,11 +6,14 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: 3 IN PROGRESS (P3.1)** — Merge PDF shipped (first Phase-3 tool) on top of the
-  P2 core. Live tools now: merge-pdf + rotate-pdf-pages, both 100% on-device.
-  Merge brings dnd-kit drag-reorder, per-file page ranges, sort A→Z/Z→A/date,
-  blank-page-between, best-effort flatten, custom output name, and the
-  "N files, M pages" result summary. Next: Split PDF (7 modes per §8.1).
+- **Phase: 3 IN PROGRESS (P3.2)** — Split PDF shipped (2nd Phase-3 tool) on top of the
+  P2 core. Live tools now: merge-pdf + rotate-pdf-pages + split-pdf, all 100% on-device.
+  Split implements ALL 7 PRD §8.1 modes (ranges w/ "end" + overlap warning + one-file
+  toggle, every N, top-level bookmarks, max-MB size w/ real-byte refinement, visual
+  scissors, odd/even, blank-page separators w/ detection), live color-coded preview
+  with cut markers + "N files will be created / फ़ाइलें बनेंगी" count, ZIP + individual
+  downloads via the shared ResultView, naming `<base>_part1.pdf` / `_odd`/`_even`.
+  Next: PageGrid family (Rotate preset gets a live page grid), then Images to PDF.
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
@@ -132,14 +135,22 @@
 
 ## 6. Unresolved issues / risks / next-phase priorities
 
-1. **NEXT: Phase 3 continues — Split PDF** (§8.1: 7 modes — by range, every N,
-   bookmarks, size, visual, odd/even, blank-separator; ZIP output via fflate).
-   Then PageGrid family (Rotate preset gets a live page grid), Images to PDF,
-   PDF→JPG/PNG, PDF→Text, Watermark, Page numbers, Crop, Doc info, Fill, View,
-   Compress, Generate password, Scan, HEIC/WEBP — one per round.
-   Merge follow-ups (deferred, noted): images-in-merge (needs Images-to-PDF
-   engine), per-file bookmarks (pdf-lib low-level outline — VERIFY API),
-   card-click page-grid expand (PageGrid round), per-file Unlock (qpdf round).
+1. **NEXT: Phase 3 continues — PageGrid family** (§8.1: one shared PageGrid
+   component with Rotate/Rearrange/Remove/Extract presets — select
+   click/shift-click/Ctrl+A + range input, drag reorder, rotate/delete/
+   duplicate/insert-blank per page or selection, undo/redo, virtualized grid
+   for large docs, zoom slider; Rotate preset gets live thumbnail rotation;
+   Remove preset gets "Remove blank pages"; Extract gets "one page = one
+   file"). Then Images to PDF, PDF→JPG/PNG, PDF→Text, Watermark, Page
+   numbers, Crop, Doc info, Fill, View, Compress, Generate password, Scan,
+   HEIC/WEBP — one per round.
+   Split follow-ups (deferred, noted): per-part bookmark-title file naming
+   (kept PRD-exact `_part1` for now), blank detection uses 0.1% dark-pixel
+   tolerance at 24px (tune if users report false blanks on noisy scans).
+   Merge follow-ups still deferred from P3.1: images-in-merge (needs
+   Images-to-PDF engine), per-file bookmarks (pdf-lib outline — VERIFY API),
+   per-file Unlock (qpdf round); the card-click page-grid expand lands with
+   the PageGrid round.
 2. Cancel path not yet caught mid-flight in browser (tool <600ms even on 400
    pages) — retest with a multi-MB scanned file in Phase 3.
 3. qpdf WASM build source + exact version + license must be verified before Phase 4
@@ -280,3 +291,75 @@ Stage Summary:
 - Architecture win: custom-panel pattern proven — tools can now ship schema options AND rich per-tool panels without leaving the config-driven system.
 - Deferred honestly: images-in-merge, per-file bookmarks (VERIFY pdf-lib outline), page-grid card expand, per-file unlock (qpdf phase).
 - Next: Split PDF (§8.1) — 7 modes, ZIP output; reuses FileList + protocol detail.
+
+---
+Task ID: P3.2
+Agent: main (Z.ai Code session)
+
+Task: Ship Split PDF — 2nd Phase-3 tool, PRD §8.1 (7 modes + live preview + ZIP output).
+
+Work Log:
+- Read worklog + PRD §8.1 split spec + studied merge-pdf tool (config/worker/panel)
+  as the architecture reference; confirmed ResultView already handles multi-output
+  ZIP + individual downloads (fflate), so split only needs to emit N outputs.
+- tools/split-pdf/plan.ts — NEW pure shared module: parseRangeList ("1-5, 8, 10-end",
+  open "N-", case-insensitive "end", clamped + overlap-friendly), rangesOverlap,
+  computeSplitPlan for all 7 modes (range w/ one-file-per-range union, everyN chunks,
+  bookmark starts w/ leading part, size estimate 0.92 margin, visual cuts-after,
+  oddEven labeled parts, blanks-as-removed-separators), parseNumberListOption,
+  fileKey (name|size identity for detected lists).
+- src/lib/pdf/thumbnails.ts — added getPdfTopLevelOutline (pdf.js getOutline +
+  dest resolution to 1-based start pages; unresolvable/external bookmarks skipped)
+  and detectBlankPages (text-content gate + 24px queued render, <0.1% dark pixels
+  = blank; unreadable pages treated as content) with onProgress.
+- tools/split-pdf/config.ts — ToolConfig, options schema EMPTY (panel owns all
+  interactive values; worker defaults defensively), minFiles/maxFiles 1, features +
+  FAQ per PRD copy, outputKind pdf.
+- tools/split-pdf/worker.ts — pdf-lib worker: loads once, computes authoritative
+  plan via shared plan.ts, builds each part (per-page progress posts), size mode
+  re-saves real bytes and halves oversized parts recursively, guards: bookmarks/
+  blanks detection must be "done" AND fileKey-matched (else tool.splitWaitingDetect),
+  no bookmarks → tool.splitNoBookmarks, no blanks found → tool.splitNoBlanks;
+  naming <base>_part1.pdf, <base>-split.pdf (single), <base>_odd/_even.pdf.
+- tools/split-pdf/panel.tsx — custom panel: role=tablist with 7 mode tabs
+  (arrow-key nav, bookmarks tab disabled when outline empty), per-mode inputs
+  (ranges + one-file switch + overlap warning chip, N, MB, clear-cuts), live
+  PREVIEW box with color-coded parts (blue/purple/emerald/amber cycle), dashed
+  cut markers w/ Scissors icon, live count "N files will be created /
+  फ़ाइलें बनेंगी", "≈ estimated" chip for size mode, visual mode = thumbnail strip
+  (queued 112px renders) with 44px scissors toggle buttons, bookmarks list with
+  titles + start pages, blanks detection with % progress + found chips (strikethrough).
+  All detection results reach the worker as plain options (JSON + fileKey), never
+  stale-across-files.
+- Registered: registry split-pdf enabled:true, TOOL_CONFIGS, TOOL_PANELS.
+- i18n: +49 keys ×2 locales (split.* section incl. rangePrompt; tool.split*
+  error codes), real Devanagari throughout.
+- QA (agent-browser, split-test.pdf = 12 pages w/ blanks @4,9 + bookmarks @1,5,10):
+  range "1-3, 5-7"→2 files & "10-end" keyword & overlap warning & one-file union;
+  everyN 4→3 files; bookmarks→3 parts (4/5/3 pages); size 0.002MB→preview "≈1 est" →
+  real run refined to 4 parts each under limit; visual scissors toggle→cut count +
+  clear; oddEven→_odd/_even (6+6); blanks→2 found/removed, 3 files 10 pages;
+  result view "2 files, 6 pages" + ZIP button click clean; Hindi end-to-end incl.
+  "2 फ़ाइलें बनेंगी"; mobile 360px no h-scroll, bottom sheet full panel + run from
+  sheet CTA; network 148 req / 0 non-local; page errors 0; eslint src+tools clean;
+  tsc --noEmit clean; dev.log only 200s.
+- Fixed during QA: pdf-lib copyPages direction (src.copyPages(src)→dest.copyPages
+  (src) — caught via captured "couldn't be read" toast, verified all 7 modes with a
+  bun smoke script before browser re-test); empty-vs-invalid ranges preview copy
+  (muted prompt vs red error); lucide icon name (Bookmark not Bookmarks); plan
+  import path (./plan from inside the tool folder).
+- Dev-server note: the sandbox reaps plain background processes between commands;
+  use the python double-fork daemon (see git history of this entry) to keep
+  `bun run dev` alive across tool calls.
+
+Stage Summary:
+- Live tools: merge-pdf, rotate-pdf-pages, split-pdf (all mode D, on-device).
+- Split covers PRD §8.1 completely: 7 modes, thumbnail strip preview w/ cut
+  markers + color-coded parts, live file count, validations (in-range, overlap
+  warning, bookmarks tab disabled when none), naming + ZIP output.
+- New shared assets for future tools: top-level outline reader, blank-page
+  detector, pure split-plan module, VisualStrip thumbnail pattern.
+- Screenshots: download/qa-p32-split-{landing,workspace,visual,visual-cut,
+  result,result-final,hindi,mobile,mobile-visual,mobile-cut,mobile-sheet,
+  mobile-result,final-desktop}.png
+- Next: PageGrid family round (reuses VisualStrip thumbnails + plan patterns).

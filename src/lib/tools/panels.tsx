@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 
 import type { ToolPanelProps } from "./panel-types";
 import { MergePanel } from "../../../tools/merge-pdf/panel";
+import { SplitPanel } from "../../../tools/split-pdf/panel";
 
 /**
  * Custom tool panels (PRD §2.6 "Panel.tsx per tool").
@@ -15,6 +16,7 @@ import { MergePanel } from "../../../tools/merge-pdf/panel";
  */
 export const TOOL_PANELS: Record<string, ComponentType<ToolPanelProps>> = {
   "merge-pdf": MergePanel,
+  "split-pdf": SplitPanel,
 };
 
 export function getToolPanel(toolId: string): ComponentType<ToolPanelProps> | undefined {

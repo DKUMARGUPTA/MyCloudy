@@ -1,4 +1,4 @@
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 
 import { PDF_DOC_PARAMS, loadPdfjs } from "./pdfjs";
 
@@ -157,4 +157,144 @@ export async function renderPdfThumbnail(
 /** Frees cached documents for files that are no longer on screen. */
 export function forgetPdfDocument(file: File | Blob): void {
   docCache.delete(file);
+}
+
+/* --------------------- Split support (PRD §8.1) --------------------- */
+
+/** A top-level outline entry resolved to its 1-based start page. */
+export interface PdfOutlineEntry {
+  title: string;
+  page: number;
+}
+
+/**
+ * Reads the TOP-LEVEL bookmarks of a PDF (PRD §8.1 split mode 3) with the
+ * self-hosted pdf.js. Bookmarks that point to external URLs or have
+ * unresolvable destinations are skipped — a split needs a real page.
+ */
+export async function getPdfTopLevelOutline(
+  file: File | Blob
+): Promise<PdfOutlineEntry[]> {
+  const doc = await openDocument(file);
+  const outline = await doc.getOutline();
+  if (!outline || outline.length === 0) return [];
+  const entries: PdfOutlineEntry[] = [];
+  for (const item of outline) {
+    if (!item.dest) continue;
+    try {
+      const dest =
+        typeof item.dest === "string"
+          ? await doc.getDestination(item.dest)
+          : item.dest;
+      if (!Array.isArray(dest) || dest.length === 0) continue;
+      const ref = dest[0];
+      if (typeof ref !== "object" || ref === null) continue;
+      const pageIndex = await doc.getPageIndex(
+        ref as Parameters<typeof doc.getPageIndex>[0]
+      );
+      const title = (item.title ?? "").trim();
+      entries.push({
+        title: title.length > 0 ? title : `Bookmark ${entries.length + 1}`,
+        page: pageIndex + 1,
+      });
+    } catch {
+      /* unresolvable destination — this bookmark just can't split */
+    }
+  }
+  return entries;
+}
+
+export interface BlankDetectionProgress {
+  done: number;
+  total: number;
+}
+
+/**
+ * Detects blank separator pages (PRD §8.1 split mode 7). A page is blank
+ * when it has no text AND a tiny render is visually near-empty. Text pages
+ * skip rendering entirely, so typical documents finish fast; only
+ * text-less candidates (e.g. scans) pay for the pixel check.
+ */
+export async function detectBlankPages(
+  file: File | Blob,
+  onProgress?: (progress: BlankDetectionProgress) => void
+): Promise<number[]> {
+  const doc = await openDocument(file);
+  const blanks: number[] = [];
+  const total = doc.numPages;
+  for (let pageNumber = 1; pageNumber <= total; pageNumber += 1) {
+    let blank = false;
+    try {
+      const page = await doc.getPage(pageNumber);
+      const text = await page.getTextContent();
+      const hasText = text.items.some(
+        (item) =>
+          typeof (item as { str?: unknown }).str === "string" &&
+          (item as { str: string }).str.trim().length > 0
+      );
+      if (!hasText) {
+        blank = await isPageVisuallyBlank(page);
+      }
+      page.cleanup();
+    } catch {
+      blank = false; // unreadable page → treat as content (safe default)
+    }
+    if (blank) blanks.push(pageNumber);
+    onProgress?.({ done: pageNumber, total });
+  }
+  return blanks;
+}
+
+/** Tiny (24px) render + near-white pixel scan, run through the queue. */
+async function isPageVisuallyBlank(page: PDFPageProxy): Promise<boolean> {
+  await acquire();
+  try {
+    const base = page.getViewport({ scale: 1 });
+    const scale = 24 / Math.max(base.width, base.height);
+    const viewport = page.getViewport({ scale });
+    const width = Math.max(1, Math.round(viewport.width));
+    const height = Math.max(1, Math.round(viewport.height));
+    let data: ImageData;
+    if (typeof OffscreenCanvas !== "undefined") {
+      const canvas = new OffscreenCanvas(width, height);
+      const context = canvas.getContext("2d");
+      if (!context) return false;
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, width, height);
+      await page
+        .render({
+          canvasContext: context as unknown as CanvasRenderingContext2D,
+          viewport,
+        })
+        .promise;
+      data = context.getImageData(0, 0, width, height);
+    } else {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) return false;
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, width, height);
+      await page.render({ canvasContext: context, viewport }).promise;
+      data = context.getImageData(0, 0, width, height);
+    }
+    const pixels = data.data;
+    const threshold = 245; // near-white tolerance for compression noise
+    const darkLimit = Math.ceil((pixels.length / 4) * 0.001); // <0.1% dark
+    let dark = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (
+        pixels[i] < threshold ||
+        pixels[i + 1] < threshold ||
+        pixels[i + 2] < threshold
+      ) {
+        dark += 1;
+        if (dark > darkLimit) return false;
+      }
+    }
+    return true;
+  } finally {
+    release();
+  }
 }

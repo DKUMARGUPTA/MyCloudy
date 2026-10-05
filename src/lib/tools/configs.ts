@@ -1,6 +1,7 @@
 import type { ToolConfig } from "@/lib/tools/config-types";
 import { config as rotatePdfPages } from "../../../tools/rotate-pdf-pages/config";
 import { config as mergePdf } from "../../../tools/merge-pdf/config";
+import { config as splitPdf } from "../../../tools/split-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -12,6 +13,7 @@ import { config as mergePdf } from "../../../tools/merge-pdf/config";
 export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [rotatePdfPages.toolId]: rotatePdfPages,
   [mergePdf.toolId]: mergePdf,
+  [splitPdf.toolId]: splitPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {
