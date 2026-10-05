@@ -344,6 +344,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: ArrowUpDown,
     popularity: 45,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Rearrange PDF pages", hi: "पेज क्रम बदलें" },
     description: {
       en: "Drag thumbnails to a new order, with keyboard move buttons.",
@@ -362,6 +363,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: FileMinus,
     popularity: 42,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Remove PDF pages", hi: "पेज हटाएँ" },
     description: {
       en: "Delete unwanted pages by selection, list or auto blank-page detect.",
@@ -380,6 +382,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: FileOutput,
     popularity: 40,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Extract PDF pages", hi: "पेज निकालें" },
     description: {
       en: "Build a new PDF from selected pages, or one file per page.",

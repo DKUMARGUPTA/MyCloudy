@@ -6,14 +6,19 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: 3 IN PROGRESS (P3.2)** — Split PDF shipped (2nd Phase-3 tool) on top of the
-  P2 core. Live tools now: merge-pdf + rotate-pdf-pages + split-pdf, all 100% on-device.
-  Split implements ALL 7 PRD §8.1 modes (ranges w/ "end" + overlap warning + one-file
-  toggle, every N, top-level bookmarks, max-MB size w/ real-byte refinement, visual
-  scissors, odd/even, blank-page separators w/ detection), live color-coded preview
-  with cut markers + "N files will be created / फ़ाइलें बनेंगी" count, ZIP + individual
-  downloads via the shared ResultView, naming `<base>_part1.pdf` / `_odd`/`_even`.
-  Next: PageGrid family (Rotate preset gets a live page grid), then Images to PDF.
+- **Phase: 3 IN PROGRESS (P3.3)** — PageGrid family shipped: ONE shared interactive
+  page-grid (tools/pagegrid/) powering FOUR tools — rotate-pdf-pages (REBASED: live
+  thumbnail rotation, all/selected/odd/even scope), rearrange-pdf-pages (drag +
+  move buttons + provenance labels), remove-pdf-pages (range select "2,5-7" +
+  auto blank-page detect), extract-pdf-pages (selection picker + one-page-per-file
+  + ZIP). Common actions per PRD §8.1: select click/shift-click/Ctrl+A/range input,
+  drag reorder, rotate 90 L/R per page or scope, delete, duplicate, insert blank,
+  undo/redo (Ctrl+Z / Ctrl+Shift+Z), zoom slider; large docs (>150 pages) render
+  virtualized rows w/ lazy IntersectionObserver thumbnails (400 pages → ~30 cells);
+  all-deleted safety disables Apply. Live tools now: 6 (merge, split, rotate,
+  rearrange, remove, extract), all 100% on-device.
+  Next: Images to PDF, then PDF→JPG/PNG, PDF→Text, Watermark, Page numbers, Crop,
+  Doc info, Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per round.
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
@@ -135,22 +140,22 @@
 
 ## 6. Unresolved issues / risks / next-phase priorities
 
-1. **NEXT: Phase 3 continues — PageGrid family** (§8.1: one shared PageGrid
-   component with Rotate/Rearrange/Remove/Extract presets — select
-   click/shift-click/Ctrl+A + range input, drag reorder, rotate/delete/
-   duplicate/insert-blank per page or selection, undo/redo, virtualized grid
-   for large docs, zoom slider; Rotate preset gets live thumbnail rotation;
-   Remove preset gets "Remove blank pages"; Extract gets "one page = one
-   file"). Then Images to PDF, PDF→JPG/PNG, PDF→Text, Watermark, Page
-   numbers, Crop, Doc info, Fill, View, Compress, Generate password, Scan,
-   HEIC/WEBP — one per round.
+1. **NEXT: Phase 3 continues — Images to PDF** (§8.1: multi-image DropZone path
+   (jpg/png/webp accept + magic bytes), reorderable image list, page-size/fit/
+   margins options, jpeg/png embedding worker via pdf-lib embedJpg/embedPng,
+   WEBP→PNG transcode). Then PDF→JPG/PNG, PDF→Text, Watermark, Page numbers,
+   Crop, Doc info, Fill, View, Compress, Generate password, Scan, HEIC/WEBP —
+   one per round.
+   PageGrid follow-ups (deferred, noted): virtualized drag stays off above 150
+   pages (move buttons cover it; dnd-on-virtualized is a known hard problem);
+   selection indices after undo are clamped, not remapped (predictable, undoable).
    Split follow-ups (deferred, noted): per-part bookmark-title file naming
    (kept PRD-exact `_part1` for now), blank detection uses 0.1% dark-pixel
    tolerance at 24px (tune if users report false blanks on noisy scans).
    Merge follow-ups still deferred from P3.1: images-in-merge (needs
    Images-to-PDF engine), per-file bookmarks (pdf-lib outline — VERIFY API),
-   per-file Unlock (qpdf round); the card-click page-grid expand lands with
-   the PageGrid round.
+   per-file Unlock (qpdf round); card-click page-grid expand = navigate to the
+   grid tools (shipped this round as surfaces).
 2. Cancel path not yet caught mid-flight in browser (tool <600ms even on 400
    pages) — retest with a multi-MB scanned file in Phase 3.
 3. qpdf WASM build source + exact version + license must be verified before Phase 4
@@ -363,3 +368,95 @@ Stage Summary:
   result,result-final,hindi,mobile,mobile-visual,mobile-cut,mobile-sheet,
   mobile-result,final-desktop}.png
 - Next: PageGrid family round (reuses VisualStrip thumbnails + plan patterns).
+
+---
+Task ID: P3.3
+Agent: main (Z.ai Code session — webDevReview-style round: baseline QA passed, advanced the next pending phase item)
+
+Task: Ship the PageGrid family (PRD §8.1 "Rotate / Rearrange / Remove / Extract") — one shared interactive
+page-grid with select/drag/undo-redo/zoom/virtualization, 4 preset-tuned tools on top of it.
+
+Work Log:
+- Baseline QA first (per review protocol): home/tools/tool pages 0 errors; rotate + merge golden
+  paths re-run clean; 0 non-local network requests; mobile 360px no h-scroll → no bugs → advanced.
+- Verified the risky pdf-lib APIs with a bun smoke script BEFORE building: copyPages with
+  DUPLICATE indices returns independent copies ✓, rotation delta on copied pages ✓, blank pages
+  with explicit size ✓ (re-ran after wiring to verify full rebuild: 12 pages all 270°).
+- tools/pagegrid/model.ts — pure shared model: GridPage {uid, source, rotation}, serializeGrid/
+  parseGridOption (compact [[source,rotation]] tuples), parseNumberListOption, and ALL ops pure:
+  rotateIndices, deleteIndices, duplicateIndices (each right after itself), insertBlankAfter,
+  moveEntry (drag), moveSelectionByOne (block move), odd/evenIndices, parseGridRange (strict,
+  in-range only), gridStats. VIRTUALIZE_ABOVE = 150. Same module feeds panel AND worker.
+- tools/pagegrid/worker.ts — ONE shared worker for all 4 tools: loads pdf-lib, resolves entries
+  (whole grid, or extract's selection), copyPages in bulk, applies rotation deltas, inserts real
+  blank pages sized from the first real page (A4 fallback), posts real per-page progress, naming
+  per toolId (-rotated/-rearranged/-pages-removed/-extracted, _pageN for one-per-file), detail
+  {files, pages}. Defensive empty-grid error (safety net behind the CTA gate).
+- tools/pagegrid/use-grid-history.ts — undo/redo as a pure useReducer (100-deep snapshot stack);
+  wrappers compute the next state through the SAME reducer so callers can serialize for options
+  immediately. Rewritten after react-hooks/refs flagged ref-during-render in the first draft.
+- tools/pagegrid/grid-surface.tsx — the surface: file header (name/size/pages/remove), toolbar
+  (selection chip + range input + Select all/Clear; scope segmented All|Selected|Odd|Even —
+  odd/even rotate-preset only; rotate L/R; duplicate/insert-blank/delete; remove-blanks w/
+  detection progress (remove preset); move earlier/later; undo/redo; zoom slider 88-168 step 16),
+  hint line, and the grid itself. Selection: click (single), ctrl+click (toggle), shift+click
+  (range from anchor), Ctrl+A, Esc, Del/Backspace, arrow-key cell focus (roving tabindex).
+  Virtualization above 150 pages: row windowing from scrollTop/viewportH/ResizeObserver, spacer
+  div with computed height, translateY window (400 pages → ~30 mounted cells); drag disabled
+  there with an honest amber hint + move buttons remain. All mutations flow through apply() →
+  history.commit + onChange("grid"/"selected") + CTA-blocked sync — event-context only, zero
+  setState-in-effect.
+- tools/pagegrid/grid-cell.tsx — cell: aspect-ratio letterbox thumb with LIVE CSS rotation,
+  lazy render via per-cell IntersectionObserver (300px rootMargin) + revoke on unmount, position
+  badge with "from page N" provenance tooltip once reordered, amber rotation badge, selected
+  check (zoom-in anim), per-cell rotate L/R + delete actions on selected cells, dnd grip
+  (Pointer/Touch/Keyboard sensors) when fully mounted. Blank pages render as dashed emerald
+  placeholder.
+- tools/pagegrid/summary-panel.tsx — aside/mobile-sheet panel: live stats (pages out / removed /
+  rotated / blanks / selected) parsed from the same serialized grid + keyboard cheat sheet.
+- Surface registry concept: src/lib/tools/surfaces.tsx (TOOL_SURFACES, named wrapper components)
+  + ToolSurfaceProps in panel-types.ts (setRunBlocked). ToolShell renders the surface in the
+  MAIN column instead of FileList+DropZone when registered; CTA gating via runBlockedKey (amber
+  TriangleAlert + reason text in the sticky bar; disabled on both desktop CTA and sheet CTA).
+- Tool configs: rotate-pdf-pages REWRITTEN (empty schema, shared worker, preset features/FAQ,
+  old per-file worker.ts deleted); rearrange/remove/extract NEW (extract carries the
+  onePerPage schema switch). Registry: 3 new tools enabled. configs.ts/panels.tsx updated.
+- i18n: +71 keys ×2 (grid.* section incl. fromPage) via python JSON round-trip (P2 lesson:
+  never MultiEdit the catalogs); real Devanagari throughout.
+- getPdfPageAspect() added to lib/pdf/thumbnails.ts (viewport-only, no render).
+- eslint config: public/** added to ignores — the vendored pdf.js minified assets were throwing
+  ~1500 pre-existing warnings/8 errors into `bun run lint` (they predate this round; src+tools
+  were always clean).
+- QA (agent-browser, fresh context, 0 page errors, 0 console errors, 0 non-local requests):
+  rotate: 12-cell grid, thumbs lazy, select/check/actions, rotate-all → 12 amber badges + live
+  img transform rotate(270deg), undo clears, run → result + summary; remove: range "2,5-7" → 4
+  selected, delete → 8 cells, insert blank → renders, remove-blanks → "Removed 2 blank pages"
+  toast + correct math (12-4-2+1=7), run → -pages-removed.pdf; extract: CTA blocked + hint with
+  no selection, shift-click → 4 selected, run → "1 files, 4 pages" -extracted.pdf, Ctrl+A +
+  one-per-file → 12 outputs + ZIP button; rearrange: pointer drag p1→p3 = [p2,p3,p1,p4,p5]
+  PROVEN by "from page" labels, undo restores, move-earlier moves selection with the page;
+  virtualization: 400-page file → 30 cells, scroll to 7000px → window at Page 181 + 20 lazy
+  thumbs, range "200-202" + scope Selected → exactly 3 rotated, run → 400 pages; safety:
+  delete-all → CTA disabled + amber warning; Hindi end-to-end (aria labels, blank-detect toast
+  in Devanagari); mobile 360px no h-scroll + bottom sheet (stats + shortcuts + CTA); zoom
+  slider 120→152 with cells growing; regressions: merge Hindi golden path + split landing +
+  home + all-tools card navigation all clean; tsc + eslint fully clean; dev.log clean after
+  compile (one transient Fast-Refresh reload during mid-edit states, resolved).
+
+Stage Summary:
+- Live tools: 6 (merge, split, rotate [REBASED on the grid], rearrange, remove, extract) — all
+  mode D, on-device. The PRD §8.1 PageGrid family is COMPLETE: common actions (select
+  click/shift/Ctrl+A/range, drag reorder, rotate per page or scope, delete, duplicate, insert
+  blank, undo/redo, zoom), preset extras (odd/even scope, blank auto-detect, one-page-per-file),
+  large-doc virtualization + lazy thumbnails, and the all-deleted Apply safety.
+- Architecture: shared pure model + ONE worker + ONE surface + per-tool thin configs — the
+  pattern for every future grid-based tool. Surface registry extends the config-driven system
+  without breaking panels (merge/split untouched).
+- Cell provenance labels ("Page 3, from page 1") double as UX polish and QA ground truth.
+- Screenshots: download/qa-p33-*.png (13).
+- Dev-server note repeated: the sandbox reaps plain background processes; the python double-fork
+  daemon (see P3.2 entry) keeps `bun run dev` alive across tool calls.
+- Next per the phase plan: Images to PDF (needs an image-handling DropZone path + jpeg/png
+  embedding worker), then PDF→JPG/PNG, PDF→Text, Watermark, Page numbers, Crop, Doc info,
+  Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per round. Split/merge
+  deferred follow-ups unchanged (see section 6).

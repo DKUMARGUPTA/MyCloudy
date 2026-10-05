@@ -76,6 +76,21 @@ export async function getPdfPageCount(file: File | Blob): Promise<number> {
   return doc.numPages;
 }
 
+/**
+ * Width/height aspect of a page (PageGrid cell geometry). Uses the cached
+ * document + viewport only — no canvas render.
+ */
+export async function getPdfPageAspect(
+  file: File | Blob,
+  pageIndex = 0
+): Promise<number> {
+  const doc = await openDocument(file);
+  const page = await doc.getPage(pageIndex + 1); // 1-based in pdf.js
+  const viewport = page.getViewport({ scale: 1 });
+  const height = Math.max(1, viewport.height);
+  return viewport.width / height;
+}
+
 /* --------------------------- Render queue --------------------------- */
 
 const MAX_CONCURRENT_RENDERS = 2;

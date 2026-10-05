@@ -25,3 +25,15 @@ export interface ToolPanelProps {
   /** Replace the whole file order (sort buttons, etc.). */
   setFileOrder: (items: ToolFileRef[]) => void;
 }
+
+/**
+ * Workspace surface contract (PageGrid family): like a panel, but rendered
+ * in the MAIN column (full width, mobile included) instead of the options
+ * aside. Surfaces own the file presentation — the ToolShell skips the
+ * FileList when one is registered. `setRunBlocked` lets a surface gate the
+ * sticky CTA (PRD §8.1 safety: "sab pages delete ho to Apply disabled").
+ */
+export interface ToolSurfaceProps extends ToolPanelProps {
+  /** Block the run with an i18n reason key, or null to clear. */
+  setRunBlocked: (reasonKey: string | null) => void;
+}

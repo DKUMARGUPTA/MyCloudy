@@ -17,6 +17,7 @@ import {
   Lock,
   Sparkles,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 
 import {
@@ -72,6 +73,7 @@ import { OptionsPanel } from "./options-panel";
 import { ProcessingView } from "./processing-view";
 import { ResultView } from "./result-view";
 import { TOOL_PANELS } from "@/lib/tools/panels";
+import { TOOL_SURFACES } from "@/lib/tools/surfaces";
 import { cn } from "@/lib/utils";
 
 /**
@@ -164,6 +166,20 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   // Optional custom options panel (PRD §2.6 Panel.tsx pattern). Direct
   // map lookup — a stable module-level reference, never created in render.
   const CustomPanel = TOOL_PANELS[tool.id];
+
+  // Optional workspace surface (PageGrid family): rendered in the main
+  // column instead of the FileList; can gate the CTA via runBlocked.
+  const WorkspaceSurface = TOOL_SURFACES[tool.id];
+
+  // Surface-driven CTA gating (PRD §8.1 safety: "sab pages delete ho to
+  // Apply disabled" / extract needs a selection). Event-context only —
+  // surfaces call this from their action handlers, never during render.
+  const [runBlockedKey, setRunBlockedKey] = useState<string | null>(null);
+  const handleRunBlocked = useCallback((reasonKey: string | null) => {
+    setRunBlockedKey(reasonKey);
+  }, []);
+  const runDisabled =
+    files.length < config.minFiles || runBlockedKey !== null;
 
   const handleOptionChange = useCallback(
     (id: string, value: string | number | boolean) => {
@@ -266,7 +282,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   }, []);
 
   const startRun = useCallback(() => {
-    if (files.length < config.minFiles) return;
+    if (files.length < config.minFiles || runBlockedKey !== null) return;
     trackToolUse(tool.id);
     setInputBytes(files.reduce((sum, item) => sum + item.file.size, 0));
     setProgress({ pct: 0, stage: "reading" });
@@ -306,7 +322,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           variant: "destructive",
         });
       });
-  }, [config.minFiles, files, options, t, toast, tool.id]);
+  }, [config.minFiles, files, options, runBlockedKey, t, toast, tool.id]);
 
   const cancelRun = useCallback(() => {
     runHandleRef.current?.cancel();
@@ -562,18 +578,36 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           </div>
 
           <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_320px]">
-            {/* Preview list (drag-reorder via dnd-kit; PRD §8.1) */}
+            {/* Main column: the surface owns file presentation when one is
+                registered (PageGrid family); otherwise the classic
+                FileList + add-more DropZone (PRD §6.3). */}
             <div className="flex flex-col gap-3">
-              <FileList items={files} onMove={moveFile} onRemove={removeFile} />
-              <DropZone
-                labelKey="tool.addMoreFiles"
-                multiple={config.maxFiles > 1}
-                maxFiles={config.maxFiles}
-                acceptKind="pdf"
-                onAccept={addFiles}
-                currentCount={files.length}
-                className="border-dashed py-4"
-              />
+              {WorkspaceSurface && files.length > 0 ? (
+                <WorkspaceSurface
+                  files={files}
+                  values={options}
+                  onChange={handleOptionChange}
+                  setFileOrder={setFiles}
+                  setRunBlocked={handleRunBlocked}
+                />
+              ) : (
+                <>
+                  <FileList
+                    items={files}
+                    onMove={moveFile}
+                    onRemove={removeFile}
+                  />
+                  <DropZone
+                    labelKey="tool.addMoreFiles"
+                    multiple={config.maxFiles > 1}
+                    maxFiles={config.maxFiles}
+                    acceptKind="pdf"
+                    onAccept={addFiles}
+                    currentCount={files.length}
+                    className="border-dashed py-4"
+                  />
+                </>
+              )}
             </div>
 
             {/* Options: desktop side panel / mobile bottom sheet.
@@ -620,18 +654,30 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
               <div className="min-w-0 flex-1">
                 <p
                   className={cn(
-                    "truncate text-xs",
-                    files.length > 0 && files.length < config.minFiles
-                      ? "font-medium text-primary"
-                      : "text-muted-foreground"
+                    "flex items-center gap-1.5 truncate text-xs",
+                    runBlockedKey !== null
+                      ? "font-medium text-amber-600 dark:text-amber-400"
+                      : files.length > 0 && files.length < config.minFiles
+                        ? "font-medium text-primary"
+                        : "text-muted-foreground"
                   )}
                 >
-                  {files.length > 0 && files.length < config.minFiles
-                    ? t("tool.summaryMinFiles", { count: config.minFiles })
-                    : t("tool.summary", {
-                        count: files.length,
-                        size: formatBytes(totalSize),
-                      })}
+                  {runBlockedKey !== null ? (
+                    <TriangleAlert
+                      className="size-3.5 shrink-0"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <span className="truncate">
+                    {runBlockedKey !== null
+                      ? t(runBlockedKey)
+                      : files.length > 0 && files.length < config.minFiles
+                        ? t("tool.summaryMinFiles", { count: config.minFiles })
+                        : t("tool.summary", {
+                            count: files.length,
+                            size: formatBytes(totalSize),
+                          })}
+                  </span>
                 </p>
                 {chainFrom ? (
                   <p className="truncate text-[11px] text-primary">
@@ -653,7 +699,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                 size="touch"
                 className="rounded-btn font-semibold"
                 onClick={startRun}
-                disabled={files.length < config.minFiles}
+                disabled={runDisabled}
               >
                 {ctaLabel}
                 <ArrowRight className="size-4" aria-hidden="true" />
@@ -675,7 +721,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                   setOptionsOpen(false);
                   startRun();
                 }}
-                disabled={files.length < config.minFiles}
+                disabled={runDisabled}
               >
                 {ctaLabel}
                 <ArrowRight className="size-4" aria-hidden="true" />
