@@ -276,7 +276,8 @@
       "errorUnsupported": "This image format can't be read here ({detail}). Convert it to JPG or PNG first.",
       "errorDecode": "Couldn't decode {detail} — the file may be damaged or unsupported on this browser.",
       "errorNoImages": "No images left to convert."
-    }
+    },
+    "errorNoText": "No selectable text found — this PDF is probably a scan. OCR is coming in a later phase."
   },
   "result": {
     "title": "Your file is ready!",
@@ -501,5 +502,14 @@
     "previewSize": "Page 1 at {dpi} DPI → {w} × {h} px",
     "previewNote": "Every selected page keeps this sharpness.",
     "previewLoading": "Reading page size…"
+  },
+  "pdftxt": {
+    "previewTitle": "Page 1 text preview",
+    "previewWords": "{count} words on page 1",
+    "previewLoading": "Reading the first page…",
+    "previewTruncated": "First 240 characters shown",
+    "previewNote": "Extraction runs on your device — this is exactly the text you'll get.",
+    "scanTitle": "No selectable text on page 1",
+    "scanBody": "This looks like a scan or image-only PDF. Extraction may come back empty until OCR ships in a later phase."
   }
 }

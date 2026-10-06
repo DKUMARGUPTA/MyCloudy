@@ -1,4 +1,5 @@
 import { renderPdfThumbnail } from "@/lib/pdf/thumbnails";
+import { renderTextThumbnail } from "@/lib/files/text-thumbnail";
 
 /**
  * Recent-file thumbnails for ANY accepted input kind (PRD §2.4: metadata +
@@ -6,6 +7,8 @@ import { renderPdfThumbnail } from "@/lib/pdf/thumbnails";
  *
  * - images: decoded + downscaled to ≤ maxDim via createImageBitmap
  * - PDFs: first-page render through the shared queued renderer
+ * - text:  first lines drawn onto a small canvas (a real preview for .txt
+ *          outputs instead of the generic icon)
  * Returns null when no thumbnail could be produced (entry still lands,
  * the strip simply shows the generic icon for it).
  */
@@ -39,6 +42,13 @@ export async function makeFileThumbnail(
       } finally {
         bitmap.close();
       }
+    } catch {
+      return null;
+    }
+  }
+  if (file.type.startsWith("text/")) {
+    try {
+      return await renderTextThumbnail(file, maxDim);
     } catch {
       return null;
     }

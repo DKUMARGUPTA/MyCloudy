@@ -6,26 +6,29 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: 3 IN PROGRESS (P3.4)** — Image conversion pair shipped: Images→PDF
-  family (ONE shared interactive image-grid in tools/imagegrid/ powering
-  images-to-pdf + jpg/png/webp-to-pdf presets: drag reorder, per-image 90°
-  rotate w/ live CSS rotation, remove, A→Z sort, add-more zone, all-removed
-  CTA gating) and PDF→images pair (pdf-to-jpg + pdf-to-png on ONE worker:
-  pdf.js fake-worker mode INSIDE the tool worker — document.baseURI shim,
-  DPI 72/150/300/600, page ranges, JPG quality, PNG transparent bg via
-  render background:"rgba(0,0,0,0)", single/multi naming + ZIP). Verified
-  byte-level: unrotated JPG/PNG embed ORIGINAL bytes, WEBP→PNG transcode,
-  RGBA preserved, two-up + page numbers + dark bg correct page geometry.
-  CANCEL PATH CAUGHT MID-FLIGHT (600 DPI × 400 pages at 6% → Cancel →
-  workspace + toast) — closes the old deferred item.
-  Live tools now: **13** (merge, split, rotate, rearrange, remove, extract,
-  images-to-pdf, jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png), all 100%
-  on-device. Infra: DropZone acceptKind driven by tool.accepts, image
-  fast-path thumbnails (inputs + outputs + recent strip), chainToolIds
-  (image outputs chain to image tools only), smart-drop image → direct
-  images-to-pdf handoff.
-  Next: PDF→Text, Watermark, Page numbers, Crop, Doc info, Fill, View,
-  Compress, Generate password, Scan, HEIC/WEBP — one per round.
+- **Phase: 3 IN PROGRESS (P3.5)** — CRITICAL FIX + PDF→Text shipped.
+  A previous round was interrupted MID-FLIGHT: cookie-banner.tsx,
+  request-tool-modal.tsx and favorites.ts were committed importing
+  `@/lib/storage/local-snapshot`, but that module was never created —
+  `/` was a 500 (module-not-found, tsc 3 errors). This round created the
+  missing module (cached localStorage snapshot factory for
+  useSyncExternalStore — stable references until the raw string changes),
+  then verified ALL in-flight features end-to-end, then shipped the next
+  PRD §8.6 item: **PDF to Text** (id `pdf-to-txt`, registry flipped
+  enabled) — pdf.js text extraction in the tool worker (same
+  fake-worker + document.baseURI shim recipe), two layouts (Flow:
+  y-gap paragraph detection + cross-line dehyphenation; Lines: verbatim
+  visual lines), optional `───── Page N ─────` markers, page ranges,
+  per-file UTF-8 .txt outputs, honest `tool.errorNoText` for scans
+  (verified: reportlab test PDF reflows perfectly, "demon-stration"
+  → "demonstration"; image-only PDF → friendly error + back to
+  workspace). Live preview panel shows page-1 text + word count before
+  running, amber scan warning when no selectable text. New text-thumbnail
+  renderer (canvas-drawn first lines) feeds ResultView + useThumbnail +
+  makeFileThumbnail for .txt outputs. outputKind union + "text".
+  Live tools now: **14** (…pdf-to-txt added), all 100% on-device.
+  Next: Watermark, Page numbers, Crop, Doc info, Fill, View, Compress,
+  Generate password, Scan, HEIC/WEBP — one per round.
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
@@ -594,3 +597,113 @@ Stage Summary:
   Crop, Doc info, Fill, View, Compress, Generate password, Scan, HEIC/WEBP
   — one per round. Merge "images also allowed" is now unblocked (reuse the
   imagegrid embed engine).
+
+---
+Task ID: P3.5
+Agent: main (Z.ai Code session — webDevReview cron round: fixed broken build, finished interrupted features, shipped PDF→Text)
+
+Task: 1) Recover the 500-on-/ broken build (missing @/lib/storage/local-snapshot
+module from an interrupted prior round); 2) QA every in-flight feature that was
+left half-shipped; 3) continue the phase plan with PDF→Text (PRD §8.6);
+4) mandatory styling detail pass; 5) this worklog record.
+
+Work Log:
+- Diagnosis: dev.log showed GET / 500 — Turbopack module-not-found for
+  `@/lib/storage/local-snapshot`, imported by cookie-banner.tsx,
+  request-tool-modal.tsx and lib/tools/favorites.ts (all already committed).
+  tsc confirmed exactly 3 errors, all the same missing module — nothing else
+  was broken. The prior round had been cut off right before creating it.
+- FIX: created src/lib/storage/local-snapshot.ts — createLocalSnapshot<T>(
+  key, parse, empty) returns a memoized () => T getter for useSyncExternalStore:
+  caches on the RAW localStorage string, so the parsed value keeps a stable
+  reference until the raw string actually changes (the useSyncExternalStore
+  contract). SSR-safe (returns empty pre-mount), storage-failure-safe
+  (try/catch → treats as absent). 63 lines incl. docs.
+- QA of the recovered in-flight features (agent-browser, fresh contexts,
+  0 page errors, 0 console errors throughout):
+  - Cookie banner (PRD §5.3): renders on fresh context (dialog "Your choice,
+    your data"), Customize → analytics switch + save → `docopdf-consent`
+    persisted + banner hidden; footer "Privacy settings" re-opens it directly
+    in expanded mode.
+  - Request-a-tool (PRD §6.2/§9): search nonsense → empty state → "Request a
+    tool" modal; submit → `docopdf-tool-requests` persisted; queued list w/
+    Remove works.
+  - Favorites + Last used (PRD §6.2): star on a tool card →
+    `docopdf-favorites` + "Favorites · 1" tab appears and filters to exactly
+    that tool; ran merge (2 files) → `docopdf-last-used` = ["merge-pdf"] +
+    "Last used" tab appears. Hindi tab labels verified (पसंदीदा · 1,
+    हाल में इस्तेमाल). Mobile 375px no h-scroll.
+- NEW TOOL: PDF to Text (tools/pdf-to-txt/):
+  - worker.ts — pdf.js inside the tool worker (fake-worker mode +
+    document.baseURI shim, same proven recipe as pdf-to-images). Text
+    reconstruction: pieces → y-clustered visual lines (tolerance 0.5× font
+    height) → x-sorted with quarter-font gap spaces → Flow mode joins lines
+    into paragraphs (baseline gap > 1.7× line height = paragraph break;
+    trailing hyphen before a lowercase letter merges: "demon-stration" →
+    "demonstration") / Lines mode keeps visual lines verbatim. Page range via
+    parsePageSpec; optional ───── Page N ───── markers when > 1 page; per-file
+    UTF-8 .txt; honest tool.errorNoText when a file yields zero selectable
+    text (scans — OCR is a later phase, PRD copy).
+  - config.ts — layout select (flow/lines) + pages + pageMarks switch;
+    chainToolIds txt-to-pdf/markdown-to-pdf; features/FAQ in en+hi.
+  - panel.tsx — LIVE page-1 text preview (getPdfPageTextPreview in
+    lib/pdf/thumbnails.ts, doc-cached, text-content only): monospace pre with
+    gradient fade + truncation note, word-count chip, amber TriangleAlert
+    block when no selectable text (scan hint), footer privacy line. Stale
+    preview guarded by file-identity comparison (lint-safe, no setState-in-
+    effect).
+- Infra (shared):
+  - src/lib/files/text-thumbnail.ts (NEW) — renderTextThumbnail draws the
+    first ~9 non-empty lines onto a 3:4 canvas (paper-white bg, ink-gray
+    monospace, measured ellipsis) → .txt outputs get a REAL document
+    thumbnail. Wired into makeFileThumbnail (text/ branch) AND useThumbnail
+    (fast path before the pdf.js attempt — previously text blobs fell to the
+    ⚠ error icon).
+  - config-types.ts outputKind union += "text".
+  - registry.ts pdf-to-txt enabled: true; configs.ts + panels.tsx registered.
+  - result-view.tsx rename regex now strips .txt too.
+  - i18n: pdftxt.* (7 keys) + tool.errorNoText, en + hi (python JSON
+    round-trip, real Devanagari).
+- QA of the new tool (fresh contexts, 0 errors):
+  - reportlab 2-page test PDF: Flow output = clean paragraphs, hyphenation
+    rejoined, numbers/symbols intact, page 2 included ("1 files, 2 pages"
+    summary); page marks ON → ───── Page 1/2 ───── separators present; Lines
+    mode → visual line breaks verbatim (demon-/stration kept).
+  - Image-only "scan" PDF: panel shows amber "No selectable text on page 1"
+    BEFORE running; run → error toast (errorNoText) → back to workspace.
+  - Result view: .txt output card renders the canvas text thumbnail
+    (img loaded, 200px); rename preset strips .txt.
+  - Hindi end-to-end: पेज 1 टेक्स्ट प्रीव्यू panel, लेआउट combobox
+    (Flow — साफ़ पैराग्राफ़), पेज-ब्रेक चिह्नित करें switch, scan copy.
+  - Mobile 375px: no h-scroll; consent banner + bottom CTA co-exist.
+  - Regressions: home hero, all-tools page (PDF to Text listed w/o Soon
+    chip), merge landing — all clean; tsc + eslint fully clean; dev.log
+    clean (only expected Fast-Refresh reloads from the i18n edits).
+- Styling pass (mandatory): text thumbnails as real visual previews;
+  preview panel chrome (header row w/ word-count chip, gradient-fade
+  monospace body, scan-warning block, privacy footer); page-mark separator
+  design; existing detail polish untouched.
+- Test assets: download/qa-text-sample.pdf (reportlab, 2 pages, hyphenation
+  case), download/qa-scan-sample.pdf (PIL image-only), qa-p35-*.png
+  screenshots (3).
+
+Stage Summary:
+- Build RECOVERED: the only blocker was one missing file; all three half-
+  shipped features (consent banner, request-a-tool, favorites/last-used)
+  verified working end-to-end, both locales.
+- Live tools: 14 — merge, split, rotate, rearrange, remove, extract,
+  images-to-pdf, jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt.
+  PRD §8.6 text extraction COMPLETE for selectable text (OCR deferred to
+  Phase 9 as planned; honest error meanwhile).
+- Text-thumbnail renderer benefits every future text-output tool
+  (PDF→Text/Markdown/HTML, txt-to-pdf previews of inputs are image-side only).
+- Next per the phase plan: Watermark (§8.3), then Page numbers, Crop, Doc
+  info, Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per
+  round. Merge "images also allowed" still unblocked (reuse imagegrid engine).
+- Deferred notes: switch toggle in the options panel sits under the sticky
+  bottom CTA bar on short desktop viewports — scrollintoview was needed in
+  QA (pre-existing layout trait, not a regression from this round; consider
+  scroll-margin-bottom on option rows if it resurfaces).
+- Suggested commit: "fix: create missing local-snapshot module (500 on /);
+  feat: PDF to Text tool with flow/lines layouts, page marks, live preview,
+  scan detection; text thumbnails for .txt outputs"

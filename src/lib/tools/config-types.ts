@@ -76,7 +76,7 @@ export interface ToolConfig {
   /** Landing-state FAQ (3 items, PRD §6.3). */
   faq: ToolFaqItem[];
   /** Primary output kind — drives naming, preview and chain suggestions. */
-  outputKind: "pdf" | "image" | "zip";
+  outputKind: "pdf" | "image" | "text" | "zip";
   /** File count limits for the DropZone (PRD §6.3 "up to N files"). */
   minFiles: number;
   maxFiles: number;

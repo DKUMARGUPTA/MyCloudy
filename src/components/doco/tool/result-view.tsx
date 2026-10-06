@@ -239,7 +239,7 @@ export function ResultView({
                     type="button"
                     onClick={() => {
                       setEditingIndex(index);
-                      setDraft(names[index].replace(/\.(pdf|zip|png|jpe?g)$/i, ""));
+                      setDraft(names[index].replace(/\.(pdf|zip|png|jpe?g|txt)$/i, ""));
                     }}
                     aria-label={t("result.renameLabel")}
                     className="flex size-8 shrink-0 items-center justify-center rounded-btn text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"

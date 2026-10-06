@@ -109,6 +109,36 @@ export async function getPdfPagePixelSize(
   };
 }
 
+/**
+ * First-page selectable-text preview for the PDF→Text panel (PRD §8.6).
+ * Reads text content only — no render. Returns "" when the page has no
+ * selectable text (scans), which the panel turns into an OCR hint.
+ */
+export async function getPdfPageTextPreview(
+  file: File | Blob,
+  maxChars = 240
+): Promise<string> {
+  const doc = await openDocument(file);
+  const page = await doc.getPage(1);
+  try {
+    const content = await page.getTextContent();
+    let text = "";
+    for (const item of content.items) {
+      const str = (item as { str?: unknown }).str;
+      if (typeof str !== "string" || str.length === 0) continue;
+      text += str;
+      if ((item as { hasEOL?: boolean }).hasEOL) text += "\n";
+    }
+    return text
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/[ \t]+$/gm, "")
+      .trim()
+      .slice(0, maxChars);
+  } finally {
+    page.cleanup();
+  }
+}
+
 /* --------------------------- Render queue --------------------------- */
 
 const MAX_CONCURRENT_RENDERS = 2;

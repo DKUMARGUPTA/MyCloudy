@@ -1718,6 +1718,7 @@ export const ALL_TOOLS: ToolDef[] = [
     id: "pdf-to-txt",
     category: "convert-from",
     mode: "D",
+    enabled: true,
     phase: "P1",
     icon: AlignLeft,
     popularity: 65,

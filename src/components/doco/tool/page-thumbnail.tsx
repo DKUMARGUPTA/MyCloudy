@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { renderPdfThumbnail } from "@/lib/pdf/thumbnails";
+import { renderTextThumbnail } from "@/lib/files/text-thumbnail";
 import { cn } from "@/lib/utils";
 
 /**
@@ -11,6 +12,7 @@ import { cn } from "@/lib/utils";
  * Two paths:
  * - image blobs (image inputs, JPG/PNG tool outputs) are their own preview —
  *   the object URL is created directly, no render queue needed
+ * - text blobs (.txt outputs) render their first lines onto a canvas
  * - PDFs render page 1 through the queue in lib/pdf/thumbnails (2 in flight)
  */
 
@@ -36,6 +38,10 @@ export function useThumbnail(
         setState({ status: "loading", url: null });
         // Image fast path: the blob IS the preview.
         if (file.type.startsWith("image/")) return file;
+        // Text fast path: first lines drawn onto a small canvas.
+        if (file.type.startsWith("text/")) {
+          return renderTextThumbnail(file, maxDim);
+        }
         return renderPdfThumbnail(file, { maxDim }).then(
           (result) => result?.blob ?? null
         );
