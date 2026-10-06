@@ -568,6 +568,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Droplets,
     popularity: 55,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Add watermark", hi: "वॉटरमार्क लगाएँ" },
     description: {
       en: "Text or logo watermark: opacity, rotation, tiling, all pages or some.",

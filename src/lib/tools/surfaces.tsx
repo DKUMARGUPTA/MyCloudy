@@ -5,6 +5,7 @@ import type { ComponentType } from "react";
 import type { ToolSurfaceProps } from "./panel-types";
 import { GridSurface } from "../../../tools/pagegrid/grid-surface";
 import { ImageGridSurface } from "../../../tools/imagegrid/image-grid-surface";
+import { WatermarkSurface } from "../../../tools/add-watermark/wm-surface";
 
 /**
  * Workspace surface registry (PageGrid + ImageGrid families, PRD §8.1/§8.6).
@@ -43,6 +44,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "jpg-to-pdf": ImageGridSurface,
   "png-to-pdf": ImageGridSurface,
   "webp-to-pdf": ImageGridSurface,
+  "add-watermark": WatermarkSurface,
 };
 
 export function getToolSurface(

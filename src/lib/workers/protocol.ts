@@ -46,6 +46,8 @@ export interface WorkerRunRequest {
   files: File[];
   /** Workspace file ids aligned with `files` (per-file options, e.g. merge ranges). */
   fileIds?: string[];
+  /** Extra run assets beside the main files (e.g. the watermark logo). */
+  assets?: File[];
 }
 
 export type WorkerResponse =

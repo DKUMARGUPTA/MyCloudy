@@ -293,18 +293,25 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
     setPhase("landing");
   }, []);
 
+  // Stable function ref from the config (module constant) — keeps the
+  // React Compiler's dependency inference happy.
+  const collectAssets = config.collectAssets;
+
   const startRun = useCallback(() => {
     if (files.length < config.minFiles || runBlockedKey !== null) return;
     trackToolUse(tool.id);
     setInputBytes(files.reduce((sum, item) => sum + item.file.size, 0));
     setProgress({ pct: 0, stage: "reading" });
     setPhase("processing");
+    // Extra in-memory assets (watermark logo etc.) ride the worker message.
+    const assets = collectAssets?.() ?? undefined;
     runHandleRef.current = toolRunner.run(
       tool.id,
       options,
       files.map((item) => item.file),
       setProgress,
-      files.map((item) => item.id)
+      files.map((item) => item.id),
+      assets
     );
     runHandleRef.current.promise
       .then((result) => {
@@ -334,7 +341,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           variant: "destructive",
         });
       });
-  }, [config.minFiles, files, options, runBlockedKey, t, toast, tool.id]);
+  }, [collectAssets, config.minFiles, files, options, runBlockedKey, t, toast, tool.id]);
 
   const cancelRun = useCallback(() => {
     runHandleRef.current?.cancel();

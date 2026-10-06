@@ -12,6 +12,7 @@ import { config as webpToPdf } from "../../../tools/webp-to-pdf/config";
 import { config as pdfToJpg } from "../../../tools/pdf-to-jpg/config";
 import { config as pdfToPng } from "../../../tools/pdf-to-png/config";
 import { config as pdfToTxt } from "../../../tools/pdf-to-txt/config";
+import { config as addWatermark } from "../../../tools/add-watermark/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -34,6 +35,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [pdfToJpg.toolId]: pdfToJpg,
   [pdfToPng.toolId]: pdfToPng,
   [pdfToTxt.toolId]: pdfToTxt,
+  [addWatermark.toolId]: addWatermark,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

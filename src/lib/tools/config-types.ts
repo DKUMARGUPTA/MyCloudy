@@ -86,6 +86,12 @@ export interface ToolConfig {
    * image-accepting tools so chains never hand a JPG to a PDF-only tool.
    */
   chainToolIds?: string[];
+  /**
+   * Extra in-memory run assets beside the workspace files (e.g. the
+   * watermark logo image). Called by the shell when a run starts; the
+   * files ride the worker message — never the network.
+   */
+  collectAssets?: () => File[];
 }
 
 /** Default option values from a schema (used to initialize the workspace). */

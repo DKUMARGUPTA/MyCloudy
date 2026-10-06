@@ -6,29 +6,31 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: 3 IN PROGRESS (P3.5)** — CRITICAL FIX + PDF→Text shipped.
-  A previous round was interrupted MID-FLIGHT: cookie-banner.tsx,
-  request-tool-modal.tsx and favorites.ts were committed importing
-  `@/lib/storage/local-snapshot`, but that module was never created —
-  `/` was a 500 (module-not-found, tsc 3 errors). This round created the
-  missing module (cached localStorage snapshot factory for
-  useSyncExternalStore — stable references until the raw string changes),
-  then verified ALL in-flight features end-to-end, then shipped the next
-  PRD §8.6 item: **PDF to Text** (id `pdf-to-txt`, registry flipped
-  enabled) — pdf.js text extraction in the tool worker (same
-  fake-worker + document.baseURI shim recipe), two layouts (Flow:
-  y-gap paragraph detection + cross-line dehyphenation; Lines: verbatim
-  visual lines), optional `───── Page N ─────` markers, page ranges,
-  per-file UTF-8 .txt outputs, honest `tool.errorNoText` for scans
-  (verified: reportlab test PDF reflows perfectly, "demon-stration"
-  → "demonstration"; image-only PDF → friendly error + back to
-  workspace). Live preview panel shows page-1 text + word count before
-  running, amber scan warning when no selectable text. New text-thumbnail
-  renderer (canvas-drawn first lines) feeds ResultView + useThumbnail +
-  makeFileThumbnail for .txt outputs. outputKind union + "text".
-  Live tools now: **14** (…pdf-to-txt added), all 100% on-device.
-  Next: Watermark, Page numbers, Crop, Doc info, Fill, View, Compress,
-  Generate password, Scan, HEIC/WEBP — one per round.
+- **Phase: 3 IN PROGRESS (P3.6)** — CRITICAL RECOVERY + WATERMARK shipped.
+  Round start found `/` was a **500 again**: the P3.5 fix file
+  `src/lib/storage/local-snapshot.ts` had been LOST (its dependents were
+  committed, the module itself never was — the previous round was cut off
+  around the file write). Recreated it from the worklog spec (memoized
+  localStorage snapshot factory for useSyncExternalStore, caches on the
+  raw string so parsed values keep stable references; SSR- + parse-failure
+  safe). `/` → 200, all in-flight features re-verified, then shipped the
+  next PRD §8.2 item: **Add watermark** (id `add-watermark`, registry
+  enabled) — text OR logo stamp with size/color/opacity/rotation,
+  9-grid position + edge-distance, diagonal tiling with spacing,
+  **behind-content via /Contents stream reordering** (pdf-lib appends its
+  draw stream last; moving it to index 0 makes the watermark draw first =
+  behind — verified by a bun smoke script BEFORE building, then proven on
+  the downloaded output: stream 0 = watermark ops), page targeting
+  (all/odd/even/range/skip-first), LIVE CANVAS PREVIEW using the same
+  placement math as the worker (positionCenter/rotatedStartPoint/tileSteps
+  shared module) + clickable page strip with marked-page dots, CTA gating
+  (no text / no logo / invalid range → amber reason + disabled button),
+  logo rides the run as an in-memory ASSET via the new
+  `ToolConfig.collectAssets()` + protocol `assets?: File[]` channel
+  (never OPFS, never network), WinAnsi honesty (Devanagari text → clear
+  error, no broken file). Live tools now: **14**, all 100% on-device.
+  Next: Page numbers, Header/footer, Crop, Doc info, Fill, View,
+  Compress, Generate password, Scan, HEIC/WEBP — one per round.
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
@@ -150,16 +152,23 @@
 
 ## 6. Unresolved issues / risks / next-phase priorities
 
-1. **NEXT: Phase 3 continues — PDF→Text** (§8.6: pdf.js text extraction,
-   reading-order options, keep-layout toggle; device-only). Then Watermark,
-   Page numbers, Crop, Doc info, Fill, View, Compress, Generate password,
-   Scan, HEIC/WEBP — one per round.
+1. **NEXT: Phase 3 continues — Page numbers + Header/footer** (§8.2:
+   formats 1 / Page 1 / 1 of N / Page 1 of N / i / I / a, start number,
+   9-grid + margins, font, skip first page, optional Hindi digits; header/
+   footer left/center/right text with {page}/{pages}/{date}/{filename}/
+   {title} variables). The watermark tool's placement math
+   (positionCenter + rotatedStartPoint in tools/add-watermark/wm-options.ts)
+   is directly reusable. Then Crop, Doc info, Fill, View, Compress,
+   Generate password, Scan, HEIC/WEBP — one per round.
    ImageGrid follow-ups (deferred, noted): per-image CROP UI (PRD §8.6 input
    row mentions "crop each" — needs a crop modal; rotate/reorder shipped);
    SVG/TIFF inputs unsupported (createImageBitmap cannot decode them in
    Chromium — honest error already shown; needs a WASM decoder later);
-   images-in-merge auto-convert (PRD merge row) now UNBLOCKED — merge worker
+   images-in-merge auto-convert (PRD merge row) still UNBLOCKED — merge worker
    can reuse the imagegrid embed engine.
+   Watermark follow-ups (deferred): Devanagari watermark text needs an
+   embedded TTF (pdf-lib standard fonts are WinAnsi-only — honest error
+   shown meanwhile; needs a vendored TTF for font embedding).
    PageGrid follow-ups (deferred, unchanged): virtualized drag stays off
    above 150 pages; selection indices after undo are clamped, not remapped.
    Split follow-ups (deferred, unchanged): per-part bookmark-title naming;
@@ -707,3 +716,125 @@ Stage Summary:
 - Suggested commit: "fix: create missing local-snapshot module (500 on /);
   feat: PDF to Text tool with flow/lines layouts, page marks, live preview,
   scan detection; text thumbnails for .txt outputs"
+
+---
+Task ID: P3.6
+Agent: main (Z.ai Code session — webDevReview cron round: recovered broken build, shipped Watermark)
+
+Task: 1) Baseline QA found `/` 500 — the P3.5 `local-snapshot.ts` fix file
+had been lost (dependents committed, module never committed); recreate +
+re-verify. 2) Continue the phase plan with Add Watermark (PRD §8.2):
+text/logo stamp, font/size/color/opacity/rotation, 9-grid position, tile,
+behind-content, layout all/odd/even/range/first-page-excluded, live canvas
+preview + thumbnails strip. 3) Mandatory styling detail pass. 4) This log.
+
+Work Log:
+- Diagnosis: dev.log GET / 500 — Turbopack module-not-found for
+  `@/lib/storage/local-snapshot`; `ls src/lib/storage/` confirmed the file
+  absent while cookie-banner/request-tool-modal/favorites (committed) still
+  imported it. git fsck dangling commit = duplicate of P3.4, no copy ever
+  committed. Recreated the module from the P3.5 spec: createLocalSnapshot
+  <T>(key, parse, empty) memoizes on the RAW localStorage string (stable
+  references = the useSyncExternalStore contract), SSR-safe, storage- and
+  parse-failure-safe. `/` → 200 immediately.
+- Baseline QA after recovery (agent-browser): home renders, 0 non-local
+  requests, rotate golden path upload→run→result with 0 page errors,
+  all-tools 97 cards; tsc + eslint clean. NOTE: `agent-browser upload` went
+  silently inert this round (files set, change handler never fired) — the
+  reliable recipe is a programmatic DataTransfer + change event via eval
+  (base64-embedded for real test files). Also learned: `[m` in tool output
+  renders as an ANSI reset and SWALLOWS those two chars in terminal
+  displays — configs.ts "looked" corrupted but was byte-perfect.
+- Smoke test BEFORE building (P3.3 lesson, scripts/smoke-watermark.ts):
+  drawText color/opacity/rotate ✓, widthOfTextAtSize ✓, Contents reorder
+  (my stream → index 0) ✓, embedPng + drawImage opacity/rotate ✓, WinAnsi
+  throws on Devanagari ✓, save/reload keeps order ✓ (verified by zlib-
+  decoding each stream of the saved file: [watermark, q, original, Q]).
+- NEW TOOL: Add watermark (tools/add-watermark/):
+  - wm-options.ts — ONE shared pure module for panel + surface + worker:
+    option ids, defaults, resolveWmOptions coercion/clamping, 6 standard
+    fonts + CSS mapping (canvas preview mirrors the pdf font), 8 color
+    presets, parseHexColor, 9-grid positionCenter (PDF y-up math),
+    rotatedStartPoint (rotate-around-box-center solved by
+    start = center − R·(w/2, h/2)), tileSteps, targetIndices
+    (all/odd/even/skipFirst/range via parsePageSpec).
+  - logo-store.ts — in-memory logo File store + custom event (panel pushes,
+    surface subscribes); the logo NEVER touches OPFS/IndexedDB/network.
+  - worker.ts — pdf-lib engine: embeds standard font (WinAnsi checked
+    UPFRONT → honest tool.errorWatermarkChars for Devanagari), stamps text
+    or logo per page (positioned 9-grid with margin, or tiled grid with
+    spacing), behind mode = draw then moveDrawStreamFirst (Contents array
+    reorder — the verified technique), logo via PNG/JPEG embed or
+    createImageBitmap→OffscreenCanvas→PNG re-encode for webp/gif,
+    real per-page progress, `-watermarked.pdf` naming, detail {files, pages}.
+  - panel.tsx — the control station: Text|Logo segmented tabs, text input
+    with 120-char counter, font select, size slider with value chip, 8
+    swatches + custom hex input (validated, snaps back on blur), opacity
+    slider, rotation quick buttons (−90/−45/0/45/90) + slider, 3×3 position
+    grid with dot indicators (disabled while tiling) + edge-distance slider,
+    tile switch + spacing slider, behind switch, layout select + range
+    input, amber hint blocks for missing text/logo.
+  - wm-surface.tsx — main-column LIVE PREVIEW: renders the selected page
+    (pdf.js thumb 560px) then paints the watermark with the SAME math as
+    the worker (what you see is what you get), page strip (12-window,
+    72px thumbs, selected ring, marked-page dots + page numbers),
+    file header chip, marked-count chip + over/behind chip + invalid-range
+    chip, CTA gating via setRunBlocked (no text / no logo / invalid range),
+    loading skeleton + identity-scoped failure state.
+  - config.ts — empty schema (split pattern), maxFiles 1 (PRD: single
+    PDF), collectAssets() feeds the logo, chain to pdf-to-jpg/png/merge;
+    features + FAQ en/hi (incl. honest Hindi-font answer).
+- Infra (additive, 3 small edits): protocol WorkerRunRequest.assets?:
+  File[]; pool.run(..., assets?); config-types ToolConfig.collectAssets?;
+  tool-shell startRun collects assets (with the React-Compiler-friendly
+  destructured dep). globals.css += .bg-checker (transparency
+  checkerboard for the logo preview).
+- Registrations: registry add-watermark enabled:true; configs.ts, panels.tsx,
+  surfaces.tsx entries. i18n: wm.* 66 keys + 5 tool.errorWatermark* codes,
+  en + real Devanagari hi (python merge, scripts/i18n-watermark.py).
+- QA (agent-browser + VLM visual checks + structural PDF checks, fresh
+  contexts, 0 page errors, 0 console errors, 0 real non-local requests):
+  landing state; upload → live preview shows red diagonal CONFIDENTIAL
+  centered (VLM); 9-grid top-right + rotation 0° (VLM); tile → 12-15
+  repeated marks (VLM); behind run → result thumbnail tiled diagonal
+  (VLM) + DOWNLOADED OUTPUT structurally verified: page-1 /Contents =
+  [watermark(906B, gs+rg ops, red 0.8627/0.149 = #DC2626 exact), q,
+  original, Q] → watermark genuinely draws BEHIND; both pages marked;
+  logo mode: upload → centered circular logo preview (VLM) + chip +
+  30% scale; logo run → output contains image XObject; CTA gating:
+  cleared text → disabled + amber "Type the watermark text first",
+  invalid range "abc" → disabled + amber chip, fixed to "2" →
+  "1 of 2 pages marked" → run "1 files, 1 pages"; Devanagari "गोपनीय" →
+  honest error toast + back to workspace (no broken file); Hindi UI end-
+  to-end (panel, chips, preview, strip aria); mobile 375px no h-scroll +
+  sticky CTA + bottom sheet with full panel; regressions after protocol/
+  pool changes: rotate golden path ✓, all-tools lists the tool ✓; tsc +
+  eslint fully clean; dev.log clean.
+- Styling pass (mandatory): swatch grid with selected ring + scale,
+  3×3 position picker with active dot, slider value chips (tabular-nums),
+  rotation quick-buttons, mode segmented tabs, checkerboard logo preview,
+  page strip with selected ring + marked dots, preview header chips
+  (marked-count / over-behind / invalid-range), amber warning blocks,
+  .bg-checker utility. VLM final review: "high level of visual polish…
+  no misalignments or cramped elements".
+
+Stage Summary:
+- Build RECOVERED again (same failure mode as P3.5 — file lost between
+  write and commit; this time it IS committed with the round).
+- Live tools: 14 — merge, split, rotate, rearrange, remove, extract,
+  images/jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt,
+  add-watermark. PRD §8.2 Watermark COMPLETE (text + logo + tiling +
+  behind + layout + live preview); Devanagari watermark text honestly
+  deferred (needs TTF embedding).
+- Architecture wins: (1) the run-ASSET channel (collectAssets → protocol
+  assets) lets any tool ship side-files to its worker without touching
+  the storage layer; (2) the z-order Contents-reorder technique unlocks
+  every future "under content" feature (page numbers under text etc.);
+  (3) shared placement math between preview canvas and worker = the
+  pattern for the upcoming Page numbers / Header-footer round.
+- Screenshots: download/qa-p36-*.png (9) + qa-p36-wm-output.pdf /
+  qa-p36-wm-logo-output.pdf (structurally verified outputs).
+- Suggested commit: "fix: recreate lost local-snapshot module (500 on /);
+  feat: Add watermark — text/logo stamps, 9-grid + tile + behind-content
+  (Contents reorder), live canvas preview + page strip, run-asset channel;
+  i18n wm.* en/hi"

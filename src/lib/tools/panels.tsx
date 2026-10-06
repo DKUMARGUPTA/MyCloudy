@@ -8,6 +8,7 @@ import { SplitPanel } from "../../../tools/split-pdf/panel";
 import { GridSummaryPanel } from "../../../tools/pagegrid/summary-panel";
 import { PdfToImagesPanel } from "../../../tools/pdf-to-images/panel";
 import { PdfToTxtPanel } from "../../../tools/pdf-to-txt/panel";
+import { WatermarkPanel } from "../../../tools/add-watermark/panel";
 
 /**
  * Custom tool panels (PRD §2.6 "Panel.tsx per tool").
@@ -44,6 +45,7 @@ export const TOOL_PANELS: Record<string, ComponentType<ToolPanelProps>> = {
   "pdf-to-jpg": PdfToImagesPanel,
   "pdf-to-png": PdfToImagesPanel,
   "pdf-to-txt": PdfToTxtPanel,
+  "add-watermark": WatermarkPanel,
 };
 
 export function getToolPanel(

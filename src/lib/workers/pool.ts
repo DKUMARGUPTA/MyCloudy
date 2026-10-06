@@ -87,7 +87,8 @@ class ToolWorkerPool {
     options: OptionValues,
     files: File[],
     onProgress: (progress: RunProgress) => void,
-    fileIds?: string[]
+    fileIds?: string[],
+    assets?: File[]
   ): RunHandle {
     const config = TOOL_CONFIGS[toolId];
     if (!config) {
@@ -182,6 +183,7 @@ class ToolWorkerPool {
           options,
           files,
           fileIds,
+          assets,
         });
       })();
     });

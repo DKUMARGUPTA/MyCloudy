@@ -237,4 +237,18 @@
   .scrollbar-thin::-webkit-scrollbar-track {
     background: transparent;
   }
+  /* Transparency checkerboard for image previews (logo picker etc.) */
+  .bg-checker {
+    background-image:
+      linear-gradient(45deg, var(--muted) 25%, transparent 25%),
+      linear-gradient(-45deg, var(--muted) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, var(--muted) 75%),
+      linear-gradient(-45deg, transparent 75%, var(--muted) 75%);
+    background-size: 10px 10px;
+    background-position:
+      0 0,
+      0 5px,
+      5px -5px,
+      -5px 0px;
+  }
 }
