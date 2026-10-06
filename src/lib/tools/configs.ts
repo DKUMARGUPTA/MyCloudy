@@ -15,6 +15,7 @@ import { config as pdfToTxt } from "../../../tools/pdf-to-txt/config";
 import { config as addWatermark } from "../../../tools/add-watermark/config";
 import { config as addPageNumbers } from "../../../tools/add-page-numbers/config";
 import { config as addHeaderFooter } from "../../../tools/add-header-footer/config";
+import { config as cropPdf } from "../../../tools/crop-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -40,6 +41,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [addWatermark.toolId]: addWatermark,
   [addPageNumbers.toolId]: addPageNumbers,
   [addHeaderFooter.toolId]: addHeaderFooter,
+  [cropPdf.toolId]: cropPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

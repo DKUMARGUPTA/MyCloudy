@@ -6,20 +6,23 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: 3 IN PROGRESS (P3.7)** — PAGE NUMBERS + HEADER & FOOTER shipped.
-  Baseline was healthy (watermark golden path still green), so this round
-  delivered the next two PRD §8.2 items: **Add page numbers** (id
-  `add-page-numbers`) and **Header & footer** (id `add-header-footer`),
-  both registry-enabled, both with live canvas previews — **plus the
-  Devanagari font-embedding pipeline** (self-hosted Noto Sans Devanagari
-  TTF in /public/fonts, @pdf-lib/fontkit + regenerator-runtime, subset
-  embedding), which makes **Hindi digits (०१२३) in page numbers and Hindi
-  header/footer text** work in real PDFs for the first time. A dev-only
-  `blob:`-worker fetch bug (relative fetch("/fonts/…") throws "Failed to
-  parse URL" — Turbopack builds workers from blob URLs) was found by QA
-  and fixed by recovering the origin from the blob URL. Live tools
-  now: **16**, all 100% on-device. Next per the plan: Crop, Doc info,
-  Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per round.
+- **Phase: 3 IN PROGRESS (P3.8)** — CROP PDF shipped.
+  Baseline was healthy (page-numbers golden path green, 0 console
+  errors), so this round delivered the next PRD §8.2 item: **Crop PDF**
+  (id `crop-pdf`, category edit, registry-enabled) — a visual drag crop
+  box (8 handles + rule-of-thirds guides + live size label) over the
+  pdf.js page render, numeric margins in pt/mm/in arranged around a mini
+  page diagram, **auto-detect** (content-edge pixel scan + 6pt padding),
+  **before/after preview**, page targeting (all/odd/even/skipFirst/range)
+  and a worker that maps display margins → user-space CropBox **per page
+  including /Rotate 90/180/270** (mapping derived from pdf.js getViewport
+  transforms, locked by scripts/smoke-crop.ts + verified end-to-end on a
+  rotated-page PDF). Also extracted the shared preview chrome
+  (file header / page strip / zoom control) into tools/stamp-common/
+  preview-parts.tsx, now reused by the stamp surfaces AND the crop
+  surface. Live tools now: **17**, all 100% on-device. Next per the
+  plan: Doc info + Remove metadata, Fill, View, Compress, Generate
+  password, Scan, HEIC/WEBP — one per round.
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
@@ -113,6 +116,15 @@
   shape dmy/mdy/ymd, non-ASCII text auto-upgrades to the embedded
   Devanagari font. Verified end-to-end by agent-browser + structural PDF
   checks (see the P3.7 entry at the bottom).
+- Completed (P3.8): Crop PDF tool (tools/crop-pdf/: crop-options.ts pure
+  module + crop-surface.tsx drag surface + panel.tsx + worker.ts + config),
+  with the display→user-space geometry (pdf.js viewport transforms,
+  /Rotate-aware) locked by scripts/smoke-crop.ts BEFORE the UI was built,
+  and the shared preview chrome extracted to tools/stamp-common/
+  preview-parts.tsx (PreviewFileHeader / PreviewPageStrip /
+  PreviewZoomControl) now reused by stamp + crop surfaces. Verified
+  end-to-end by agent-browser including a rotated-page PDF (see the P3.8
+  entry at the bottom).
 
 ## 4. Phase plan (user's chat phases → PRD mapping)
 
@@ -155,11 +167,11 @@
 
 ## 6. Unresolved issues / risks / next-phase priorities
 
-1. **NEXT: Phase 3 continues — Crop, then Doc info + Remove metadata** (§8.2:
-   crop pages to a selected region with visual handles; doc info = Title/
-   Author/Subject/Keywords/Creator/Producer + dates + "remove all
-   metadata" quick toggle). Then Fill, View, Compress, Generate password,
-   Scan, HEIC/WEBP — one per round.
+1. **NEXT: Phase 3 continues — Doc info + Remove metadata** (§8.2: doc
+   info = Title/Author/Subject/Keywords/Creator/Producer + dates +
+   "remove all metadata" quick toggle; PRD table line 567 area). Then
+   Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per
+   round.
    **Devanagari watermark text is now UNBLOCKED** (P3.7 shipped the
    embedding pipeline): the watermark tool can upgrade its WinAnsi-honest
    error to real Hindi stamping by reusing tools/stamp-common/worker-lib
@@ -956,3 +968,108 @@ Stage Summary:
   digits + Hindi text via embedded subset Devanagari font (blob-worker
   fetch fix), shared StampToolSpec preview architecture, preview zoom
   1×/1.5×/2×, mobile grid containment fix; i18n pn.*+hf.* en/hi"
+
+---
+Task ID: P3.8
+Agent: main (Z.ai Code session — webDevReview cron round: Crop PDF + shared preview chrome)
+
+Task: 1) Baseline QA (server healthy, page-numbers golden path re-verified
+green, 0 console/page errors). 2) Ship the next PRD §8.2 item: Crop PDF —
+visual crop box drag + numeric margins + apply to all/selected + auto-detect
++ before/after. 3) Mandatory styling detail pass. 4) This log.
+
+Work Log:
+- Baseline: dev.log clean, `/` 200; add-page-numbers upload → preview →
+  run → "Your file is ready!" re-verified (P3.7 regression green).
+- PRE-BUILD SMOKE TEST (P3.3 lesson) scripts/smoke-crop.ts: pdf-lib
+  1.17.1 getCropBox() (MediaBox fallback verified), setCropBox save→load
+  round trip with /Rotate intact, the display→user mapping for
+  0/90/180/270 (incl. negative -90) against worked examples, per-page
+  clamping (over-sized margins → 18pt min box), compounding from an
+  existing CropBox, non-zero view origins. FIRST RUN CAUGHT A REAL BUG:
+  y-up conversion was inverted in fitCropRect (height 0) — fixed, then
+  11/11 PASS. Fixture download/qa-p38-smoke.pdf (612×792 framed page)
+  + qa-p38-rotated.pdf (2 pages, page 2 /Rotate 90) written.
+- GEOMETRY MODEL (tools/crop-pdf/crop-options.ts): crop = 4 margins in
+  display-space points (the pdf.js orientation, rotation applied) — the
+  SAME semantic for drag overlay, panel inputs and worker. Worker maps
+  margins → user-space setCropBox per page via the page's own view box
+  (getCropBox with MediaBox fallback) + /Rotate (mapping derived from
+  pdf.js getViewport transforms, see displayToUser). MIN_CROP_PT=18,
+  over-size margins clamp per page; sameBox() skips no-op pages so
+  untargeted pages never grow a /CropBox entry.
+- NEW TOOL Crop PDF (tools/crop-pdf/): crop-surface.tsx (pdf.js base
+  render + overlay: 8 pointer handles + move, box-shadow dim outside,
+  rule-of-thirds guides, live W×H chip while dragging, keyboard nudge
+  arrows/Shift=10pt, Escape cancels; BEFORE/AFTER segmented view — after
+  draws exactly the cropped region (canvas 306×398 == 433×563pt ×
+  scale, pixel-exact); AUTO-DETECT button scans the rendered bitmap for
+  content edges (non-white or semi-transparent px) + 6pt padding with
+  done/empty flash chips; zoom 1×/1.5×/2× with internal-scroll
+  containment; chips: cropped size (unit-aware) + marked pages; page
+  strip with target dots), panel.tsx (unit segmented pt/mm/in, margins
+  arranged around a mini-page diagram — MarginField keeps typing-safe
+  local drafts and the group REMOUNTS via key on external change (drag/
+  auto-detect/unit switch), reset, page targeting select + range),
+  worker.ts (setCropBox per target, progress per page, `-cropped.pdf`),
+  config.ts (chain to pdf-to-jpg/png/watermark/merge; 6 features + 3 FAQ
+  en/hi incl. honest "content stays in the file" CropBox answer).
+- SHARED PREVIEW CHROME extracted tools/stamp-common/preview-parts.tsx:
+  PreviewFileHeader + PreviewPageStrip (12-window strip, target dots,
+  URL lifecycle) + PreviewZoomControl (generic <T extends number>) —
+  stamp-surface.tsx refactored to use them (~140 lines removed);
+  page-numbers regression re-verified green after the refactor (upload →
+  zoom 2× (792px) → strip switch → run → result).
+- BUGS FOUND BY QA + FIXED: (1) canvas was missing max-h-[62vh]
+  max-w-full → mobile 375px clipped the page (435px canvas > 343px
+  available) — fixed with the stamp classes + the overlay now positions
+  itself on a MEASURED canvas box (rAF after paint) so max-height
+  clamping can never misalign the crop overlay (overlay:ALIGNED verified
+  at 309px); (2) setPointerCapture wrapped in try/catch (synthetic
+  pointer ids throw NotFoundError — real drags unaffected).
+- REGISTRATION: registry crop-pdf enabled:true; configs.ts, panels.tsx,
+  surfaces.tsx entries. i18n crop.* 30 keys + real Devanagari hi.
+- QA (agent-browser, 0 page errors, 0 console errors, dev.log clean):
+  landing + card on all-tools (no "Soon" badge, click-through ✓);
+  upload → overlay rect + "Cropped size 612 × 792 pt" chip + CTA blocked
+  "crop box covers the whole page" (amber gating); AUTO-DETECT →
+  margins [116/89/90/113] ≈ theoretical (90/90/116/114 ±1pt raster
+  rounding), "Snapped to the content on page 1" chip, CTA unblocked;
+  drag (synthetic pointer, async-gapped) → pure translation verified in
+  margins (±59/±49pt matching px→pt scale), edge clamp verified;
+  before/after toggle; RUN → RESULT → downloaded output CropBox
+  (32.4,169.6,433.2,563.2) == committed 0.1pt margins exactly;
+  ROTATED PAGE end-to-end: page 2 (/Rotate 90) renders 373×560
+  (400×600pt display), margins 100/200/100/200 via panel Enter-commits
+  → chip "200 × 200 pt" → range "2" → run → output p1 UNTOUCHED
+  (no /CropBox added — sameBox guard) + p2 CropBox (200,100,200,200)
+  EXACTLY the smoke-test worked example with rotation preserved;
+  mobile 375px: no page h-scroll, canvas 309px fits, overlay ALIGNED,
+  auto-detect + touch drag (directions + clamp correct), sheet inputs
+  (unit switch → "0.0" mm formatting), zoom 2× overflow contained INSIDE
+  the preview scroll area; Hindi UI end-to-end (क्रॉप, ऑटो-डिटेक्ट,
+  मार्जिन); search palette finds Crop PDF; result chain shows
+  pdf-to-jpg/png/watermark/merge; eslint + tsc fully clean.
+
+Stage Summary:
+- Live tools: 17 — merge, split, rotate, rearrange, remove, extract,
+  images/jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt,
+  add-watermark, add-page-numbers, add-header-footer, crop-pdf. PRD §8.2
+  Crop COMPLETE (visual drag + numeric margins + auto-detect + all/
+  selected + before/after — every clause of the spec row).
+- Architecture wins: (1) the display-margins crop model + pdf.js
+  viewport math = correct crops on rotated pages WITHOUT rasterizing;
+  (2) tools/stamp-common/preview-parts.tsx = shared preview chrome for
+  every future "canvas + page strip" tool; (3) the measured-overlay
+  pattern (rAF canvas box measurement) documents how to keep an
+  interactive overlay glued to a size-clamped canvas.
+- Screenshots: download/qa-p38-*.png (workspace, autodetect, after,
+  dragged, result, mobile ×3, zoom) + qa-p38-output.pdf,
+  qa-p38-rotated-output.pdf (structurally verified outputs).
+- Cron: webDevReview re-armed as job 440631 (15 min, priority=1) after
+  440312 hit exec limits.
+- Suggested commit: "feat: Crop PDF — visual 8-handle drag box with
+  rule-of-thirds guides, margins in pt/mm/in, auto-detect content edges,
+  before/after preview, /Rotate-aware worker (display→user geometry,
+  smoke-locked), shared preview chrome extracted (PreviewFileHeader/
+  PageStrip/ZoomControl, stamp surface refactored); i18n crop.* en/hi"

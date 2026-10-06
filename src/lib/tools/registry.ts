@@ -637,6 +637,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Crop,
     popularity: 34,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Crop PDF", hi: "क्रॉप करें" },
     description: {
       en: "Visual crop box or numeric margins, auto-detect, all or selected pages.",

@@ -11,6 +11,7 @@ import { PdfToTxtPanel } from "../../../tools/pdf-to-txt/panel";
 import { WatermarkPanel } from "../../../tools/add-watermark/panel";
 import { PageNumbersPanel } from "../../../tools/add-page-numbers/panel";
 import { HeaderFooterPanel } from "../../../tools/add-header-footer/panel";
+import { CropPanel } from "../../../tools/crop-pdf/panel";
 
 /**
  * Custom tool panels (PRD §2.6 "Panel.tsx per tool").
@@ -50,6 +51,7 @@ export const TOOL_PANELS: Record<string, ComponentType<ToolPanelProps>> = {
   "add-watermark": WatermarkPanel,
   "add-page-numbers": PageNumbersPanel,
   "add-header-footer": HeaderFooterPanel,
+  "crop-pdf": CropPanel,
 };
 
 export function getToolPanel(

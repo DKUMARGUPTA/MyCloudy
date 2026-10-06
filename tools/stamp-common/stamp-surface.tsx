@@ -1,21 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  FileText,
-  Loader2,
-  ScanSearch,
-  TriangleAlert,
-  X,
-  ZoomIn,
-} from "lucide-react";
+import { Loader2, ScanSearch, TriangleAlert } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { useI18n } from "@/components/providers/locale-provider";
 import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
-import { formatBytes } from "@/lib/storage/recent-files";
 import {
   getPdfMetadataTitle,
   getPdfPagePixelSize,
@@ -28,6 +17,11 @@ import {
   type TextMeasurer,
   fileBaseName,
 } from "./layout";
+import {
+  PreviewFileHeader,
+  PreviewPageStrip,
+  PreviewZoomControl,
+} from "./preview-parts";
 import { cssFontFor, type WmFontId } from "../add-watermark/wm-options";
 
 /**
@@ -42,7 +36,6 @@ import { cssFontFor, type WmFontId } from "../add-watermark/wm-options";
  * placement preview (same approach the watermark round proved end-to-end).
  */
 
-const STRIP_MAX = 12;
 const PREVIEW_MAX_DIM = 560;
 /** Zoom presets for the preview — text stamps are small on full pages. */
 const ZOOM_STEPS = [1, 1.5, 2] as const;
@@ -53,17 +46,6 @@ interface BasePreview {
   bitmap: ImageBitmap;
   pdfW: number;
   pdfH: number;
-}
-
-function stripWindow(selected: number, pageCount: number): number[] {
-  if (pageCount <= STRIP_MAX) {
-    return Array.from({ length: pageCount }, (_, i) => i);
-  }
-  const start = Math.min(
-    Math.max(0, selected - Math.floor(STRIP_MAX / 2)),
-    pageCount - STRIP_MAX
-  );
-  return Array.from({ length: STRIP_MAX }, (_, i) => start + i);
 }
 
 /** Devanagari-aware canvas font: the app's self-hosted Noto Sans Devanagari. */
@@ -104,11 +86,7 @@ export function StampSurface<TOptions>({
     null
   );
   const [docTitle, setDocTitle] = useState("");
-  const [stripUrls, setStripUrls] = useState<{ page: number; url: string }[]>(
-    []
-  );
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const stripUrlsRef = useRef<{ page: number; url: string }[]>([]);
   const [zoom, setZoom] = useState<(typeof ZOOM_STEPS)[number]>(1);
 
   const targets = useMemo(
@@ -165,36 +143,7 @@ export function StampSurface<TOptions>({
     };
   }, [file, selectedPage]);
 
-  // Thumbnails strip for the visible window.
-  useEffect(() => {
-    if (!file || pageCount === 0) return;
-    let cancelled = false;
-    const indices = stripWindow(selectedPage, pageCount);
-    void (async () => {
-      const next: { page: number; url: string }[] = [];
-      for (const index of indices) {
-        const thumb = await renderPdfThumbnail(file, {
-          pageIndex: index,
-          maxDim: 72,
-        });
-        if (cancelled) return;
-        next.push({ page: index, url: URL.createObjectURL(thumb.blob) });
-      }
-      for (const old of stripUrlsRef.current) URL.revokeObjectURL(old.url);
-      stripUrlsRef.current = next;
-      setStripUrls(next);
-    })().catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [file, pageCount, selectedPage]);
-
-  // Revoke strip URLs on unmount.
-  useEffect(() => {
-    return () => {
-      for (const old of stripUrlsRef.current) URL.revokeObjectURL(old.url);
-    };
-  }, []);
+  // Thumbnails strip + zoom live in the shared preview parts.
 
   // CTA gating (amber reason in the sticky bar) — the spec decides.
   const blockedKey = spec.runBlocked(options, targets, pageCount);
@@ -270,35 +219,11 @@ export function StampSurface<TOptions>({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* File header */}
-      <div className="flex items-center gap-3 rounded-card border border-border bg-card px-4 py-3">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-btn bg-primary/10 text-primary">
-          <FileText className="size-5" aria-hidden="true" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-foreground">
-            {file.name}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {pageCount > 0
-              ? t("wm.filePages", {
-                  count: pageCount,
-                  size: formatBytes(file.size),
-                })
-              : formatBytes(file.size)}
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-9 shrink-0"
-          onClick={removeFile}
-          aria-label={t("wm.removeFile")}
-        >
-          <X className="size-4" aria-hidden="true" />
-        </Button>
-      </div>
+      <PreviewFileHeader
+        file={file}
+        pageCount={pageCount}
+        onRemove={removeFile}
+      />
 
       {/* Live preview card */}
       <div className="overflow-hidden rounded-card border border-border bg-card">
@@ -324,30 +249,11 @@ export function StampSurface<TOptions>({
               ))
             )}
             {/* Zoom control — small stamps need a closer look (styling pass) */}
-            <div
-              role="group"
-              aria-label={t("wm.zoomLabel")}
-              className="ml-1 flex items-center gap-0.5 rounded-btn border border-border bg-background p-0.5"
-            >
-              <ZoomIn className="ml-1 size-3 text-muted-foreground" aria-hidden="true" />
-              {ZOOM_STEPS.map((step) => (
-                <button
-                  key={step}
-                  type="button"
-                  onClick={() => setZoom(step)}
-                  aria-pressed={zoom === step}
-                  aria-label={t("wm.zoomStep", { step })}
-                  className={cn(
-                    "min-h-6 min-w-8 rounded-md px-1.5 text-[10px] font-semibold tabular-nums transition-colors",
-                    zoom === step
-                      ? "bg-primary/15 text-primary"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  {step}×
-                </button>
-              ))}
-            </div>
+            <PreviewZoomControl
+              steps={ZOOM_STEPS}
+              value={zoom}
+              onChange={setZoom}
+            />
           </div>
         </div>
 
@@ -398,81 +304,13 @@ export function StampSurface<TOptions>({
       </div>
 
       {/* Page strip */}
-      {pageCount > 1 ? (
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            className="size-9 shrink-0 rounded-btn"
-            disabled={selectedPage === 0}
-            onClick={() => setSelectedPage((page) => Math.max(0, page - 1))}
-            aria-label={t("wm.prevPage")}
-          >
-            <ChevronLeft className="size-4" aria-hidden="true" />
-          </Button>
-          <div
-            className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1 scrollbar-thin"
-            role="listbox"
-            aria-label={t("wm.stripLabel")}
-          >
-            {stripUrls.map((item) => {
-              const isSelected = item.page === selectedPage;
-              const isMarked = markedSet.has(item.page);
-              return (
-                <button
-                  key={item.page}
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  aria-label={t("wm.stripPageLabel", { page: item.page + 1 })}
-                  onClick={() => setSelectedPage(item.page)}
-                  className={cn(
-                    "relative shrink-0 overflow-hidden rounded-md border transition-all",
-                    isSelected
-                      ? "border-primary ring-2 ring-primary/30 scale-105"
-                      : "border-border opacity-80 hover:opacity-100"
-                  )}
-                >
-                  <img
-                    src={item.url}
-                    alt=""
-                    className="h-16 w-auto"
-                    loading="lazy"
-                  />
-                  <span
-                    className={cn(
-                      "absolute bottom-0.5 right-0.5 rounded bg-background/85 px-1 text-[9px] font-semibold tabular-nums text-foreground",
-                      isMarked && "text-primary"
-                    )}
-                  >
-                    {item.page + 1}
-                  </span>
-                  {isMarked ? (
-                    <span
-                      className="absolute left-0.5 top-0.5 size-1.5 rounded-full bg-primary"
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            className="size-9 shrink-0 rounded-btn"
-            disabled={selectedPage >= pageCount - 1}
-            onClick={() =>
-              setSelectedPage((page) => Math.min(pageCount - 1, page + 1))
-            }
-            aria-label={t("wm.nextPage")}
-          >
-            <ChevronRight className="size-4" aria-hidden="true" />
-          </Button>
-        </div>
-      ) : null}
+      <PreviewPageStrip
+        file={file}
+        pageCount={pageCount}
+        selected={selectedPage}
+        onSelect={setSelectedPage}
+        markedSet={markedSet}
+      />
     </div>
   );
 }
