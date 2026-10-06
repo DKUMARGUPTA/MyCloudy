@@ -8,6 +8,8 @@ import { ImageGridSurface } from "../../../tools/imagegrid/image-grid-surface";
 import { WatermarkSurface } from "../../../tools/add-watermark/wm-surface";
 import { StampSurface } from "../../../tools/stamp-common/stamp-surface";
 import { CropSurface } from "../../../tools/crop-pdf/crop-surface";
+import { DocInfoSurface } from "../../../tools/change-pdf-doc-info/surface";
+import { RemoveMetaSurface } from "../../../tools/remove-pdf-metadata/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -60,6 +62,8 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "add-page-numbers": PageNumbersStampSurface,
   "add-header-footer": HeaderFooterStampSurface,
   "crop-pdf": CropSurface,
+  "change-pdf-doc-info": DocInfoSurface,
+  "remove-pdf-metadata": RemoveMetaSurface,
 };
 
 export function getToolSurface(

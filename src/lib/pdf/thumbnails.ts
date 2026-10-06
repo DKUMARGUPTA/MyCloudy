@@ -1,5 +1,6 @@
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 
+import type { DocInfoRead } from "../../../tools/meta-common/meta";
 import { PDF_DOC_PARAMS, loadPdfjs } from "./pdfjs";
 
 /**
@@ -125,6 +126,106 @@ export async function getPdfMetadataTitle(
   } catch {
     return "";
   }
+}
+
+/**
+ * pdf.js-injected info keys that are NOT entries of the file's Info dict
+ * (they describe the parsed document, not user metadata).
+ */
+const PDFJS_INFO_KEYS = new Set([
+  "PDFFormatVersion",
+  "IsLinearized",
+  "IsAcroFormPresent",
+  "IsXFAPresent",
+  "IsCollectionPresent",
+  "Language",
+]);
+
+const META_TEXT_LIMIT = 400;
+
+function infoString(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, META_TEXT_LIMIT);
+}
+
+function infoDate(
+  value: unknown,
+  toDate: (raw: string) => Date | null
+): Date | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  return toDate(value);
+}
+
+/**
+ * Full document-information read for the Doc info / Remove metadata tools
+ * (PRD §8.2 + §8.3): the six standard fields, both dates parsed, custom
+ * Info-dict entries, and whether an XMP /Metadata packet is attached.
+ * Reads the cached document — metadata only, nothing rendered.
+ */
+export async function getPdfDocInfo(
+  file: File | Blob
+): Promise<DocInfoRead> {
+  const doc = await openDocument(file);
+  const pdfjs = await loadPdfjs();
+  const toDate = (raw: string): Date | null => {
+    try {
+      return pdfjs.PDFDateString.toDateObject(raw);
+    } catch {
+      return null;
+    }
+  };
+
+  let info: Record<string, unknown> = {};
+  let hasXmp = false;
+  try {
+    const meta = await doc.getMetadata();
+    if (meta.info && typeof meta.info === "object") {
+      info = meta.info as Record<string, unknown>;
+    }
+    try {
+      const raw = meta.metadata?.getRaw();
+      hasXmp = typeof raw === "string" && raw.trim().length > 0;
+    } catch {
+      hasXmp = false;
+    }
+  } catch {
+    // No readable metadata at all — return the clean/empty snapshot.
+  }
+
+  const standardKeys = new Set([
+    "Title",
+    "Author",
+    "Subject",
+    "Keywords",
+    "Creator",
+    "Producer",
+    "CreationDate",
+    "ModDate",
+  ]);
+  const custom: { key: string; value: string }[] = [];
+  for (const [key, value] of Object.entries(info)) {
+    if (standardKeys.has(key) || PDFJS_INFO_KEYS.has(key)) continue;
+    const text =
+      typeof value === "string"
+        ? infoString(value)
+        : typeof value === "number" || typeof value === "boolean"
+          ? String(value)
+          : "";
+    if (text !== "") custom.push({ key, value: text });
+  }
+
+  return {
+    title: infoString(info.Title),
+    author: infoString(info.Author),
+    subject: infoString(info.Subject),
+    keywords: infoString(info.Keywords),
+    creator: infoString(info.Creator),
+    producer: infoString(info.Producer),
+    creationDate: infoDate(info.CreationDate, toDate),
+    modificationDate: infoDate(info.ModDate, toDate),
+    custom: custom.slice(0, 12),
+    hasXmp,
+  };
 }
 
 /**

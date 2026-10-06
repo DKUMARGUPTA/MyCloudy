@@ -668,6 +668,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Info,
     popularity: 20,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Change document information", hi: "जानकारी बदलें" },
     description: {
       en: "Edit title, author, subject, keywords — or clear everything.",
@@ -1175,6 +1176,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: FileX,
     popularity: 20,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Remove PDF metadata", hi: "मेटाडेटा हटाएँ" },
     description: {
       en: "See every hidden field — author, software, dates — then strip them.",

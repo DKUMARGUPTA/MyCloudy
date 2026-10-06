@@ -12,6 +12,8 @@ import { WatermarkPanel } from "../../../tools/add-watermark/panel";
 import { PageNumbersPanel } from "../../../tools/add-page-numbers/panel";
 import { HeaderFooterPanel } from "../../../tools/add-header-footer/panel";
 import { CropPanel } from "../../../tools/crop-pdf/panel";
+import { DocInfoPanel } from "../../../tools/change-pdf-doc-info/panel";
+import { RemoveMetaPanel } from "../../../tools/remove-pdf-metadata/panel";
 
 /**
  * Custom tool panels (PRD §2.6 "Panel.tsx per tool").
@@ -52,6 +54,8 @@ export const TOOL_PANELS: Record<string, ComponentType<ToolPanelProps>> = {
   "add-page-numbers": PageNumbersPanel,
   "add-header-footer": HeaderFooterPanel,
   "crop-pdf": CropPanel,
+  "change-pdf-doc-info": DocInfoPanel,
+  "remove-pdf-metadata": RemoveMetaPanel,
 };
 
 export function getToolPanel(
