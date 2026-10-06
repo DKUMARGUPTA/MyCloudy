@@ -110,6 +110,24 @@ export async function getPdfPagePixelSize(
 }
 
 /**
+ * PDF Title metadata ("" when absent) — feeds the {title} variable of the
+ * header/footer tool preview. Uses the cached document, metadata read only.
+ */
+export async function getPdfMetadataTitle(
+  file: File | Blob
+): Promise<string> {
+  const doc = await openDocument(file);
+  try {
+    const meta = await doc.getMetadata();
+    const info = meta.info as { Title?: unknown } | undefined;
+    const title = info?.Title;
+    return typeof title === "string" ? title.trim().slice(0, 200) : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
  * First-page selectable-text preview for the PDF→Text panel (PRD §8.6).
  * Reads text content only — no render. Returns "" when the page has no
  * selectable text (scans), which the panel turns into an OCR hint.

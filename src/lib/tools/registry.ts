@@ -587,6 +587,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: ListOrdered,
     popularity: 38,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Add page numbers", hi: "पेज नंबर लगाएँ" },
     description: {
       en: "1, Page 1 of N, Roman or Hindi digits, 9 positions, skip first page.",
@@ -605,6 +606,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: PanelTop,
     popularity: 30,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Header & footer", hi: "हेडर-फुटर लगाएँ" },
     description: {
       en: "Left/center/right text with {page}, {date}, {filename} variables.",

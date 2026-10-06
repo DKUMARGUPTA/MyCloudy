@@ -6,6 +6,9 @@ import type { ToolSurfaceProps } from "./panel-types";
 import { GridSurface } from "../../../tools/pagegrid/grid-surface";
 import { ImageGridSurface } from "../../../tools/imagegrid/image-grid-surface";
 import { WatermarkSurface } from "../../../tools/add-watermark/wm-surface";
+import { StampSurface } from "../../../tools/stamp-common/stamp-surface";
+import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
+import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
 /**
  * Workspace surface registry (PageGrid + ImageGrid families, PRD §8.1/§8.6).
@@ -35,6 +38,14 @@ function ExtractGridSurface(props: ToolSurfaceProps) {
   return <GridSurface {...props} preset="extract" />;
 }
 
+function PageNumbersStampSurface(props: ToolSurfaceProps) {
+  return <StampSurface {...props} spec={PN_SPEC} previewTitleKey="pn.previewTitle" />;
+}
+
+function HeaderFooterStampSurface(props: ToolSurfaceProps) {
+  return <StampSurface {...props} spec={HF_SPEC} previewTitleKey="hf.previewTitle" />;
+}
+
 export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "rotate-pdf-pages": RotateGridSurface,
   "rearrange-pdf-pages": RearrangeGridSurface,
@@ -45,6 +56,8 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "png-to-pdf": ImageGridSurface,
   "webp-to-pdf": ImageGridSurface,
   "add-watermark": WatermarkSurface,
+  "add-page-numbers": PageNumbersStampSurface,
+  "add-header-footer": HeaderFooterStampSurface,
 };
 
 export function getToolSurface(

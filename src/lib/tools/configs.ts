@@ -13,6 +13,8 @@ import { config as pdfToJpg } from "../../../tools/pdf-to-jpg/config";
 import { config as pdfToPng } from "../../../tools/pdf-to-png/config";
 import { config as pdfToTxt } from "../../../tools/pdf-to-txt/config";
 import { config as addWatermark } from "../../../tools/add-watermark/config";
+import { config as addPageNumbers } from "../../../tools/add-page-numbers/config";
+import { config as addHeaderFooter } from "../../../tools/add-header-footer/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -36,6 +38,8 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [pdfToPng.toolId]: pdfToPng,
   [pdfToTxt.toolId]: pdfToTxt,
   [addWatermark.toolId]: addWatermark,
+  [addPageNumbers.toolId]: addPageNumbers,
+  [addHeaderFooter.toolId]: addHeaderFooter,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

@@ -6,31 +6,20 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: 3 IN PROGRESS (P3.6)** — CRITICAL RECOVERY + WATERMARK shipped.
-  Round start found `/` was a **500 again**: the P3.5 fix file
-  `src/lib/storage/local-snapshot.ts` had been LOST (its dependents were
-  committed, the module itself never was — the previous round was cut off
-  around the file write). Recreated it from the worklog spec (memoized
-  localStorage snapshot factory for useSyncExternalStore, caches on the
-  raw string so parsed values keep stable references; SSR- + parse-failure
-  safe). `/` → 200, all in-flight features re-verified, then shipped the
-  next PRD §8.2 item: **Add watermark** (id `add-watermark`, registry
-  enabled) — text OR logo stamp with size/color/opacity/rotation,
-  9-grid position + edge-distance, diagonal tiling with spacing,
-  **behind-content via /Contents stream reordering** (pdf-lib appends its
-  draw stream last; moving it to index 0 makes the watermark draw first =
-  behind — verified by a bun smoke script BEFORE building, then proven on
-  the downloaded output: stream 0 = watermark ops), page targeting
-  (all/odd/even/range/skip-first), LIVE CANVAS PREVIEW using the same
-  placement math as the worker (positionCenter/rotatedStartPoint/tileSteps
-  shared module) + clickable page strip with marked-page dots, CTA gating
-  (no text / no logo / invalid range → amber reason + disabled button),
-  logo rides the run as an in-memory ASSET via the new
-  `ToolConfig.collectAssets()` + protocol `assets?: File[]` channel
-  (never OPFS, never network), WinAnsi honesty (Devanagari text → clear
-  error, no broken file). Live tools now: **14**, all 100% on-device.
-  Next: Page numbers, Header/footer, Crop, Doc info, Fill, View,
-  Compress, Generate password, Scan, HEIC/WEBP — one per round.
+- **Phase: 3 IN PROGRESS (P3.7)** — PAGE NUMBERS + HEADER & FOOTER shipped.
+  Baseline was healthy (watermark golden path still green), so this round
+  delivered the next two PRD §8.2 items: **Add page numbers** (id
+  `add-page-numbers`) and **Header & footer** (id `add-header-footer`),
+  both registry-enabled, both with live canvas previews — **plus the
+  Devanagari font-embedding pipeline** (self-hosted Noto Sans Devanagari
+  TTF in /public/fonts, @pdf-lib/fontkit + regenerator-runtime, subset
+  embedding), which makes **Hindi digits (०१२३) in page numbers and Hindi
+  header/footer text** work in real PDFs for the first time. A dev-only
+  `blob:`-worker fetch bug (relative fetch("/fonts/…") throws "Failed to
+  parse URL" — Turbopack builds workers from blob URLs) was found by QA
+  and fixed by recovering the origin from the blob URL. Live tools
+  now: **16**, all 100% on-device. Next per the plan: Crop, Doc info,
+  Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per round.
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
@@ -110,6 +99,20 @@
   use); hero browseAll {count} interpolation; tsc ClipboardEvent DOM vs
   React type; tsconfig scaffold-dir exclusions.
 - Goal now: execute the phase plan below in strict order, one phase (or sub-phase) per round.
+- Completed (P3.7): Page numbers + Header & footer tools on the new
+  `tools/stamp-common/` shared architecture — ONE spec interface
+  (resolve/targets/marks/runBlocked/chips) drives BOTH the live preview
+  canvas (StampSurface, canvas-measured) and the pdf-lib workers
+  (font-measured), so what you see is what you get. Includes the
+  Devanagari embedding pipeline (public/fonts TTF + @pdf-lib/fontkit +
+  regenerator-runtime, subset:true), 8 number formats (1 / Page 1 / 1 of N
+  / Page 1 of N / i / I / a / A), start number, 9-grid + margin, full
+  layout targeting (all/odd/even/skipFirst/range), Hindi digits; HF has 6
+  slots (L/C/R × header/footer) with {page} {pages} {date} {filename}
+  {title} variables (case-insensitive, unknown braces left visible), date
+  shape dmy/mdy/ymd, non-ASCII text auto-upgrades to the embedded
+  Devanagari font. Verified end-to-end by agent-browser + structural PDF
+  checks (see the P3.7 entry at the bottom).
 
 ## 4. Phase plan (user's chat phases → PRD mapping)
 
@@ -152,29 +155,31 @@
 
 ## 6. Unresolved issues / risks / next-phase priorities
 
-1. **NEXT: Phase 3 continues — Page numbers + Header/footer** (§8.2:
-   formats 1 / Page 1 / 1 of N / Page 1 of N / i / I / a, start number,
-   9-grid + margins, font, skip first page, optional Hindi digits; header/
-   footer left/center/right text with {page}/{pages}/{date}/{filename}/
-   {title} variables). The watermark tool's placement math
-   (positionCenter + rotatedStartPoint in tools/add-watermark/wm-options.ts)
-   is directly reusable. Then Crop, Doc info, Fill, View, Compress,
-   Generate password, Scan, HEIC/WEBP — one per round.
+1. **NEXT: Phase 3 continues — Crop, then Doc info + Remove metadata** (§8.2:
+   crop pages to a selected region with visual handles; doc info = Title/
+   Author/Subject/Keywords/Creator/Producer + dates + "remove all
+   metadata" quick toggle). Then Fill, View, Compress, Generate password,
+   Scan, HEIC/WEBP — one per round.
+   **Devanagari watermark text is now UNBLOCKED** (P3.7 shipped the
+   embedding pipeline): the watermark tool can upgrade its WinAnsi-honest
+   error to real Hindi stamping by reusing tools/stamp-common/worker-lib
+   (loadStampFonts + the devaFontUrl blob-origin fix) — good small round.
    ImageGrid follow-ups (deferred, noted): per-image CROP UI (PRD §8.6 input
    row mentions "crop each" — needs a crop modal; rotate/reorder shipped);
    SVG/TIFF inputs unsupported (createImageBitmap cannot decode them in
    Chromium — honest error already shown; needs a WASM decoder later);
    images-in-merge auto-convert (PRD merge row) still UNBLOCKED — merge worker
    can reuse the imagegrid embed engine.
-   Watermark follow-ups (deferred): Devanagari watermark text needs an
-   embedded TTF (pdf-lib standard fonts are WinAnsi-only — honest error
-   shown meanwhile; needs a vendored TTF for font embedding).
    PageGrid follow-ups (deferred, unchanged): virtualized drag stays off
    above 150 pages; selection indices after undo are clamped, not remapped.
    Split follow-ups (deferred, unchanged): per-part bookmark-title naming;
    blank detection 0.1% tolerance tuning.
    Merge follow-ups still deferred from P3.1: per-file bookmarks (pdf-lib
    outline — VERIFY API), per-file Unlock (qpdf round).
+   Stamp-tool follow-ups (deferred, P3.7): page-number "of N" always uses
+   the TOTAL page count (start-number users see the honest behavior
+   documented in the FAQ); no per-slot font override in HF (one font for
+   all six slots by design).
 2. ~~Cancel path not yet caught mid-flight~~ **DONE in P3.4**: caught at 6%
    on a 600 DPI × 400-page pdf-to-jpg run; Cancel → workspace + toast ✓.
 3. qpdf WASM build source + exact version + license must be verified before Phase 4
@@ -838,3 +843,116 @@ Stage Summary:
   feat: Add watermark — text/logo stamps, 9-grid + tile + behind-content
   (Contents reorder), live canvas preview + page strip, run-asset channel;
   i18n wm.* en/hi"
+
+---
+Task ID: P3.7
+Agent: main (Z.ai Code session — webDevReview cron round: Page numbers + Header & footer + Devanagari font embedding)
+
+Task: 1) Baseline QA (server healthy, watermark golden path re-verified
+green). 2) Ship the next two PRD §8.2 items: Add page numbers + Header &
+footer, both with live canvas previews. 3) Mandatory styling detail pass.
+4) This log.
+
+Work Log:
+- Baseline: dev.log clean, `/` 200; watermark upload → preview → run →
+  result re-verified (P3.6 regression green) using the P3.6 recipe
+  (base64-embedded PDF + programmatic DataTransfer + change event).
+- PRE-BUILD SMOKE TEST (P3.3 lesson) scripts/smoke-pagenumbers.ts:
+  @pdf-lib/fontkit@1.1.1 pinned + regenerator-runtime@0.14.1 (bun throws
+  "regeneratorRuntime is not defined" without it); embedFont(ttf,
+  {subset:true}) → widthOfTextAtSize works for "०१२३४५६७८९", "पृष्ठ" and
+  mixed "Page ५ of १०"; save/reload round-trip fine; subset output 6.7KB
+  = 0.03× the 243KB source. Noto Sans Devanagari TTF downloaded once
+  (build-time fetch, OFL) → public/fonts/ + license file (no runtime CDN).
+- NEW shared architecture tools/stamp-common/: layout.ts (StampMark,
+  StampPageContext, StampToolSpec {resolve/targets/marks/runBlocked/
+  chips}, toRoman/toAlpha/toHindiDigits/formatPageNumber,
+  formatStampDate dmy/mdy/ymd, resolveStampVariables, needsUnicodeFont);
+  worker-lib.ts (loadStampFonts: 6 standard + devanagari subset embed,
+  drawStampMark center-anchored with the 0.25em baseline, safeBaseName);
+  stamp-surface.tsx (ONE generic live-preview surface for both tools:
+  pdf.js base render + marks painted with the SAME math the workers use,
+  canvas measurer via cssFontFor + --font-noto-devanagari for Devanagari,
+  page strip + marked dots, chips, CTA gating). getPdfMetadataTitle()
+  added to lib/pdf/thumbnails.ts for the {title} variable preview.
+- NEW TOOL Add page numbers (tools/add-page-numbers/): pn-options.ts
+  spec (8 formats, start, hindiDigits, font/size/color/opacity, 9-grid +
+  margin, layout all/odd/even/skipFirst/range), worker.ts (spec.marks +
+  drawStampMark per target, `-numbered.pdf`), panel.tsx (format select
+  with live sample chip, start-number input with custom ▲▼ stepper,
+  Hindi-digits switch with disabled state on roman/alpha formats + emerald
+  "०१२३४५६७८९ embedded" pill, font select disabled+hint when Hindi forced,
+  swatches + hex input, 9-grid picker with position label, margin slider,
+  layout selector), config.ts (chain to add-header-footer/jpg/png/merge;
+  6 features + 3 FAQ en/hi incl. honest "of N counts total pages").
+- NEW TOOL Header & footer (tools/add-header-footer/): hf-options.ts
+  spec (6 slots L/C/R × header/footer, shared font/size/color/opacity,
+  margin, dateFormat, layout; {page}/{pages}/{date}/{filename}/{title}
+  case-insensitive, unknown braces left visible; needsUnicodeFont →
+  mark auto-upgrades to the embedded devanagari font incl. {filename}/
+  {title} resolution), worker.ts (`-header-footer.pdf`), panel.tsx
+  (variables legend with mono {token} chips, 6 labeled slot inputs with
+  placeholders, date-shape select, amber empty-state gating), config.ts
+  (chain to add-page-numbers; Hindi-header FAQ).
+- BUG FOUND BY QA + FIXED: dev Turbopack builds module workers from
+  blob: URLs → fetch("/fonts/…") inside the worker throws "Failed to
+  parse URL from …" (opaque base). Diagnosed via a temporary DBG error
+  detail routed through the toast. Fix in devaFontUrl(): resolve against
+  self.location.href when http(s), else recover the origin from the
+  blob: URL itself, else fall back to the relative path (prod workers
+  are http-served). Verified: Hindi runs now succeed.
+- REGISTRATION: registry add-page-numbers + add-header-footer
+  enabled:true; configs.ts, panels.tsx, surfaces.tsx entries
+  (StampSurface wrappers with PN_SPEC/HF_SPEC). i18n: pn.* 27 + hf.* 26
+  keys + tool.errorPageNoPages/errorPageFont, en + real Devanagari hi
+  (scripts/i18n-pagenumbers.py merge).
+- STYLING PASS (mandatory): preview zoom control 1×/1.5×/2× (segmented,
+  aria-pressed, ZoomIn icon, canvas px-scaled + shrink-0 + internal
+  scroll container with scrollbar-thin); sample chip; start-number
+  stepper; emerald Hindi-embedded pill; mono variable chips; position
+  label under the 9-grid; amber gating blocks; header/footer on-chips.
+  LAYOUT BUG FOUND + FIXED: zoomed canvas (792px) blew up the mobile grid
+  track (auto max-content) → tool-shell workspace grid changed to
+  `grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px]` + zoom container
+  max-w-full overflow-x-auto → 375px now scrolls INSIDE the preview,
+  zero page-level h-scroll (verified by measuring every wide element).
+- QA (agent-browser, fresh contexts, 0 page errors, 0 console errors,
+  dev.log clean): PN landing + upload + live preview (format chip "Page
+  1 of 12" + canvas pixel-verified stamp at bottom-right; 3×-zoomed crop
+  VLM-read "Page 1 of 12"); skip-first → "11 of 12 pages marked" + page
+  strip dots; RUN → RESULT; DOWNLOADED OUTPUT structurally verified:
+  11 stamp streams = pages 2-12 with EXACT sequence "Page 1 of 12" →
+  "Page 11 of 12" at Tm(497.33, 38.75) = margin 36 + 0.25×11 baseline
+  math, page 1 untouched; Hindi digits RUN → output has
+  NotoSansDevanagari-Regular-4824 subset (FontFile2 + Type0) + 12
+  streams with GID <0001> = १; HF chained from the PN RESULT (what-next
+  chain works); Hindi text "गोपनीय दस्तावेज़" run → RESULT + output
+  verified (11+1 stamp streams, embedded subset font); Latin variables
+  run → output texts "my report" ({filename} kept the space), "1 of
+  12"…"12 of 12" ({page}/{pages}), "06/10/2026" ({date} dmy); Hindi UI
+  end-to-end (पेज नंबर लगाएँ, ऐसा दिखेगा, chips); mobile 375px zoom 2×
+  no page h-scroll + sticky CTA (VLM: "no overlapping or cramped UI");
+  regressions: all-tools lists both new tools (97 cards), rotate golden
+  path ✓, watermark golden path ✓; eslint + tsc fully clean.
+
+Stage Summary:
+- Live tools: 16 — merge, split, rotate, rearrange, remove, extract,
+  images/jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt,
+  add-watermark, add-page-numbers, add-header-footer. PRD §8.2 Page
+  numbers + Header & footer COMPLETE (incl. Hindi digits via embedded
+  font — the PRD's "Hindi digits optional" is now real, not deferred).
+- Architecture wins: (1) the StampToolSpec interface = one shared
+  live-preview surface + worker mark computation for any future
+  "computed text on pages" tool; (2) the Devanagari embedding pipeline
+  (public/fonts TTF + fontkit + subset) unblocks Hindi text in
+  watermark and any text-drawing tool; (3) the blob-worker fetch fix
+  documents how to fetch same-origin static assets from workers.
+- Screenshots: download/qa-p37-*.png (workspace, zoom, hindi, mobile ×2,
+  smoke pdf) + qa-p37-pn-output.pdf, qa-p37-pn-hindi-output.pdf,
+  qa-p37-hf-hindi-output.pdf, qa-p37-hf-variables-output.pdf
+  (all structurally verified outputs).
+- Suggested commit: "feat: Add page numbers + Header & footer — 8 number
+  formats, {page}/{pages}/{date}/{filename}/{title} variables, Hindi
+  digits + Hindi text via embedded subset Devanagari font (blob-worker
+  fetch fix), shared StampToolSpec preview architecture, preview zoom
+  1×/1.5×/2×, mobile grid containment fix; i18n pn.*+hf.* en/hi"

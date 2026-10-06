@@ -596,7 +596,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
             </span>
           </div>
 
-          <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_320px]">
+          <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
             {/* Main column: the surface owns file presentation when one is
                 registered (PageGrid family); otherwise the classic
                 FileList + add-more DropZone (PRD §6.3). */}
