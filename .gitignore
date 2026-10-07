@@ -41,6 +41,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 local-*
+# real source module whose name matches the local-* pattern (P3.9 fix:
+# this file was silently un-ignored-lost 3×, each time 500-ing the app)
+!src/lib/storage/local-snapshot.ts
 .claude
 .z-ai-config
 *.log
