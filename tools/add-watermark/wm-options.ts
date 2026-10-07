@@ -1,5 +1,6 @@
 import type { OptionValues } from "@/lib/tools/config-types";
 import { parsePageSpec } from "@/lib/workers/protocol";
+import { needsUnicodeFont } from "../stamp-common/layout";
 
 /**
  * Watermark option ids, defaults and pure helpers (PRD §8.2 "Watermark").
@@ -203,6 +204,24 @@ export function cssFontFor(fontId: WmFontId, sizePx: number): string {
   const entry = WM_FONTS.find((f) => f.id === fontId) ?? WM_FONTS[0];
   const weight = /Bold/.test(entry.id) ? "700" : "400";
   return `${weight} ${sizePx}px ${entry.css}`;
+}
+
+/**
+ * CSS font string for the preview canvas, unicode-aware: non-WinAnsi text
+ * (Devanagari/Hindi) is previewed in the embedded Noto Sans Devanagari
+ * family — the same font the worker stamps, so the preview is honest.
+ */
+export function wmCssFontFor(text: string, fontId: WmFontId, sizePx: number): string {
+  if (needsUnicodeFont(text)) {
+    let family = "";
+    if (typeof window !== "undefined") {
+      family = getComputedStyle(document.body)
+        .getPropertyValue("--font-noto-devanagari")
+        .trim();
+    }
+    return `400 ${sizePx}px ${family || "'Noto Sans Devanagari'"}`;
+  }
+  return cssFontFor(fontId, sizePx);
 }
 
 /** 9-grid anchor (0-1 both axes) — row-major, y measured from the TOP. */

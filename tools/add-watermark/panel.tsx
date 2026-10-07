@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import {
   Droplets,
   ImagePlus,
+  Languages,
   Layers,
   RotateCw,
   SquareDashed,
@@ -36,6 +37,7 @@ import {
   resolveWmOptions,
   type WmPosition,
 } from "./wm-options";
+import { needsUnicodeFont } from "../stamp-common/layout";
 import { getLogoFile, setLogoFile } from "./logo-store";
 
 /**
@@ -241,10 +243,18 @@ export function WatermarkPanel({ values, onChange }: ToolPanelProps) {
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor={`${inputId}-font`} className="text-sm font-medium">
-              {t("wm.font")}
-            </Label>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor={`${inputId}-font`} className="text-sm font-medium">
+                {t("wm.font")}
+              </Label>
+              {needsUnicodeFont(wm.text.trim()) ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                  <Languages className="size-3" aria-hidden="true" />
+                  {t("wm.devaPill")}
+                </span>
+              ) : null}
+            </div>
             <Select
               value={wm.font}
               onValueChange={(next) => onChange(WM_IDS.font, next)}
@@ -260,6 +270,11 @@ export function WatermarkPanel({ values, onChange }: ToolPanelProps) {
                 ))}
               </SelectContent>
             </Select>
+            {needsUnicodeFont(wm.text.trim()) ? (
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                {t("wm.devaFontHint")}
+              </p>
+            ) : null}
           </div>
 
           <SliderRow

@@ -50,6 +50,43 @@ const EMPTY_READ: DocInfoRead = {
   hasXmp: false,
 };
 
+/** The "will be removed" tag — same style as the doc-info AFTER card. */
+function WillRemoveChip({ t }: { t: (key: string) => string }): React.JSX.Element {
+  return (
+    <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
+      {t("rmeta.willRemove")}
+    </span>
+  );
+}
+
+/** One report row (field / date / custom / XMP) with its trailing tag. */
+function ReportRow({
+  label,
+  value,
+  tag,
+  dimmed,
+}: {
+  label: string;
+  value: React.ReactNode;
+  tag: React.ReactNode;
+  dimmed?: boolean;
+}): React.JSX.Element {
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-[6.5rem_minmax(0,1fr)_auto] items-start gap-3 px-4 py-2.5 sm:grid-cols-[7.5rem_minmax(0,1fr)_auto]",
+        dimmed && "opacity-60"
+      )}
+    >
+      <dt className="pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="min-w-0 break-words text-sm text-foreground">{value}</dd>
+      <dd className="pt-0.5">{tag}</dd>
+    </div>
+  );
+}
+
 function textOf(snapshot: DocInfoRead, key: keyof DocInfoRead): string {
   const value = snapshot[key];
   return typeof value === "string" ? value : "";
@@ -193,98 +230,56 @@ export function RemoveMetaSurface({
             <dl className="flex flex-col divide-y divide-border/60">
               {FIELD_LABEL_KEYS.filter(({ key }) => textOf(snapshot, key) !== "").map(
                 ({ key, label }) => (
-                  <div
+                  <ReportRow
                     key={key}
-                    className="grid grid-cols-[6.5rem_minmax(0,1fr)_auto] items-start gap-3 px-4 py-2.5 sm:grid-cols-[7.5rem_minmax(0,1fr)_auto]"
-                  >
-                    <dt className="pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      {t(label)}
-                    </dt>
-                    <dd className="min-w-0 break-words text-sm text-foreground">
-                      {textOf(snapshot, key)}
-                    </dd>
-                    <dd className="pt-0.5">
-                      <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
-                        {t("rmeta.willRemove")}
-                      </span>
-                    </dd>
-                  </div>
+                    label={t(label)}
+                    value={textOf(snapshot, key)}
+                    tag={<WillRemoveChip t={t} />}
+                  />
                 )
               )}
               {snapshot.creationDate !== null ? (
-                <div className="grid grid-cols-[6.5rem_minmax(0,1fr)_auto] items-start gap-3 px-4 py-2.5 sm:grid-cols-[7.5rem_minmax(0,1fr)_auto]">
-                  <dt className="pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    {t("meta.fCreated")}
-                  </dt>
-                  <dd className="text-sm text-foreground">
-                    {formatMetaDate(snapshot.creationDate, locale)}
-                  </dd>
-                  <dd className="pt-0.5">
-                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
-                      {t("rmeta.willRemove")}
-                    </span>
-                  </dd>
-                </div>
+                <ReportRow
+                  label={t("meta.fCreated")}
+                  value={formatMetaDate(snapshot.creationDate, locale)}
+                  tag={<WillRemoveChip t={t} />}
+                />
               ) : null}
               {snapshot.modificationDate !== null ? (
-                <div className="grid grid-cols-[6.5rem_minmax(0,1fr)_auto] items-start gap-3 px-4 py-2.5 sm:grid-cols-[7.5rem_minmax(0,1fr)_auto]">
-                  <dt className="pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    {t("meta.fModified")}
-                  </dt>
-                  <dd className="text-sm text-foreground">
-                    {formatMetaDate(snapshot.modificationDate, locale)}
-                  </dd>
-                  <dd className="pt-0.5">
-                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
-                      {t("rmeta.willRemove")}
-                    </span>
-                  </dd>
-                </div>
+                <ReportRow
+                  label={t("meta.fModified")}
+                  value={formatMetaDate(snapshot.modificationDate, locale)}
+                  tag={<WillRemoveChip t={t} />}
+                />
               ) : null}
               {snapshot.custom.map((entry) => (
-                <div
+                <ReportRow
                   key={entry.key}
-                  className="grid grid-cols-[6.5rem_minmax(0,1fr)_auto] items-start gap-3 px-4 py-2.5 sm:grid-cols-[7.5rem_minmax(0,1fr)_auto]"
-                >
-                  <dt className="pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    {entry.key}
-                  </dt>
-                  <dd className="min-w-0 break-words text-sm text-foreground">
-                    {entry.value}
-                  </dd>
-                  <dd className="pt-0.5">
-                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
-                      {t("rmeta.willRemove")}
-                    </span>
-                  </dd>
-                </div>
+                  label={entry.key}
+                  value={entry.value}
+                  tag={<WillRemoveChip t={t} />}
+                />
               ))}
               {snapshot.hasXmp ? (
-                <div
-                  className={cn(
-                    "grid grid-cols-[6.5rem_minmax(0,1fr)_auto] items-start gap-3 px-4 py-2.5 sm:grid-cols-[7.5rem_minmax(0,1fr)_auto]",
-                    !alsoXmp && "opacity-60"
-                  )}
-                >
-                  <dt className="pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    {t("meta.fXmp")}
-                  </dt>
-                  <dd className="flex items-center gap-1.5 text-sm text-foreground">
-                    <Braces className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                    {t("rmeta.xmpRow")}
-                  </dd>
-                  <dd className="pt-0.5">
-                    {alsoXmp ? (
-                      <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
-                        {t("rmeta.willRemove")}
-                      </span>
+                <ReportRow
+                  dimmed={!alsoXmp}
+                  label={t("meta.fXmp")}
+                  value={
+                    <span className="inline-flex items-center gap-1.5">
+                      <Braces className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                      {t("rmeta.xmpRow")}
+                    </span>
+                  }
+                  tag={
+                    alsoXmp ? (
+                      <WillRemoveChip t={t} />
                     ) : (
                       <span className="rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
                         {t("rmeta.kept")}
                       </span>
-                    )}
-                  </dd>
-                </div>
+                    )
+                  }
+                />
               ) : null}
             </dl>
           </div>

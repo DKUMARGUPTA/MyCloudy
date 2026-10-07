@@ -21,12 +21,12 @@ import {
 } from "@/lib/pdf/thumbnails";
 import { cn } from "@/lib/utils";
 import {
-  cssFontFor,
   positionCenter,
   resolveWmOptions,
   rotatedStartPoint,
   targetIndices,
   tileSteps,
+  wmCssFontFor,
 } from "./wm-options";
 import { getLogoFile, subscribeToLogo } from "./logo-store";
 
@@ -236,7 +236,7 @@ export function WatermarkSurface({
       ctx.save();
       ctx.translate(cx * s, (pageH - cy) * s);
       ctx.rotate(-rad);
-      ctx.font = cssFontFor(wm.font, wm.size * s);
+      ctx.font = wmCssFontFor(wm.text.trim(), wm.font, wm.size * s);
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(wm.text.trim(), 0, 0);
@@ -253,7 +253,7 @@ export function WatermarkSurface({
     };
 
     if (wm.type === "text" && wm.text.trim().length > 0) {
-      ctx.font = cssFontFor(wm.font, wm.size * s);
+      ctx.font = wmCssFontFor(wm.text.trim(), wm.font, wm.size * s);
       const textW = ctx.measureText(wm.text.trim()).width / s; // PDF units
       const boxH = wm.size;
       if (wm.tile) {

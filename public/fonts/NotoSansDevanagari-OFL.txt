@@ -92,3 +92,10 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+
+---
+Note (P3.9): replaced the earlier "devanagari subset" TTF (Latin letters
+missing → mixed "Page ५" text had invisible Latin) with the full google/fonts
+variable build (wdth,wght) which covers Basic Latin + Devanagari. pdf-lib
+embeds the default instance (Regular 400); source:
+https://github.com/google/fonts/tree/main/ofl/notosansdevanagari (OFL).

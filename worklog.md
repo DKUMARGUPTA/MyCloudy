@@ -1073,3 +1073,104 @@ Stage Summary:
   before/after preview, /Rotate-aware worker (display→user geometry,
   smoke-locked), shared preview chrome extracted (PreviewFileHeader/
   PageStrip/ZoomControl, stamp surface refactored); i18n crop.* en/hi"
+
+---
+Task ID: P3.9
+Agent: main (Z.ai Code session — webDevReview cron round: Doc info + Remove metadata RECOVERY + QA + Devanagari everywhere)
+
+Task: 1) The previous round built change-pdf-doc-info + remove-pdf-metadata and
+committed them (f8d06dd) but died BEFORE writing its worklog entry and before
+any QA. 2) On arrival `/` was 500. 3) Recover, QA both tools end-to-end, fix
+everything found, ship the deferred Devanagari watermark upgrade, styling pass,
+this log.
+
+Work Log:
+- CRITICAL RECOVERY: `/` was 500 — src/lib/storage/local-snapshot.ts gone
+  AGAIN (3rd time). ROOT CAUSE FOUND THIS ROUND: .gitignore's `local-*` rule
+  silently matched the file — it was NEVER in git (even the P3.6 "recreate +
+  commit" 619af87 missed it because git add refused). Fixed .gitignore
+  (negation `!src/lib/storage/local-snapshot.ts`), recreated the module
+  (createLocalSnapshot: raw-string-keyed cache, SSR fallback, parse guarded),
+  committed. This failure mode can now never recur.
+- Reviewed the inherited P3.9 files (meta-common/{meta,worker-lib}, both
+  tools' config/panel/surface/worker, scripts/smoke-metadata.ts 22/22 PASS,
+  registry/configs/panels/surfaces already wired) — code was complete and
+  correct; QA was missing.
+- QA GOLDEN PATH change-pdf-doc-info (fresh contexts, 0 page/console errors):
+  upload → BEFORE card shows pdf.js-read fields → form PRE-FILLS from the
+  file (title/author/creator verified) → edit title + clear creator → AFTER
+  card live-updates (dotted-underline changed values + "will be removed"
+  chips) → CTA gated until changes → RUN → RESULT ("1 files, 1 pages",
+  974→946 B) → DOWNLOADED OUTPUT structurally verified with pdf-lib +
+  PDFName keys: Title edited to exact text, Creator REMOVED, Author/Subject/
+  Keywords/Producer/CreationDate/ModDate all KEPT, XMP stripped (default
+  switch), pages intact. Hindi UI end-to-end (जानकारी बदलें, टाइटल) + Hindi
+  title "गोपनीय वार्षिक रिपोर्ट" written via PDFHexString → verified in output
+  (UTF-16BE round trip). Mobile 375×812: no h-scroll, bottom sheet works,
+  sticky CTA.
+- QA GOLDEN PATH remove-pdf-metadata: upload → honest found-fields report
+  (6 fields + dates + custom entries + XMP row, each with "will be removed"
+  tag) → "already clean" empty state → XMP toggle OFF via native CDP click
+  (synthetic .click() is IGNORED by Radix Switch — needs pointer events):
+  Kept chip + row dims + summary count drops → RUN → output Info dict FULLY
+  REMOVED + XMP kept when toggled (verified both ways). FIXTURE LESSON: pdf.js
+  `get metadata()` only reads /Metadata when it is an INDIRECT Ref
+  (streamRef instanceof Ref) — test fixtures must context.register() the
+  stream; direct-object /Metadata is invisible to pdf.js (real PDFs always
+  use refs, app behavior is correct).
+- BUG FIXED (a11y, real): the ToolShell mounts every custom panel in BOTH
+  the desktop aside AND the mobile bottom sheet → duplicate hardcoded ids.
+  change-pdf-doc-info (`di-*`) and split-pdf (`split-ranges` etc.) broke
+  label→input association + screen readers on mobile. Both now use useId()
+  (the stamp-tool panels already did). Verified: 12 inputs / 12 unique ids
+  with the sheet open, labels resolve. Benign remainder: LogoMark's identical
+  SVG gradient id appears twice (renders correctly; noted, not fixed).
+- BUG FIXED (P3.7 regression, found via glyph probing): the previous
+  NotoSansDevanagari-Regular.ttf (GF devanagari subset) has NO Latin letters
+  — "Page ५ of १२" mapped Latin to .notdef (INVISIBLE text in live
+  page-numbers/HF mixed output!). Swapped public/fonts to the google/fonts
+  variable build (642 KB, covers Basic Latin + Devanagari, charset 551):
+  GID probes now 0 .notdef for mixed text; pdf-lib embeds the default
+  instance; OFL note updated. VERIFIED LIVE: PN hindiDigits output "Page १
+  of १" now fully visible (VLM-read on the browser-rendered PDF, zoomed).
+- FEATURE (worklog priority #2): Add watermark Devanagari upgrade — non-
+  WinAnsi text now embeds the self-hosted Noto Sans Devanagari subset via
+  stamp-common/worker-lib (loadStampFonts) instead of erroring; preview
+  canvas renders the same family via wmCssFontFor (new, unicode-aware);
+  panel shows an emerald "हिंदी embedded" pill + hint when the text needs
+  it; error copy updated (Latin+digits+Hindi supported; CJK still honest
+  error). END-TO-END VERIFIED: "गोपनीय — Confidential" watermark → output
+  embeds Type0 NotoSansDevanagari subset → VLM confirms BOTH the Devanagari
+  and Latin parts visible.
+- STYLING PASS (VLM-reviewed): "will be removed" chips unified + contrast
+  bumped (amber-500/15 bg, amber-800/amber-300 text) in BOTH surfaces;
+  remove-meta report rows extracted to one ReportRow component (5× dedup);
+  doc-info form spacing gap-3→4 + label gap-1.5→2; XMP switch row gap-3→4
+  + leading-relaxed hints. Final VLM verdict: "Production-ready (A-grade)".
+- Final: eslint clean, tsc clean, dev.log clean, / = 200, all console
+  captures 0 errors.
+
+Stage Summary:
+- Live tools: 19 — merge, split, rotate, rearrange, remove, extract,
+  images/jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt,
+  add-watermark, add-page-numbers, add-header-footer, crop-pdf,
+  change-pdf-doc-info, remove-pdf-metadata. PRD §8.2 Doc info + §8.3
+  Remove metadata COMPLETE (the inherited round is now truly done: built +
+  QA'd + logged).
+- The 3×-recurring local-snapshot 500 is dead (gitignore root cause fixed).
+- The mixed Latin+Devanagari invisibility bug (P3.7+) is fixed for ALL
+  stamp tools by the full-coverage font build.
+- Watermark now stamps real Hindi text (PRD "Hindi optional" clause fully
+  delivered across wm/pn/hf).
+- Radix Switch lesson: synthetic .click() is ignored — use native CDP
+  click (agent-browser click command) or pointer events in automation.
+- Screenshots: download/qa-p39x-*.png (12) + structurally verified outputs
+  qa-p39x-*-output.pdf / -edited / -clean / -xmpkept / -wm-deva-output /
+  -pn-mixed-output.
+- Suggested commit: "fix: .gitignore local-* root cause (3rd 500),
+  useId for duplicate panel ids, full-coverage Devanagari font (invisible
+  Latin in mixed stamps); feat: watermark Hindi stamping; P3.9 doc-info +
+  remove-metadata QA'd (info-dict strip/keep XMP both verified)"
+- Next per plan: Fill out, View, Compress (device), Generate password, Scan
+  to PDF, HEIC/WEBP — one per round. imagegrid per-image CROP UI still
+  deferred; images-in-merge still unblocked (reuse imagegrid engine).

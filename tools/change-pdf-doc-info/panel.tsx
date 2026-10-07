@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import {
   CalendarDays,
   Eraser,
@@ -91,6 +96,12 @@ export function DocInfoPanel({
   onChange,
 }: ToolPanelProps): React.JSX.Element {
   const { t } = useI18n();
+  // Instance-unique ids: the ToolShell mounts this panel in BOTH the desktop
+  // aside and the mobile bottom sheet (only one is visible, but both are in
+  // the DOM) — hardcoded ids would be duplicated and break label→input
+  // associations + screen readers on mobile.
+  const uid = useId();
+  const fieldId = (id: string): string => `${uid}-di-${id}`;
   const file = files[0]?.file ?? null;
   // Snapshot tagged with its file — identity replaces any reset-on-change
   // (lint-clean; stale data for a swapped file never renders).
@@ -172,22 +183,22 @@ export function DocInfoPanel({
   return (
     <div className="flex flex-col gap-5">
       {/* The six text fields */}
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-4">
         <SectionTitle
           icon={<FileText className="size-3.5" />}
           label={t("meta.fieldsTitle")}
         />
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-4">
           {FIELDS.map((field) => (
-            <div key={field.id} className="flex flex-col gap-1.5">
+            <div key={field.id} className="flex flex-col gap-2">
               <Label
-                htmlFor={`di-${field.id}`}
+                htmlFor={fieldId(field.id)}
                 className="text-xs font-medium text-foreground"
               >
                 {t(field.labelKey)}
               </Label>
               <Input
-                id={`di-${field.id}`}
+                id={fieldId(field.id)}
                 type="text"
                 autoComplete="off"
                 spellCheck={false}
@@ -213,7 +224,7 @@ export function DocInfoPanel({
           label={t("meta.datesTitle")}
         />
         {DATE_SELECTS.map((select) => (
-          <div key={select.id} className="flex flex-col gap-1.5">
+          <div key={select.id} className="flex flex-col gap-2">
             <Label className="text-xs font-medium text-foreground">
               {t(select.labelKey)}
             </Label>

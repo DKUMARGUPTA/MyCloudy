@@ -142,7 +142,7 @@ function RemovedChip({ t }: { t: (key: string) => string }): React.JSX.Element {
       <span className="text-muted-foreground/50 line-through decoration-muted-foreground/40">
         —
       </span>
-      <span className="rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+      <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
         {t("meta.willRemove")}
       </span>
     </span>

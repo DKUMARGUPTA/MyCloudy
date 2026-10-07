@@ -98,13 +98,13 @@ export function RemoveMetaPanel({
       </div>
 
       {/* XMP switch */}
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
           <Label className="flex items-center gap-1.5 text-xs font-medium text-foreground">
             <Braces className="size-3.5 text-muted-foreground" aria-hidden="true" />
             {t("rmeta.alsoXmp")}
           </Label>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
             {t("rmeta.alsoXmpHint")}
           </p>
         </div>

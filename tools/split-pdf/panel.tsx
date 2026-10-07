@@ -3,6 +3,7 @@
 import {
   Fragment,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -74,6 +75,16 @@ export function SplitPanel({
   onChange,
 }: ToolPanelProps) {
   const { t } = useI18n();
+  // Instance-unique ids: this panel is mounted in BOTH the desktop aside and
+  // the mobile bottom sheet (one hidden, one visible — both in the DOM), so
+  // hardcoded ids would duplicate and break label→input associations.
+  const uid = useId();
+  const ids = {
+    ranges: `${uid}-split-ranges`,
+    onePerRange: `${uid}-split-one-per-range`,
+    everyN: `${uid}-split-every-n`,
+    maxSize: `${uid}-split-max-size`,
+  } as const;
   const file = files.length > 0 ? files[0].file : null;
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
@@ -358,11 +369,11 @@ export function SplitPanel({
           {mode === "range" ? (
             <div className="flex flex-col gap-2">
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="split-ranges" className="text-xs font-medium">
+                <Label htmlFor={ids.ranges} className="text-xs font-medium">
                   {t("split.rangeLabel")}
                 </Label>
                 <Input
-                  id="split-ranges"
+                  id={ids.ranges}
                   type="text"
                   spellCheck={false}
                   autoComplete="off"
@@ -400,7 +411,7 @@ export function SplitPanel({
               </div>
               <div className="flex items-center justify-between gap-3 rounded-btn border border-border bg-background px-2.5 py-2">
                 <Label
-                  htmlFor="split-one-per-range"
+                  htmlFor={ids.onePerRange}
                   className="text-xs font-medium leading-snug"
                 >
                   {t("split.oneFilePerRangeLabel")}
@@ -409,7 +420,7 @@ export function SplitPanel({
                   </span>
                 </Label>
                 <Switch
-                  id="split-one-per-range"
+                  id={ids.onePerRange}
                   checked={oneFilePerRange}
                   onCheckedChange={(next) => onChange("oneFilePerRange", next)}
                   aria-label={t("split.oneFilePerRangeLabel")}
@@ -420,12 +431,12 @@ export function SplitPanel({
 
           {mode === "everyN" ? (
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="split-every-n" className="text-xs font-medium">
+              <Label htmlFor={ids.everyN} className="text-xs font-medium">
                 {t("split.everyNLabel")}
               </Label>
               <div className="flex items-center gap-2">
                 <Input
-                  id="split-every-n"
+                  id={ids.everyN}
                   type="number"
                   inputMode="numeric"
                   min={1}
@@ -497,12 +508,12 @@ export function SplitPanel({
 
           {mode === "size" ? (
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="split-max-size" className="text-xs font-medium">
+              <Label htmlFor={ids.maxSize} className="text-xs font-medium">
                 {t("split.sizeLabel")}
               </Label>
               <div className="flex items-center gap-2">
                 <Input
-                  id="split-max-size"
+                  id={ids.maxSize}
                   type="number"
                   inputMode="decimal"
                   min={0.1}

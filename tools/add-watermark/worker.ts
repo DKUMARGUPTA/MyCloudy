@@ -13,6 +13,8 @@ import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
+import { needsUnicodeFont } from "../stamp-common/layout";
+import { loadStampFonts } from "../stamp-common/worker-lib";
 import {
   positionCenter,
   rotatedStartPoint,
@@ -31,6 +33,10 @@ import {
  * watermark stream (pdf-lib appends it LAST) runs FIRST — the technique
  * was verified against pdf-lib's PDFPage.getContentStream + save round-trip
  * before this worker was written (see scripts/smoke-watermark.ts).
+ *
+ * Non-WinAnsi text (Devanagari/Hindi) is stamped via the self-hosted Noto
+ * Sans Devanagari subset embed from tools/stamp-common/worker-lib — the
+ * same pipeline the page-numbers round proved end-to-end.
  */
 
 const FONT_MAP: Record<WmFontId, StandardFonts> = {
@@ -124,9 +130,16 @@ async function run(request: WorkerRunRequest): Promise<void> {
       post({ type: "error", runId, code: "tool.errorWatermarkMissing" });
       return;
     }
-    font = await doc.embedFont(FONT_MAP[wm.font]);
+    if (needsUnicodeFont(text)) {
+      // Devanagari (and mixed Latin+Deva): embed the self-hosted Noto Sans
+      // Devanagari (subset) — real Hindi stamps, no upload.
+      const stampFonts = await loadStampFonts(doc, true);
+      font = stampFonts.fontFor("devanagari");
+    } else {
+      font = await doc.embedFont(FONT_MAP[wm.font]);
+    }
     try {
-      font.encodeText(text); // throws for non-WinAnsi (e.g. Devanagari)
+      font.encodeText(text); // throws for glyphs the embedded font lacks
     } catch {
       post({ type: "error", runId, code: "tool.errorWatermarkChars" });
       return;
