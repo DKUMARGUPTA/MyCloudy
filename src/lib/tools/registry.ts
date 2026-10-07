@@ -956,6 +956,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Minimize2,
     popularity: 92,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Compress PDF", hi: "पीडीएफ़ कंप्रेस करें" },
     description: {
       en: "Quality presets or custom DPI — smaller file, same readable text.",

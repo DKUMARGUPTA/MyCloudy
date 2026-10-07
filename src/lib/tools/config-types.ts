@@ -10,6 +10,17 @@ import type { L10n } from "@/lib/tools/registry";
  * this config — no per-tool pages are hand-written.
  */
 
+/**
+ * Show this field only while another field holds `equals` (string compare
+ * against the option value). Used for "Custom" reveals — e.g. quality/maxDim
+ * fields appear only when the preset select is on "custom". Hidden fields
+ * keep their values; workers simply don't read them.
+ */
+export interface ShowWhen {
+  id: string;
+  equals: string | boolean;
+}
+
 /** One renderable option field in the OptionsPanel (workspace state). */
 export type OptionField =
   | {
@@ -19,6 +30,7 @@ export type OptionField =
       hint?: L10n;
       choices: { value: string; label: L10n }[];
       default: string;
+      showWhen?: ShowWhen;
     }
   | {
       kind: "number";
@@ -30,6 +42,7 @@ export type OptionField =
       step?: number;
       suffix?: L10n;
       default: number;
+      showWhen?: ShowWhen;
     }
   | {
       kind: "text";
@@ -38,6 +51,7 @@ export type OptionField =
       hint?: L10n;
       placeholder?: L10n;
       default: string;
+      showWhen?: ShowWhen;
     }
   | {
       kind: "switch";
@@ -45,6 +59,7 @@ export type OptionField =
       label: L10n;
       hint?: L10n;
       default: boolean;
+      showWhen?: ShowWhen;
     }
   | {
       /** Page-range text ("all", "1-3, 5, 8-") parsed + validated in the worker. */
@@ -54,7 +69,18 @@ export type OptionField =
       hint?: L10n;
       placeholder?: L10n;
       default: string;
+      showWhen?: ShowWhen;
     };
+
+/** A field is visible unless its `showWhen` dependency mismatches. */
+export function fieldVisible(
+  field: OptionField,
+  values: OptionValues
+): boolean {
+  if (!field.showWhen) return true;
+  const dep = values[field.showWhen.id];
+  return String(dep ?? "") === String(field.showWhen.equals);
+}
 
 /** Values the OptionsPanel produces; plain data so the worker can consume it. */
 export type OptionValues = Record<string, string | number | boolean>;

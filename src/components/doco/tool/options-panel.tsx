@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { useI18n } from "@/components/providers/locale-provider";
 import type { OptionField, OptionValues } from "@/lib/tools/config-types";
+import { fieldVisible } from "@/lib/tools/config-types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,7 +29,7 @@ export function OptionsPanel({
 
   return (
     <div className={cn("flex flex-col gap-5", className)}>
-      {fields.map((field) => {
+      {fields.filter((field) => fieldVisible(field, values)).map((field) => {
         const value = values[field.id];
         const hint = field.hint ? (
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
