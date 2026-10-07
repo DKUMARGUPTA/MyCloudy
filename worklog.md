@@ -6,23 +6,23 @@
 
 ## 1. Current project status (assessment)
 
-- **Phase: 3 IN PROGRESS (P3.8)** — CROP PDF shipped.
-  Baseline was healthy (page-numbers golden path green, 0 console
-  errors), so this round delivered the next PRD §8.2 item: **Crop PDF**
-  (id `crop-pdf`, category edit, registry-enabled) — a visual drag crop
-  box (8 handles + rule-of-thirds guides + live size label) over the
-  pdf.js page render, numeric margins in pt/mm/in arranged around a mini
-  page diagram, **auto-detect** (content-edge pixel scan + 6pt padding),
-  **before/after preview**, page targeting (all/odd/even/skipFirst/range)
-  and a worker that maps display margins → user-space CropBox **per page
-  including /Rotate 90/180/270** (mapping derived from pdf.js getViewport
-  transforms, locked by scripts/smoke-crop.ts + verified end-to-end on a
-  rotated-page PDF). Also extracted the shared preview chrome
-  (file header / page strip / zoom control) into tools/stamp-common/
-  preview-parts.tsx, now reused by the stamp surfaces AND the crop
-  surface. Live tools now: **17**, all 100% on-device. Next per the
-  plan: Doc info + Remove metadata, Fill, View, Compress, Generate
-  password, Scan, HEIC/WEBP — one per round.
+- **Phase: 3 IN PROGRESS (P3.10)** — FILL OUT PDF FORMS shipped.
+  Baseline was healthy (merge golden path green, 0 console errors), so
+  this round delivered the next PRD §8.2 item: **Fill out PDF forms**
+  (id `fill-out-pdf`, edit, D, P1) — pdf-lib AcroForm scan (kinds,
+  labels, flags, options, current values, widget rects with /Rotate-aware
+  display mapping), live page preview with % -positioned highlight boxes
+  that click-to-focus their field, a reading-order field form (natural
+  Tab order; text/multiline/maxLength/checkbox/radio/dropdown/optionlist
+  + a native date picker for date-ish fields), a localStorage auto-fill
+  profile (name/email/phone/organization/address, label-exact Latin+
+  Hindi matching), required/read-only/filled states, and a flatten-after-
+  fill switch. Worker uses "f:<fileId>::<name>" epoch keys (answers can
+  never leak into a replaced file), truncates to maxLength, pre-renders
+  non-WinAnsi answers with the embedded Devanagari subset before
+  save() would throw, and falls back to NeedAppearances. Live tools now:
+  **20**, all 100% on-device. Next per the plan: View, Compress,
+  Generate password, Scan to PDF, HEIC/WEBP — one per round.
 - PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
   Markdown extract for easy reading/grep:
   `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
@@ -167,31 +167,18 @@
 
 ## 6. Unresolved issues / risks / next-phase priorities
 
-1. **NEXT: Phase 3 continues — Doc info + Remove metadata** (§8.2: doc
-   info = Title/Author/Subject/Keywords/Creator/Producer + dates +
-   "remove all metadata" quick toggle; PRD table line 567 area). Then
-   Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per
-   round.
-   **Devanagari watermark text is now UNBLOCKED** (P3.7 shipped the
-   embedding pipeline): the watermark tool can upgrade its WinAnsi-honest
-   error to real Hindi stamping by reusing tools/stamp-common/worker-lib
-   (loadStampFonts + the devaFontUrl blob-origin fix) — good small round.
-   ImageGrid follow-ups (deferred, noted): per-image CROP UI (PRD §8.6 input
-   row mentions "crop each" — needs a crop modal; rotate/reorder shipped);
-   SVG/TIFF inputs unsupported (createImageBitmap cannot decode them in
-   Chromium — honest error already shown; needs a WASM decoder later);
-   images-in-merge auto-convert (PRD merge row) still UNBLOCKED — merge worker
-   can reuse the imagegrid embed engine.
-   PageGrid follow-ups (deferred, unchanged): virtualized drag stays off
-   above 150 pages; selection indices after undo are clamped, not remapped.
-   Split follow-ups (deferred, unchanged): per-part bookmark-title naming;
-   blank detection 0.1% tolerance tuning.
-   Merge follow-ups still deferred from P3.1: per-file bookmarks (pdf-lib
-   outline — VERIFY API), per-file Unlock (qpdf round).
-   Stamp-tool follow-ups (deferred, P3.7): page-number "of N" always uses
-   the TOTAL page count (start-number users see the honest behavior
-   documented in the FAQ); no per-slot font override in HF (one font for
-   all six slots by design).
+1. **NEXT: Phase 3 continues — View, then Compress (device), Generate
+   password, Scan to PDF, HEIC/WEBP** — one per round (PRD §8.2/§8.4).
+   **Engine insight for future form work (P3.10):** pdf-lib doc.save()
+   regenerates dirty field appearances with WinAnsi Helvetica and THROWS
+   for non-Latin values — the Devanagari pre-render + NeedAppearances
+   fallback pattern lives in tools/fill-out-pdf/worker.ts; reuse it for
+   anything that touches AcroForm values.
+   Fill-tool follow-ups (deferred, noted): dropdown/optionlist values
+   with non-WinAnsi OPTION strings fall back to NeedAppearances (values
+   always stored; rendering is reader-side) — could embed Devanagari for
+   Ch-field appearances later; no per-field font picker in the fill UI
+   (by design).
 2. ~~Cancel path not yet caught mid-flight~~ **DONE in P3.4**: caught at 6%
    on a 600 DPI × 400-page pdf-to-jpg run; Cancel → workspace + toast ✓.
 3. qpdf WASM build source + exact version + license must be verified before Phase 4
@@ -1174,3 +1161,114 @@ Stage Summary:
 - Next per plan: Fill out, View, Compress (device), Generate password, Scan
   to PDF, HEIC/WEBP — one per round. imagegrid per-image CROP UI still
   deferred; images-in-merge still unblocked (reuse imagegrid engine).
+
+---
+Task ID: P3.10
+Agent: main (Z.ai Code session — webDevReview round: Fill out PDF forms)
+
+Task: Next PRD §8.2 item per the plan — "Fill out PDF forms" (id
+fill-out-pdf, edit, D, P1): field highlight + Tab navigation +
+checkbox/radio/dropdown + date picker + auto-fill from local profile +
+flatten after fill. Build it, QA it end-to-end with agent-browser, fix
+everything found, styling pass, this log.
+
+Work Log:
+- Read worklog, armed-state check: cron job 441340 (15-min webDevReview)
+  alive, git tree clean at 31fbe5f (P3.9). Baseline QA: / 200, 0 console
+  errors, hash-routing to merge-pdf workspace fine. configs.ts "corruption"
+  was a terminal-render artifact ([m eaten as ANSI) — file verified clean
+  by hexdump, NO fix needed.
+- BUILT tools/fill-out-pdf/ (5 files): scan.ts (pdf-lib AcroForm scan:
+  kind/label/flags/current value/options/widgets with page + user-space
+  rect per widget via P()/getObjectRef + page-ref map; userRectToDisplay
+  for /Rotate 0/90/180/270 — derived from pdf.js viewport transforms;
+  isWinAnsiText CP1252 check), profile.ts (localStorage auto-fill
+  profile name/email/phone/organization/address + matchProfileValue
+  heuristics Latin+Hindi), worker.ts (epoch-scoped "f:<fileId>::<name>"
+  flat option keys so answers can NEVER leak into a replaced file;
+  per-kind application incl. maxLength pre-truncation; non-WinAnsi
+  answers pre-rendered with the embedded Noto Devanagari subset via
+  stamp-common loadStampFonts BEFORE save() would throw WinAnsi; last
+  resort = NeedAppearances + save(updateFieldAppearances:false)),
+  surface.tsx (page preview canvas + % -positioned highlight boxes that
+  click-to-focus their field; field form in reading order = natural Tab
+  order; page chips; required/read-only/type badges; date fields get a
+  native date picker writing dd/mm/yyyy; radio clear; dropdown none;
+  optionlist checkbox multi-select; auto-fill bar + collapsible profile
+  editor; filled-count + required-left chips; CTA gating no-changes/
+  no-fields/scanning), config.ts (flatten switch + features/faq en+hi).
+  Wired: configs.ts, surfaces.tsx, registry enabled:true, i18n fill.* 48
+  keys en/hi.
+- ENGINE BUGS FOUND + FIXED (smoke script scripts/smoke-fill.ts, 40+ checks
+  ALL PASS): ① pdf-lib setText THROWS ExceededMaxLengthError on overflow
+  — worker pre-truncates (verified the throw exists + truncation
+  round-trips). ② doc.save() auto-regenerates dirty field appearances
+  with WinAnsi Helvetica and THROWS for non-WinAnsi values (would kill
+  the whole run) — worker now pre-renders non-WinAnsi text fields with
+  the embedded Devanagari font; structural verify: output widget AP
+  stream references NotoSansDevanagari-Regular subset, and VLM-confirmed
+  the Hindi text RENDERS on the browser canvas (feed output back into the
+  tool). ③ fixture lesson: createTextField+addToPage regenerates the
+  widget AP immediately (WinAnsi throw at FIXTURE time for ₹).
+- UI BUG FOUND + FIXED (browser QA): auto-fill matched the FULLY
+  QUALIFIED name ("applicant.essay" contains "applicant") — essay/pincode/
+  dob got filled with the user's name. Fixed: label-only matching,
+  generic-name = EXACT normalized label set {name, fullname,
+  applicantname, yourname, applicant, नाम, पूरानाम}, fname/lname
+  exact-only ("fullname" ⊅ lname), Devanagari kept in normalize().
+  Matcher unit-probed: 15/15 cases incl. Hindi labels.
+- QA GOLDEN PATHS (fresh contexts, 0 console errors each): ① full fill
+  (text+checkbox+radio+dropdown+optionlist multi) → RUN → "Your file is
+  ready!" → downloaded output structurally verified 9/9 (name/email/
+  agree/city=Jaipur/gender=Male/languages=Hindi+Tamil/readonly total
+  untouched/dob empty/form alive/2 pages). ② Hindi answer "अर्जुन मेहता"
+  → output value round-trips + Devanagari appearance + VLM-visible. ③
+  FLATTEN (native CDP click on Radix switch — synthetic events are
+  ignored, P3.9 lesson) → output has 0 fields left, 2 pages, permanent
+  ink. ④ Empty state (non-form PDF): honest "No fillable form fields
+  found" + editor-phase note. ⑤ Auto-fill: saved profile → one click →
+  name+email filled, ZERO false matches after the fix. ⑥ Hindi UI
+  end-to-end (फ़ॉर्म भरें CTA run → ready). ⑦ Highlight-box click focuses
+  the right input + scrolls; focusing an input highlights its page box.
+  ⑧ Mobile 375×812: no h-scroll, stacked layout, VLM-verified clean.
+  ⑨ Date picker: calendar affordance on date-ish fields writes
+  dd/mm/yyyy into the (still free-text) input.
+- STYLING PASS (VLM-reviewed): first VLM verdict flagged faint highlight
+  boxes → bumped to border-2 + bg-primary/15 (unfilled), emerald fill
+  state, ring on focus; second VLM pass: "clearly visible with good
+  contrast". Rows keep Page chips + kind badges + required (red) +
+  read-only (lock) + emerald "Filled" dots.
+- Final: eslint clean, tsc clean, smoke-fill ALL PASS, dev.log clean
+  (only transient 500s while the paren-broken regex was mid-edit — fixed
+  immediately; last GETs all 200).
+
+Stage Summary:
+- Live tools: 20 — merge, split, rotate, rearrange, remove, extract,
+  images/jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt,
+  add-watermark, add-page-numbers, add-header-footer, crop-pdf,
+  change-pdf-doc-info, remove-pdf-metadata, fill-out-pdf. PRD §8.2
+  "Fill out PDF forms" COMPLETE (highlight/Tab/checkbox/radio/dropdown/
+  date picker/auto-fill profile/flatten — every PRD clause delivered).
+- The WinAnsi-save-crash engine insight applies to ANY future form
+  work: pdf-lib save() regenerates dirty appearances with Helvetica and
+  throws on non-Latin — the Devanagari pre-render + NeedAppearances
+  fallback pattern lives in tools/fill-out-pdf/worker.ts.
+- Automation lessons re-confirmed: Radix Switch/Checkbox need NATIVE
+  CDP clicks (agent-browser click), not synthetic events; same-frame
+  double toggles on one optionlist overwrite each other (stale props by
+  design of the shared-values architecture) — space interactions ≥1
+  frame in QA, humans are never affected.
+- Screenshots: download/qa-p310-{workspace,empty-state,hindi-ui,hindi-
+  render,highlights-fixed,mobile}.png + outputs qa-p310-fixture.pdf,
+  -output.pdf, -output2.pdf, -hindi-output.pdf, -flat-output.pdf.
+- Suggested commit: "feat: Fill out PDF forms (PRD §8.2) — AcroForm scan
+  with widget rects + /Rotate display mapping, click-to-focus highlight
+  boxes on live preview, reading-order field form (text/multiline/
+  maxLength/checkbox/radio/dropdown/optionlist/date picker), local
+  auto-fill profile (label-exact matching, Latin+Hindi), flatten switch;
+  worker: file-id epoch keys (no cross-file leaks), maxLength truncate,
+  Devanagari pre-render for non-WinAnsi answers + NeedAppearances
+  fallback; smoke-fill 40+ checks; i18n fill.* en/hi"
+- Next per plan: View, Compress (device), Generate password, Scan to
+  PDF, HEIC/WEBP — one per round. Unblocked leftovers: images-in-merge
+  auto-convert (reuse imagegrid engine), imagegrid per-image crop UI.

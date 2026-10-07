@@ -18,6 +18,7 @@ import { config as addHeaderFooter } from "../../../tools/add-header-footer/conf
 import { config as cropPdf } from "../../../tools/crop-pdf/config";
 import { config as changePdfDocInfo } from "../../../tools/change-pdf-doc-info/config";
 import { config as removePdfMetadata } from "../../../tools/remove-pdf-metadata/config";
+import { config as fillOutPdf } from "../../../tools/fill-out-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -46,6 +47,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [cropPdf.toolId]: cropPdf,
   [changePdfDocInfo.toolId]: changePdfDocInfo,
   [removePdfMetadata.toolId]: removePdfMetadata,
+  [fillOutPdf.toolId]: fillOutPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

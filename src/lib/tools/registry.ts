@@ -535,6 +535,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: ClipboardCheck,
     popularity: 50,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Fill out PDF forms", hi: "फ़ॉर्म भरें" },
     description: {
       en: "Fill text fields, checkboxes and dropdowns; flatten when done.",
