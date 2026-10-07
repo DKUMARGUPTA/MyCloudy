@@ -40,4 +40,11 @@ export interface ToolSurfaceProps extends ToolPanelProps {
   setRunBlocked: (reasonKey: string | null) => void;
   /** Shell file pipeline (limits, OPFS copy, recent entries). */
   addFiles: (incoming: File[]) => void;
+  /**
+   * Hand the CURRENT workspace files to another tool and navigate there
+   * (PRD §6.4 chains). Viewer surfaces use this for "continue with"
+   * actions since they have no result phase of their own. Optional so
+   * existing surfaces can ignore it.
+   */
+  onChain?: (targetToolId: string) => void;
 }

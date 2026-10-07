@@ -219,7 +219,10 @@ class ToolWorkerPool {
     const pool = this.idle.get(toolId);
     const reused = pool?.pop();
     if (reused) return reused;
-    return TOOL_CONFIGS[toolId].createWorker();
+    // Viewer-only tools never run, so their configs carry no factory.
+    const factory = TOOL_CONFIGS[toolId].createWorker;
+    if (!factory) throw new Error(`tool-${toolId}-has-no-worker`);
+    return factory();
   }
 
   private returnWorker(toolId: string, worker: Worker): void {

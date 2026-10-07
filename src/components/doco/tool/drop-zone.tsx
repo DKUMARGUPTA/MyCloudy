@@ -232,10 +232,14 @@ export function DropZone({
           </span>
         </span>
         <span className="text-[11px] text-muted-foreground">
-          {t("dropzone.limits", {
-            size: isMobileDevice() ? "50 MB" : "200 MB",
-            count: maxFiles,
-          })}
+          {maxFiles === 1
+            ? t("dropzone.limitsOne", {
+                size: isMobileDevice() ? "50 MB" : "200 MB",
+              })
+            : t("dropzone.limits", {
+                size: isMobileDevice() ? "50 MB" : "200 MB",
+                count: maxFiles,
+              })}
         </span>
       </label>
       <input

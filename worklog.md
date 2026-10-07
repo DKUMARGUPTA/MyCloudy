@@ -1272,3 +1272,106 @@ Stage Summary:
 - Next per plan: View, Compress (device), Generate password, Scan to
   PDF, HEIC/WEBP — one per round. Unblocked leftovers: images-in-merge
   auto-convert (reuse imagegrid engine), imagegrid per-image crop UI.
+
+---
+Task ID: P3.11
+Agent: webDevReview (main agent, session web-3597fa1e)
+Task: webDevReview cycle — QA the live site, then ship the next PRD §7.7 tool: View PDF (PRD §6.5 viewer), plus mandatory styling/features.
+
+Work Log:
+- Read worklog fully; baseline QA (agent-browser): home + category pages clean,
+  0 console errors, footer natural. dev.log showed only HISTORICAL 500s from
+  the P3.10 mid-edit regex (already fixed; all recent GETs 200).
+- Designed + shipped **View PDF** (`view-pdf`, category view, D-mode, P1):
+  - **New architecture: viewer-only tools.** `ToolConfig.viewerOnly: true`
+    (createWorker/outputKind now optional; pool guards the missing factory).
+    ToolShell hides the sticky run CTA + options aside + BottomSheet for such
+    tools and renders the workspace surface FULL-WIDTH — the surface IS the
+    product. Added `onChain` to ToolSurfaceProps; shell wires it to
+    handleChain (enabled/coming-soon toasts preserved).
+  - `tools/view-pdf/surface.tsx` (~1660 lines): full viewer with
+    continuous/single/two-page-spread layouts, zoom 25-400% via steps +
+    fit-width/fit-page (ResizeObserver-driven, DPR-capped rendering),
+    90-degree view rotation, dark reading mode (canvas invert+hue filter),
+    thumbnails/outline sidebar (lazy thumbnails, flattened bookmarks w/
+    depth + resolved pages), full-text search (Ctrl+F) with per-item
+    proportional highlight boxes + active-match ring + results drawer +
+    Enter/Shift+Enter navigation + auto-jump to first match, selectable
+    text layer via pdf.js TextLayer (+ `.pdf-textLayer` CSS in
+    globals.css, --scale-factor var), go-to-page input + G shortcut,
+    arrows/PageUp/PageDown move by page in every layout, +/- zoom,
+    R rotate, Esc closes search. Print = hidden iframe w/ blob URL
+    (native PDF print), Download = original bytes, Share via
+    navigator.share when available. Continue-with strip chains into
+    merge/split/rotate/fill-out-pdf.
+  - Password flow (PRD §6.5): PasswordException → inline prompt (stays
+    local), wrong-password note, same-password resubmit re-runs the open
+    (pwTry epoch). qpdf-AES-256 fixture QA'd end to end.
+- **Bugs found by QA + fixed:**
+  1. Page slots had NO explicit size → collapsed to ~32px, breaking layout,
+     lazy IO, scroll math, fit modes (root cause: slot must be the layout
+     authority — now sized from pageSizes×scale).
+  2. Native /Rotate was double-applied vs slot math — pageSizes now store
+     UNROTATED media size + page.rotate; displaySize composes
+     rot+viewRotation exactly like pdf.js viewports.
+  3. Search highlights pointed at wrong items: geo items were compacted
+     while search indexes the RAW content.items — geo now carries
+     itemIndex (fixed 4px-wide / wrong-position boxes).
+  4. Search didn't auto-jump to the first match; Enter now lands on match 1.
+  5. Same-wrong-password resubmit gave no feedback (pwTry epoch).
+  6. "Search in document (Ctrl+F) (Ctrl+F)" doubled title.
+- React Compiler lint reworks (all green): geo ref→state + boxes useMemo;
+  container-size ref→state (RO fires after observe); doc-effect sync
+  resets → documented adjust-state-during-render pattern (openedFor);
+  search early-reset → searchResult carries its query (pure derivation).
+- **Styling/features passes (VLM-reviewed ×6):** mobile toolbar was 3 rows /
+  133px tall → single scrollable row (49px, scrollbar-none, shrink-0 items,
+  fit buttons hidden <sm); highlight box confirmed clearly visible (closeup
+  PASS); dark+spread PASS after re-shoot; landing copy for viewerOnly
+  tools (view.how1-3) + dropzone singular "1 file" (limitsOne) in en/hi;
+  fixed share-button JSX mangled by a partial edit (tsc caught nothing —
+  found by inspection).
+- QA GOLDEN PATHS (fresh contexts, 0 console errors each): upload →
+  viewer renders (6 pages, 180% fit-width, 2 lazily-rendered canvases) →
+  zoom 200% ✓ → spread/single slots ✓ → rotate → landscape slot ✓ → dark
+  filter ✓ → search "zoom"/"pineapple"/"fox" counts+highlight+drawer+ring ✓
+  → page input goto 2 ✓ → thumbs 6 rendered + active thumb tracks page ✓ →
+  outline 6 rows → click row 4 jumps to page 4 ✓ → arrows move by page ✓ →
+  G focuses page input ✓ → password wrong→note, right "user123"→unlocked ✓,
+  same-wrong resubmit retries ✓ → Hindi UI end-to-end (viewer, toolbar
+  titles, continue strip) ✓ → mobile 375×812 single-row toolbar, no
+  h-scroll, canvases render ✓ → category page shows View PDF live (5 Soon).
+- tsc clean, eslint clean, dev.log clean (all 200s).
+
+Stage Summary:
+- Live tools: 21 (20 + view-pdf). PRD §6.5 viewer delivered except
+  presentation mode + attachments/annotations lists (see risks).
+- Key architecture additions: viewerOnly ToolConfig + full-width shell
+  mode + surface onChain. Reusable for Compare PDFs (P3) later.
+- Engine insights: page slots MUST be sized from pageSizes×scale (layout
+  authority); geo itemIndex must align with RAW pdf.js items (never compact
+  shared indices); pdf.js TextLayer needs --scale-factor + minimal CSS
+  (added to globals.css); print via hidden iframe + blob URL works in
+  Chromium; PasswordException retry needs an epoch (same-input resubmits).
+- QA fixtures: download/qa-p311-fixture.pdf (6 pages, outline,
+  searchable), qa-p311-locked.pdf (AES-256, user "user123").
+  Screenshots: qa-p311-{landing,viewer-sidebar,viewer-search-fixed,
+  highlight-closeup,dark-spread2,mobile-fixed,password,hindi-viewer}.png.
+- Suggested commit: "feat: View PDF (PRD §6.5) — viewer-only tool
+  architecture (no run step, full-width surface, surface chains), lazy
+  page rendering ±2, text layer, search w/ on-page highlights + drawer,
+  thumbnails/outline sidebar, zoom/fit/rotate/spread/dark mode, password
+  prompt (local), print/download/share, keyboard shortcuts, EN+HI;
+  shell: viewerOnly mode + singular dropzone limits copy"
+- Next per plan (one per round): Compress (device), Generate password,
+  Scan to PDF, HEIC/WEBP. Unblocked leftovers: images-in-merge
+  auto-convert, imagegrid per-image crop UI.
+- Risks/debt (small): (1) search is case-insensitive substring per text
+  item — no regex/diacritic folding yet (PRD's search-pdf tool, P2, will
+  supersede); (2) attachments/annotations sidebar lists + presentation
+  (fullscreen) mode from §6.5 not built — candidates for a later polish
+  round; (3) cross-item phrase matches (match spans two text items) not
+  highlighted — item-level only; (4) huge page counts (>500) probe all
+  sizes upfront — fine in QA, worth a progress bar someday; (5) print uses
+  the browser's native PDF print UI (blob iframe) — consistent + zero
+  re-render cost, but no page-range selection.

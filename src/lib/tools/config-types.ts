@@ -67,16 +67,29 @@ export interface ToolFaqItem {
 export interface ToolConfig {
   /** Matches the registry tool id (== URL slug). */
   toolId: string;
-  /** Factory for this tool's dedicated Web Worker (Turbopack bundles it). */
-  createWorker: () => Worker;
+  /**
+   * Factory for this tool's dedicated Web Worker (Turbopack bundles it).
+   * Optional ONLY for viewer tools (`viewerOnly: true`) — they never run.
+   */
+  createWorker?: () => Worker;
   /** Options schema rendered by the shared OptionsPanel. */
   options: OptionField[];
   /** Landing-state feature bullets (4-6, PRD §6.3). */
   features: L10n[];
   /** Landing-state FAQ (3 items, PRD §6.3). */
   faq: ToolFaqItem[];
-  /** Primary output kind — drives naming, preview and chain suggestions. */
-  outputKind: "pdf" | "image" | "text" | "zip";
+  /**
+   * Primary output kind — drives naming, preview and chain suggestions.
+   * Required for runnable tools; unused by viewer tools.
+   */
+  outputKind?: "pdf" | "image" | "text" | "zip";
+  /**
+   * Viewer tools (PRD §6.5, e.g. View PDF) have no processing step at all:
+   * the ToolShell hides the sticky run CTA and never enters the
+   * processing/result phases — the workspace surface IS the product
+   * (print, download and continue-with chains live inside it).
+   */
+  viewerOnly?: boolean;
   /** File count limits for the DropZone (PRD §6.3 "up to N files"). */
   minFiles: number;
   maxFiles: number;

@@ -96,6 +96,9 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   const { t, locale } = useI18n();
   const { toast } = useToast();
   const category = getCategory(tool.category);
+  // Viewer tools (PRD §6.5) never process anything: no run CTA, no options
+  // aside, no processing/result phases — the workspace surface IS the tool.
+  const viewerOnly = config.viewerOnly === true;
 
   // One-time chain handoff peek — set by a previous tool's result view or
   // the home Smart Drop Zone right before navigating here. Consumed via
@@ -367,6 +370,18 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
     [locale, t, toast, tool.id]
   );
 
+  // Viewer surfaces chain the current file straight into another tool
+  // (they have no result phase of their own). Same enabled/coming-soon
+  // behavior as result-view chains.
+  const surfaceChain = useCallback(
+    (targetId: string) => {
+      const target = getTool(targetId);
+      if (!target) return;
+      handleChain(target, files.map((item) => item.file));
+    },
+    [files, handleChain]
+  );
+
   const removeFromDevice = useCallback(() => {
     void clearWorkingFiles().catch(() => undefined);
     // Remove this run's recent entries by their file metadata (label+size).
@@ -464,7 +479,10 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                   {t("tool.howTitle")}
                 </h2>
                 <ol className="mt-3 grid gap-3 sm:grid-cols-3">
-                  {["tool.how1", "tool.how2", "tool.how3"].map((key, index) => (
+                  {(viewerOnly
+                    ? ["view.how1", "view.how2", "view.how3"]
+                    : ["tool.how1", "tool.how2", "tool.how3"]
+                  ).map((key, index) => (
                     <li
                       key={key}
                       className="rounded-card border border-border bg-card p-4"
@@ -596,10 +614,16 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
             </span>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div
+            className={cn(
+              "mt-4 grid grid-cols-1 gap-6",
+              !viewerOnly && "lg:grid-cols-[minmax(0,1fr)_320px]"
+            )}
+          >
             {/* Main column: the surface owns file presentation when one is
                 registered (PageGrid family); otherwise the classic
-                FileList + add-more DropZone (PRD §6.3). */}
+                FileList + add-more DropZone (PRD §6.3). Viewer tools go
+                full-width — their surface is the entire product (§6.5). */}
             <div className="flex flex-col gap-3">
               {WorkspaceSurface && files.length > 0 ? (
                 <WorkspaceSurface
@@ -609,6 +633,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                   setFileOrder={setFiles}
                   setRunBlocked={handleRunBlocked}
                   addFiles={addFiles}
+                  onChain={surfaceChain}
                 />
               ) : (
                 <>
@@ -632,7 +657,9 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
 
             {/* Options: desktop side panel / mobile bottom sheet.
                 Height budget: sticky header (top-20) + sticky CTA bar at the
-                bottom — so the panel never slides under the CTA bar. */}
+                bottom — so the panel never slides under the CTA bar.
+                Viewer tools have no options panel — full-width surface. */}
+            {!viewerOnly ? (
             <aside className="hidden lg:block">
               <div className="sticky top-20 mb-20 flex max-h-[calc(100vh-11.5rem)] flex-col gap-5 overflow-y-auto scrollbar-thin rounded-card border border-border bg-card p-5">
                 <div>
@@ -666,9 +693,12 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                 </p>
               </div>
             </aside>
+            ) : null}
           </div>
 
-          {/* Sticky CTA (PRD §6.3): count + estimated size + action */}
+          {/* Sticky CTA (PRD §6.3): count + estimated size + action.
+              Hidden for viewer tools — the surface owns its actions. */}
+          {!viewerOnly ? (
           <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85">
             <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">
@@ -726,7 +756,9 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
               </Button>
             </div>
           </div>
+          ) : null}
 
+          {!viewerOnly ? (
           <BottomSheet
             open={optionsOpen}
             onOpenChange={setOptionsOpen}
@@ -764,6 +796,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
               onChange={handleOptionChange}
             />
           </BottomSheet>
+          ) : null}
         </section>
       ) : null}
 

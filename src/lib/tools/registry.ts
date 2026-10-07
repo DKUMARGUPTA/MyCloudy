@@ -1234,6 +1234,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Eye,
     popularity: 60,
     accepts: "pdf",
+    enabled: true,
     name: { en: "View PDF", hi: "पीडीएफ़ देखें" },
     description: {
       en: "Fast viewer: thumbnails, search, outline, dark reading mode.",
