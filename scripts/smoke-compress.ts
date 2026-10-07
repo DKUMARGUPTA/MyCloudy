@@ -187,25 +187,23 @@ async function main(): Promise<void> {
   );
 
   console.log("\nclassifyImage skip paths:");
-  const mkDict = (entries: Record<string, unknown>) => {
-    const dict = reloaded.context.obj({});
-    for (const [k, v] of Object.entries(entries)) dict.set(PDFName.of(k), v as never);
-    return dict;
-  };
-  const stream = (dict: ReturnType<typeof mkDict>) =>
-    PDFRawStream.of(dict, new Uint8Array(16));
+  // context.obj() converts strings→PDFName, numbers→PDFNumber — the same
+  // shape a parsed document produces.
+  const mkDict = (entries: Record<string, unknown>) =>
+    reloaded.context.obj(entries) as ReturnType<typeof reloaded.context.obj>;
+  const stream = () => PDFRawStream.of(mkDict({}), new Uint8Array(16));
   check(
     "JPXDecode → skip",
     classifyImage(
       mkDict({ Filter: "JPXDecode", Width: 10, Height: 10, BitsPerComponent: 8 }),
-      stream(mkDict({}))
+      stream()
     ) === "skip"
   );
   check(
     "ImageMask → skip",
     classifyImage(
       mkDict({ ImageMask: 1, Width: 10, Height: 10 }),
-      stream(mkDict({}))
+      stream()
     ) === "skip"
   );
   check(
@@ -218,7 +216,7 @@ async function main(): Promise<void> {
         BitsPerComponent: 8,
         ColorSpace: "DeviceCMYK",
       }),
-      stream(mkDict({}))
+      stream()
     ) === "raw-cmyk"
   );
   const idxDict = mkDict({
@@ -233,7 +231,7 @@ async function main(): Promise<void> {
   );
   check(
     "Indexed → indexed + palette inline",
-    classifyImage(idxDict, stream(mkDict({}))) === "indexed" &&
+    classifyImage(idxDict, stream()) === "indexed" &&
       indexedPalette(idxDict)?.baseComponents === 3
   );
 
@@ -259,13 +257,12 @@ async function main(): Promise<void> {
 
   const alphaImg = candidates.find((c) => c.width === 900)!;
   const smaskRef = alphaImg.stream.dict.get(PDFName.of("SMask"));
-  const carried = { smask: smaskRef instanceof (PDFRawStream as never) ? "?" : String(smaskRef) };
   replaceImageStream(reloaded.context, alphaImg, fakeJpeg, 900, 700);
   const afterAlpha = reloaded.context.lookup(alphaImg.ref) as PDFRawStream;
   check(
     "SMask ref carried into the replacement",
     String(afterAlpha.dict.get(PDFName.of("SMask"))) === String(smaskRef),
-    carried.smask
+    String(smaskRef)
   );
 
   // ICCBased with N=3
@@ -274,16 +271,11 @@ async function main(): Promise<void> {
     Width: 10,
     Height: 10,
     BitsPerComponent: 8,
+    ColorSpace: ["ICCBased", 3],
   });
-  iccDict.set(
-    PDFName.of("ColorSpace"),
-    reloaded.context.obj(["ICCBased", reloaded.context.nextRef()])
-  );
-  const iccArray = iccDict.lookup(PDFName.of("ColorSpace"));
-  (iccArray as PDFArray).set(1, reloaded.context.register(reloaded.context.obj(3)) as never);
   check(
     "ICCBased N=3 → raw-rgb",
-    classifyImage(iccDict, stream(mkDict({}))) === "raw-rgb"
+    classifyImage(iccDict, stream()) === "raw-rgb"
   );
 
   const resaved = await reloaded.save({ useObjectStreams: true });
