@@ -1,6 +1,7 @@
 import {
   PDFArray,
   PDFDict,
+  PDFHexString,
   PDFName,
   PDFNumber,
   PDFRawStream,
@@ -343,7 +344,9 @@ export function indexedPalette(
   const baseComponents = indexedBaseComponents(base);
   if (baseComponents === null) return null;
   const lookup = colorSpace.lookup(3);
-  if (lookup instanceof PDFString) {
+  // Parsed PDFs carry string lookups as PDFHexString; literal-built ones
+  // as PDFString — both expose asBytes().
+  if (lookup instanceof PDFString || lookup instanceof PDFHexString) {
     return {
       baseComponents,
       palette: new Uint8Array(lookup.asBytes()),

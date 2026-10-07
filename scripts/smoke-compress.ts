@@ -24,9 +24,11 @@ import { readFile, writeFile } from "node:fs/promises";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import {
   PDFArray,
+  PDFDict,
   PDFName,
   PDFNumber,
   PDFRawStream,
+  PDFString,
 } from "pdf-lib";
 import {
   classifyImage,
@@ -151,24 +153,28 @@ async function main(): Promise<void> {
     candidates.some((c) => c.strategy === "raw-rgb" && c.width === 900)
   );
 
-  // The SMask gray image must NOT be among the candidates.
-  const allImages: { dict: PDFRawStream["dict"] }[] = [];
-  for (const [, obj] of reloaded.context.enumerateIndirectObjects()) {
+  // The SMask gray image (obj 17, 900x700 DeviceGray) must NOT be among the
+  // candidates — its bytes are the alpha channel of the RGB image.
+  const grayRefs: string[] = [];
+  for (const [ref, obj] of reloaded.context.enumerateIndirectObjects()) {
     if (obj instanceof PDFRawStream) {
       const st = obj.dict.lookup(PDFName.of("Subtype"));
-      if (st instanceof PDFName && st.asString() === "Image") {
-        allImages.push({ dict: obj.dict });
+      const cs = obj.dict.lookup(PDFName.of("ColorSpace"));
+      if (
+        st instanceof PDFName &&
+        st === PDFName.of("Image") &&
+        cs instanceof PDFName &&
+        cs === PDFName.of("DeviceGray")
+      ) {
+        grayRefs.push(ref.toString());
       }
     }
   }
-  const smaskStreams = allImages.filter(({ dict }) => {
-    const cs = dict.lookup(PDFName.of("ColorSpace"));
-    return cs instanceof PDFName && cs.asString() === "DeviceGray";
-  });
+  const grayCandidate = candidates.find((c) => c.strategy === "raw-gray");
   check(
     "SMask gray image exists in doc but is excluded from candidates",
-    smaskStreams.length === 1 &&
-      !candidates.some((c) => c.strategy === "raw-gray")
+    grayRefs.length === 1 && grayCandidate === undefined,
+    grayRefs.join(",") || "none"
   );
 
   console.log("\ntargetSize + grayscale:");
@@ -189,8 +195,8 @@ async function main(): Promise<void> {
   console.log("\nclassifyImage skip paths:");
   // context.obj() converts strings→PDFName, numbers→PDFNumber — the same
   // shape a parsed document produces.
-  const mkDict = (entries: Record<string, unknown>) =>
-    reloaded.context.obj(entries) as ReturnType<typeof reloaded.context.obj>;
+  const mkDict = (entries: Record<string, unknown>): PDFDict =>
+    reloaded.context.obj(entries as never) as unknown as PDFDict;
   const stream = () => PDFRawStream.of(mkDict({}), new Uint8Array(16));
   check(
     "JPXDecode → skip",
@@ -219,16 +225,21 @@ async function main(): Promise<void> {
       stream()
     ) === "raw-cmyk"
   );
+  // /Indexed arrays carry the palette lookup as PDFString in parsed files —
+  // context.obj would turn a plain string into a PDFName, so build the
+  // array explicitly like the parser does.
   const idxDict = mkDict({
     Filter: "FlateDecode",
     Width: 10,
     Height: 10,
     BitsPerComponent: 8,
   });
-  idxDict.set(
-    PDFName.of("ColorSpace"),
-    reloaded.context.obj(["Indexed", "DeviceRGB", 3, ""])
-  );
+  const idxArray = PDFArray.withContext(reloaded.context);
+  idxArray.push(PDFName.of("Indexed"));
+  idxArray.push(PDFName.of("DeviceRGB"));
+  idxArray.push(reloaded.context.obj(3));
+  idxArray.push(PDFString.of("\u0001\u0002\u0003\u0004\u0005\u0006"));
+  idxDict.set(PDFName.of("ColorSpace"), idxArray);
   check(
     "Indexed → indexed + palette inline",
     classifyImage(idxDict, stream()) === "indexed" &&

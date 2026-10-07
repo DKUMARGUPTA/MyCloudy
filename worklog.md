@@ -1375,3 +1375,100 @@ Stage Summary:
   sizes upfront — fine in QA, worth a progress bar someday; (5) print uses
   the browser's native PDF print UI (blob iframe) — consistent + zero
   re-render cost, but no page-range selection.
+
+---
+Task ID: P3.12
+Agent: webDevReview (main agent, session web-3597fa1e)
+Task: webDevReview cycle — baseline QA, then ship the next PRD §7.5 P1 tool: Compress PDF (device mode), plus mandatory styling/features.
+
+Work Log:
+- Read worklog fully; baseline QA (agent-browser): home + optimize category
+  clean, 0 console errors, Compress PDF showed "Soon" badge. dev.log all 200s.
+- ENGINE LESSON (cost 2 smoke failures — pin this for future pdf-lib work):
+  ① PDFName.asString() returns the name WITH the leading slash ("/DeviceRGB")
+    — comparing it to "DeviceRGB" silently fails. Compare POOLED PDFName
+    objects by identity instead: cs === PDFName.of("DeviceRGB"). PDFName.of
+    is a pool (same instance per name), so identity works everywhere.
+  ② context.obj() maps plain strings to PDFName — a real /Indexed palette
+    string arrives as PDFString/PDFHexString (both have .asBytes()), so
+    fixtures must build those explicitly.
+- Built tools/compress-pdf/ (3 files):
+  - engine.ts (PURE, bun-testable): resolveParams (light .82/2400, rec
+    .65/1600, strong .45/1200, custom clamps q .2-.97 / dim 200-8000),
+    classifyImage (DCTDecode→jpeg; Flate/LZW/A85/AHex/RunLength + DeviceGray
+    1c / DeviceRGB 3c / DeviceCMYK 4c / ICCBased N / Indexed palette; skips
+    ImageMask, JPX/CCITT/JBIG2, DCT-in-nested-filter, bpc≠8), 
+    collectImageCandidates (ALL image XObjects, EXCLUDES /SMask + /Mask
+    alpha objects via protectedRefs — re-encoding alpha as lossy RGB would
+    corrupt transparency; skips <8px images), replaceImageStream (new
+    PDFRawStream DCTDecode w/ updated W/H/ColorSpace, carries /SMask /Mask
+    /Name /Interpolate), targetSize (never upscales), grayscaleImageData
+    (Rec.601), indexedPalette (PDFString+PDFHexString inline palettes).
+  - worker.ts: DCT→createImageBitmap (browser JPEG decode); raw→
+    decodePDFRawStream→ImageData by colorspace (gray/rgb/cmyk-naive/
+    indexed w/ palette expansion incl. stream-backed palettes); Offscreen
+    draw to target size + optional luminance grayscale → JPEG re-encode →
+    size-guarded (≥2% win else keep original); replaceImageStream per
+    candidate; optional stripAllMetadata (meta-common); progress per image.
+  - config.ts: preset select (Light/Recommended/Strong/Custom) + Custom
+    reveals quality 30-95% + maxDim 600-4000px via NEW showWhen schema;
+    grayscale + stripMetadata switches; en+hi features/FAQ (6/3).
+- SCHEMA EXTENSION: OptionField.showWhen {id, equals} + fieldVisible() in
+  config-types.ts; OptionsPanel filters on it. Hidden fields keep values.
+- Wired: configs.ts import + registry enabled:true. Result view already
+  shows before→after size + % saved chip (no changes needed).
+- QA (fresh contexts, 0 console errors each):
+  ① GOLDEN PATH: upload 1.5MB fixture (PIL noisy gradient JPEG 2200x1500
+    + flat Flate PNG + alpha PNG + text-only page, 4 pages) → Recommended →
+    "1.5 MB → 148 KB — 90% smaller". Structural verify of output: 4 pages,
+    photo is now jpeg 1600x1091 (DCTDecode), SMask 17 0 R preserved on the
+    alpha image, flat/alpha originals kept (size guard), text layer INTACT
+    (BT/Tj hex literal "Compress QA Fixture" decodes correctly on page 1).
+  ② CUSTOM reveal: dropdown→Custom shows quality 65 + maxDim 1600 inputs;
+    switch back to Recommended hides them (showWhen works both ways).
+  ③ GRAYSCALE + STRIP: 146 KB; output has NO Info dict, NO /Metadata XMP.
+  ④ HINDI UI end-to-end: पीडीएफ़ कंप्रेस करें → आपकी फ़ाइल तैयार है! →
+    90% छोटी → डाउनलोड.
+  ⑤ MOBILE 375×812: no h-scroll; VLM verdict: clean, no overlaps, delta
+    prominently displayed.
+  ⑥ ENCRYPTED PDF: password-protected fixture → toast "Something went
+    wrong / This PDF is password-protected. Unlock it first, then try
+    again." + return to workspace (caught via MutationObserver — toasts
+    auto-dismiss, sleep() misses them).
+  ⑦ Optimize category page: Compress PDF live (no Soon badge).
+  ⑧ VLM desktop review: layout clean, hierarchy clear, size savings
+    prominent; custom-reveal panel: fields clean, spacing professional.
+- smoke-compress.ts: 22/22 PASS (params clamping, candidate discovery,
+    SMask exclusion, targetSize, luminance math, classify skip paths,
+    replaceImageStream dict + SMask carry, doc reload round-trip).
+- eslint clean, tsc clean, dev.log clean (all 200s).
+
+Stage Summary:
+- Live tools: 22 (21 + compress-pdf). PRD §7.5 core delivered.
+- Key architecture additions: showWhen conditional option fields (reusable
+  for every future tool); pure-engine/impure-worker split for compress.
+- Engine insights for any future image-touching tool (N-up, Rasterize,
+  Images-in-merge): see ENGINE LESSON above — PDFName identity comparison,
+  PDFString vs literal strings, SMask protection pattern, size-guard
+  pattern (never regress), dimension change is safe because cm matrices
+  stretch images into the same drawn box.
+- QA fixtures: download/qa-p312-fixture.pdf (1.5MB, 3 image kinds + text
+  page), qa-p311-locked.pdf reused for encrypted path. Outputs: -output
+  (148KB), -compressed-gray (146KB, no Info/XMP). Screenshots: qa-p312-
+  {baseline-optimize, custom-reveal, result, mobile-result}.png.
+- Suggested commit: "feat: Compress PDF (PRD §7.5) — device-side image
+  re-encode engine (DCT/Flate/LZW decode, colorspace-aware raw pixels,
+  Indexed palettes incl. stream-backed), JPEG re-encode at preset/custom
+  quality+maxDim, grayscale, optional metadata strip, per-image size
+  guard (never regress), SMask/Mask protection; showWhen conditional
+  option fields; smoke 22/22; QA 90% smaller w/ text layer verified"
+- Next per plan (one per round): Generate password (PRD §7.4 qpdf-based),
+  Scan to PDF, HEIC/WEBP converters. Unblocked leftovers: images-in-merge
+  auto-convert, imagegrid per-image crop UI, view-pdf presentation mode.
+- Risks/debt (small): ① no "compress to target size" loop yet (separate
+  P2 tool compress-pdf-to-size — iterative quality ladder);
+  ② JPEG2000/CCITT/JBIG2 images are skipped (rare in the wild — browsers
+  can't decode JPX losslessly anyway); ③ 16-bit and non-8bpc raw images
+  skipped; ④ large multi-image PDFs re-encode sequentially — fine in QA
+  (4 images <2s), a 200-image file would want the existing per-page
+  progress bar (already wired per-image).
