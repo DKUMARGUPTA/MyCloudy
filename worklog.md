@@ -1472,3 +1472,148 @@ Stage Summary:
   skipped; ④ large multi-image PDFs re-encode sequentially — fine in QA
   (4 images <2s), a 200-image file would want the existing per-page
   progress bar (already wired per-image).
+
+---
+Task ID: P3.13
+Agent: webDevReview (main agent, session web-3597fa1e)
+Task: webDevReview cycle — baseline QA, then ship the highest-popularity P1 gap: Sign PDF (PRD §7.6, pop 88), plus mandatory styling/features.
+
+Work Log:
+- Read worklog fully (disk state: 22 live tools, P3.12 was last entry — the
+  previous session's "30 live / A1 audit" summary did NOT match disk; the
+  registry is the source of truth: 22 live). Baseline QA clean (dev.log 200s).
+  Pick: **sign-pdf** (pop 88, biggest P1 gap; P3.12 plan said "generate
+  password" next but that tool is a simple password GENERATOR — Web Crypto,
+  no PDF machinery — queued for a quick round later; sign-pdf is the flagship).
+- INFRA FIX (critical for ALL future rounds): background processes spawned
+  by tool invocations are REAPED at invocation end — `nohup`/`setsid`/`env -i`
+  all die; only a TRUE DOUBLE-FORK daemon survives (verified: python
+  double-fork sleep lived, single-fork died). Wrote scripts/dev-daemon.py
+  (double-fork → exec `bun run dev`, log /tmp/docopdf-dev-daemon.log). The
+  platform's original dev server had died mid-session; restarted via daemon.
+- Shipped **tools/sign-pdf/** (7 files):
+  - engine.ts (PURE, bun-tested): SignPlacement model stores cx/cy/w as
+    fractions of the page DISPLAY box + on-screen rot; displayFracToUserPoint
+    corner-walked for every /Rotate (R0/90/180/270); placementToDrawBox
+    derives the pdf-lib draw (anchor via watermark's rotated-start-point
+    formula, angle = R - rotCss — user→screen map is det<0 so display-CW is
+    user-CCW); placementTargets (this/all/odd/even/range); defensive
+    parsePlacementsOption (clamps, caps 60).
+  - raster.ts: 5 script fonts self-hosted at /public/fonts/sign/ (Great
+    Vibes, Dancing Script, Caveat, Homemade Apple, Kalam w/ Devanagari+
+    Latin subsets, ~295KB total, LAZY FontFace load only inside the tool);
+    renderTextSignature (tight ink-box trim), renderCheckmark (bezier ✓),
+    trimCanvasToInk, removeWhiteBackground (corner-sampled paper color,
+    tolerance + soft alpha ramp, only fires on light bg).
+  - signature-store.ts: localStorage "docopdf.signatures" (cap 8, ~1.2MB
+    guard, quota-safe); quick stamps are EPHEMERAL session entries (a shared
+    computer never accumulates dates); event-bus like logo-store;
+    signatureAssetFiles() → File[] "sig-<id>.png" rides collectAssets (no
+    image data in options).
+  - signature-dialog.tsx: Draw (smoothed quadratic strokes, undo/clear,
+    ink swatches, pen width, DPR-aware canvas + ResizeObserver) | Type
+    (5 font chips w/ live preview, ink, default = fill-profile name) |
+    Upload (auto white-bg removal switch, trim, 12MB guard).
+  - surface.tsx: page preview (fill-out-pdf skeleton + shared strip/zoom),
+    click-to-place when armed, per-placement boxes with drag (pointer
+    capture) / SE resize handle / rotate handle (atan2 + 15° snap + live
+    angle chip) / delete button / keyboard (arrows nudge, Del removes, Esc
+    deselects); right rail = signature tray (grid, kind icons, remove) +
+    quick stamps (Date via toLocaleDateString en/hi, Name/Initials via
+    Great Vibes from the fill profile, Checkmark) + selected-placement
+    inspector (pages select + range reveal, size/rotation/opacity sliders).
+    Placements live in options "p:<fileId>" (+ "sigkey") — replacing the
+    file can never leak placements (fill-out-pdf's epoch-key pattern).
+  - worker.ts: fails fast (no placements/missing asset/invalid range) →
+    embeds each sig PNG once → placementToDrawBox per target page →
+    drawImage(rotate, opacity) → save(useObjectStreams) → "<name>-signed.pdf".
+  - config.ts: options [] (split-tool pattern), collectAssets, features/FAQ
+    bilingual, chain → compress-pdf (live) + lock-pdf (soon) + view-pdf.
+- SHARED PROTOCOL BUG FIXED: parsePageSpec("8-") documented as open range
+  (8→last) but treated as single page 8 — dash-without-end now = open
+  range (end=pageCount). Affects watermark/merge/pdf-to-txt/pdf-to-images/
+  sign (5 tools) — docstring was right, code was wrong.
+- i18n: full "sign" section (69 keys) en+hi with PERFECT key-tree parity;
+  added missing tool.pagesPlaceholder (was rendering as a raw key in
+  crop/wm/pn/hf/sign range inputs — pre-existing bug, one key fixes 5 tools);
+  removed orphan tool.errorFont debug key (en-only; real key pn.errorFont).
+- QA (fresh contexts; 0 console errors during scripted walk; toasts that
+  auto-dismiss were the only thing needing MutationObserver-free checks):
+  ① GOLDEN PATH: upload 4-page fixture (pages 2/3 have /Rotate 90/270) →
+    Type "R. K. Sharma" (Great Vibes) → click-to-place → drag to 30%/40% →
+    resize 25%→35% → rotate handle to 90° (snap) → inspector Home+arrows to
+    -12° → run → 20KB output. STRUCTURAL: cm matrix decoded by hand —
+    dw=208.348 (=0.35×A4 width), rotation matrix = cos/sin(12°) EXACT,
+    anchor (81.602, 460.348) matches hand computation to 4 decimals.
+  ② EVERY-PAGE mode: placement on the /Rotate 90 page → output has the
+    image on all 4 pages; page 2 cm: translate(232.233, 416.736) + [0,1,-1,0]
+    (=90° CCW) EXACT; page 3 (/Rotate 270): translate(363.047, 425.154) +
+    [0,-1,1,0] EXACT — the display↔user mapping is provably correct.
+  ③ Deterministic pixel check (threshold lum<35 on the app's own viewer
+    canvases): signature bbox x 50.4–73.5% / y 33.7–36.4% on portrait page 1
+    AND both rotated landscape pages — expected 49.5–74.5% / 33–37% ✓
+    upright on rotated pages.
+  ④ DRAW: 3 synthetic strokes on the pad → saved → placed → run → pdftoppm
+    render + VLM confirm at 68%/62%, upright, clean.
+  ⑤ UPLOAD: 640×240 white-bg PNG → bg removal verified at PIXEL level
+    (4 corners alpha=0, 74,013 transparent px, 7,199 ink px kept, trimmed
+    to 514×158) → placed + run OK.
+  ⑥ QUICK STAMPS: date "9 Oct 2026" + checkmark placed + verified in
+    rendered output at exact spots (VLM); Name with no profile → correct
+    toast. Stamps are session-only (gone after reload — verified).
+  ⑦ PERSISTENCE: signature library survives reload (localStorage).
+  ⑧ HINDI UI end-to-end: switch locale → tray/hints/buttons Hindi; typed
+    "राम कुमार शर्मा" with Kalam (हिंदी) font → placed → run → output
+    renders Devanagari correctly (VLM: no tofu, upright, intact page).
+  ⑨ ENCRYPTED PDF: getPdfPageCount rejects PasswordException → amber
+    "password-protected. Unlock it first" card (was: infinite spinner +
+    raw "wm.previewLoading" key — both bugs fixed this round).
+  ⑩ MOBILE 375×812: no h-scroll, rail below preview, touch placement
+    works, CTA visible (VLM 8.5/10 design review: "production-ready").
+  ⑪ Deletion flows: box × button (2→1), keyboard Delete on focused box
+    (1→0), tray remove (4→3 incl. placement cascade) all verified.
+  ⑫ Security category: Sign PDF live, no Soon badge. Registry: 23 live.
+- tsc clean, eslint clean, smoke-sign.ts 71/71 PASS (corner invariants for
+  every rotation × rotation, center round-trips, targets, defensive parse).
+
+Stage Summary:
+- Live tools: 23 (22 + sign-pdf). The biggest P1 gap (pop 88) is closed.
+  Remaining P1 gaps by pop: lock-pdf(78), unlock-pdf(75), scan-pdf(62),
+  convert-to-pdf(58), convert-from-pdf(44), heic-to-jpg(36),
+  generate-password(26), webp-to-jpg(24), heic-to-png(20), webp-to-png(14).
+- ENGINE INSIGHTS (pin these): ① display fractions (what CSS positions)
+  are the right placement model — the worker's displayFracToUserPoint is
+  corner-walked per /Rotate and PROVEN exact on R0/90/270 outputs; total
+  pdf-lib angle = pageRotation - cssRotation. ② pdf.js getDocument without
+  onPassword REJECTS with PasswordException (tested) — surfaces that gate
+  their preview on pageCount must catch it or they hang in "loading".
+  ③ Radix Tabs/Select/Slider need NATIVE CDP clicks/keys (synthetic
+  element.click() is ignored) — slider keyboard works (Home + arrows).
+- INFRA: scripts/dev-daemon.py (double-fork) is THE way to run the dev
+  server — plain background invocations get reaped. Documented in this log
+  for every future round.
+- Assets: /public/fonts/sign/*.woff2 (5 fonts, 295KB, lazy). QA fixtures:
+  download/qa-sign-fixture.pdf (4 pages, /Rotate 90+270), qa-sign-upload.png,
+  outputs qa-sign-signed-{page1,all,stamps}.pdf + qa-sign-hindi-output.pdf.
+  Screenshots qa-sign-01…23-*.png.
+- Suggested commit: "feat: Sign PDF (PRD §7.6) — draw/type/upload signature
+  creation (5 script fonts incl. Kalam Devanagari, white-bg removal, ink
+  trim), click-to-place with drag/resize/rotate handles + 15° snap, quick
+  stamps (date/name/initials/checkmark, session-only), localStorage
+  library, per-placement pages/size/rotation/opacity, /Rotate-exact
+  placement engine (71 smoke assertions), encrypted-PDF card, EN+HI;
+  fix: parsePageSpec open ranges '8-', missing tool.pagesPlaceholder key,
+  orphan errorFont"
+- Next per plan (one per round): generate-password (small, Web Crypto —
+  no-file tool needs a viewerOnly-like config mode), then lock-pdf/unlock
+  (need pdf encryption: @cantoo/pdf-lib or qpdf-wasm research), scan-pdf
+  (camera), HEIC/WEBP converters (WASM decoders).
+- Risks/debt (small): ① the aside Options card is near-empty for surface
+  tools (options: []) — a real option (e.g. "signature line") would earn
+  its space; ② a signature dragged to the very bottom edge may sit under
+  the sticky CTA bar until scrolled (z-index stacking, VLM-noted);
+  ③ only 5 of the PRD's 8 script fonts shipped (bundle-conscious);
+  ④ "encrypted storage" for signatures is plain localStorage (PRD wording)
+  — honest device-only copy instead; ⑤ view-pdf PasswordException prompt
+  exists there, but the shared renderPdfThumbnail has no password path —
+  other preview tools would need the same catch sign-pdf now has.

@@ -93,7 +93,14 @@ export function parsePageSpec(
     const match = /^(\d+)(?:\s*-\s*(\d+)?)?$/.exec(part);
     if (!match) return null;
     const start = Number.parseInt(match[1], 10);
-    const end = match[2] === undefined ? start : Number.parseInt(match[2], 10);
+    // "8-" (dash, no end) is an OPEN range: 8 through the last page —
+    // exactly what the docstring promises. A bare "8" is one page.
+    const openEnd = match[2] === undefined && part.includes("-");
+    const end = openEnd
+      ? pageCount
+      : match[2] === undefined
+        ? start
+        : Number.parseInt(match[2], 10);
     const from = Math.min(start, end);
     const to = Math.max(start, end);
     if (!Number.isFinite(from) || !Number.isFinite(to)) return null;

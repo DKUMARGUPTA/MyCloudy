@@ -21,6 +21,7 @@ import { config as removePdfMetadata } from "../../../tools/remove-pdf-metadata/
 import { config as fillOutPdf } from "../../../tools/fill-out-pdf/config";
 import { config as viewPdf } from "../../../tools/view-pdf/config";
 import { config as compressPdf } from "../../../tools/compress-pdf/config";
+import { config as signPdf } from "../../../tools/sign-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -52,6 +53,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [fillOutPdf.toolId]: fillOutPdf,
   [viewPdf.toolId]: viewPdf,
   [compressPdf.toolId]: compressPdf,
+  [signPdf.toolId]: signPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

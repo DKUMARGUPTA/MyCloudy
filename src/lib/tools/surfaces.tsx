@@ -12,6 +12,7 @@ import { DocInfoSurface } from "../../../tools/change-pdf-doc-info/surface";
 import { RemoveMetaSurface } from "../../../tools/remove-pdf-metadata/surface";
 import { FillSurface } from "../../../tools/fill-out-pdf/surface";
 import { ViewSurface } from "../../../tools/view-pdf/surface";
+import { SignSurface } from "../../../tools/sign-pdf/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -68,6 +69,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "remove-pdf-metadata": RemoveMetaSurface,
   "fill-out-pdf": FillSurface,
   "view-pdf": ViewSurface,
+  "sign-pdf": SignSurface,
 };
 
 export function getToolSurface(

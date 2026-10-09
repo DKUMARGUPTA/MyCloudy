@@ -1124,6 +1124,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: PenTool,
     popularity: 88,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Sign PDF", hi: "हस्ताक्षर करें" },
     description: {
       en: "Draw, type or upload your signature; place it on any page.",
