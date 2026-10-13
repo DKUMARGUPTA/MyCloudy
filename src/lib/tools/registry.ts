@@ -1009,6 +1009,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: ScanText,
     popularity: 52,
     accepts: "pdf",
+    enabled: true,
     name: { en: "PDF OCR", hi: "पीडीएफ़ OCR" },
     description: {
       en: "Make scanned PDFs searchable; English and Hindi models included.",

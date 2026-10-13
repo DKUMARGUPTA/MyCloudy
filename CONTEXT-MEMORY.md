@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P3.18 ke baad — HEIC/WEBP converters shipped — **33 tools live**.
+> **Updated:** P3.19 ke baad — PDF OCR shipped — **34 tools live**.
 
 ---
 
@@ -12,17 +12,18 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **33** ✅ |
-| Pending (Coming Soon) | **64** ⏳ |
+| **Ready to use (LIVE)** | **34** ✅ |
+| Pending (Coming Soon) | **63** ⏳ |
 | Phase | 3 (tools one-by-one) IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1081 = 1081 keys parity) |
+| i18n | English + हिंदी (1085 = 1085 keys parity) |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
+| OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 33 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 34 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (6/12)
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -52,8 +53,9 @@
 - ✅ Remove PDF metadata (`remove-pdf-metadata`)
 - ✅ Generate password (`generate-password`)
 
-### ⚡ Optimize (1/8)
+### ⚡ Optimize (2/8)
 - ✅ Compress PDF (`compress-pdf`) — quality presets / custom DPI
+- ✅ PDF OCR (`ocr-pdf`) — P3.19: Tesseract LSTM, English + हिंदी, searchable PDF (GlyphLessFont invisible layer) ya TXT, 150/300 DPI, mixed-docs smart skip, per-page confidence chip
 
 ### 👁️ View (1/6)
 - ✅ View PDF (`view-pdf`) — thumbnails, search, outline, dark mode
@@ -73,35 +75,34 @@
 
 ---
 
-## ⏳ 64 PENDING TOOLS (Kaam baki hai)
+## ⏳ 63 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **OCR PDF** (`ocr-pdf`) — Tesseract WASM + Hindi traineddata (SABSE PEHLE — PRD P2)
-2. **Compress to target size** (`compress-pdf-to-size`) — under 100KB/200KB/1MB
-3. **Pages per sheet / N-up** (`pages-per-sheet`) — 2,4,6,9,16 with live preview
-4. **Halve PDF pages** (`halve-pdf-pages`) — book spreads left/right
-5. **Overlay PDF** (`overlay-pdf`) — stamp one PDF over another
-6. **Bookmark PDF** (`bookmark-pdf`) — outline tree
-7. **Extract images** (`extract-images`) — embedded images PNG/JPG ZIP
-8. **Copy from PDF** (`copy-from-pdf`) — text/Markdown/CSV
-9. **Search in PDFs** (`search-pdf`) — query/regex across files
-10. **Flatten PDF** (`flatten-pdf`) — forms/annotations into content
-11. **Rasterize PDF** (`rasterize-pdf`) — pages to flat images (redact worker ka raster path reuse karo)
-12. **Make PDF fillable** (`make-pdf-fillable`) — auto-detect fields ya manual add
-13. **Change PDF page size** (`change-pdf-page-size`) — A3/A4/A5/Letter/custom mm
-14. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
-15. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
-16. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
-17. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
-18. **Text to PDF** (`txt-to-pdf`) + **Markdown to PDF** (`markdown-to-pdf`) + **SVG to PDF** + **TIFF to PDF**
-19. **Generate QR code** (`generate-qr-code`) — URL/UPI/WiFi/vCard + colors + logo
-20. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
-21. **Set viewer preferences** (`set-pdf-viewer-preferences`)
-22. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
-23. **Universal converters** — `convert-to-pdf`, `convert-from-pdf` (smart routing)
+1. **Compress to target size** (`compress-pdf-to-size`) — under 100KB/200KB/1MB (SABSE PEHLE — India forms)
+2. **Pages per sheet / N-up** (`pages-per-sheet`) — 2,4,6,9,16 with live preview
+3. **Halve PDF pages** (`halve-pdf-pages`) — book spreads left/right
+4. **Overlay PDF** (`overlay-pdf`) — stamp one PDF over another
+5. **Bookmark PDF** (`bookmark-pdf`) — outline tree
+6. **Extract images** (`extract-images`) — embedded images PNG/JPG ZIP
+7. **Copy from PDF** (`copy-from-pdf`) — text/Markdown/CSV
+8. **Search in PDFs** (`search-pdf`) — query/regex across files
+9. **Flatten PDF** (`flatten-pdf`) — forms/annotations into content
+10. **Rasterize PDF** (`rasterize-pdf`) — pages to flat images (redact worker ka raster path reuse karo)
+11. **Make PDF fillable** (`make-pdf-fillable`) — auto-detect fields ya manual add
+12. **Change PDF page size** (`change-pdf-page-size`) — A3/A4/A5/Letter/custom mm
+13. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
+14. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
+15. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
+16. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
+17. **Text to PDF** (`txt-to-pdf`) + **Markdown to PDF** (`markdown-to-pdf`) + **SVG to PDF** + **TIFF to PDF**
+18. **Generate QR code** (`generate-qr-code`) — URL/UPI/WiFi/vCard + colors + logo
+19. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
+20. **Set viewer preferences** (`set-pdf-viewer-preferences`)
+21. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
+22. **Universal converters** — `convert-to-pdf`, `convert-from-pdf` (smart routing)
 
-*(Original queue ke HEIC/WEBP items ✅ DONE in P3.18)*
+*(P2 queue ka OCR item ✅ DONE in P3.19)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -144,6 +145,7 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - **camera landingSurface** — capture-style tools ke liye (`scan-pdf` se aaya)
 - **HEIC engine (P3.18)** — `src/lib/heic/heic-decode.ts` (worker-side libheif WASM, lazy + cached) + `heic-preview.ts` (main-thread thumbnail queue + LRU 64) + `public/libheif/` (2MB self-hosted bundle + LGPL license). CSP mein `wasm-unsafe-eval` add hua. Safari pe native decode fast-path hai.
 - **convert-image worker** — `tools/convert-image/worker.ts` 4-way converter (webp/heic × jpg/png), alpha flattening + maxDim downscale + deduped names
+- **OCR engine (P3.19)** — `public/tesseract/` self-hosted Tesseract 7 (ESM lib + nested worker + 3 lstm cores + eng/hin traineddata.gz, Apache-2.0 licenses shipped). `tools/ocr-pdf/` worker: pdf.js render → **committedPngBlob** (canvas-commit race guard!) → tesseract `recognize(blob, {pdfTitle}, {text, pdf:true})` → **tesseract ka apna PDF renderer** (GlyphLessFont invisible layer, logical char order — Hindi ि/ी matras searchable!) → pdf-lib copyPages merge (native pages pass through as-is). Smart skip: pages with ≥150 selectable chars skip OCR. Warm singleton + reinitialize on language change; traineddata IndexedDB-cached by tesseract.
 
 ---
 
@@ -180,6 +182,10 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 
 ## 🔑 Technical Insights (reuse karo, dobara mat dhundo)
 
+- **⚠️ THE CANVAS-COMMIT RACE (P3.19, 4 ghante ka debugging!)**: Chrome accelerated OffscreenCanvas pe `page.render().promise` resolve hone par raster ops GPU pe PENDING reh sakte hain — us instant `convertToBlob()`/`getImageData()` **BLANK snapshot** de sakta hai (white ~49KB PNG jab committed ~87KB hona chahiye). Tesseract ko blank mila → conf 0 → errorOcrEmpty. **FIX: `committedPngBlob()`** (`tools/ocr-pdf/worker.ts`): convert → createImageBitmap(last) decode-yield → convert again → size-stability loop (deterministic PNG encoder = same bytes → same size). HAR tool jo render ke turant baad canvas padhta hai is guard se guzarna chahiye!
+- **Hindi text layer in PDFs**: pdf-lib `drawText` + fontkit SHAPES Devanagari (visual glyph order) → extraction ि-matras rehint reorders → "दु िनया" (unsearchable). Char-by-char = dotted circles ◌. **SOLUTION: tesseract ka built-in PDF renderer** (`recognize(img, {pdfTitle}, {text:true, pdf:true})`) — GlyphLessFont + logical-order ToUnicode — "नमस्ते दुनिया" perfectly searchable. Page PDFs ko pdf-lib copyPages se merge karo.
+- **Tesseract 7 self-host recipe**: `tesseract.esm.min.js` (default export = lib) + `worker.min.js` (nested classic worker, blob-wrapped importScripts) + 3× `-lstm.wasm.js` cores (SIMD variants auto-picked; single-file builds — no separate .wasm) + `langs/<lang>.traineddata.gz` from `@tesseract.js-data/<lang>/4.0.0_best_int/`. createWorker options: `{workerPath, corePath, langPath, gzip: true, workerBlobURL: true}` + `setParameters({user_defined_dpi, preserve_interword_spaces})`. OffscreenCanvas/Blob/dataURL sab loadImage handle karta hai — lekin committed blob best hai (upar wala race!).
+- **QA harness pins (P3.19 naya)**: workspace state mein `main label` = OPTIONS ka label ho sakta hai — dropzone dhundo `textContent.includes('drop files here')` se (Hindi UI mein 'फ़ाइलें यहाँ')! Result ke baad drop karne se pehle "Start over" click karo. Toast errors dekhne ke liye MutationObserver lagao (auto-dismiss). `w.onmessage` pe addEventListener se progress/result capture karo.
 - **HEIC decode recipe:** libheif-js@1.23.5 wasm-bundle.mjs (wasm EMBEDDED — single file, no separate .wasm) → copy to /public/libheif/, load via variable-URL dynamic import + turbopackIgnore (pdf.js pattern). Default export = FACTORY function — call it: `await factory()`. Then `new libheif.HeifDecoder().decode(bytes)` → image array → `image.display({data,width,height},cb)` fills RGBA. Empty array = corrupt/unsupported. Bun can smoke-test it directly!
 - **QA harness pins (P3.18):** agent-browser `open` SAME URL = NO reload (stale state!) — use `reload`; fetch(blob:) BLOCKED by CSP connect-src 'self' — verify pixels via drawImage(liveImg) ya Worker.prototype.onmessage hook (defineProperty wrap) se blob capture (blob.arrayBuffer() CSP bypass karta hai); dropzone label input ka SIBLING hai — `main label` pe dispatch karo (bubble hota hai div.onDrop tak)
 - **Devanagari in PDFs:** pdf-lib `save()` non-Latin pe WinAnsi Helvetica ke saath THROW karta hai — pre-render with embedded fontkit subset ya NeedAppearances fallback (pattern: `tools/fill-out-pdf/worker.ts`)
@@ -192,7 +198,14 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 
 ## 📝 Session Log (naya kaam yahan append karo)
 
-### P3.18 (latest) — HEIC/WEBP Converters ✅ 5 TOOLS
+### P3.19 (latest) — PDF OCR ✅ TESSERACT + HINDI
+- ocr-pdf: self-hosted Tesseract 7 LSTM (3 cores + eng/hin models, ~15MB lazy), searchable PDF via tesseract's own GlyphLessFont renderer (Hindi logical order verified: "नमस्ते दुनिया" searchable!), TXT mode, 150/300 DPI, mixed-doc smart skip, per-page + result confidence chips
+- **THE canvas-commit race** found & fixed (committedPngBlob) — 4h debugging, pinned in insights
+- pdf-to-txt copy updated (OCR ab live), i18n 1085=1085, protocol StageDetail.conf + RunDetail.confidence added
+- QA: eng scan conf 95 extraction verified, hin scan perfect logical text, text mode UTF-8, mixed pass-through, HI UI, mobile 375px, merge regression, 708 requests all-localhost, zero console errors
+- Live: 34 | i18n: 1085=1085 | lint+tsc clean | dev.log clean
+
+### P3.18 — HEIC/WEBP Converters ✅ 5 TOOLS
 - webp-to-jpg, webp-to-png, heic-to-jpg, heic-to-png (shared convert-image worker) + heic-to-pdf (ImageGrid preset)
 - libheif WASM self-hosted (LGPL, unmodified, license shipped) — HEIC ab HAR browser mein decode hota hai (Safari native fallback)
 - images-to-pdf bhi upgrade hua (Chromium + HEIC pehle impossible tha, ab kaam karta hai)

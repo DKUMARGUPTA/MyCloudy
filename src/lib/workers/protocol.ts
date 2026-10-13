@@ -24,11 +24,15 @@ export type RunStage = "reading" | "processing" | "saving";
 export interface StageDetail {
   page?: number;
   pages?: number;
+  /** Live OCR confidence (%) for the page just processed (ocr-pdf). */
+  conf?: number;
 }
 
 export interface RunDetail {
   files?: number;
   pages?: number;
+  /** Mean OCR confidence (%) across OCRed pages (ocr-pdf). */
+  confidence?: number;
 }
 
 export interface ToolOutput {

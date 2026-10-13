@@ -2347,3 +2347,81 @@ Stage Summary:
   per PRD perf targets, revisit if QA complains. ④ mif1/msf1 generic
   HEIF containers accepted — libheif errors honestly if the codec
   inside is unsupported.
+
+---
+Task ID: P3.19
+Agent: main (Z.ai Code)
+Task: PDF OCR tool (ocr-pdf) — PRD §8.4, P2 queue ka top item. Self-hosted Tesseract (English + Hindi), searchable PDF + text output, per-page confidence.
+
+Work Log:
+- Read CONTEXT-MEMORY + worklog (P3.18 HEIC/WEBP shipped, 33 live). Next queue
+  item = OCR (PRD's top P2).
+- Installed tesseract.js@7.0.0 + @tesseract.js-data/eng + @tesseract.js-data/hin
+  (Apache-2.0, PRD §3 approved). Dist inspection: ESM export = default lib;
+  browser spawnWorker = blob-wrapped importScripts(workerPath); getCore picks
+  1 of 3 lstm cores by SIMD (SINGLE-FILE .wasm.js builds — no separate .wasm);
+  lang fetch = `${langPath}/${lang}.traineddata.gz` with gzip:true (else 404 —
+  gzip defaults falsy in v7!). loadImage supports OffscreenCanvas/Blob/dataURL.
+- Self-hosted to public/tesseract/: tesseract.esm.min.js (63KB) + worker.min.js
+  (111KB) + 3× tesseract-core-{,relaxed-,}simd-lstm.wasm.js (~3.9MB each,
+  lazy — only matching one fetched) + langs/eng.traineddata.gz (2.9MB) +
+  langs/hin.traineddata.gz (1.4MB) + both Apache-2.0 LICENSE files.
+  Data from @tesseract.js-data/<lang>/4.0.0_best_int (lstm-only tuned).
+- tools/ocr-pdf/{engine.ts,worker.ts,config.ts}: engine = pure (probeText join,
+  txt page assembly, countChars) — 10/10 bun smoke tests. Worker = pdf.js
+  fake-worker render (dpi 150/300) → text probe per page (≥150 chars =
+  native) → tesseract warm singleton (reinitialize on lang change,
+  user_defined_dpi + preserve_interword_spaces) → searchable: tesseract's
+  OWN PDF renderer (recognize(blob,{pdfTitle},{text,pdf:true}) → data.pdf =
+  1-page PDF with GlyphLessFont invisible layer) → pdf-lib copyPages merge
+  (native pages pass through vector-perfect, OCR pages from tesseract PDFs).
+  Text mode: UTF-8 .txt with ───── Page N ───── markers.
+- THE BIG BUG (4h): first runs returned confidence 0 + empty text. Page-context
+  replicas of the EXACT same calls (canvas/blob/dataURL/pdf-output/
+  setParameters/OffscreenCanvas) ALL worked (conf 95)! Isolated blob-module-
+  worker replica ALSO worked. A/B test in the REAL worker: canvas=95,
+  blob=0, dataURL=0 — same run! Byte inspection: the 49KB PNG had valid magic
+  + FileReader + arrayBuffer fine — but createImageBitmap decoded it ALL
+  WHITE (dark=0) while the same canvas had dark=292 at the same moment.
+  ROOT CAUSE: Chrome accelerated OffscreenCanvas resolves pdf.js render
+  task while raster ops are still pending on the GPU — the FIRST
+  convertToBlob() reads back a BLANK snapshot; after an image-decode yield
+  the commit lands and later converts are good (49KB blank vs 87KB real,
+  both reproduced).
+  FIX: committedPngBlob() — convert → createImageBitmap(last) decode-yield →
+  convert again → size-stability loop (deterministic PNG encoder: same
+  bitmap = same bytes = same size; genuinely-white pages exit immediately).
+  After: eng scan conf 95, hin scan perfect, all modes green.
+- Devanagari text layer research (pinned in CONTEXT-MEMORY insights): pdf-lib
+  drawText + fontkit SHAPES Hindi → visual glyph order → pdf.js extraction
+  reorders pre-base ि → "दु िनया" unsearchable; char-by-char draws = dotted
+  circles ◌ (ccmp). SOLUTION: tesseract's built-in PDF renderer (GlyphLessFont
+  + logical ToUnicode) — "नमस्ते दुनिया" extracts in logical order, fully
+  searchable. This drove the architecture (tesseract pdf output + pdf-lib
+  merge) over a hand-rolled word layer (also -300 LOC).
+- Registry: ocr-pdf enabled:true; configs.ts wired; protocol extended
+  (StageDetail.conf live per-page chip, RunDetail.confidence result chip);
+  processing-view + result-view render the chips (only when present);
+  i18n en+hi: tool.confidence, tool.errorOcrModel, tool.errorOcrEmpty,
+  result.ocrConfidence + updated tool.errorNoText + pdftxt.scanBody (OCR ab
+  live) + pdf-to-txt FAQ#2 answer. 1085=1085 parity both directions.
+- QA (agent-browser): ① eng scan → searchable PDF, result chip "Average OCR
+  confidence: 95%", output 38KB, in-browser pdf.js extraction = "Invoice
+  Number 4457 Total Amount Due: 1250.75 Scanned document page one Deepak
+  Sharma" ✓ ② hin scan → "नमस्ते दुनिया यह एक स्कैन किया हुआ दस्तावेज़ है भारत
+  में बना" — LOGICAL ORDER ✓ ③ text mode UTF-8 .txt ✓ ④ wrong-language run =
+  honest garbage (expected) ⑤ mixed PDF: page1 native passthrough vector +
+  page2 OCR ✓ ⑥ Hindi UI full workspace (भाषा/आउटपुट/स्कैन क्वालिटी/skip
+  labels, Devanagari filename accepted, CTA "पीडीएफ़ OCR →") ⑦ mobile 375×812:
+  no h-scroll, CTA 44px, full run works ⑧ optimize category: PDF OCR card
+  live (no Soon badge) ⑨ merge-pdf regression PASS ⑩ 708 requests ALL
+  localhost, zero page errors, console only expected fake-worker notices +
+  dev notices. Fixtures cleaned from public/.
+- bunx tsc --noEmit clean; eslint clean; dev.log clean.
+
+Stage Summary:
+- Live tools: 34 (33 + ocr-pdf). Optimize 2/8. i18n 1085=1085.
+- NEW reusable knowledge: canvas-commit race + committedPngBlob guard; Hindi
+  searchable-layer via tesseract PDF renderer; tesseract 7 self-host recipe.
+- Next queue: compress-pdf-to-size (India 100KB/200KB forms), pages-per-sheet,
+  halve-pdf-pages, overlay-pdf...

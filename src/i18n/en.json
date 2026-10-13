@@ -283,7 +283,7 @@
       "errorNoImages": "No images left to convert.",
       "errorHeicDecode": "{detail} could not be decoded — it may be damaged or use an unsupported HEIC variant."
     },
-    "errorNoText": "No selectable text found — this PDF is probably a scan. OCR is coming in a later phase.",
+    "errorNoText": "No selectable text found — this PDF is probably a scan. Try the PDF OCR tool.",
     "errorWatermarkMissing": "Add the watermark text (or a logo) first.",
     "errorWatermarkChars": "The embedded font can't carry this text — Latin letters, digits and Hindi (Devanagari) are supported.",
     "errorWatermarkLogo": "The logo image could not be read. Try a PNG or JPG.",
@@ -305,7 +305,10 @@
     "errorNoPages": "No pages to scan — capture or add at least one photo.",
     "errorUnsupported": "{detail} is not a photo this tool can read.",
     "errorDecode": "{detail} could not be decoded.",
-    "errorEncode": "The scan could not be rendered."
+    "errorEncode": "The scan could not be rendered.",
+    "confidence": "OCR confidence {n}%",
+    "errorOcrModel": "The OCR engine could not load — check your connection and try again.",
+    "errorOcrEmpty": "No text was recognized — try 300 DPI or a clearer scan."
   },
   "result": {
     "title": "Your file is ready!",
@@ -326,7 +329,8 @@
     "privacyLine": "This file is only on your device — nothing was uploaded.",
     "removeFromDevice": "Remove from this device",
     "removedToast": "Removed from this device",
-    "summaryFilesPages": "{files} files, {pages} pages"
+    "summaryFilesPages": "{files} files, {pages} pages",
+    "ocrConfidence": "Average OCR confidence: {n}%"
   },
   "feedback": {
     "prompt": "Was this tool useful?",
@@ -539,7 +543,7 @@
     "previewTruncated": "First 240 characters shown",
     "previewNote": "Extraction runs on your device — this is exactly the text you'll get.",
     "scanTitle": "No selectable text on page 1",
-    "scanBody": "This looks like a scan or image-only PDF. Extraction may come back empty until OCR ships in a later phase."
+    "scanBody": "This looks like a scan or image-only PDF. Use the PDF OCR tool to recognize the text."
   },
   "wm": {
     "designTitle": "Watermark",

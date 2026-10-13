@@ -32,6 +32,7 @@ import { config as webpToPng } from "../../../tools/webp-to-png/config";
 import { config as heicToJpg } from "../../../tools/heic-to-jpg/config";
 import { config as heicToPng } from "../../../tools/heic-to-png/config";
 import { config as heicToPdf } from "../../../tools/heic-to-pdf/config";
+import { config as ocrPdf } from "../../../tools/ocr-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -74,6 +75,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [heicToJpg.toolId]: heicToJpg,
   [heicToPng.toolId]: heicToPng,
   [heicToPdf.toolId]: heicToPdf,
+  [ocrPdf.toolId]: ocrPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

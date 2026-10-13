@@ -90,8 +90,8 @@ export const config: ToolConfig = {
     {
       q: { en: "My PDF is a scan — why is the result empty?", hi: "मेरी PDF स्कैन है — नतीजा खाली क्यों?" },
       a: {
-        en: "Scanned pages are images; there is no text to select. DocoPDF tells you this instead of saving an empty file. OCR for scans is planned for a later phase.",
-        hi: "स्कैन किए पेज तस्वीर होते हैं; उनमें चुनने लायक़ टेक्स्ट नहीं होता। DocoPDF खाली फ़ाइल की जगह साफ़ बता देता है। स्कैन के लिए OCR बाद के चरण में आएगा।",
+        en: "Scanned pages are images; there is no text to select. DocoPDF tells you this instead of saving an empty file. Run the PDF OCR tool on the same file to recognize the text — English and Hindi are supported.",
+        hi: "स्कैन किए पेज तस्वीर होते हैं; उनमें चुनने लायक़ टेक्स्ट नहीं होता। DocoPDF खाली फ़ाइल की जगह साफ़ बता देता है। उसी फ़ाइल पर PDF OCR टूल चलाएँ — अंग्रेज़ी और हिंदी दोनों समर्थित हैं।",
       },
     },
     {

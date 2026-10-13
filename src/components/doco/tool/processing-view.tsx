@@ -57,6 +57,9 @@ export function ProcessingView({
                 pages: progress.detail.pages,
               })
             : t("tool.pagesCount", { count: progress.detail.pages })}
+          {progress.detail?.conf !== undefined
+            ? ` · ${t("tool.confidence", { n: progress.detail.conf })}`
+            : ""}
         </p>
       ) : null}
 
