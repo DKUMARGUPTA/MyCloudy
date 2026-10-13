@@ -125,6 +125,14 @@ export interface ToolConfig {
    */
   noFile?: boolean;
   /**
+   * Camera-first tools (e.g. Scan to PDF) keep the full run pipeline but
+   * render their surface on the LANDING page in place of the DropZone —
+   * the surface embeds its own inputs (camera capture + gallery picker
+   * via addFiles) so the primary flow needs no upload first. minFiles 0
+   * is expected; the surface gates the CTA via setRunBlocked.
+   */
+  landingSurface?: boolean;
+  /**
    * Landing "How it works" step keys (exactly 3, i18n). Defaults:
    * viewer tools → view.how1-3, everything else → tool.how1-3. No-file
    * tools usually need their own steps (there is no file to select).

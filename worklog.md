@@ -2015,3 +2015,157 @@ Stage Summary:
   usually made elsewhere. ③ unlock drops CUSTOM Info keys (standard
   six preserved) — FAQ could mention it. ④ keywords ride as a comma
   string in the meta JSON (round-trips through setKeywords array).
+
+---
+Task ID: P3.17
+Agent: main (Z.ai Code)
+Task: SCAN TO PDF (PRD §8.4 create, lines 997-1000) — camera capture
+with auto edge detection, perspective correction, scanner filters and
+multi-page sessions; gallery photos ride the same pipeline.
+
+Work Log:
+- PRD flow delivered in full: camera access (getUserMedia rear camera,
+  2560px ideal) with LIVE edge-detection overlay (450ms throttled,
+  green quad when confident, amber dashed when searching), multi-shot
+  camera sessions (capture N → Done → one addFiles batch), honest
+  per-cause camera errors (denied/notfound/unsupported + retry),
+  torch toggle (getCapabilities-gated), 30-page cap with limit copy.
+- tools/scan-pdf/engine.ts (PURE, smoke 54/54): detectDocumentQuad
+  (Otsu + 8-connected largest component on BOTH polarities + extreme-
+  point corners + fill-ratio scoring — the desk RING around a page also
+  forms a valid quad, fill-ratio is what keeps detection on the page;
+  honest confidence 0 fallback = full-frame "adjust corners"), solve-
+  Homography (8×8 Gaussian w/ partial pivoting), warpPerspective
+  (bilinear inverse mapping, white outside), quadOutputSize (long-edge
+  cap, 16px floor), filters (magic = per-channel 1/99 percentile
+  stretch + 1.25× saturation; bw = Bradley adaptive threshold via
+  integral image window min/8 bias 0.15; gray = BT.601), rotateQuarter,
+  normalized-quad page model + serialize/parse/reconcile ops.
+- tools/scan-pdf/worker.ts: decode → denormalize quad → full-res warp
+  (Standard 1600px / High 2400px long edge) → filter → rotate → JPEG
+  0.90 → pdf-lib pages (A4/Letter/fit, auto orientation by scan aspect,
+  margin none/small/big). Output name "<base>-scan.pdf" ("scan.pdf" for
+  own captures). Errors: tool.scan.errorNoPages/errorUnsupported/
+  errorDecode/errorEncode.
+- tools/scan-pdf/surface.tsx: LANDING hero (camera CTA + gallery
+  DropZone — new config.landingSurface flag renders the surface in
+  place of the DropZone while KEEPING the run/result pipeline; +7 lines
+  in tool-shell.tsx, reusable for every camera-first tool), workspace
+  grid (dnd-kit drag reorder, per-card edit/rotate/move/delete, WYSIWYG
+  canvas previews rendered by the SAME engine the worker uses),
+  PageEditorDialog (SVG quad overlay + 4 pointer-captured draggable
+  handles, arrow-key nudge ±0.005 / Shift ×4, live warped preview via
+  one rAF per change, 4 filter chips, auto-detect / reset-corners /
+  rotate), CameraSheet (portal overlay, object-contain video stage
+  with aspect-ratio box for exact overlay mapping, shot strip with
+  per-shot remove, URL lifecycle via Set + unmount revoke).
+- ARCHITECTURE FIX (bug found in QA): the landing→workspace phase
+  change REMOUNTS the surface — initial pages were rebuilt with no
+  files transition, so auto-detect (wired only into the reconcile
+  effect) never ran. Fixed with a single detection-kicker effect keyed
+  on [files.length] that fires on mount + after reconcile microtasks
+  (declaration order + FIFO microtasks make this deterministic); skips
+  already-detected and manually-adjusted pages so re-detection never
+  fights a user reset.
+- DECODE ROBUSTNESS (bug found in QA): createImageBitmap(File) and even
+  file.arrayBuffer() can fail on Files whose lazy backing store dies
+  after the input clears (seen with CDP-uploaded files in headless
+  Chromium; same class of failure exists on iOS Safari file handles).
+  decodePreview now has TWO paths: bytes→fresh Blob→createImageBitmap,
+  falling back to objectURL + <img> + canvas (imagegrid's battle-tested
+  pattern). Worker keeps the bytes-first path (worker-context reads of
+  structured-cloned files are reliable — imagegrid worker precedent).
+- i18n: full "scan" section — 60 top-level + nested keys + 4 tool.error*
+  keys, en+hi PERFECT parity (1073 = 1073). scripts/i18n-scan.py.
+- i18n ENGINE UPGRADE (backward compatible): translate() now supports
+  an ICU-lite plural subset — {n, plural, =1 {one page} other {# pages}}
+  with # substitution — implemented in applyParams() next to plain
+  {param} replacement; existing keys unaffected. Hindi plurals included
+  (1 पेज / # पेज).
+- Wiring: registry scan-pdf enabled:true (28 live), configs.ts +
+  surfaces.tsx + howKeys + chainToolIds (all-enabled set).
+- QA (agent-browser; smoke 54/54 + lock 32/32 + password 56/56
+  regressions; eslint clean; tsc clean; dev.log clean; page errors: 0;
+  network: ZERO external requests):
+  ① LANDING = camera hero + gallery picker (VLM 9/10, no standard
+  dropzone — landingSurface verified).
+  ② GOLDEN PATH: 3 fixtures dropped (angled A4 on dark desk / straight
+  warm page / no-document gradient) → auto-detect cropped the two
+  documents (canvas TL pixel = paper, portrait-ish warp output) and
+  left the gradient honestly full-frame-then-sky-band-cropped (a
+  plausible detection on a bright band — user-fixable in editor).
+  "3 auto-detected" chip (ICU plural working).
+  ③ EDITOR: handles on the document corners (VLM 10/10), live preview
+  straightens; Magic color applied to page 1 (chip "1 filtered");
+  B&W preview verified BINARIZED (canvas histogram: 9189 black /
+  19269 white / 0 mid pixels).
+  ④ ROTATE: card 3 ×3 quarter-turns → warp output dims swap 420×160 →
+  160×420 (rotation baked into the pipeline, not CSS).
+  ⑤ RUN → result "Your file is ready! 1 files, 3 pages" → download →
+  OUTPUT STRUCTURALLY VERIFIED: 3 pages, A4 auto-orientation (842×595
+  landscape for the two wide docs, 595×842 portrait for the rotated
+  one), 3 embedded DCTDecode JPEGs (one perspective-corrected page each,
+  615KB total); pdftoppm renders → VLM 9/10: straightened white pages,
+  text lines readable, Magic page whitest, warm page Original, gradient
+  rotated portrait, dark desk backgrounds gone.
+  ⑥ CAMERA ERROR PATH: headless = no device → "No camera found on this
+  device" + Try again (correct per-cause copy; denied branch copy
+  shipped, headless can't grant).
+  ⑦ HINDI: full flow in Devanagari (1 पेज, 1 ऑटो-पहचान, editor title
+  पेज 1 एडिट करें, corner labels ऊपर-बायाँ…, filters मैजिक कलर/
+  ग्रेस्केल, ऑटो पहचान, हो गया).
+  ⑧ MOBILE 375×812: no h-scroll; VLM 8/10 (touch targets 44px+).
+  ⑨ CATEGORY #/tools/create: card live, NO Soon badge.
+  ⑩ REGRESSIONS: home + merge-pdf land fine after the shell change.
+- QA HARNESS FINDING (pin): agent-browser's `upload` (CDP
+  setFileInputFiles) yields Files that become UNREADABLE after the
+  DropZone clears input.value — createImageBitmap, arrayBuffer AND
+  objectURL+<img> all fail on them. The working recipe: fetch fixture
+  bytes in-page (from public/), construct File objects, dispatch a
+  synthetic DragEvent('drop') with a DataTransfer. This is likely why
+  old dev.log shows /download/ 404 fixture fetch attempts.
+- Cleaned: debug console.error removed; public/qa-scan temp fixtures
+  deleted (scripts/make-scan-fixture.py regenerates them + the
+  download/qa-scan-*.jpg originals).
+
+Stage Summary:
+- Live tools: 28 (27 + scan-pdf). PRD §8.4 Scan to PDF delivered:
+  camera + live overlay + torch, auto edge detect + perspective
+  correction, Original/Magic/B&W/Grayscale filters with live preview,
+  multi-page sessions with reorder/rotate/delete, corner editor with
+  keyboard nudge, A4/Letter/fit + margins + quality cap, verified
+  output, honest errors — all on-device.
+- ARCHITECTURAL GAIN: config.landingSurface — camera-first tools keep
+  the full run pipeline but own the landing inputs; +7 shell lines,
+  reusable for every future capture-style tool (QR scan, photo
+  capture…). Plus the ICU-lite plural support in translate() for all
+  future keys.
+- ENGINE INSIGHTS pinned above: the remount-detection-kicker pattern
+  (effects keyed on [files.length] fire on mount where prevFileCount
+  initializers hide file transitions) and the two-path decode
+  (bytes→Blob→createImageBitmap with objectURL+<img> fallback).
+- Assets: smoke-scan.ts 54/54; make-scan-fixture.py; QA fixtures
+  download/qa-scan-photo1/2.jpg + qa-scan-nodoc.jpg; screenshots
+  /tmp/scanout-1..3 + download/qa-p317-01..15 (landing, workspace,
+  editor, magic, bw, rotated, result, camera-error, hindi, hindi-editor,
+  mobile, category, final-landing).
+- Suggested commit: "feat: Scan to PDF (PRD §8.4) — camera capture
+  with live edge-detection overlay + torch, Otsu/extreme-point quad
+  detection with honest confidence, homography perspective warp,
+  Magic/B&W/Grayscale filters with live WYSIWYG preview, multi-page
+  sessions with corner editor (pointer + keyboard), A4/Letter/fit
+  output; new landingSurface config flag + ICU-lite plurals in i18n;
+  EN+HI 64 keys; smoke 54/54"
+- Next per plan (one per round): HEIC/WEBP converters (WASM decoders —
+  heic2any or libheif-js research first, license check), then
+  web-optimize/rasterize (raster path in redact worker to reuse).
+- Risks/debt (small): ① camera capture itself unverifiable in headless
+  (no device) — the capture path shares code with gallery (addFiles +
+  same page model + same engine), live overlay uses the same proven
+  detector, but a REAL camera session should be smoke-tested on a
+  phone when possible. ② gradient photos can produce plausible-but-
+  wrong quads (sky band) — inherent to Otsu detectors; user fix via
+  editor is one tap, honest fallback = full-frame. ③ torch uses the
+  non-standard MediaTrackConstraintSet.torch cast (capability-gated,
+  try/catch'd). ④ preview cache is module-level with a 48-entry soft
+  LRU — fine for ≤30-page sessions; a marathon session re-decodes.

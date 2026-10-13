@@ -723,6 +723,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: ScanLine,
     popularity: 62,
     accepts: "image",
+    enabled: true,
     name: { en: "Scan to PDF", hi: "स्कैन कर पीडीएफ़ बनाएँ" },
     description: {
       en: "Camera capture with edge detection, filters and multi-page scans.",

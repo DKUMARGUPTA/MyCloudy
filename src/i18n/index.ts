@@ -36,20 +36,39 @@ function lookup(dict: unknown, key: string): string | undefined {
   return typeof current === "string" ? current : undefined;
 }
 
+/**
+ * ICU-lite plural subset: `{n, plural, =1 {one thing} other {# things}}`
+ * — `#` inside a branch is replaced by the number. Anything that doesn't
+ * match stays untouched (plain {param} replacement below still applies).
+ */
+const PLURAL_RE =
+  /\{(\w+),\s*plural,\s*=1\s*\{([^{}]*)\}\s*other\s*\{([^{}]*)\}\}/g;
+
+function applyParams(value: string, params: TranslateParams): string {
+  let out = value.replace(
+    PLURAL_RE,
+    (_match, name: string, one: string, other: string) => {
+      const n = Number(params[name]);
+      const branch = n === 1 ? one : other;
+      return branch.replaceAll("#", String(n));
+    }
+  );
+  for (const [name, replacement] of Object.entries(params)) {
+    out = out.replaceAll(`{${name}}`, String(replacement));
+  }
+  return out;
+}
+
 /** Translate a dotted key with optional {param} interpolation. Falls back en -> key. */
 export function translate(
   locale: Locale,
   key: string,
   params?: TranslateParams
 ): string {
-  let value =
+  const value =
     lookup(dictionaries[locale], key) ?? lookup(dictionaries.en, key);
   if (value === undefined) return key;
-  if (params) {
-    for (const [name, replacement] of Object.entries(params)) {
-      value = value.replaceAll(`{${name}}`, String(replacement));
-    }
-  }
+  if (params) return applyParams(value, params);
   return value;
 }
 

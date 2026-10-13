@@ -26,6 +26,7 @@ import { config as redactPdf } from "../../../tools/redact-pdf/config";
 import { config as generatePassword } from "../../../tools/generate-password/config";
 import { config as lockPdf } from "../../../tools/lock-pdf/config";
 import { config as unlockPdf } from "../../../tools/unlock-pdf/config";
+import { config as scanPdf } from "../../../tools/scan-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -62,6 +63,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [generatePassword.toolId]: generatePassword,
   [lockPdf.toolId]: lockPdf,
   [unlockPdf.toolId]: unlockPdf,
+  [scanPdf.toolId]: scanPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

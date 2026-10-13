@@ -493,6 +493,21 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                 onChain={surfaceChain}
               />
             </div>
+          ) : config.landingSurface === true && WorkspaceSurface ? (
+            // Camera-first tools (Scan to PDF): the surface owns the
+            // landing inputs (camera + gallery via addFiles) but keeps
+            // the full run/result pipeline below.
+            <div className="pt-2">
+              <WorkspaceSurface
+                files={[]}
+                values={options}
+                onChange={handleOptionChange}
+                setFileOrder={setFiles}
+                setRunBlocked={handleRunBlocked}
+                addFiles={addFiles}
+                onChain={surfaceChain}
+              />
+            </div>
           ) : (
             <DropZone
               labelKey={selectLabelKey}
