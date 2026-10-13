@@ -330,7 +330,9 @@
     "removeFromDevice": "Remove from this device",
     "removedToast": "Removed from this device",
     "summaryFilesPages": "{files} files, {pages} pages",
-    "ocrConfidence": "Average OCR confidence: {n}%"
+    "ocrConfidence": "Average OCR confidence: {n}%",
+    "underTarget": "Under your target size",
+    "targetMissed": "Target not reached — this is the smallest this file gets on-device"
   },
   "feedback": {
     "prompt": "Was this tool useful?",

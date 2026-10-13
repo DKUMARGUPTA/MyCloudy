@@ -976,6 +976,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Target,
     popularity: 48,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Compress to target size", hi: "लक्ष्य साइज़ में कंप्रेस" },
     description: {
       en: "Under 100 KB / 200 KB / 1 MB for form portals and email limits.",

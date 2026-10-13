@@ -334,7 +334,9 @@
     "removeFromDevice": "इस डिवाइस से हटाएँ",
     "removedToast": "इस डिवाइस से हटा दिया",
     "summaryFilesPages": "{files} फ़ाइलें, {pages} पेज",
-    "ocrConfidence": "औसत OCR सटीकता {n}%"
+    "ocrConfidence": "औसत OCR सटीकता {n}%",
+    "underTarget": "आपके लक्ष्य साइज़ से कम",
+    "targetMissed": "लक्ष्य पूरा नहीं हुआ — डिवाइस पर इससे छोटा नहीं हो सकता"
   },
   "feedback": {
     "prompt": "यह टूल काम आया?",

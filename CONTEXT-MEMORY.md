@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P3.19 ke baad — PDF OCR shipped — **34 tools live**.
+> **Updated:** P3.20 ke baad — Compress to target size shipped — **35 tools live**.
 
 ---
 
@@ -12,18 +12,18 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **34** ✅ |
-| Pending (Coming Soon) | **63** ⏳ |
+| **Ready to use (LIVE)** | **35** ✅ |
+| Pending (Coming Soon) | **62** ⏳ |
 | Phase | 3 (tools one-by-one) IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1085 = 1085 keys parity) |
+| i18n | English + हिंदी (1087 = 1087 keys parity) |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 34 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 35 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (6/12)
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -53,9 +53,10 @@
 - ✅ Remove PDF metadata (`remove-pdf-metadata`)
 - ✅ Generate password (`generate-password`)
 
-### ⚡ Optimize (2/8)
+### ⚡ Optimize (3/8)
 - ✅ Compress PDF (`compress-pdf`) — quality presets / custom DPI
 - ✅ PDF OCR (`ocr-pdf`) — P3.19: Tesseract LSTM, English + हिंदी, searchable PDF (GlyphLessFont invisible layer) ya TXT, 150/300 DPI, mixed-docs smart skip, per-page confidence chip
+- ✅ Compress to target size (`compress-pdf-to-size`) — P3.20: India forms — 100/200/500 KB/1 MB/custom target, iterative ladder (structural → image q/dim/gray → raster dpi/q), honest amber miss chip
 
 ### 👁️ View (1/6)
 - ✅ View PDF (`view-pdf`) — thumbnails, search, outline, dark mode
@@ -75,32 +76,31 @@
 
 ---
 
-## ⏳ 63 PENDING TOOLS (Kaam baki hai)
+## ⏳ 62 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Compress to target size** (`compress-pdf-to-size`) — under 100KB/200KB/1MB (SABSE PEHLE — India forms)
-2. **Pages per sheet / N-up** (`pages-per-sheet`) — 2,4,6,9,16 with live preview
-3. **Halve PDF pages** (`halve-pdf-pages`) — book spreads left/right
-4. **Overlay PDF** (`overlay-pdf`) — stamp one PDF over another
-5. **Bookmark PDF** (`bookmark-pdf`) — outline tree
-6. **Extract images** (`extract-images`) — embedded images PNG/JPG ZIP
-7. **Copy from PDF** (`copy-from-pdf`) — text/Markdown/CSV
-8. **Search in PDFs** (`search-pdf`) — query/regex across files
-9. **Flatten PDF** (`flatten-pdf`) — forms/annotations into content
-10. **Rasterize PDF** (`rasterize-pdf`) — pages to flat images (redact worker ka raster path reuse karo)
-11. **Make PDF fillable** (`make-pdf-fillable`) — auto-detect fields ya manual add
-12. **Change PDF page size** (`change-pdf-page-size`) — A3/A4/A5/Letter/custom mm
-13. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
-14. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
-15. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
-16. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
-17. **Text to PDF** (`txt-to-pdf`) + **Markdown to PDF** (`markdown-to-pdf`) + **SVG to PDF** + **TIFF to PDF**
-18. **Generate QR code** (`generate-qr-code`) — URL/UPI/WiFi/vCard + colors + logo
-19. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
-20. **Set viewer preferences** (`set-pdf-viewer-preferences`)
-21. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
-22. **Universal converters** — `convert-to-pdf`, `convert-from-pdf` (smart routing)
+1. **Pages per sheet / N-up** (`pages-per-sheet`) — 2,4,6,9,16 with live preview
+2. **Halve PDF pages** (`halve-pdf-pages`) — book spreads left/right
+3. **Overlay PDF** (`overlay-pdf`) — stamp one PDF over another
+4. **Bookmark PDF** (`bookmark-pdf`) — outline tree
+5. **Extract images** (`extract-images`) — embedded images PNG/JPG ZIP
+6. **Copy from PDF** (`copy-from-pdf`) — text/Markdown/CSV
+7. **Search in PDFs** (`search-pdf`) — query/regex across files
+8. **Flatten PDF** (`flatten-pdf`) — forms/annotations into content
+9. **Rasterize PDF** (`rasterize-pdf`) — pages to flat images (redact worker ka raster path reuse karo)
+10. **Make PDF fillable** (`make-pdf-fillable`) — auto-detect fields ya manual add
+11. **Change PDF page size** (`change-pdf-page-size`) — A3/A4/A5/Letter/custom mm
+12. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
+13. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
+14. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
+15. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
+16. **Text to PDF** (`txt-to-pdf`) + **Markdown to PDF** (`markdown-to-pdf`) + **SVG to PDF** + **TIFF to PDF**
+17. **Generate QR code** (`generate-qr-code`) — URL/UPI/WiFi/vCard + colors + logo
+18. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
+19. **Set viewer preferences** (`set-pdf-viewer-preferences`)
+20. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
+21. **Universal converters** — `convert-to-pdf`, `convert-from-pdf` (smart routing)
 
 *(P2 queue ka OCR item ✅ DONE in P3.19)*
 
@@ -145,6 +145,8 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - **camera landingSurface** — capture-style tools ke liye (`scan-pdf` se aaya)
 - **HEIC engine (P3.18)** — `src/lib/heic/heic-decode.ts` (worker-side libheif WASM, lazy + cached) + `heic-preview.ts` (main-thread thumbnail queue + LRU 64) + `public/libheif/` (2MB self-hosted bundle + LGPL license). CSP mein `wasm-unsafe-eval` add hua. Safari pe native decode fast-path hai.
 - **convert-image worker** — `tools/convert-image/worker.ts` 4-way converter (webp/heic × jpg/png), alpha flattening + maxDim downscale + deduped names
+- **compress-common (P3.20)** — `tools/compress-common/recompress.ts`: shared impure image-recompression (recompressCandidate + rawPixelsToImageData + committedJpegBlob — canvas-commit guard JPEG variant). compress-pdf + compress-pdf-to-size dono isi se stream karte hain.
+- **to-size ladder (P3.20)** — `tools/compress-pdf-to-size/`: engine (resolveTargetBytes + IMAGE_LADDER q0.8→0.32/dim2400→900/gray-tail + RASTER_LADDER 140→52 DPI) + worker (0: passthrough → 1: object-streams+meta-strip → 2: image ladder (text selectable) → 3: raster ladder (last resort) → honest amber miss chip). customKB clamp 30KB–10MB.
 - **OCR engine (P3.19)** — `public/tesseract/` self-hosted Tesseract 7 (ESM lib + nested worker + 3 lstm cores + eng/hin traineddata.gz, Apache-2.0 licenses shipped). `tools/ocr-pdf/` worker: pdf.js render → **committedPngBlob** (canvas-commit race guard!) → tesseract `recognize(blob, {pdfTitle}, {text, pdf:true})` → **tesseract ka apna PDF renderer** (GlyphLessFont invisible layer, logical char order — Hindi ि/ी matras searchable!) → pdf-lib copyPages merge (native pages pass through as-is). Smart skip: pages with ≥150 selectable chars skip OCR. Warm singleton + reinitialize on language change; traineddata IndexedDB-cached by tesseract.
 
 ---
@@ -198,7 +200,14 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 
 ## 📝 Session Log (naya kaam yahan append karo)
 
-### P3.19 (latest) — PDF OCR ✅ TESSERACT + HINDI
+### P3.20 (latest) — Compress to target size ✅
+- compress-pdf-to-size: iterative ladder (passthrough → structural → image q/dim/gray → raster dpi/q), green "Under your target size" + amber "Target not reached" honest chips, customKB 30KB–10MB clamp
+- compress-pdf/worker.ts refactored → shared `tools/compress-common/recompress.ts` (verbatim extraction, regression PASS)
+- committedJpegBlob (canvas-commit guard, JPEG variant) — raster path blank-snapshot se bachata hai
+- QA: 1.5MB→78KB @100KB (text preserved — pdf.js extraction verified all 4 pages), 25KB extreme (raster path), miss chip @30-page/30KB, already-under passthrough, HI UI + Devanagari filename, mobile 375px, compress-pdf regression 148KB @Recommended, zero console errors, all localhost
+- Live: 35 | i18n: 1087=1087 | lint+tsc clean | dev.log clean
+
+### P3.19 — PDF OCR ✅ TESSERACT + HINDI
 - ocr-pdf: self-hosted Tesseract 7 LSTM (3 cores + eng/hin models, ~15MB lazy), searchable PDF via tesseract's own GlyphLessFont renderer (Hindi logical order verified: "नमस्ते दुनिया" searchable!), TXT mode, 150/300 DPI, mixed-doc smart skip, per-page + result confidence chips
 - **THE canvas-commit race** found & fixed (committedPngBlob) — 4h debugging, pinned in insights
 - pdf-to-txt copy updated (OCR ab live), i18n 1085=1085, protocol StageDetail.conf + RunDetail.confidence added

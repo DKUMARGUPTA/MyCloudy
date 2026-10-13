@@ -33,6 +33,8 @@ export interface RunDetail {
   pages?: number;
   /** Mean OCR confidence (%) across OCRed pages (ocr-pdf). */
   confidence?: number;
+  /** Whether the output fit the byte budget (compress-pdf-to-size). */
+  targetHit?: boolean;
 }
 
 export interface ToolOutput {

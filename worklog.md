@@ -2425,3 +2425,110 @@ Stage Summary:
   searchable-layer via tesseract PDF renderer; tesseract 7 self-host recipe.
 - Next queue: compress-pdf-to-size (India 100KB/200KB forms), pages-per-sheet,
   halve-pdf-pages, overlay-pdf...
+
+---
+Task ID: P3.20
+Agent: main (Z.ai Code)
+Task: Compress to target size tool (compress-pdf-to-size) — PRD §7.5 P2 queue ka top item (India forms: under 100KB/200KB/1MB). Iterative compress ladder, honest result chips.
+
+Work Log:
+- Read CONTEXT-MEMORY + worklog tail (P3.19 OCR shipped, 34 live). Next queue
+  item = compress-pdf-to-size (PRD §7.5: "Compress to target size (100KB/
+  200KB / custom) | D | Iterative compress | P2"; §persona: "100KB/200KB
+  target compress" for govt-form users).
+- Pattern reuse plan: compress-pdf/engine.ts (pure image candidates +
+  replaceImageStream) + ocr-pdf/worker.ts (pdf.js fake-worker loader +
+  canvas-commit guard) + compress-pdf/config.ts (options/faq shape).
+- NEW shared module tools/compress-common/recompress.ts — extracted the
+  impure image machinery VERBATIM from compress-pdf/worker.ts (cmykToRgb,
+  rawPixelsToImageData, streamPalette, recompressCandidate) + NEW
+  committedJpegBlob(canvas, quality): the P3.19 canvas-commit race guard
+  for JPEG readbacks (convert → createImageBitmap decode-yield → convert
+  → size-stability loop, max 8 attempts).
+- compress-pdf/worker.ts refactored to import from compress-common (302 →
+  129 lines, identical behaviour; regression-tested in browser below).
+- tools/compress-pdf-to-size/engine.ts (PURE, bun-testable):
+  resolveTargetBytes (presets 100/200/500/1000 KB; custom clamp 30KB–10MB,
+  garbage-proof default) + IMAGE_LADDER (6 steps: q0.80/2400 → q0.32/900,
+  grayscale only in the tail 2) + RASTER_LADDER (6 steps: 140 DPI/q0.72 →
+  52 DPI/q0.32) + ladderIsStrictlyHarder sanity helper.
+- tools/compress-pdf-to-size/worker.ts ladder:
+  0) bytes.length <= target → passthrough untouched (best-effort page
+     count for the chip);
+  1) structural: PDFDocument.load (ignoreEncryption:false → honest
+     errorEncrypted) + stripAllMetadata + save(useObjectStreams) —
+     measure;
+  2) image ladder on the SAME doc (compounds: strip + replacements;
+     per-step re-collect candidates — replaced DCT streams reclassify as
+     "jpeg", size-guard keeps every step monotonic); measure per step;
+  3) raster ladder from ORIGINAL bytes via pdf.js fake-worker (fresh
+     viewport per dpi, white-filled, committedJpegBlob, pdf-lib embedJpg
+     on same-points-size pages); measure per step;
+  best attempt wins; targetHit: best <= target reported honestly.
+  Progress: pessimistic unit model (images×6 + pages×6), pct 4→95, detail
+  page/pages per unit. maxFiles: 1 (form-portal mental model).
+- config.ts: target select (100/200/500 KB/1 MB/custom, default 100) +
+  customKB number (showWhen custom, min 30 max 10240 step 10 default 300)
+  + 5 features + 3 FAQ (en+hi). chainToolIds: view-pdf, lock-pdf,
+  pdf-to-jpg, merge-pdf.
+- Protocol: RunDetail.targetHit?: boolean. result-view.tsx: green chip
+  "Under your target size" when true, amber "Target not reached — this
+  is the smallest this file gets on-device" when false. i18n en+hi
+  result.underTarget + result.targetMissed → 1087 = 1087 parity.
+- Registry: compress-pdf-to-size enabled: true; configs.ts wired.
+- scripts/smoke-to-size.ts (bun, 19/19): target resolution (presets,
+  custom clamps up/down, garbage, default), ladder invariants (strictly
+  harder, encoder bounds, gray-tail), REAL-FIXTURE measure-loop rehearsal
+  (qa-p312-fixture: 3 candidates found; structural alone 1534 KB > 100
+  KB; one injected replacement lands 34 KB ≤ 100 KB; replaced dict
+  verified DCTDecode/DeviceRGB/16×16).
+- QA (agent-browser, dev server healthy HTTP 200):
+  ① EN landing/workspace: select + custom KB reveal (spinbutton "Your
+    target (KB)" default 300) ✓
+  ② 1.5 MB fixture → default 100 KB: "1.5 MB → 78 KB — 95% smaller" +
+    green "Under your target size" chip ✓ (image ladder — text intact)
+  ③ custom 150 KB: hit (same ladder step — first-fit semantics) ✓
+  ④ custom 20 KB (below min): worker clamped to 30 KB → output 25 KB,
+    green chip CORRECT (verified via Worker.prototype.postMessage hook:
+    options {target:"custom", customKB:20} arrived; min-clamp saved it)
+  ⑤ extreme 20 KB: raster path exercised — output 25 KB < image-ladder
+    floor 38 KB (raster improved on images!) ✓
+  ⑥ miss case: 30-page dense text fixture + 30 KB target → full ladder
+    walk, structural best (36 KB) → AMBER "Target not reached — this is
+    the smallest this file gets on-device" chip ✓ honest
+  ⑦ already-under: 148 KB file + 1 MB target → passthrough untouched,
+    "148 KB total", green chip, "1 files, 4 pages" (after passthrough
+    page-count fix — stale worker bundle initially showed 0; page reload
+    proved fix live)
+  ⑧ deep verify: onmessage-property hook captured output blob (79,434 B
+    ≤ 102,400) → page-level pdf.js import → ALL 4 pages have selectable
+    text (98–123 chars each: "Compress QA Fixture Page 1 — JPEG
+    photo…") ✓ image ladder preserves text layer
+  ⑨ HI UI: "लक्ष्य साइज़ में कंप्रेस →" CTA, "100 KB से कम" select,
+    "आपके लक्ष्य साइज़ से कम" chip, "95% छोटी", Devanagari filename
+    "दस्तावेज़-परीक्षण-compressed.pdf" accepted ✓
+  ⑩ mobile 375×812: no h-scroll, CTA 44 px, dropzone 339 px, full run ✓
+  ⑪ compress-pdf REGRESSION (shared-module refactor): Recommended
+    preset → "1.5 MB → 148 KB — 90% smaller" ✓
+  ⑫ zero window errors/rejections; performance entries all
+    localhost:3000 (fixture fetch from public/ included) ✓
+  Screenshots: qa-p320-result-en.png, qa-p320-miss-chip.png,
+  qa-p320-result-hi.png, qa-p320-mobile-result.png. Fixtures cleaned
+  from public/.
+- bunx tsc --noEmit clean; eslint clean; dev.log clean; smoke-to-size
+  19/19 + smoke-compress 22/22.
+
+Stage Summary:
+- Live tools: 35 (34 + compress-pdf-to-size). Optimize 3/8. i18n
+  1087=1087.
+- NEW reusable assets: tools/compress-common/recompress.ts (shared by 2
+  tools) + committedJpegBlob (JPEG canvas-commit guard) + the ladder
+  pattern (first-fit iterative descent with honest miss chip).
+- QA pin (new): React controlled number inputs in the options panel need
+  the native-prototype setter + 'input' event — verify readback BEFORE
+  clicking CTA, and hook Worker.prototype.postMessage to confirm the
+  options actually reached the worker (UI readback alone can lie when
+  React re-renders). Worker bundles can go STALE in a long-lived page —
+  agent-browser `reload` (not `open`) after worker edits.
+- Next queue: pages-per-sheet (N-up 2/4/6/9/16 + live preview), halve-
+  pdf-pages, overlay-pdf, bookmark-pdf, extract-images...

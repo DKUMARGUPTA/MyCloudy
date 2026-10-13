@@ -65,7 +65,14 @@ export function ResultView({
   outputs: ToolOutput[];
   inputBytes: number;
   /** Worker run summary (PRD §8.1: "5 files, 42 pages"). */
-  runSummary?: { files?: number; pages?: number; confidence?: number } | null;
+  runSummary?:
+    | {
+        files?: number;
+        pages?: number;
+        confidence?: number;
+        targetHit?: boolean;
+      }
+    | null;
   chainFromName?: string;
   chainTargets: ToolDef[];
   onChain: (nextTool: ToolDef, files: File[]) => void;
@@ -177,6 +184,16 @@ export function ResultView({
         {runSummary?.confidence !== undefined ? (
           <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
             {t("result.ocrConfidence", { n: runSummary.confidence })}
+          </p>
+        ) : null}
+        {runSummary?.targetHit === true ? (
+          <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+            {t("result.underTarget")}
+          </p>
+        ) : null}
+        {runSummary?.targetHit === false ? (
+          <p className="rounded-chip bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
+            {t("result.targetMissed")}
           </p>
         ) : null}
         <p className="text-sm text-muted-foreground">
