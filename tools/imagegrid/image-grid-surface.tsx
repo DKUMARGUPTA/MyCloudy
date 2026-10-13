@@ -24,6 +24,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { looksHeic, resolveHeicPreview } from "@/lib/heic/heic-preview";
 import {
   ArrowDownAZ,
   ChevronDown,
@@ -306,13 +307,26 @@ function ImageCard({
   const [url, setUrl] = useState<string | null>(null);
 
   // Object URL + natural size for the preview (promise callbacks only —
-  // never setState synchronously in the effect body).
+  // never setState synchronously in the effect body). HEIC inputs get a
+  // queued libheif preview (Safari's native <img> path is kept for itself);
+  // preview URLs from the HEIC cache are NOT revoked here — the cache owns
+  // them, unlike the object URL this card creates for non-HEIC images.
   useEffect(() => {
     if (!file) return;
     let cancelled = false;
     let objectUrl: string | null = null;
-    void Promise.resolve().then(() => {
+    void Promise.resolve().then(async () => {
       if (cancelled) return;
+      if (looksHeic(file)) {
+        const preview = await resolveHeicPreview(file);
+        if (cancelled) return;
+        if (preview) {
+          setUrl(preview.url);
+          setDims({ w: preview.width, h: preview.height });
+          return;
+        }
+        // Byte-sniff says not HEIC after all — fall through to <img>.
+      }
       objectUrl = URL.createObjectURL(file);
       setUrl(objectUrl);
       const img = new Image();

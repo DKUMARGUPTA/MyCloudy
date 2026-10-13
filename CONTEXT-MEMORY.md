@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** Scan to PDF (P3.17) ke baad — 28 tools live.
+> **Updated:** P3.18 ke baad — HEIC/WEBP converters shipped — **33 tools live**.
 
 ---
 
@@ -12,16 +12,17 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **28** ✅ |
-| Pending (Coming Soon) | **69** ⏳ |
+| **Ready to use (LIVE)** | **33** ✅ |
+| Pending (Coming Soon) | **64** ⏳ |
 | Phase | 3 (tools one-by-one) IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1073 = 1073 keys parity) |
+| i18n | English + हिंदी (1081 = 1081 keys parity) |
+| HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 
 ---
 
-## ✅ 28 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 33 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (6/12)
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -57,43 +58,50 @@
 ### 👁️ View (1/6)
 - ✅ View PDF (`view-pdf`) — thumbnails, search, outline, dark mode
 
-### 📥 Convert to PDF (3/17)
-- ✅ JPG to PDF (`jpg-to-pdf`) · ✅ PNG to PDF (`png-to-pdf`) · ✅ WEBP to PDF (`webp-to-pdf`)
+### 📥 Convert to PDF (4/17)
+- ✅ JPG to PDF (`jpg-to-pdf`) · ✅ PNG to PDF (`png-to-pdf`) · ✅ WEBP to PDF (`webp-to-pdf`) · ✅ HEIC to PDF (`heic-to-pdf`) — libheif WASM se har browser mein!
 
 ### 📤 Convert from PDF (3/13)
 - ✅ PDF to JPG (`pdf-to-jpg`) · ✅ PDF to PNG (`pdf-to-png`) · ✅ PDF to Text (`pdf-to-txt`)
 
+### 🖼️ Image Tools (4/6) — P3.18 NAYA!
+- ✅ HEIC to JPG (`heic-to-jpg`) — iPhone photos, har browser mein
+- ✅ HEIC to PNG (`heic-to-png`) — lossless
+- ✅ WEBP to JPG (`webp-to-jpg`) — alpha flattening + quality
+- ✅ WEBP to PNG (`webp-to-png`) — transparency preserved
+- ⏳ resize-image-kb (P2), passport-photo (P3)
+
 ---
 
-## ⏳ 69 PENDING TOOLS (Kaam baki hai)
+## ⏳ 64 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **HEIC converters** — `heic-to-jpg`, `heic-to-png`, `heic-to-pdf` (license verify karna hai: heic2any/libheif-js)
-2. **WEBP converters** — `webp-to-jpg`, `webp-to-png`
-3. **OCR PDF** (`ocr-pdf`) — Tesseract WASM + Hindi traineddata
-4. **Compress to target size** (`compress-pdf-to-size`) — under 100KB/200KB/1MB
-5. **Pages per sheet / N-up** (`pages-per-sheet`) — 2,4,6,9,16 with live preview
-6. **Halve PDF pages** (`halve-pdf-pages`) — book spreads left/right
-7. **Overlay PDF** (`overlay-pdf`) — stamp one PDF over another
-8. **Bookmark PDF** (`bookmark-pdf`) — outline tree
-9. **Extract images** (`extract-images`) — embedded images PNG/JPG ZIP
-10. **Copy from PDF** (`copy-from-pdf`) — text/Markdown/CSV
-11. **Search in PDFs** (`search-pdf`) — query/regex across files
-12. **Flatten PDF** (`flatten-pdf`) — forms/annotations into content
-13. **Rasterize PDF** (`rasterize-pdf`) — pages to flat images (redact worker ka raster path reuse karo)
-14. **Make PDF fillable** (`make-pdf-fillable`) — auto-detect fields ya manual add
-15. **Change PDF page size** (`change-pdf-page-size`) — A3/A4/A5/Letter/custom mm
-16. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
-17. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
-18. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
-19. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
-20. **Text to PDF** (`txt-to-pdf`) + **Markdown to PDF** (`markdown-to-pdf`) + **SVG to PDF** + **TIFF to PDF**
-21. **Generate QR code** (`generate-qr-code`) — URL/UPI/WiFi/vCard + colors + logo
-22. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
-23. **Set viewer preferences** (`set-pdf-viewer-preferences`)
-24. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
-25. **Universal converters** — `convert-to-pdf`, `convert-from-pdf` (smart routing)
+1. **OCR PDF** (`ocr-pdf`) — Tesseract WASM + Hindi traineddata (SABSE PEHLE — PRD P2)
+2. **Compress to target size** (`compress-pdf-to-size`) — under 100KB/200KB/1MB
+3. **Pages per sheet / N-up** (`pages-per-sheet`) — 2,4,6,9,16 with live preview
+4. **Halve PDF pages** (`halve-pdf-pages`) — book spreads left/right
+5. **Overlay PDF** (`overlay-pdf`) — stamp one PDF over another
+6. **Bookmark PDF** (`bookmark-pdf`) — outline tree
+7. **Extract images** (`extract-images`) — embedded images PNG/JPG ZIP
+8. **Copy from PDF** (`copy-from-pdf`) — text/Markdown/CSV
+9. **Search in PDFs** (`search-pdf`) — query/regex across files
+10. **Flatten PDF** (`flatten-pdf`) — forms/annotations into content
+11. **Rasterize PDF** (`rasterize-pdf`) — pages to flat images (redact worker ka raster path reuse karo)
+12. **Make PDF fillable** (`make-pdf-fillable`) — auto-detect fields ya manual add
+13. **Change PDF page size** (`change-pdf-page-size`) — A3/A4/A5/Letter/custom mm
+14. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
+15. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
+16. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
+17. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
+18. **Text to PDF** (`txt-to-pdf`) + **Markdown to PDF** (`markdown-to-pdf`) + **SVG to PDF** + **TIFF to PDF**
+19. **Generate QR code** (`generate-qr-code`) — URL/UPI/WiFi/vCard + colors + logo
+20. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
+21. **Set viewer preferences** (`set-pdf-viewer-preferences`)
+22. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
+23. **Universal converters** — `convert-to-pdf`, `convert-from-pdf` (smart routing)
+
+*(Original queue ke HEIC/WEBP items ✅ DONE in P3.18)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -120,7 +128,7 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 
 ---
 
-## 🏗️ Foundation — Kya-Kya BAN CHUKA hai (Phases 0–2)
+## 🏗️ Foundation — Kya-Kya BAN CHUKA hai (Phases 0–2 + naye modules)
 
 - **Design system** — PRD §3 exact colors (primary #2563EB), light+dark, Inter + Noto Sans Devanagari self-hosted, no CDN
 - **Global layout** — header mega-menu + Ctrl+K fuzzy search, footer, cookie banner (analytics OFF), 404/500/offline
@@ -134,6 +142,8 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - **i18n engine** — ICU-lite plural support: `{n, plural, =1 {one page} other {# pages}}`
 - **Devanagari PDF pipeline** — fontkit + subset:true, WinAnsi fallback pattern (`tools/fill-out-pdf/worker.ts` mein pinned)
 - **camera landingSurface** — capture-style tools ke liye (`scan-pdf` se aaya)
+- **HEIC engine (P3.18)** — `src/lib/heic/heic-decode.ts` (worker-side libheif WASM, lazy + cached) + `heic-preview.ts` (main-thread thumbnail queue + LRU 64) + `public/libheif/` (2MB self-hosted bundle + LGPL license). CSP mein `wasm-unsafe-eval` add hua. Safari pe native decode fast-path hai.
+- **convert-image worker** — `tools/convert-image/worker.ts` 4-way converter (webp/heic × jpg/png), alpha flattening + maxDim downscale + deduped names
 
 ---
 
@@ -160,16 +170,18 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 3. **No AGPL/GPL libs** (no Ghostscript, no MuPDF)
 4. **pdf-lib encrypt nahi kar sakta** — Protect/Unlock = qpdf WASM only
 5. **Config-driven tools** — ek registry + ek ToolShell, per-tool page copy-paste NAHI
-6. **Sab UI strings i18n se** (en + real Devanagari Hindi, short)
-7. **A11y** — keyboard, aria, 44px targets, 360px mobile-first, prefers-reduced-motion
-8. **No placeholder/TODO code** — har file complete runnable
-9. **Security** — magic bytes validation, 50MB mobile/200MB desktop, kabhi file names log mat karo
-10. Sandbox: sirf `/` visible, API routes use karo (server actions NAHI), `bun run build` KABHI NAHI, har kaam ke baad dev.log check + agent-browser QA
+4. **Sab UI strings i18n se** (en + real Devanagari Hindi, short)
+5. **A11y** — keyboard, aria, 44px targets, 360px mobile-first, prefers-reduced-motion
+6. **No placeholder/TODO code** — har file complete runnable
+7. **Security** — magic bytes validation, 50MB mobile/200MB desktop, kabhi file names log mat karo
+8. Sandbox: sirf `/` visible, API routes use karo (server actions NAHI), `bun run build` KABHI NAHI, har kaam ke baad dev.log check + agent-browser QA
 
 ---
 
 ## 🔑 Technical Insights (reuse karo, dobara mat dhundo)
 
+- **HEIC decode recipe:** libheif-js@1.23.5 wasm-bundle.mjs (wasm EMBEDDED — single file, no separate .wasm) → copy to /public/libheif/, load via variable-URL dynamic import + turbopackIgnore (pdf.js pattern). Default export = FACTORY function — call it: `await factory()`. Then `new libheif.HeifDecoder().decode(bytes)` → image array → `image.display({data,width,height},cb)` fills RGBA. Empty array = corrupt/unsupported. Bun can smoke-test it directly!
+- **QA harness pins (P3.18):** agent-browser `open` SAME URL = NO reload (stale state!) — use `reload`; fetch(blob:) BLOCKED by CSP connect-src 'self' — verify pixels via drawImage(liveImg) ya Worker.prototype.onmessage hook (defineProperty wrap) se blob capture (blob.arrayBuffer() CSP bypass karta hai); dropzone label input ka SIBLING hai — `main label` pe dispatch karo (bubble hota hai div.onDrop tak)
 - **Devanagari in PDFs:** pdf-lib `save()` non-Latin pe WinAnsi Helvetica ke saath THROW karta hai — pre-render with embedded fontkit subset ya NeedAppearances fallback (pattern: `tools/fill-out-pdf/worker.ts`)
 - **Agent-browser upload flaky:** CDP setFileInputFiles wale Files DropZone clear hone ke baad UNREADABLE ho jate hain — recipe: public/ se fetch karke synthetic `DragEvent('drop')` + DataTransfer bhejo
 - **agent-browser click flaky** re-rendered React buttons pe — `eval .click()` + delayed reads use karo; toasts ke liye MutationObserver lagao
@@ -180,7 +192,15 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 
 ## 📝 Session Log (naya kaam yahan append karo)
 
-### P3.17 (latest) — Scan to PDF ✅
+### P3.18 (latest) — HEIC/WEBP Converters ✅ 5 TOOLS
+- webp-to-jpg, webp-to-png, heic-to-jpg, heic-to-png (shared convert-image worker) + heic-to-pdf (ImageGrid preset)
+- libheif WASM self-hosted (LGPL, unmodified, license shipped) — HEIC ab HAR browser mein decode hota hai (Safari native fallback)
+- images-to-pdf bhi upgrade hua (Chromium + HEIC pehle impossible tha, ab kaam karta hai)
+- Alpha flattening, quality slider, maxDim downscale, kind-aware DropZone copy + honest error copy
+- Pixel-verified QA: output colors exact, PDF structure + page content verified, Hindi, mobile 375px, 323 requests sab localhost
+- Live: 33 | i18n: 1081=1081 | lint+tsc clean | dev.log clean
+
+### P3.17 — Scan to PDF ✅
 - Camera + live edge-detection overlay + torch, Otsu quad detection, homography perspective warp, Magic/B&W/Grayscale live preview filters, multi-page sessions, corner editor (pointer+keyboard), A4/Letter/fit output
 - Smoke 54/54, EN+HI 1073=1073 keys, QA screenshots saved
 

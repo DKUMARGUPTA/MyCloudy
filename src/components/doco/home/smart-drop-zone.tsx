@@ -17,6 +17,7 @@ import { ROUTES, navigateToHash } from "@/hooks/use-hash-route";
 import { setChainHandoff } from "@/lib/tools/chain";
 import { getTool, type ToolDef } from "@/lib/tools/registry";
 import { sniffIsPdf } from "@/lib/pdf/thumbnails";
+import { looksHeic } from "@/lib/heic/heic-preview";
 import { formatBytes } from "@/lib/storage/recent-files";
 import { DropZone } from "@/components/doco/tool/drop-zone";
 import { cn } from "@/lib/utils";
@@ -89,6 +90,9 @@ export function SmartDropZone() {
 
   const rotateTool = getTool("rotate-pdf-pages");
   const imagesTool = getTool("images-to-pdf");
+  const heicJpgTool = getTool("heic-to-jpg");
+  // HEIC picked → the converter is the most likely intent.
+  const heicPick = picked ? looksHeic(picked) : false;
 
   if (picked) {
     return (
@@ -161,6 +165,20 @@ export function SmartDropZone() {
           </div>
         ) : kind === "image" ? (
           <div className="mt-3 flex flex-col gap-2">
+            {heicPick && heicJpgTool?.enabled ? (
+              <Button
+                type="button"
+                size="touch"
+                className="w-full justify-between rounded-btn font-semibold sm:w-auto sm:min-w-64"
+                onClick={() => handoffTo(heicJpgTool)}
+              >
+                <span className="flex items-center gap-2">
+                  <ImageIcon className="size-4" aria-hidden="true" />
+                  {heicJpgTool.name[locale]}
+                </span>
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </Button>
+            ) : null}
             {imagesTool?.enabled ? (
               <Button
                 type="button"

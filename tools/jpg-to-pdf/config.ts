@@ -6,6 +6,7 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  */
 export const config: ToolConfig = {
   toolId: "jpg-to-pdf",
+  howKeys: ["imgc.how1", "imgc.how2", "imgc.how3"],
   createWorker: () =>
     new Worker(new URL("../imagegrid/worker.ts", import.meta.url), {
       type: "module",

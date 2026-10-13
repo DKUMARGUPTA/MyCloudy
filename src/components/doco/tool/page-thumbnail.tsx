@@ -4,14 +4,17 @@ import { useEffect, useState } from "react";
 
 import { renderPdfThumbnail } from "@/lib/pdf/thumbnails";
 import { renderTextThumbnail } from "@/lib/files/text-thumbnail";
+import { looksHeic, resolveHeicPreview } from "@/lib/heic/heic-preview";
 import { cn } from "@/lib/utils";
 
 /**
  * File/page thumbnail with skeleton + error states (PRD §2.8: queued renders).
  *
- * Two paths:
+ * Three paths:
  * - image blobs (image inputs, JPG/PNG tool outputs) are their own preview —
  *   the object URL is created directly, no render queue needed
+ * - HEIC blobs cannot <img>-render outside Safari, so they go through the
+ *   queued libheif preview (src/lib/heic/heic-preview.ts)
  * - text blobs (.txt outputs) render their first lines onto a canvas
  * - PDFs render page 1 through the queue in lib/pdf/thumbnails (2 in flight)
  */
@@ -33,9 +36,18 @@ export function useThumbnail(
     // All state updates happen in promise callbacks (never synchronously
     // in the effect body); the cleanup revokes the created object URL.
     void Promise.resolve()
-      .then(() => {
+      .then(async () => {
         if (cancelled) return null;
         setState({ status: "loading", url: null });
+        // HEIC fast path: browsers other than Safari cannot render HEIC
+        // object URLs — decode a small preview instead (queued + cached).
+        // A null preview (byte-sniff said "not HEIC after all") falls
+        // through to the normal paths below.
+        if (file instanceof File && looksHeic(file)) {
+          const preview = await resolveHeicPreview(file, maxDim);
+          if (cancelled) return null;
+          if (preview) return preview.blob;
+        }
         // Image fast path: the blob IS the preview.
         if (file.type.startsWith("image/")) return file;
         // Text fast path: first lines drawn onto a small canvas.

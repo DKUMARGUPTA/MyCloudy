@@ -9,6 +9,8 @@ import type { NextConfig } from "next";
  *   avoid a dark-mode flash. Nonce-based CSP does not work with SSG.
  *   No third-party script origins are allowed.
  * - `'unsafe-eval'` is only added in development (React Refresh requires it).
+ *   In production, `'wasm-unsafe-eval'` alone allows WebAssembly compilation
+ *   (self-hosted libheif for HEIC decode, /libheif) without full eval.
  * - `worker-src 'self' blob:` + `img-src ... blob:` enable the Phase 2
  *   Web Worker pool and OPFS/blob thumbnails, all same-origin.
  * - `connect-src 'self'`: device-only tools make zero external requests.
@@ -18,7 +20,7 @@ const isDev = process.env.NODE_ENV === "development";
 
 const cspDirectives = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self'",

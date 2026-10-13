@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 import type { OptionValues } from "@/lib/tools/config-types";
 import { parseImageGridOption } from "./model";
+import { decodeHeicToBitmap } from "@/lib/heic/heic-decode";
 import {
   type WorkerRunRequest,
   type WorkerResponse,
@@ -9,14 +10,15 @@ import {
 
 /**
  * Images → PDF worker (PRD §8.6) — shared by images-to-pdf and its
- * jpg/png/webp-to-pdf presets. Device-only: files arrive by structured
+ * jpg/png/webp/heic-to-pdf presets. Device-only: files arrive by structured
  * clone, pdf-lib embeds them, the PDF Blob goes straight back.
  *
  * Quality policy (honest, no silent re-compression):
  * - unrotated JPG/PNG → the ORIGINAL bytes are embedded (zero quality loss)
- * - rotated images, or WEBP/GIF/HEIC sources → decoded with
- *   createImageBitmap, drawn (rotated) onto an OffscreenCanvas and
- *   re-encoded (JPEG 0.92 for photos, PNG when alpha is possible)
+ * - rotated images, or WEBP/GIF/HEIC sources → decoded (createImageBitmap,
+ *   with the self-hosted libheif WASM as HEIC fallback so Chromium works
+ *   too), drawn (rotated) onto an OffscreenCanvas and re-encoded (JPEG 0.92
+ *   for photos, PNG when alpha is possible)
  */
 
 const A4: [number, number] = [595.28, 841.89];
@@ -43,8 +45,18 @@ function sniffImageKind(head: Uint8Array): ImageKind {
   if (has([0x52, 0x49, 0x46, 0x46]) && has([0x57, 0x45, 0x42, 0x50], 8)) {
     return "webp";
   }
-  if (has([0x66, 0x74, 0x79, 0x70], 4) && has([0x68, 0x65, 0x69, 0x63], 8)) {
-    return "heic";
+  if (has([0x66, 0x74, 0x79, 0x70], 4)) {
+    const brand = String.fromCharCode(
+      head[8] ?? 0,
+      head[9] ?? 0,
+      head[10] ?? 0,
+      head[11] ?? 0
+    );
+    if (
+      ["heic", "heix", "hevc", "hevm", "hevs", "heim", "heis", "mif1", "msf1"].includes(brand)
+    ) {
+      return "heic";
+    }
   }
   return "unknown";
 }
@@ -92,14 +104,22 @@ async function prepareImage(
     onError("tool.images.errorUnsupported", file.name);
   }
 
-  // Decode path (rotation or transcode).
+  // Decode path (rotation or transcode). HEIC: native decode first
+  // (Safari), then the self-hosted libheif WASM so Chromium/Edge/Firefox
+  // work too — the honest error only fires when both fail.
   let bitmap: ImageBitmap;
-  try {
-    bitmap = await createImageBitmap(
-      kind === "jpeg" || kind === "png" ? new Blob([raw as unknown as BlobPart], { type: `image/${kind}` }) : file
-    );
-  } catch {
-    onError("tool.images.errorDecode", file.name);
+  if (kind === "heic") {
+    bitmap = await decodeHeicWithFallback(file, raw, onError);
+  } else {
+    try {
+      bitmap = await createImageBitmap(
+        kind === "jpeg" || kind === "png"
+          ? new Blob([raw as unknown as BlobPart], { type: `image/${kind}` })
+          : file
+      );
+    } catch {
+      onError("tool.images.errorDecode", file.name);
+    }
   }
 
   try {
@@ -152,6 +172,28 @@ async function bitmapSize(
     return { width: bitmap.width, height: bitmap.height };
   } finally {
     bitmap.close();
+  }
+}
+
+/**
+ * HEIC decode: try the browser's native decoder first (Safari — fast,
+ * zero download), fall back to the self-hosted libheif WASM build that
+ * works in every browser (src/lib/heic/heic-decode.ts).
+ */
+async function decodeHeicWithFallback(
+  file: File,
+  raw: Uint8Array,
+  onError: (code: string, detail: string) => never
+): Promise<ImageBitmap> {
+  try {
+    return await createImageBitmap(file);
+  } catch {
+    // Chromium/Firefox: native HEIC decode is unavailable — use libheif.
+  }
+  try {
+    return await decodeHeicToBitmap(raw);
+  } catch {
+    onError("tool.images.errorHeicDecode", file.name);
   }
 }
 

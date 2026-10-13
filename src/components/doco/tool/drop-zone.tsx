@@ -53,13 +53,26 @@ async function sniffIsImage(file: File): Promise<boolean> {
   const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
   const has = (bytes: number[], offset = 0) =>
     bytes.every((byte, i) => head[offset + i] === byte);
-  return (
+  if (
     has([0xff, 0xd8, 0xff]) || // JPEG
     has([0x89, 0x50, 0x4e, 0x47]) || // PNG
     has([0x47, 0x49, 0x46, 0x38]) || // GIF
-    has([0x52, 0x49, 0x46, 0x46]) || // WEBP (RIFF....WEBP)
-    (has([0x66, 0x74, 0x79, 0x70], 4) && has([0x68, 0x65, 0x69, 0x63], 8)) // HEIC (ftyp heic)
-  );
+    has([0x52, 0x49, 0x46, 0x46]) // WEBP (RIFF....WEBP)
+  ) {
+    return true;
+  }
+  // HEIC/HEIF family (ftyp at 4, brand at 8): heic/heix/hevc/hevm/hevs from
+  // Apple/Samsung phones, heim/heis (Samsung), mif1/msf1 generic containers.
+  if (has([0x66, 0x74, 0x79, 0x70], 4)) {
+    const brand = String.fromCharCode(
+      head[8] ?? 0,
+      head[9] ?? 0,
+      head[10] ?? 0,
+      head[11] ?? 0
+    );
+    return ["heic", "heix", "hevc", "hevm", "hevs", "heim", "heis", "mif1", "msf1"].includes(brand);
+  }
+  return false;
 }
 
 export function DropZone({
@@ -121,8 +134,16 @@ export function DropZone({
               : await sniffIsImage(file);
         if (!valid) {
           toast({
-            title: t("dropzone.errNotPdfTitle"),
-            description: t("dropzone.errNotPdfDesc"),
+            title: t(
+              acceptKind === "image"
+                ? "dropzone.errNotImageTitle"
+                : "dropzone.errNotPdfTitle"
+            ),
+            description: t(
+              acceptKind === "image"
+                ? "dropzone.errNotImageDesc"
+                : "dropzone.errNotPdfDesc"
+            ),
             variant: "destructive",
           });
           continue;
@@ -232,14 +253,23 @@ export function DropZone({
           </span>
         </span>
         <span className="text-[11px] text-muted-foreground">
-          {maxFiles === 1
-            ? t("dropzone.limitsOne", {
-                size: isMobileDevice() ? "50 MB" : "200 MB",
-              })
-            : t("dropzone.limits", {
-                size: isMobileDevice() ? "50 MB" : "200 MB",
-                count: maxFiles,
-              })}
+          {acceptKind === "image"
+            ? maxFiles === 1
+              ? t("dropzone.limitsImageOne", {
+                  size: isMobileDevice() ? "50 MB" : "200 MB",
+                })
+              : t("dropzone.limitsImage", {
+                  size: isMobileDevice() ? "50 MB" : "200 MB",
+                  count: maxFiles,
+                })
+            : maxFiles === 1
+              ? t("dropzone.limitsOne", {
+                  size: isMobileDevice() ? "50 MB" : "200 MB",
+                })
+              : t("dropzone.limits", {
+                  size: isMobileDevice() ? "50 MB" : "200 MB",
+                  count: maxFiles,
+                })}
         </span>
       </label>
       <input

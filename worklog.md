@@ -2194,3 +2194,156 @@ Stage Summary:
   session before the full worklog; keep it updated (append to Session Log,
   refresh Quick Status numbers) after every round.
 - No code changes; dev server untouched (still 200, log clean).
+
+---
+Task ID: P3.18
+Agent: main-session (user: "go ahead and upgrade")
+Task: Ship the next PRD §7.10/§8.6 item — HEIC/WEBP image converters:
+webp-to-jpg, webp-to-png, heic-to-jpg, heic-to-png, heic-to-pdf (5 tools,
+one shared architecture + one shared decoder).
+
+Work Log:
+- License decision (risk #4 resolved): libheif-js@1.23.5 (catdad-experiments
+  Emscripten build, LGPL-3.0, published Oct 2026). PRD §2.3 line 102 says
+  "MIT / LGPL check" — LGPL is allowed with a check; the lib is used
+  UNMODIFIED from npm, license text ships in /public/libheif/, source =
+  the published npm release (LGPL §4). NOT AGPL/GPL (banned list) — ok.
+- Assets: copied libheif-wasm/libheif-bundle.mjs (2.04MB, wasm embedded,
+  single file) → public/libheif/libheif-bundle.mjs + LICENSE-LGPL-3.0.
+  Self-hosted, CDN-free, PWA-cacheable later. Loaded via the pdf.js
+  pattern (variable URL + turbopackIgnore dynamic import).
+- bun-smoke-tested the decoder OUTSIDE the browser first (bun runs the
+  mjs + wasm natively): generated 2 real HEIC fixtures via pip
+  pillow-heif (800×600 colorful + 640×960 portrait), decoded both →
+  correct dims + exact RGBA colors (bg 240/243/248, green 35/197/94).
+- NEW src/lib/heic/heic-decode.ts — worker-side lazy loader:
+  decodeHeic(bytes) → RGBA, decodeHeicToBitmap(bytes) → ImageBitmap;
+  gigapixel allocation guard; failed-load cache drop; markers map to
+  honest i18n keys (tool.images.errorHeicDecode).
+- NEW src/lib/heic/heic-preview.ts — main-thread HEIC thumbnails:
+  looksHeic (mime/ext), isHeicBytes (ftyp brand family), and
+  resolveHeicPreview(file) → {blob, url, width, height} — sequential
+  queue + 64-entry LRU (revokes evicted URLs). Needed because
+  Chromium/Firefox cannot <img>-render HEIC object URLs.
+- NEW tools/convert-image/worker.ts — shared by the 4 converters
+  (pdf-to-images pattern): per-toolId SOURCE/TARGET maps, ftyp-brand
+  sniff (HEIC family: heic/heix/hevc/hevm/hevs/heim/heis/mif1/msf1 —
+  no AVIF), native createImageBitmap for WEBP, libheif for HEIC,
+  quality slider (jpg), background flattening (white/soft/black —
+  jpg has no alpha), maxDim downscale (4096/2048/1024), deduped
+  output names (base-2.jpg), honest per-file errors.
+- 4 new tool configs: tools/webp-to-jpg, webp-to-png, heic-to-jpg,
+  heic-to-png (all ImageTools maxFiles 30, chainToolIds → image-
+  accepting tools only, howKeys imgc.how1-3) + tools/heic-to-pdf
+  (ImageGrid preset over the imagegrid worker, like webp-to-pdf).
+- UPGRADE tools/imagegrid/worker.ts: HEIC decode now falls back from
+  Safari-native createImageBitmap to libheif WASM → images-to-pdf,
+  jpg/png/webp/heic-to-pdf now work in every browser; brand-family
+  sniff (was heic-only).
+- NEW capability plumbing:
+  - drop-zone.tsx: sniffIsImage accepts the full HEIC family; limits
+    copy now kind-aware (Images up to… vs PDF up to…); reject copy
+    kind-aware (errNotImageTitle/Desc — was "That's not a PDF" on
+    image tools!).
+  - page-thumbnail.tsx useThumbnail: HEIC → queued libheif preview
+    (blob + own URL lifecycle; falls through when not HEIC by bytes).
+  - image-grid-surface.tsx card: HEIC → resolveHeicPreview (cache-
+    owned URL, never revoked by the card) + dims from decode.
+  - smart-drop-zone.tsx: HEIC picked → heic-to-jpg suggested first.
+  - next.config.ts CSP: script-src + 'wasm-unsafe-eval' (prod-correct
+    WebAssembly for libheif; dev already had unsafe-eval).
+- Registry: enabled:true ×5 (heic-to-jpg/heic-to-png/webp-to-jpg/
+  webp-to-png/heic-to-pdf) + configs.ts wiring + surfaces.tsx
+  (heic-to-pdf → ImageGridSurface).
+- i18n: +4 keys each lang (imgc.how1-3, tool.images.errorHeicDecode)
+  +2 (dropzone.limitsImage/limitsImageOne) +2 (dropzone.errNotImageTitle/
+  Desc) → 1081 = 1081 en/hi parity, zero missing (script-verified).
+  Copy fix: images-to-pdf/jpg-to-pdf/png-to-pdf/webp-to-pdf landing
+  how-steps said "Select one or more PDF files" → now imgc.how1-3.
+- QA (agent-browser, headless Chromium — the browser with NO native
+  HEIC, i.e. the hard case):
+  ① Landing: h1 + limits "Images up to 200 MB · up to 30 files", how
+     steps image-specific, options render, 0 page errors.
+  ② heic-to-jpg GOLDEN PATH: 2 HEICs dropped (synthetic DragEvent from
+     public/ fixtures) → FileCard thumbnails DECODED via libheif
+     (200×150 + 133×200, both OK) → run → "Your file is ready! 2
+     files" qa-photo.jpg + qa-portrait.jpg → OUTPUT PIXEL-VERIFIED via
+     drawImage: bg [240,243,248] vs source (240,244,248) ✓, blue
+     [37,99,234] vs (37,99,235) ✓, yellow [250,204,22] vs (250,204,21)
+     ✓ — libheif decode is pixel-exact within JPEG tolerance.
+  ③ heic-to-pdf: 2 HEICs → ImageGrid surface, 2/2 libheif thumbnails
+     loaded (480×360) → run → worker-hook captured the output blob →
+     %PDF- magic ✓, mime ✓, 2 pages ✓, A4 auto-landscape 842×595 ✓
+     (800×600 photo is landscape); pdf.js render + pixel sample: page
+     white bg ✓, photo content ON the page (yellow ellipse [250,204,22]
+     exact) ✓.
+  ④ webp-to-jpg: alpha webp + photo webp → JPGs; ALPHA FLATTENING
+     VERIFIED: transparent corner → [255,255,255] white ✓, red
+     ellipse [220,38,37] ✓, 50%-alpha blue rect → blended [145,176,243]
+     ≈ expected (146,177,245) ✓.
+  ⑤ webp-to-png: alpha webp → TRANSPARENCY PRESERVED: corner alpha=0
+     ✓, red [220,38,38,255] ✓.
+  ⑥ heic-to-png: portrait HEIC → 640×960 PNG (original res) ✓, green
+     [35,197,94] ✓, name qa-portrait.png ✓.
+  ⑦ ERROR PATH: fake %PDF dropped on image tool → honest toast (now
+     kind-correct "not an image" copy after fix).
+  ⑧ HINDI: full heic-to-jpg UI in Devanagari (हेडिंग, how steps,
+     options JPG क्वालिटी/पारदर्शी हिस्से/अधिकतम साइज़, limits इमेज
+     200 MB तक), Devanagari filename फ़ोटो.heic accepted + thumb OK.
+  ⑨ MOBILE 375×812: no h-scroll, CTA 44px touch target.
+  ⑩ CATEGORY #/tools/images: all 4 converters live (2 Soon badges =
+     resize-image-kb P2 + passport-photo P3 — correct).
+  ⑪ SMART DROP: HEIC on home → "HEIC to JPG" primary suggestion +
+     Images to PDF → handoff verified (file lands in workspace, thumb
+     decodes).
+  ⑫ REGRESSION: merge-pdf golden path (2 PDFs → "2 files, 6 pages")
+     — shared DropZone/PageThumbnail/imagegrid changes are safe;
+     pdf-to-jpg landing + lock/i18n sections untouched.
+  ⑬ NETWORK: 323 requests in session, ZERO non-localhost (§2.2
+     privacy rule intact). Console: only dev Fast-Refresh reload
+     notices (i18n json edits) — 0 page errors.
+  ⑭ eslint clean; tsc --noEmit clean; i18n parity 1081=1081 (script
+     checked missing keys both directions: NONE); dev.log clean.
+- QA HARNESS NOTES (pin): (a) agent-browser `open` to the SAME URL does
+  NOT reload the SPA (stale state!) — use `reload` or navigate home
+  first; after reload the hash route needs ~2.5s before the input
+  exists. (b) fetch(blob:) is BLOCKED by CSP connect-src 'self' —
+  verify output pixels via drawImage(liveImg) instead, or hook
+  Worker.prototype.onmessage (defineProperty set-wrap) to capture
+  result Blobs directly (blob.arrayBuffer() bypasses CSP). (c) The
+  dropzone label is a SIBLING of the input — dispatch the drop on
+  `document.querySelector('main label')` (bubbles to the div.onDrop).
+- Cleaned: public/qa-img fixtures removed (regen: pillow-heif for HEIC
+  + Pillow for WEBP; qa-doc.pdf via scripts /tmp/mkpdf.mjs pattern).
+
+Stage Summary:
+- Live tools: 33 (28 + the 5 new). Images category 4/6 (resize-image-kb
+  P2, passport-photo P3 remain). HEIC now decodes in EVERY browser via
+  self-hosted libheif WASM — images-to-pdf upgraded for free too.
+- New reusable assets: src/lib/heic/ (worker decode + main-thread
+  preview queue/cache), tools/convert-image/ (4-way converter worker),
+  CSP wasm-unsafe-eval, kind-aware DropZone copy/rejects, smart-drop
+  HEIC routing.
+- Live tools now: 33 — merge, split, rotate, rearrange, remove,
+  extract, fill-out, watermark, page numbers, header-footer, crop,
+  doc-info, scan, images-to-pdf, compress, lock, unlock, sign, redact,
+  remove-metadata, generate-password, view, jpg-to-pdf, png-to-pdf,
+  webp-to-pdf, heic-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt,
+  webp-to-jpg, webp-to-png, heic-to-jpg, heic-to-png.
+- Suggested commit: "feat: HEIC/WEBP image converters (PRD §7.10) —
+  5 tools on a shared convert-image worker; self-hosted libheif WASM
+  1.23.5 (LGPL, unmodified, license shipped) with Safari-native
+  fallback chain; main-thread HEIC thumbnail queue for grids+cards;
+  alpha flattening/downscale options; kind-aware DropZone copy;
+  CSP wasm-unsafe-eval; EN+HI 1081 keys; pixel-verified QA"
+- Next per plan (one per round): OCR (Tesseract + Hindi traineddata),
+  compress-pdf-to-size, pages-per-sheet (N-up), halve-pdf-pages,
+  overlay-pdf, bookmark-pdf… (see CONTEXT-MEMORY priority queue).
+- Risks/debt (small): ① libheif LGPL — attribution page/notice in
+  About when static pages ship (Phase 6) — license file already
+  served at /libheif/LICENSE-LGPL-3.0. ② AVIF files are honestly
+  refused (no AVIF tool in PRD). ③ HEIC grid with 50 photos decodes
+  sequentially (~0.2-0.5s each) — skeleton shows until ready; fine
+  per PRD perf targets, revisit if QA complains. ④ mif1/msf1 generic
+  HEIF containers accepted — libheif errors honestly if the codec
+  inside is unsupported.

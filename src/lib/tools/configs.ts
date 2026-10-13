@@ -27,6 +27,11 @@ import { config as generatePassword } from "../../../tools/generate-password/con
 import { config as lockPdf } from "../../../tools/lock-pdf/config";
 import { config as unlockPdf } from "../../../tools/unlock-pdf/config";
 import { config as scanPdf } from "../../../tools/scan-pdf/config";
+import { config as webpToJpg } from "../../../tools/webp-to-jpg/config";
+import { config as webpToPng } from "../../../tools/webp-to-png/config";
+import { config as heicToJpg } from "../../../tools/heic-to-jpg/config";
+import { config as heicToPng } from "../../../tools/heic-to-png/config";
+import { config as heicToPdf } from "../../../tools/heic-to-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -64,6 +69,11 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [lockPdf.toolId]: lockPdf,
   [unlockPdf.toolId]: unlockPdf,
   [scanPdf.toolId]: scanPdf,
+  [webpToJpg.toolId]: webpToJpg,
+  [webpToPng.toolId]: webpToPng,
+  [heicToJpg.toolId]: heicToJpg,
+  [heicToPng.toolId]: heicToPng,
+  [heicToPdf.toolId]: heicToPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

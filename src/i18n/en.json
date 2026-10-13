@@ -213,7 +213,11 @@
     "errNotPdfTitle": "That's not a PDF",
     "errNotPdfDesc": "We checked the file's content — it isn't a valid PDF.",
     "warnLowSpaceTitle": "Low device storage",
-    "warnLowSpaceDesc": "Your browser storage is nearly full. Consider freeing some space."
+    "warnLowSpaceDesc": "Your browser storage is nearly full. Consider freeing some space.",
+    "limitsImage": "Images up to {size} · up to {count} files",
+    "limitsImageOne": "Images up to {size} · 1 file",
+    "errNotImageTitle": "That's not an image",
+    "errNotImageDesc": "We checked the file's content — it isn't a JPG, PNG, WEBP or HEIC image."
   },
   "tool": {
     "selectPdfFiles": "Select PDF files",
@@ -276,7 +280,8 @@
     "images": {
       "errorUnsupported": "This image format can't be read here ({detail}). Convert it to JPG or PNG first.",
       "errorDecode": "Couldn't decode {detail} — the file may be damaged or unsupported on this browser.",
-      "errorNoImages": "No images left to convert."
+      "errorNoImages": "No images left to convert.",
+      "errorHeicDecode": "{detail} could not be decoded — it may be damaged or use an unsupported HEIC variant."
     },
     "errorNoText": "No selectable text found — this PDF is probably a scan. OCR is coming in a later phase.",
     "errorWatermarkMissing": "Add the watermark text (or a logo) first.",
@@ -1173,5 +1178,10 @@
     "how1": "Open the camera (or add photos) and capture each page — a live overlay tracks the document.",
     "how2": "Adjust corners if needed and pick a filter: Original, Magic color, B&W or Grayscale — the preview is the final page.",
     "how3": "Create the PDF on your device — download it, share it, or continue with Compress, Lock or Sign."
+  },
+  "imgc": {
+    "how1": "Add your images — they stay on your device the whole time.",
+    "how2": "Set quality, background and size options before running.",
+    "how3": "Download the converted images, share them, or chain into another tool."
   }
 }
