@@ -1881,3 +1881,137 @@ Stage Summary:
   (documented trade-off, count kept exact for honest math); ② pronounce
   entropy counts pool offers, not English phonotactics (documented in
   code); ③ no export/download of the password (by design — copy only).
+
+---
+Task ID: P3.16
+Agent: main (Z.ai Code)
+Task: LOCK PDF + UNLOCK PDF (PRD §8.4 security, lines 848-857) — AES-256
+encryption pair. The P1 catalog gap closed.
+
+Work Log:
+- Research: @cantoo/pdf-lib 2.11.1 chosen (pdf-lib fork, MIT, actively
+  maintained, AES-256/V5/R6 encryption). qpdf-wasm 0.1.0 exists but is
+  pre-1.0; @cantoo won on API + maintenance. Installed alongside pdf-lib
+  (both coexist; only lock/unlock workers import @cantoo).
+- PROTOTYPE FINDINGS (pinned for everyone):
+  ① @cantoo encrypt() produces AES-256 V5/R6/AESV3 by default, AES-128
+  V4/R4/AESV2 optional — exactly the PRD spec.
+  ② NAIVE UNLOCK IS A TRAP: load(password)+save() keeps the ORIGINAL
+  xref-stream object serialized in the output, so stale "/Encrypt N 0 R"
+  trailer entries survive — plain pdf-lib then rejects the "unlocked"
+  file as still-encrypted (chain tools break). FIX = redact rebuild
+  pattern: fresh PDFDocument + copyPages (+ PDFObjectCopier for the
+  AcroForm) writes its own trailer — verified zero "/Encrypt" bytes.
+  ③ @CANTOO PARSE BUG: re-parsing an encrypted file returns GARBAGE for
+  trailer Info strings (title/author) — but the FILE ITSELF IS CORRECT:
+  pdf.js reads Title/Author perfectly. So lockPdf saves honest files;
+  unlockPdf must NOT copy Info from the tainted parse — the surface
+  reads metadata via pdf.js and the worker re-applies it with fresh
+  setters (custom keys dropped, standard six preserved).
+  ④ Form fields + filled values survive the rebuild ONLY with the
+  manual PDFObjectCopier AcroForm copy (plain copyPages drops them).
+  ⑤ Wrong password throws Error("Password incorrect"); no password on
+  encrypted throws EncryptedPDFError; owner-only files open with the
+  EMPTY user password "" (both unlock modes handled).
+- Shipped tools/lock-common/security.ts (PURE, smoke 32/32): LOCK_IDS +
+  UNLOCK_IDS option contracts; SecurityError codes; lockPdf (validate
+  6+ chars, reject already-locked, permissions map incl. a11y +
+  documentAssembly:false); unlockPdf (detect → password → rebuild →
+  meta re-apply); verifyLocked (opens with pw AND refuses without);
+  verifyUnlocked (zero "/Encrypt" bytes + plain reload); estimateTypedBits
+  (charset entropy + common-password penalty for the surface meter).
+- tools/lock-pdf/: worker (parse → lock → verify → -locked.pdf), config
+  (features/FAQ honest about permissions being reader-enforced), surface
+  (the password cockpit: open pw + eye toggle + live 5-segment strength
+  meter + one-tap Generate card [reuses generate-password engine,
+  avoidAmbiguous 16 chars] + confirm field w/ setCustomValidity mismatch
+  + owner pw optional + 6 permission switches + AES-256/128 selector +
+  PRD "recover nahi hoga" amber warning; CTA gated at <6 chars via
+  setRunBlocked).
+- tools/unlock-pdf/: worker (meta JSON in, unlock, verify, -unlocked.pdf),
+  config (features/FAQ incl. honest "no cracking" policy), surface
+  (pdf.js probe detects the lock kind: PasswordException → required
+  password field with DEBOUNCED live check + green "password looks
+  right" badge; opens-freely → "restrictions will be stripped" card;
+  unreadable → repair suggestion; policy card always visible; metadata
+  snapshot rides options as unlock.meta JSON).
+- Wiring: registry lock-pdf + unlock-pdf enabled:true (27 live),
+  configs.ts + surfaces.tsx.
+- i18n: lock (30) + unlock (13) + 5 tool.error* keys, en+hi PERFECT
+  parity (1003 = 1003). Merge script scripts/i18n-lock.py.
+- Lint round: react-hooks/set-state-in-effect in the unlock surface —
+  fixed with the remove-meta file-identity tagging pattern (probe/pages
+  state carries its File; swapped files render "checking" with no
+  synchronous reset). UserPermissions type isn't re-exported by @cantoo
+  (structural inline type); setKeywords takes string[] (comma-split).
+- QA (agent-browser; smoke 32/32 + password smoke 56/56 regression;
+  eslint clean; tsc clean; dev.log clean; console: zero errors):
+  ① LOCK GOLDEN PATH: fixture (2 pages, text + filled form + title/
+  author) → typed "Monsoon#2026!" → meter Excellent 85 bits → run →
+  result. OUTPUT STRUCTURALLY VERIFIED: /Encrypt present, AES-256
+  V5/R6/AESV3, /P -1036 (restrictions), opens with password (2 pages),
+  form fields + "Ramesh Kumar" value survive, pdf.js no-password =
+  PasswordException, with-password Title "Salary Slip October" intact,
+  page text intact.
+  ② Generate button: suggests 16-char avoid-ambiguous password
+  ("jE5yVg>+%q=5Hq_~") → "Use this" fills the field.
+  ③ SHORT PASSWORD: 5 chars → CTA disabled + "at least 6" hint.
+  ④ UNLOCK GOLDEN PATH: the locked output → password field appears
+  (probe detected) → wrong pw → no badge; correct pw → green "looks
+  right" badge → run → OUTPUT VERIFIED: ZERO /Encrypt bytes, plain
+  pdf-lib opens (chain-compat), forms + values survive, Title survives
+  (pdf.js meta path!), pdf.js opens freely, text intact.
+  ⑤ OWNER-ONLY: restrictions-only fixture → "No open password needed"
+  + strip card → run → verified clean + forms + title.
+  ⑥ ERROR HONESTY: wrong pw → "That password is not correct."; locking
+  a locked file → "already password-protected — unlock it first";
+  unlocking a plain file → "no password — nothing to unlock".
+  ⑦ HINDI: result + start-over + lock landing all Devanagari (आपकी
+  फ़ाइल तैयार है, नई फ़ाइल के साथ शुरू करें, पासवर्ड लगाएँ).
+  ⑧ MOBILE 375×812: no h-scroll; VLM 8/10.
+  ⑨ CATEGORY #/tools/security: both cards live, no Soon badges.
+  ⑩ DESKTOP VLM: 8.5/10 "highly polished, professional… balances
+  technical complexity with an approachable aesthetic".
+  ⑪ QA LESSON (pin): after several Fast-Refresh full reloads the SPA
+  state can silently break (CTA clicks do nothing, injected script
+  fragments appear in body) — ALWAYS location.reload() before blaming
+  the app. Also never add a stopPropagation() capture listener while
+  debugging clicks — it kills React's delegated listener permanently
+  for that node.
+- Cleaned: scripts/proto-*.ts deleted (throwaway prototypes), one-off
+  verify scripts removed. Kept: smoke-lock.ts, i18n-lock.py,
+  make-lock-fixture.ts, make-owneronly.ts.
+
+Stage Summary:
+- Live tools: 27 (25 + lock-pdf + unlock-pdf). PRD §8.4 Protect/Unlock
+  delivered: AES-256 (default)/AES-128, open+owner passwords, 6
+  permission switches, strength meter + generate, both unlock modes
+  (known password / owner restrictions), verified outputs, honest
+  errors — all on-device.
+- DEPENDENCY ADDITION: @cantoo/pdf-lib@2.11.1 (MIT) — first package
+  addition since Phase 2. Both workers import it; everything else keeps
+  plain pdf-lib 1.17.1.
+- ENGINE INSIGHTS pinned above (①-⑤) — especially the naive-unlock
+  xref trap and the @cantoo Info parse bug; they will matter for any
+  future encrypted-PDF work (PDF/A, repair, etc.).
+- Assets: smoke-lock.ts 32/32; QA fixtures download/qa-lock-fixture.pdf
+  + qa-owneronly.pdf; screenshots /tmp/lk-01…07 + ul-01…06 (workspace,
+  strong-pw, generated, result, wrong-pw, owner-only, hindi, mobile,
+  final-desktop).
+- Suggested commit: "feat: Lock PDF + Unlock PDF (PRD §8.4) — AES-256/
+  AES-128 via @cantoo/pdf-lib, open+owner passwords, 6 permissions,
+  strength meter + one-tap generate, rebuild-based unlock (no /Encrypt
+  remnant, forms+values+Info preserved), dual-mode detection with live
+  password check, verified outputs, honest errors; EN+HI 48 keys;
+  smoke 32/32"
+- Next per plan (one per round): scan-pdf (camera capture) → then
+  HEIC/WEBP converters (WASM decoders) → web-optimize/rasterize (raster
+  path exists in redact worker to reuse).
+- Risks/debt (small): ① @cantoo Info-parse bug means OUR OWN verify
+  reload can't read titles — pdf.js is the honest reader (documented in
+  the engine header); watch for an upstream fix. ② Owner-only lock
+  (empty open password) is engine-supported but the lock surface always
+  requires 6+ chars — intentional (primary flow); owner-only files are
+  usually made elsewhere. ③ unlock drops CUSTOM Info keys (standard
+  six preserved) — FAQ could mention it. ④ keywords ride as a comma
+  string in the meta JSON (round-trips through setKeywords array).

@@ -24,6 +24,8 @@ import { config as compressPdf } from "../../../tools/compress-pdf/config";
 import { config as signPdf } from "../../../tools/sign-pdf/config";
 import { config as redactPdf } from "../../../tools/redact-pdf/config";
 import { config as generatePassword } from "../../../tools/generate-password/config";
+import { config as lockPdf } from "../../../tools/lock-pdf/config";
+import { config as unlockPdf } from "../../../tools/unlock-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -58,6 +60,8 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [signPdf.toolId]: signPdf,
   [redactPdf.toolId]: redactPdf,
   [generatePassword.toolId]: generatePassword,
+  [lockPdf.toolId]: lockPdf,
+  [unlockPdf.toolId]: unlockPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

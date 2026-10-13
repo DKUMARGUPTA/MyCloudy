@@ -291,7 +291,12 @@
     "errorSignAssetMissing": "A signature image could not be found — add it again and retry.",
     "errorSignAssetBroken": "A signature image could not be read. Recreate it and retry.",
     "errorRedactNoMarks": "Mark at least one redaction box first — search for text or draw one.",
-    "errorRedactVerify": "The redaction could not be verified. Nothing was downloaded — please try again."
+    "errorRedactVerify": "The redaction could not be verified. Nothing was downloaded — please try again.",
+    "errorAlreadyEncrypted": "This PDF is already password-protected — unlock it first.",
+    "errorWrongPassword": "That password is not correct.",
+    "errorNotEncrypted": "This PDF has no password — nothing to unlock.",
+    "errorPwTooShort": "The open password needs at least 6 characters.",
+    "errorNoPassword": "Enter a password first."
   },
   "result": {
     "title": "Your file is ready!",
@@ -1045,5 +1050,52 @@
       "centuries": "~{count} centuries",
       "millennia": "tens of thousands of years"
     }
+  },
+  "lock": {
+    "formTitle": "Set the passwords",
+    "formSubtitle": "AES encryption happens on your device — nothing is sent anywhere",
+    "openPw": "Open password",
+    "pwPlaceholder": "Password to open the file",
+    "confirmPw": "Confirm open password",
+    "mismatch": "Passwords do not match",
+    "pwRules": "Minimum 6 characters — 12 or more is better. Needed to open the file.",
+    "recoverWarn": "If you forget the password it cannot be recovered — keep the original file or save the password somewhere safe.",
+    "ownerPw": "Owner password",
+    "optional": "optional",
+    "ownerPlaceholder": "Full-control password (defaults to the open password)",
+    "ownerHint": "Opening with the owner password unlocks full rights — changing permissions later.",
+    "generate": "Generate",
+    "genHint": "Suggest a strong password",
+    "useThis": "Use this",
+    "permsTitle": "Permissions for readers",
+    "permsHint": "What someone opening with the open password may do. Enforced by well-behaved readers (Acrobat, Chrome, Preview).",
+    "permPrint": "Print",
+    "permCopy": "Copy text",
+    "permModify": "Edit content",
+    "permAnnotate": "Comment & annotate",
+    "permForms": "Fill forms",
+    "permAccess": "Screen readers (accessibility)",
+    "algTitle": "Encryption strength",
+    "alg256": "AES-256",
+    "alg256Hint": "Modern standard — recommended",
+    "alg128": "AES-128",
+    "alg128Hint": "Only for very old readers",
+    "pwTooShort": "Open password needs at least 6 characters",
+    "privacyLine": "The PDF, both passwords and permissions are applied in your browser — they never leave this device."
+  },
+  "unlock": {
+    "checking": "Reading the file…",
+    "pwTitle": "Enter the open password",
+    "pwSubtitle": "The file asks for a password when opening",
+    "pwPlaceholder": "Open password",
+    "pwHint": "Type the password you use to open this PDF. Nothing is sent anywhere.",
+    "pwAccepted": "Password looks right — ready to unlock",
+    "ownerTitle": "No open password needed",
+    "ownerSubtitle": "This file opens freely — restrictions will be stripped",
+    "ownerBody": "This PDF opens without a password but carries owner restrictions (printing, copying or editing disabled). Leave everything as is and run — the restrictions are removed while pages, forms and content stay identical.",
+    "unreadableTitle": "Could not read this file",
+    "unreadableBody": "The PDF could not be opened. It may be damaged — try the Repair PDF tool first.",
+    "policyTitle": "Use responsibly",
+    "policyBody": "Only unlock files you own, or have permission to modify. An unknown open password cannot be removed — by anyone."
   }
 }

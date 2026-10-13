@@ -15,6 +15,8 @@ import { ViewSurface } from "../../../tools/view-pdf/surface";
 import { SignSurface } from "../../../tools/sign-pdf/surface";
 import { RedactSurface } from "../../../tools/redact-pdf/surface";
 import { PasswordSurface } from "../../../tools/generate-password/surface";
+import { LockSurface } from "../../../tools/lock-pdf/surface";
+import { UnlockSurface } from "../../../tools/unlock-pdf/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -74,6 +76,8 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "sign-pdf": SignSurface,
   "redact-pdf": RedactSurface,
   "generate-password": PasswordSurface,
+  "lock-pdf": LockSurface,
+  "unlock-pdf": UnlockSurface,
 };
 
 export function getToolSurface(

@@ -1088,6 +1088,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Lock,
     popularity: 78,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Protect PDF", hi: "पासवर्ड लगाएँ" },
     description: {
       en: "AES-256 password with print/copy/edit permission switches.",
@@ -1106,6 +1107,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: EyeOff,
     popularity: 75,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Unlock PDF", hi: "लॉक हटाएँ" },
     description: {
       en: "Remove a password you know, or owner restrictions — no cracking.",
