@@ -99,6 +99,10 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   // Viewer tools (PRD §6.5) never process anything: no run CTA, no options
   // aside, no processing/result phases — the workspace surface IS the tool.
   const viewerOnly = config.viewerOnly === true;
+  // No-file tools (Generate Password family) render their surface directly
+  // on the landing in place of the DropZone — nothing is ever uploaded.
+  const noFile = config.noFile === true;
+  const surfaceOnly = viewerOnly || noFile;
 
   // One-time chain handoff peek — set by a previous tool's result view or
   // the home Smart Drop Zone right before navigating here. Consumed via
@@ -477,14 +481,28 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
             </div>
           </header>
 
-          <DropZone
-            labelKey={selectLabelKey}
-            multiple={config.maxFiles > 1}
-            maxFiles={config.maxFiles}
-            acceptKind={acceptKind}
-            onAccept={addFiles}
-            currentCount={files.length}
-          />
+          {noFile && WorkspaceSurface ? (
+            <div className="pt-2">
+              <WorkspaceSurface
+                files={[]}
+                values={options}
+                onChange={handleOptionChange}
+                setFileOrder={setFiles}
+                setRunBlocked={handleRunBlocked}
+                addFiles={addFiles}
+                onChain={surfaceChain}
+              />
+            </div>
+          ) : (
+            <DropZone
+              labelKey={selectLabelKey}
+              multiple={config.maxFiles > 1}
+              maxFiles={config.maxFiles}
+              acceptKind={acceptKind}
+              onAccept={addFiles}
+              currentCount={files.length}
+            />
+          )}
 
           <div className="grid gap-8 lg:grid-cols-[2fr_1fr]">
             <div className="flex flex-col gap-8">
@@ -495,9 +513,11 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                   {t("tool.howTitle")}
                 </h2>
                 <ol className="mt-3 grid gap-3 sm:grid-cols-3">
-                  {(viewerOnly
-                    ? ["view.how1", "view.how2", "view.how3"]
-                    : ["tool.how1", "tool.how2", "tool.how3"]
+                  {(config.howKeys ??
+                    (viewerOnly
+                      ? ["view.how1", "view.how2", "view.how3"]
+                      : ["tool.how1", "tool.how2", "tool.how3"]
+                    )
                   ).map((key, index) => (
                     <li
                       key={key}
@@ -633,7 +653,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           <div
             className={cn(
               "mt-4 grid grid-cols-1 gap-6",
-              !viewerOnly && "lg:grid-cols-[minmax(0,1fr)_320px]"
+              !surfaceOnly && "lg:grid-cols-[minmax(0,1fr)_320px]"
             )}
           >
             {/* Main column: the surface owns file presentation when one is
@@ -675,7 +695,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                 Height budget: sticky header (top-20) + sticky CTA bar at the
                 bottom — so the panel never slides under the CTA bar.
                 Viewer tools have no options panel — full-width surface. */}
-            {!viewerOnly ? (
+            {!surfaceOnly ? (
             <aside className="hidden lg:block">
               <div className="sticky top-20 mb-20 flex max-h-[calc(100vh-11.5rem)] flex-col gap-5 overflow-y-auto scrollbar-thin rounded-card border border-border bg-card p-5">
                 <div>
@@ -714,7 +734,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
 
           {/* Sticky CTA (PRD §6.3): count + estimated size + action.
               Hidden for viewer tools — the surface owns its actions. */}
-          {!viewerOnly ? (
+          {!surfaceOnly ? (
           <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85">
             <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">
@@ -774,7 +794,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           </div>
           ) : null}
 
-          {!viewerOnly ? (
+          {!surfaceOnly ? (
           <BottomSheet
             open={optionsOpen}
             onOpenChange={setOptionsOpen}

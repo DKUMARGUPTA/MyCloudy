@@ -1199,6 +1199,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: KeyRound,
     popularity: 26,
     accepts: "any",
+    enabled: true,
     name: { en: "Generate password", hi: "पासवर्ड बनाएँ" },
     description: {
       en: "Strong random or pronounceable passwords — nothing stored.",

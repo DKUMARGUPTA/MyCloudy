@@ -116,6 +116,20 @@ export interface ToolConfig {
    * (print, download and continue-with chains live inside it).
    */
   viewerOnly?: boolean;
+  /**
+   * No-file tools (e.g. Generate Password) never touch a document: the
+   * surface is the whole product and renders directly on the LANDING
+   * page in place of the DropZone — no upload, no run CTA, no options
+   * aside, no processing/result phases. Surfaces for such tools must
+   * tolerate an empty file list (they ignore files entirely).
+   */
+  noFile?: boolean;
+  /**
+   * Landing "How it works" step keys (exactly 3, i18n). Defaults:
+   * viewer tools → view.how1-3, everything else → tool.how1-3. No-file
+   * tools usually need their own steps (there is no file to select).
+   */
+  howKeys?: string[];
   /** File count limits for the DropZone (PRD §6.3 "up to N files"). */
   minFiles: number;
   maxFiles: number;

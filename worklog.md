@@ -1772,3 +1772,112 @@ Stage Summary:
   could reuse a single doc handle); ④ unreferenced XObjects with hidden
   text in the ORIGINAL are never copied anyway (rebuild model) — but the
   FAQ wording stays scoped to what we verify (no text on marked pages).
+
+---
+Task ID: P3.15
+Agent: main (Z.ai Code)
+Task: Status report to user + next planned tool: GENERATE PASSWORD (PRD §8.4 security row, line 884) — the first NO-FILE tool.
+
+Work Log:
+- User asked for a status report (24 tools live at round start). Delivered
+  the full done/remaining breakdown, then continued with the plan's next
+  tool: generate-password. Re-armed the disabled 15-min webDevReview cron
+  (old job 455636 deleted → new job 456137, priority 1).
+- NEW ARCHITECTURE PATTERN — "noFile" tools (config-types.ts): config
+  `noFile: true` renders the tool's SURFACE directly on the LANDING page in
+  place of the DropZone. No upload, no workspace/processing/result phases,
+  no sticky CTA, no options aside (surfaceOnly = viewerOnly || noFile).
+  Plus optional `config.howKeys` for custom 3-step landing copy (defaults
+  stay tool.how1-3 / view.how1-3). This is the template for every future
+  generator-style tool (QR code, invoice number generator etc.).
+- tools/generate-password/ (3 files):
+  - engine.ts (PURE, smoke 56/56): randomInt via Web Crypto
+    crypto.getRandomValues with REJECTION SAMPLING (no modulo bias —
+    chi-square < 30 over 70k draws); generateRandom (one char from EVERY
+    enabled set first + unbiased Fisher-Yates shuffle to hide structure;
+    length clamped 8-64; avoid-ambiguous strips 0O1lI|'"{}[];:,. and
+    friends); generatePronounceable (onset×nucleus×coda syllable soup —
+    entropy counted per actual randomInt draw); generatePassphrase with
+    256 EN + 256 HI common words (both = 512, i.e. exactly 8/8/9 bits per
+    word), separators -._/space/none, capitalize (+1 bit/word), addNumber
+    (2-digit on a random word, honest bits). classifyStrength bands
+    (<28/36/60/80 → 0-4), crackSeconds = 2^(bits-1)/1e10 (GPU offline
+    rig, honest bad-case), crackBucket/crackCount for localized copy,
+    passwordStats checklist helper.
+  - surface.tsx: the whole product. Big mono output (masked ••• when
+    hidden), Copy (timeout-RACED clipboard writeText → 800ms → execCommand
+    fallback → toast either way — see clipboard insight below),
+    Regenerate (archives outgoing value), Show/Hide; strength card
+    (5-segment colored meter + bits + crack estimate); 3 mode tabs;
+    random controls (length slider 8-64 + 4 charset chips — last one
+    can't be turned off + avoid-ambiguous switch); pronounceable length
+    slider; passphrase controls (words 3-8, EN/HI/Both, 5 separators,
+    capitalize + addNumber switches); live checklist chips; session-only
+    history (last 6, Clear, dies with the tab); privacy line.
+    STATE PATTERN (react-hooks/set-state-in-effect-proof): ONE AllOpts
+    object + generateFrom dispatcher; every option change regenerates
+    inside its own event handler (applyOpts/patchRandom/patchPhrase) —
+    NO regenerate-effect at all; initial value via lazy useState
+    initializer.
+  - config.ts: noFile + howKeys + 5 features + 3 FAQ (L10n inline).
+- Wiring: registry enabled:true (25 live), configs.ts + surfaces.tsx.
+- i18n: full "gp" section — 57 top-level keys + 9 crack.* buckets, en+hi
+  PERFECT key-tree parity (955 = 955 total keys each). Merge script
+  scripts/i18n-password.py. FAQ/Q&A typo round: nested-q mistake fixed.
+- QA (agent-browser; smoke 56/56; eslint clean; tsc clean; dev.log clean):
+  ① LANDING = SURFACE: #/tool/generate-password renders the generator
+  immediately (no dropzone): password s0j!%V0sEuLj>2p!, Excellent, 103
+  bits (= 16·log2(83)), "tens of thousands of years" crack line, all
+  three modes + chips visible. ② PASSPHRASE: EN 4-word dash-joined;
+  हिंदी words (फल-गुलाब-नाग-गर्म); Both mixed + capitalize + addNumber →
+  "Bamboo-Frost-छाया-Apron64"; space separator → "Glacier चाँद कहानी
+  Tulip86". ③ RANDOM: pointer-drag length slider 16→58 (regenerates at
+  58 chars); End-key path also exercised. ④ COPY: eval-click (no user
+  activation) → after the 800ms race → honest failure toast "Could not
+  copy…" (execCommand needs a gesture — correct fallback design);
+  NATIVE CDP click → "Copied!" button + "Password copied to clipboard"
+  toast — both paths give feedback (the race exists because headless
+  AND some Android WebViews leave writeText() pending forever).
+  ⑤ REGENERATE ×2 → session history rows accumulate (2 entries
+  verified). ⑥ HIDE/SHOW → ••• mask + restore. ⑦ HINDI locale: full
+  Devanagari UI, hi passphrase "भोर39 संध्या झींगुर सुबह". ⑧ MOBILE
+  375×812: no h-scroll; VLM 8/10 (thin slider track note only).
+  ⑨ CATEGORY #/tools/security: "पासवर्ड बनाएँ" card listed, NO Soon
+  badge. ⑩ Desktop VLM final: 8.5/10 "clean, professional, highly
+  functional… entropy meter effectively builds trust". ⑪ Console: zero
+  errors/warnings all session.
+
+Stage Summary:
+- Live tools: 25 (24 + generate-password). PRD §8.4 Generate password
+  delivered: length 8-64, charsets, avoid-ambiguous, pronounceable,
+  passphrase (HI/EN/Both 256-word lists), copy button, strength meter —
+  Web Crypto only, nothing stored (session history included).
+- ARCHITECTURAL GAIN: the noFile surface-on-landing pattern + howKeys —
+  reusable for every file-less tool coming in the catalog (QR generator,
+  etc.).
+- CLIPBOARD INSIGHT (pin): navigator.clipboard.writeText can HANG (never
+  resolve) in browsers without a permission event (headless, some
+  Android WebViews). ALWAYS race it with a timeout before falling back to
+  execCommand — otherwise the copy button gives zero feedback. Also:
+  Radix shadcn toasts render as ol/li (NOT [data-sonner-toast]) — the
+  QA toast selector was wrong, not the toast.
+- STATE INSIGHT (pin): "regenerate on options change" WITHOUT an effect:
+  one AllOpts object + generation inside the change handlers themselves;
+  initial value from a lazy useState initializer. Lint-clean under
+  react-hooks/set-state-in-effect.
+- Engine assets: smoke-password.ts 56/56; scripts/i18n-password.py;
+  QA screenshots /tmp/gp-01…07 (landing, clean, copy-toast, hindi,
+  mobile, category, final-desktop).
+- Suggested commit: "feat: Generate Password (PRD §8.4) — Web Crypto
+  random/pronounceable/passphrase (256-word HI+EN lists), honest
+  strength meter + offline crack estimate, timeout-raced clipboard copy,
+  session-only history; new noFile tool pattern (surface-on-landing +
+  howKeys); EN+HI 66 keys; smoke 56/56"
+- Next per plan (one per round): lock-pdf/unlock-pdf (@cantoo/pdf-lib or
+  qpdf-wasm research first — encryption is the P1 gap), then scan-pdf
+  (camera), then HEIC/WEBP converters (WASM decoders).
+- Risks/debt (small): ① word lists are 256/256 — fine for passphrases but
+  an EFF-style 7k list would push per-word entropy to ~12.9 bits
+  (documented trade-off, count kept exact for honest math); ② pronounce
+  entropy counts pool offers, not English phonotactics (documented in
+  code); ③ no export/download of the password (by design — copy only).
