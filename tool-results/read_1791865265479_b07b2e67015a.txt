@@ -1,0 +1,759 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+     4→import {
+     5→  Crop as CropIcon,
+     6→  Loader2,
+     7→  ScanSearch,
+     8→  TriangleAlert,
+     9→} from "lucide-react";
+    10→
+    11→import { Button } from "@/components/ui/button";
+    12→import { useI18n } from "@/components/providers/locale-provider";
+    13→import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
+    14→import {
+    15→  getPdfPageCount,
+    16→  getPdfPagePixelSize,
+    17→  renderPdfThumbnail,
+    18→} from "@/lib/pdf/thumbnails";
+    19→import { cn } from "@/lib/utils";
+    20→import {
+    21→  PreviewFileHeader,
+    22→  PreviewPageStrip,
+    23→  PreviewZoomControl,
+    24→} from "../stamp-common/preview-parts";
+    25→import {
+    26→  CROP_IDS,
+    27→  type CropOptions,
+    28→  MIN_CROP_PT,
+    29→  clampedRectYDown,
+    30→  cropIsNoOp,
+    31→  cropTargets,
+    32→  formatPtInUnit,
+    33→  resolveCropOptions,
+    34→} from "./crop-options";
+    35→
+    36→/**
+    37→ * Crop PDF live surface (PRD §8.2 "Crop": "Visual crop box drag; margins
+    38→ * numeric; apply to all / selected; auto-detect margins; shows
+    39→ * before/after"). Renders the page with pdf.js (rotation applied) and lets
+    40→ * the user drag an 8-handle crop box on top — the exact margins the worker
+    41→ * will set, thanks to the shared display-space geometry in crop-options.
+    42→ */
+    43→
+    44→const PREVIEW_MAX_DIM = 560;
+    45→const ZOOM_STEPS = [1, 1.5, 2] as const;
+    46→/** Small breathing room auto-detect leaves around found content (pt). */
+    47→const AUTO_PAD_PT = 6;
+    48→
+    49→type DragMode = "move" | "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+    50→
+    51→interface BasePreview {
+    52→  file: File;
+    53→  pageIndex: number;
+    54→  bitmap: ImageBitmap;
+    55→  /** Display-space page dims in points (pdf.js scale 1, rotation applied). */
+    56→  dispW: number;
+    57→  dispH: number;
+    58→}
+    59→
+    60→/** Drag rect in display points, y down (x1 > x0, y1 > y0). */
+    61→interface LiveRect {
+    62→  x0: number;
+    63→  y0: number;
+    64→  x1: number;
+    65→  y1: number;
+    66→}
+    67→
+    68→interface DragState {
+    69→  mode: DragMode;
+    70→  rect: LiveRect;
+    71→  /** Pointer offset inside the rect when a "move" drag starts (pt). */
+    72→  grabX: number;
+    73→  grabY: number;
+    74→}
+    75→
+    76→/**
+    77→ * The 8 resize handles (corners + edges). Pointer-only (mouse/touch) — the
+    78→ * rect itself is keyboard-nudgeable and the panel inputs are the precise
+    79→ * keyboard path, so handles can stay aria-hidden.
+    80→ */
+    81→const HANDLES: { mode: DragMode; x: number; y: number; cursor: string }[] = [
+    82→  { mode: "nw", x: 0, y: 0, cursor: "nwse-resize" },
+    83→  { mode: "n", x: 50, y: 0, cursor: "ns-resize" },
+    84→  { mode: "ne", x: 100, y: 0, cursor: "nesw-resize" },
+    85→  { mode: "e", x: 100, y: 50, cursor: "ew-resize" },
+    86→  { mode: "se", x: 100, y: 100, cursor: "nwse-resize" },
+    87→  { mode: "s", x: 50, y: 100, cursor: "ns-resize" },
+    88→  { mode: "sw", x: 0, y: 100, cursor: "nesw-resize" },
+    89→  { mode: "w", x: 0, y: 50, cursor: "ew-resize" },
+    90→];
+    91→
+    92→function clampN(n: number, min: number, max: number): number {
+    93→  return Math.min(max, Math.max(min, n));
+    94→}
+    95→
+    96→function round1(n: number): number {
+    97→  return Math.round(n * 10) / 10;
+    98→}
+    99→
+   100→/** Margins → the clamped live rect the overlay shows (display points). */
+   101→function rectFromCrop(
+   102→  crop: CropOptions,
+   103→  base: BasePreview
+   104→): LiveRect {
+   105→  const r = clampedRectYDown(crop, base.dispW, base.dispH, MIN_CROP_PT);
+   106→  return { x0: r.left, y0: r.top, x1: r.left + r.width, y1: r.top + r.height };
+   107→}
+   108→
+   109→/** Bitmap-pixel source rect of the cropped region (for the "after" render). */
+   110→function afterSrcRect(
+   111→  base: BasePreview,
+   112→  crop: CropOptions
+   113→): { x: number; y: number; w: number; h: number } {
+   114→  const r = clampedRectYDown(crop, base.dispW, base.dispH, MIN_CROP_PT);
+   115→  const pxPerPt = base.bitmap.width / base.dispW;
+   116→  return {
+   117→    x: r.left * pxPerPt,
+   118→    y: r.top * pxPerPt,
+   119→    w: Math.max(1, r.width * pxPerPt),
+   120→    h: Math.max(1, r.height * pxPerPt),
+   121→  };
+   122→}
+   123→
+   124→export function CropSurface({
+   125→  files,
+   126→  values,
+   127→  onChange,
+   128→  setFileOrder,
+   129→  setRunBlocked,
+   130→}: ToolSurfaceProps): React.JSX.Element | null {
+   131→  const { t } = useI18n();
+   132→  const file = files.length > 0 ? files[0].file : null;
+   133→  const fileMeta = files[0];
+   134→
+   135→  const crop = useMemo(() => resolveCropOptions(values), [values]);
+   136→  const [pageCount, setPageCount] = useState(0);
+   137→  const [selectedPage, setSelectedPage] = useState(0);
+   138→  const [base, setBase] = useState<BasePreview | null>(null);
+   139→  const [failure, setFailure] = useState<{ file: File; pageIndex: number } | null>(
+   140→    null
+   141→  );
+   142→  const [zoom, setZoom] = useState<(typeof ZOOM_STEPS)[number]>(1);
+   143→  const [view, setView] = useState<"before" | "after">("before");
+   144→  const [drag, setDrag] = useState<DragState | null>(null);
+   145→  const [autoBusy, setAutoBusy] = useState(false);
+   146→  const [autoFlash, setAutoFlash] = useState<"done" | "empty" | null>(null);
+   147→  /** Measured canvas CSS box (px, relative to the wrapper) — the overlay
+   148→   *  tracks this instead of the wrapper so max-height clamping (tall pages
+   149→   *  on short viewports) never misaligns the crop box. */
+   150→  const [canvasBox, setCanvasBox] = useState<{
+   151→    left: number;
+   152→    top: number;
+   153→    w: number;
+   154→    h: number;
+   155→  } | null>(null);
+   156→  const canvasRef = useRef<HTMLCanvasElement>(null);
+   157→  const overlayRef = useRef<HTMLDivElement>(null);
+   158→  const flashTimer = useRef<number | null>(null);
+   159→
+   160→  const targets = useMemo(
+   161→    () => (pageCount > 0 ? cropTargets(crop, pageCount) : []),
+   162→    [crop, pageCount]
+   163→  );
+   164→  const targetSet = useMemo(() => new Set(targets ?? []), [targets]);
+   165→
+   166→  // Page count for the selected file.
+   167→  useEffect(() => {
+   168→    if (!file) return;
+   169→    let cancelled = false;
+   170→    void (async () => {
+   171→      const count = await getPdfPageCount(file);
+   172→      if (cancelled) return;
+   173→      setPageCount(count);
+   174→      setSelectedPage((page) => Math.min(page, Math.max(0, count - 1)));
+   175→    })().catch(() => undefined);
+   176→    return () => {
+   177→      cancelled = true;
+   178→    };
+   179→  }, [file]);
+   180→
+   181→  // Base render for the selected page (pdf.js via the shared queue) at the
+   182→  // page's DISPLAYED orientation — the crop box lives in that space.
+   183→  useEffect(() => {
+   184→    if (!file) return;
+   185→    let cancelled = false;
+   186→    void (async () => {
+   187→      const [thumb, pixel] = await Promise.all([
+   188→        renderPdfThumbnail(file, {
+   189→          pageIndex: selectedPage,
+   190→          maxDim: PREVIEW_MAX_DIM,
+   191→        }),
+   192→        getPdfPagePixelSize(file, 1, selectedPage),
+   193→      ]);
+   194→      if (cancelled) return;
+   195→      const bitmap = await createImageBitmap(thumb.blob);
+   196→      if (cancelled) return;
+   197→      setFailure(null);
+   198→      // A new page/file cancels any in-flight drag.
+   199→      setDrag(null);
+   200→      setBase({ file, pageIndex: selectedPage, bitmap, dispW: pixel.width, dispH: pixel.height });
+   201→    })().catch(() => {
+   202→      if (!cancelled) {
+   203→        setFailure({ file, pageIndex: selectedPage });
+   204→        setBase(null);
+   205→      }
+   206→    });
+   207→    return () => {
+   208→      cancelled = true;
+   209→    };
+   210→  }, [file, selectedPage]);
+   211→
+   212→  // CTA gating (amber reason in the sticky bar).
+   213→  const blockedKey =
+   214→    targets === null
+   215→      ? "wm.rangeInvalid"
+   216→      : targets.length === 0
+   217→        ? "crop.ctaNoPages"
+   218→        : cropIsNoOp(crop)
+   219→          ? "crop.ctaNoCrop"
+   220→          : null;
+   221→  useEffect(() => {
+   222→    setRunBlocked(blockedKey);
+   223→  }, [blockedKey, setRunBlocked]);
+   224→
+   225→  // THE painter — "before" draws the full page, "after" draws exactly the
+   226→  // cropped region (what the output page will look like). After painting it
+   227→  // measures the canvas's rendered box (rAF, post-layout) so the overlay
+   228→  // can track it precisely.
+   229→  useEffect(() => {
+   230→    const canvas = canvasRef.current;
+   231→    if (!canvas || !base) return;
+   232→    const ctx = canvas.getContext("2d");
+   233→    if (!ctx) return;
+   234→    if (view === "after") {
+   235→      const src = afterSrcRect(base, crop);
+   236→      canvas.width = Math.max(1, Math.round(src.w));
+   237→      canvas.height = Math.max(1, Math.round(src.h));
+   238→      ctx.clearRect(0, 0, canvas.width, canvas.height);
+   239→      ctx.drawImage(base.bitmap, src.x, src.y, src.w, src.h, 0, 0, src.w, src.h);
+   240→    } else {
+   241→      canvas.width = base.bitmap.width;
+   242→      canvas.height = base.bitmap.height;
+   243→      ctx.clearRect(0, 0, canvas.width, canvas.height);
+   244→      ctx.drawImage(base.bitmap, 0, 0);
+   245→    }
+   246→    const raf = requestAnimationFrame(() => {
+   247→      const el = canvasRef.current;
+   248→      if (!el) return;
+   249→      const r = el.getBoundingClientRect();
+   250→      if (r.width < 2 || r.height < 2) return;
+   251→      const parent = el.parentElement;
+   252→      const pr = parent
+   253→        ? parent.getBoundingClientRect()
+   254→        : { left: r.left, top: r.top };
+   255→      setCanvasBox({
+   256→        left: r.left - pr.left,
+   257→        top: r.top - pr.top,
+   258→        w: r.width,
+   259→        h: r.height,
+   260→      });
+   261→    });
+   262→    return () => cancelAnimationFrame(raf);
+   263→  }, [base, view, crop]);
+   264→
+   265→  // Transient auto-detect feedback chip (cleared on unmount).
+   266→  useEffect(() => {
+   267→    return () => {
+   268→      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+   269→    };
+   270→  }, []);
+   271→
+   272→  const flash = useCallback((kind: "done" | "empty"): void => {
+   273→    setAutoFlash(kind);
+   274→    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+   275→    flashTimer.current = window.setTimeout(() => setAutoFlash(null), 2600);
+   276→  }, []);
+   277→
+   278→  const removeFile = useCallback((): void => {
+   279→    setFileOrder([]);
+   280→  }, [setFileOrder]);
+   281→
+   282→  // --- Drag machinery -------------------------------------------------
+   283→  const beginDrag = (mode: DragMode) => {
+   284→    return (event: React.PointerEvent<HTMLDivElement>): void => {
+   285→      if (!base || view !== "before" || event.button !== 0) return;
+   286→      const overlay = overlayRef.current;
+   287→      if (!overlay) return;
+   288→      const box = overlay.getBoundingClientRect();
+   289→      const px = ((event.clientX - box.left) / box.width) * base.dispW;
+   290→      const py = ((event.clientY - box.top) / box.height) * base.dispH;
+   291→      const start = rectFromCrop(crop, base);
+   292→      try {
+   293→        overlay.setPointerCapture(event.pointerId);
+   294→      } catch {
+   295→        // Some pointer ids can't be captured (synthetic events, exotic
+   296→        // browsers) — the overlay-level move/up handlers still drive the
+   297→        // drag as long as the pointer stays over the canvas.
+   298→      }
+   299→      setDrag({ mode, rect: start, grabX: px - start.x0, grabY: py - start.y0 });
+   300→      event.preventDefault();
+   301→    };
+   302→  };
+   303→
+   304→  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+   305→    if (!drag || !base || !overlayRef.current) return;
+   306→    const box = overlayRef.current.getBoundingClientRect();
+   307→    const px = clampN(((event.clientX - box.left) / box.width) * base.dispW, 0, base.dispW);
+   308→    const py = clampN(((event.clientY - box.top) / box.height) * base.dispH, 0, base.dispH);
+   309→    const min = MIN_CROP_PT;
+   310→    let { x0, y0, x1, y1 } = drag.rect;
+   311→    switch (drag.mode) {
+   312→      case "move": {
+   313→        const w = x1 - x0;
+   314→        const h = y1 - y0;
+   315→        x0 = clampN(px - drag.grabX, 0, base.dispW - w);
+   316→        y0 = clampN(py - drag.grabY, 0, base.dispH - h);
+   317→        x1 = x0 + w;
+   318→        y1 = y0 + h;
+   319→        break;
+   320→      }
+   321→      case "nw":
+   322→        x0 = clampN(px, 0, x1 - min);
+   323→        y0 = clampN(py, 0, y1 - min);
+   324→        break;
+   325→      case "n":
+   326→        y0 = clampN(py, 0, y1 - min);
+   327→        break;
+   328→      case "ne":
+   329→        x1 = clampN(px, x0 + min, base.dispW);
+   330→        y0 = clampN(py, 0, y1 - min);
+   331→        break;
+   332→      case "e":
+   333→        x1 = clampN(px, x0 + min, base.dispW);
+   334→        break;
+   335→      case "se":
+   336→        x1 = clampN(px, x0 + min, base.dispW);
+   337→        y1 = clampN(py, y0 + min, base.dispH);
+   338→        break;
+   339→      case "s":
+   340→        y1 = clampN(py, y0 + min, base.dispH);
+   341→        break;
+   342→      case "sw":
+   343→        x0 = clampN(px, 0, x1 - min);
+   344→        y1 = clampN(py, y0 + min, base.dispH);
+   345→        break;
+   346→      case "w":
+   347→        x0 = clampN(px, 0, x1 - min);
+   348→        break;
+   349→    }
+   350→    setDrag({ ...drag, rect: { x0, y0, x1, y1 } });
+   351→  };
+   352→
+   353→  const commitDrag = useCallback((): void => {
+   354→    if (!drag || !base) return;
+   355→    const { x0, y0, x1, y1 } = drag.rect;
+   356→    onChange(CROP_IDS.left, round1(x0));
+   357→    onChange(CROP_IDS.top, round1(y0));
+   358→    onChange(CROP_IDS.right, round1(base.dispW - x1));
+   359→    onChange(CROP_IDS.bottom, round1(base.dispH - y1));
+   360→    setDrag(null);
+   361→  }, [base, drag, onChange]);
+   362→
+   363→  const cancelDrag = useCallback((): void => {
+   364→    setDrag(null);
+   365→  }, []);
+   366→
+   367→  // Keyboard nudge: arrows move the box 1 pt (Shift = 10 pt).
+   368→  const handleRectKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+   369→    if (!base) return;
+   370→    const step = event.shiftKey ? 10 : 1;
+   371→    let dx = 0;
+   372→    let dy = 0;
+   373→    switch (event.key) {
+   374→      case "ArrowLeft":
+   375→        dx = -step;
+   376→        break;
+   377→      case "ArrowRight":
+   378→        dx = step;
+   379→        break;
+   380→      case "ArrowUp":
+   381→        dy = -step;
+   382→        break;
+   383→      case "ArrowDown":
+   384→        dy = step;
+   385→        break;
+   386→      default:
+   387→        return;
+   388→    }
+   389→    event.preventDefault();
+   390→    const r = rectFromCrop(crop, base);
+   391→    const w = r.x1 - r.x0;
+   392→    const h = r.y1 - r.y0;
+   393→    const x0 = clampN(r.x0 + dx, 0, base.dispW - w);
+   394→    const y0 = clampN(r.y0 + dy, 0, base.dispH - h);
+   395→    onChange(CROP_IDS.left, round1(x0));
+   396→    onChange(CROP_IDS.top, round1(y0));
+   397→    onChange(CROP_IDS.right, round1(base.dispW - (x0 + w)));
+   398→    onChange(CROP_IDS.bottom, round1(base.dispH - (y0 + h)));
+   399→  };
+   400→
+   401→  // --- Auto-detect margins --------------------------------------------
+   402→  const runAutoDetect = (): void => {
+   403→    if (!base || autoBusy) return;
+   404→    setAutoBusy(true);
+   405→    void (async () => {
+   406→      // Let the busy spinner paint before the synchronous pixel scan.
+   407→      await new Promise((resolve) => setTimeout(resolve, 30));
+   408→      try {
+   409→        const scan = document.createElement("canvas");
+   410→        scan.width = base.bitmap.width;
+   411→        scan.height = base.bitmap.height;
+   412→        const sctx = scan.getContext("2d", { willReadFrequently: true });
+   413→        if (!sctx) return;
+   414→        sctx.drawImage(base.bitmap, 0, 0);
+   415→        const img = sctx.getImageData(0, 0, scan.width, scan.height);
+   416→        const { data, width, height } = img;
+   417→        let minX = 0;
+   418→        let minY = 0;
+   419→        let maxX = -1;
+   420→        let maxY = -1;
+   421→        for (let y = 0; y < height; y += 1) {
+   422→          for (let x = 0; x < width; x += 1) {
+   423→            const i = (y * width + x) * 4;
+   424→            const alpha = data[i + 3];
+   425→            // Ink = visibly non-white OR not fully opaque (soft edges,
+   426→            // transparent regions where the page shows through).
+   427→            const ink =
+   428→              (alpha < 250 && alpha > 8) ||
+   429→              (alpha >= 250 &&
+   430→                (data[i] < 246 || data[i + 1] < 246 || data[i + 2] < 246));
+   431→            if (!ink) continue;
+   432→            if (maxX < 0) {
+   433→              minX = x;
+   434→              minY = y;
+   435→              maxX = x;
+   436→              maxY = y;
+   437→            } else {
+   438→              if (x < minX) minX = x;
+   439→              if (y < minY) minY = y;
+   440→              if (x > maxX) maxX = x;
+   441→              if (y > maxY) maxY = y;
+   442→            }
+   443→          }
+   444→        }
+   445→        if (maxX < 0) {
+   446→          flash("empty");
+   447→          return;
+   448→        }
+   449→        const pxPerPt = width / base.dispW;
+   450→        onChange(CROP_IDS.left, Math.max(0, round1(minX / pxPerPt - AUTO_PAD_PT)));
+   451→        onChange(CROP_IDS.top, Math.max(0, round1(minY / pxPerPt - AUTO_PAD_PT)));
+   452→        onChange(
+   453→          CROP_IDS.right,
+   454→          Math.max(0, round1(base.dispW - (maxX + 1) / pxPerPt - AUTO_PAD_PT))
+   455→        );
+   456→        onChange(
+   457→          CROP_IDS.bottom,
+   458→          Math.max(0, round1(base.dispH - (maxY + 1) / pxPerPt - AUTO_PAD_PT))
+   459→        );
+   460→        flash("done");
+   461→      } finally {
+   462→        setAutoBusy(false);
+   463→      }
+   464→    })();
+   465→  };
+   466→
+   467→  if (!file || !fileMeta) return null;
+   468→
+   469→  const current =
+   470→    base !== null && base.file === file && base.pageIndex === selectedPage
+   471→      ? base
+   472→      : null;
+   473→  const invalidRange = targets === null;
+   474→  const failed =
+   475→    failure !== null &&
+   476→    failure.file === file &&
+   477→    failure.pageIndex === selectedPage &&
+   478→    current === null;
+   479→
+   480→  // The overlay rect (percent-positioned so zoom never breaks it).
+   481→  const live = drag !== null && current !== null ? drag.rect : null;
+   482→  const overlayRect = current
+   483→    ? (live ?? rectFromCrop(crop, current))
+   484→    : null;
+   485→
+   486→  const afterPx =
+   487→    current !== null && view === "after" ? afterSrcRect(current, crop) : null;
+   488→  const canvasW = afterPx ? afterPx.w : (current?.bitmap.width ?? 0);
+   489→  const croppedSize =
+   490→    current !== null
+   491→      ? clampedRectYDown(crop, current.dispW, current.dispH, MIN_CROP_PT)
+   492→      : null;
+   493→
+   494→  return (
+   495→    <div className="flex flex-col gap-4">
+   496→      <PreviewFileHeader
+   497→        file={file}
+   498→        pageCount={pageCount}
+   499→        onRemove={removeFile}
+   500→      />
+   501→
+   502→      {/* Live preview card */}
+   503→      <div className="overflow-hidden rounded-card border border-border bg-card">
+   504→        <div className="flex flex-col gap-2 border-b border-border/60 bg-muted/40 px-4 py-2.5">
+   505→          <div className="flex flex-wrap items-center justify-between gap-2">
+   506→            <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+   507→              <CropIcon className="size-3.5 text-primary" aria-hidden="true" />
+   508→              {t("crop.previewTitle")}
+   509→            </p>
+   510→            <div className="flex flex-wrap items-center gap-1.5">
+   511→              {/* Auto-detect: snap the box to the page's content. */}
+   512→              <Button
+   513→                type="button"
+   514→                variant="outline"
+   515→                size="sm"
+   516→                className="h-7 gap-1.5 rounded-btn px-2 text-[11px]"
+   517→                onClick={runAutoDetect}
+   518→                disabled={current === null || autoBusy}
+   519→                aria-label={t("crop.autoDetect")}
+   520→              >
+   521→                {autoBusy ? (
+   522→                  <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+   523→                ) : (
+   524→                  <ScanSearch className="size-3.5" aria-hidden="true" />
+   525→                )}
+   526→                {t("crop.autoDetect")}
+   527→              </Button>
+   528→              {/* Before / after — PRD §8.2 "shows before/after". */}
+   529→              <div
+   530→                role="group"
+   531→                aria-label={t("crop.beforeAfterLabel")}
+   532→                className="flex items-center gap-0.5 rounded-btn border border-border bg-background p-0.5"
+   533→              >
+   534→                {(["before", "after"] as const).map((mode) => (
+   535→                  <button
+   536→                    key={mode}
+   537→                    type="button"
+   538→                    onClick={() => setView(mode)}
+   539→                    aria-pressed={view === mode}
+   540→                    className={cn(
+   541→                      "min-h-6 rounded-md px-2 text-[10px] font-semibold transition-colors",
+   542→                      view === mode
+   543→                        ? "bg-primary/15 text-primary"
+   544→                        : "text-muted-foreground hover:text-foreground"
+   545→                    )}
+   546→                  >
+   547→                    {t(mode === "before" ? "crop.before" : "crop.after")}
+   548→                  </button>
+   549→                ))}
+   550→              </div>
+   551→              <PreviewZoomControl
+   552→                steps={ZOOM_STEPS}
+   553→                value={zoom}
+   554→                onChange={setZoom}
+   555→              />
+   556→            </div>
+   557→          </div>
+   558→          <div className="flex flex-wrap items-center gap-1.5">
+   559→            {autoFlash !== null ? (
+   560→              <span
+   561→                className={cn(
+   562→                  "flex items-center gap-1 rounded-chip px-2 py-0.5 text-[10px] font-semibold",
+   563→                  autoFlash === "done"
+   564→                    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
+   565→                    : "bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300"
+   566→                )}
+   567→              >
+   568→                {autoFlash === "done" ? (
+   569→                  t("crop.autoDone", { page: selectedPage + 1 })
+   570→                ) : (
+   571→                  <>
+   572→                    <TriangleAlert className="size-3" aria-hidden="true" />
+   573→                    {t("crop.autoEmpty")}
+   574→                  </>
+   575→                )}
+   576→              </span>
+   577→            ) : null}
+   578→            {invalidRange ? (
+   579→              <span className="flex items-center gap-1 rounded-chip bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
+   580→                <TriangleAlert className="size-3" aria-hidden="true" />
+   581→                {t("wm.rangeInvalid")}
+   582→              </span>
+   583→            ) : (
+   584→              <>
+   585→                {croppedSize !== null ? (
+   586→                  <span className="rounded-chip bg-primary/10 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-primary">
+   587→                    {t("crop.chipSize", {
+   588→                      w: formatPtInUnit(croppedSize.width, crop.unit),
+   589→                      h: formatPtInUnit(croppedSize.height, crop.unit),
+   590→                      unit: crop.unit,
+   591→                    })}
+   592→                  </span>
+   593→                ) : null}
+   594→                <span className="rounded-chip bg-primary/10 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-primary">
+   595→                  {t("wm.markedCount", {
+   596→                    count: targets?.length ?? 0,
+   597→                    pages: pageCount,
+   598→                  })}
+   599→                </span>
+   600→              </>
+   601→            )}
+   602→          </div>
+   603→        </div>
+   604→
+   605→        <div
+   606→          className={cn(
+   607→            "relative flex max-w-full justify-center bg-muted/30 px-4 py-5",
+   608→            zoom > 1
+   609→              ? "overflow-x-auto overflow-y-hidden scrollbar-thin"
+   610→              : "items-center overflow-hidden"
+   611→          )}
+   612→        >
+   613→          {failed ? (
+   614→            <div className="flex items-start gap-2.5 px-3 py-6 text-xs leading-relaxed text-muted-foreground">
+   615→              <TriangleAlert
+   616→                className="mt-0.5 size-4 shrink-0 text-amber-500"
+   617→                aria-hidden="true"
+   618→              />
+   619→              {t("wm.previewFailed")}
+   620→            </div>
+   621→          ) : current ? (
+   622→            <div
+   623→              className={cn(
+   624→                "relative inline-block max-w-full",
+   625→                zoom > 1 && "max-w-none shrink-0"
+   626→              )}
+   627→            >
+   628→              <canvas
+   629→                ref={canvasRef}
+   630→                style={
+   631→                  zoom > 1
+   632→                    ? { width: `${Math.round(canvasW * zoom)}px` }
+   633→                    : undefined
+   634→                }
+   635→                className={cn(
+   636→                  "block h-auto w-auto max-h-[62vh] max-w-full rounded-md border border-border/60 shadow-sm",
+   637→                  view === "after"
+   638→                    ? "bg-background ring-1 ring-emerald-300/70 dark:ring-emerald-500/40"
+   639→                    : ""
+   640→                )}
+   641→                aria-label={t("crop.previewTitle")}
+   642→                role="img"
+   643→              />
+   644→              {view === "before" && overlayRect !== null && canvasBox !== null ? (
+   645→                <div
+   646→                  ref={overlayRef}
+   647→                  className="absolute select-none"
+   648→                  style={{
+   649→                    left: `${canvasBox.left}px`,
+   650→                    top: `${canvasBox.top}px`,
+   651→                    width: `${canvasBox.w}px`,
+   652→                    height: `${canvasBox.h}px`,
+   653→                    touchAction: "none",
+   654→                  }}
+   655→                  onPointerMove={handlePointerMove}
+   656→                  onPointerUp={commitDrag}
+   657→                  onPointerCancel={cancelDrag}
+   658→                  onKeyDown={(event) => {
+   659→                    if (event.key === "Escape" && drag !== null) {
+   660→                      event.preventDefault();
+   661→                      cancelDrag();
+   662→                    }
+   663→                  }}
+   664→                >
+   665→                  {/* The crop box: dims everything outside, thirds inside. */}
+   666→                  <div
+   667→                    role="group"
+   668→                    tabIndex={0}
+   669→                    aria-label={t("crop.rectLabel")}
+   670→                    aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
+   671→                    onKeyDown={handleRectKeyDown}
+   672→                    onPointerDown={beginDrag("move")}
+   673→                    className="absolute cursor-move outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+   674→                    style={{
+   675→                      left: `${(overlayRect.x0 / current.dispW) * 100}%`,
+   676→                      top: `${(overlayRect.y0 / current.dispH) * 100}%`,
+   677→                      width: `${((overlayRect.x1 - overlayRect.x0) / current.dispW) * 100}%`,
+   678→                      height: `${((overlayRect.y1 - overlayRect.y0) / current.dispH) * 100}%`,
+   679→                      boxShadow: "0 0 0 9999px rgba(15, 23, 42, 0.45)",
+   680→                      border: "1.5px solid var(--primary)",
+   681→                    }}
+   682→                  >
+   683→                    {/* Rule-of-thirds guides. */}
+   684→                    <span
+   685→                      aria-hidden="true"
+   686→                      className="pointer-events-none absolute inset-y-0 left-1/3 w-px bg-white/30"
+   687→                    />
+   688→                    <span
+   689→                      aria-hidden="true"
+   690→                      className="pointer-events-none absolute inset-y-0 left-2/3 w-px bg-white/30"
+   691→                    />
+   692→                    <span
+   693→                      aria-hidden="true"
+   694→                      className="pointer-events-none absolute inset-x-0 top-1/3 h-px bg-white/30"
+   695→                    />
+   696→                    <span
+   697→                      aria-hidden="true"
+   698→                      className="pointer-events-none absolute inset-x-0 top-2/3 h-px bg-white/30"
+   699→                    />
+   700→                    <span className="sr-only">{t("crop.rectHint")}</span>
+   701→                    {/* Live size label while dragging. */}
+   702→                    {drag !== null ? (
+   703→                      <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-chip bg-primary px-2 py-0.5 text-[10px] font-semibold tabular-nums text-primary-foreground shadow-sm">
+   704→                        {formatPtInUnit(overlayRect.x1 - overlayRect.x0, crop.unit)}{" "}
+   705→                        ×{" "}
+   706→                        {formatPtInUnit(overlayRect.y1 - overlayRect.y0, crop.unit)}{" "}
+   707→                        {crop.unit}
+   708→                      </span>
+   709→                    ) : null}
+   710→                    {/* 8 resize handles (pointer; the panel inputs are the
+   711→                        keyboard-precise path). */}
+   712→                    {HANDLES.map((handle) => (
+   713→                      <div
+   714→                        key={handle.mode}
+   715→                        aria-hidden="true"
+   716→                        onPointerDown={beginDrag(handle.mode)}
+   717→                        className="absolute flex size-7 items-center justify-center"
+   718→                        style={{
+   719→                          left: `${handle.x}%`,
+   720→                          top: `${handle.y}%`,
+   721→                          transform: "translate(-50%, -50%)",
+   722→                          cursor: handle.cursor,
+   723→                          touchAction: "none",
+   724→                        }}
+   725→                      >
+   726→                        <span className="pointer-events-none size-3 rounded-[3px] border-2 border-primary bg-background shadow-sm" />
+   727→                      </div>
+   728→                    ))}
+   729→                  </div>
+   730→                </div>
+   731→              ) : null}
+   732→            </div>
+   733→          ) : (
+   734→            <div className="flex h-72 w-52 items-center justify-center rounded-md border border-dashed border-border">
+   735→              <Loader2
+   736→                className="size-5 animate-spin text-muted-foreground"
+   737→                aria-hidden="true"
+   738→              />
+   739→            </div>
+   740→          )}
+   741→        </div>
+   742→
+   743→        <p className="border-t border-border/60 px-4 py-2 text-[10px] text-muted-foreground">
+   744→          {view === "after" ? t("crop.afterNote") : t("crop.previewNote")}
+   745→        </p>
+   746→      </div>
+   747→
+   748→      {/* Page strip */}
+   749→      <PreviewPageStrip
+   750→        file={file}
+   751→        pageCount={pageCount}
+   752→        selected={selectedPage}
+   753→        onSelect={setSelectedPage}
+   754→        markedSet={targetSet}
+   755→      />
+   756→    </div>
+   757→  );
+   758→}
+   759→

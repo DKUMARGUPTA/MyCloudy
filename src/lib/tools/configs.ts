@@ -22,6 +22,7 @@ import { config as fillOutPdf } from "../../../tools/fill-out-pdf/config";
 import { config as viewPdf } from "../../../tools/view-pdf/config";
 import { config as compressPdf } from "../../../tools/compress-pdf/config";
 import { config as signPdf } from "../../../tools/sign-pdf/config";
+import { config as redactPdf } from "../../../tools/redact-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -54,6 +55,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [viewPdf.toolId]: viewPdf,
   [compressPdf.toolId]: compressPdf,
   [signPdf.toolId]: signPdf,
+  [redactPdf.toolId]: redactPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

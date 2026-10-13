@@ -1161,6 +1161,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: EyeOff,
     popularity: 28,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Redact PDF", hi: "रिडैक्ट करें" },
     description: {
       en: "Permanently hide Aadhaar, PAN, phone or custom text — verified gone.",

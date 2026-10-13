@@ -394,6 +394,22 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
     toast({ title: t("result.removedToast") });
   }, [files, t, toast]);
 
+  /**
+   * "Start over with a new file" (result view): a clean slate — outputs,
+   * workspace files AND options (per-file marks, placements, per-file
+   * ranges) all go, so nothing from the previous document can leak into
+   * the next one. Stays on this tool's page.
+   */
+  const startOver = useCallback(() => {
+    setOutputs([]);
+    setRunSummary(null);
+    setFiles([]);
+    setOptions(defaultOptionValues(config.options));
+    setRunBlockedKey(null);
+    void clearWorkingFiles().catch(() => undefined);
+    setPhase("landing");
+  }, [config.options]);
+
   const totalSize = files.reduce((sum, item) => sum + item.file.size, 0);
   const ctaLabel = `${tool.name[locale]} ${t("tool.ctaArrow")}`;
   const Icon = tool.icon;
@@ -818,6 +834,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           chainTargets={chainTargets}
           onChain={handleChain}
           onRemoveFromDevice={removeFromDevice}
+          onStartOver={startOver}
         />
       ) : null}
 

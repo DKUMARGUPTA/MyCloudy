@@ -9,6 +9,7 @@ import {
   FileDown,
   HardDriveDownload,
   Pencil,
+  RotateCcw,
   Share2,
   ThumbsDown,
   ThumbsUp,
@@ -58,6 +59,7 @@ export function ResultView({
   chainTargets,
   onChain,
   onRemoveFromDevice,
+  onStartOver,
 }: {
   tool: ToolDef;
   outputs: ToolOutput[];
@@ -68,6 +70,8 @@ export function ResultView({
   chainTargets: ToolDef[];
   onChain: (nextTool: ToolDef, files: File[]) => void;
   onRemoveFromDevice: () => void;
+  /** "Start over with a new file" — clean slate on this tool's page. */
+  onStartOver?: () => void;
 }) {
   const { t, locale } = useI18n();
   const { toast } = useToast();
@@ -373,6 +377,20 @@ export function ResultView({
             ))}
           </div>
         </div>
+      ) : null}
+
+      {/* Start over — clean slate on this tool (all tools, PRD §6.4) */}
+      {onStartOver ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="touch"
+          className="mt-4 w-full gap-2 rounded-btn"
+          onClick={onStartOver}
+        >
+          <RotateCcw className="size-4" aria-hidden="true" />
+          {t("result.startOver")}
+        </Button>
       ) : null}
 
       {/* Feedback + privacy (PRD §6.4) */}

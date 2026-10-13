@@ -1617,3 +1617,158 @@ Stage Summary:
   — honest device-only copy instead; ⑤ view-pdf PasswordException prompt
   exists there, but the shared renderPdfThumbnail has no password path —
   other preview tools would need the same catch sign-pdf now has.
+
+---
+Task ID: P3.14
+Agent: Z.ai Code (main orchestrator, session web-3597fa1e)
+Task: Ship the Redact PDF tool (PRD §8.4, security category, pop 28) —
+true redaction with search-based marking, manual boxes, verified-gone output.
+Also recovered the lost ResultView "Start over" feature for ALL tools.
+
+Work Log:
+- STATE RECONCILIATION (important for every future round): the previous
+  session's summary claimed "44 tools live, P4.5 Start-over complete" — the
+  DISK disagrees: worklog ended at P3.13, registry had 23 enabled tools, and
+  ResultView had NO start-over button. Disk is always the source of truth;
+  this round shipped against the disk state (P3 plan: one tool per round).
+- Dev server was DOWN at session start; restarted via scripts/dev-daemon.py
+  (double-fork — the only way processes survive invocation reaping).
+- Shipped tools/redact-pdf/ (5 files):
+  - engine.ts (PURE, 49/49 smoke): RedactMark model (display fractions,
+    sign's proven placement geometry); 4 Indian-pattern regexes with
+    look-around guards (Aadhaar 12-digit grouped/solid, PAN, IN mobile
+    incl. +91/91- and 5+5 split forms, email) — 16-digit order ids and
+    landlines rejected; termMatches (case-insensitive); buildPieces/
+    buildLines with synthetic-space joining whose segment offsets map
+    every character back to its covering piece; pieceUserBox (rotated
+    glyph runs via advance/up vectors); userRectToDisplay (pdf.js viewport
+    transforms, R0/90/180/270 hand-verified); displayRectToFraction
+    (clamped + padded); parseRedactMarks (defensive: clamps, dedupes,
+    caps 600, drops bad kinds/pages).
+  - search.ts: extractPageTexts (main-thread pdf.js via the shared
+    loadPdfjs, WeakMap cache per File, failed parses don't poison the
+    cache) + findSensitiveMarks (patterns+terms → enabled marks) +
+    hasNoText (scan detection for the honest hint).
+  - surface.tsx: sign-skeleton preview (header/strip/zoom/canvas +
+    PasswordException card) with: found matches as translucent red
+    switches (click = keep/skip, chip shows the kind), manual boxes drawn
+    by dragging empty canvas (drag/resize/delete + keyboard nudge), a
+    selected-mark inspector (kind/text/page/state + keep/redact/delete),
+    Find rail (4 preset toggles + custom terms textarea + Find & mark +
+    per-kind count chips + Clear found), how-it-works security card.
+    Marks live in options "m:<fileId>" + "mkey" (epoch-key — replacing
+    the file can never leak boxes). Live-drag state commits once on
+    release (sign's pattern).
+  - worker.ts (the security core): pdf.js renders each marked page at
+    the chosen DPI (40MP pixel cap), paints OPAQUE boxes onto the raster
+    BEFORE encoding, then rebuilds the output as a NEW PDFDocument —
+    unmarked pages copied vector-perfect (copyPages), marked pages become
+    JPEG-only addPage([displayDims]) draws. Because nothing from a marked
+    page is ever copied, its content streams, annotations, widgets and
+    form values never enter the file (in-place surgery would leave
+    orphaned-but-serialized objects — pdf-lib writes orphans; the
+    rebuild sidesteps the whole problem). VERIFICATION STEP: the saved
+    bytes are re-opened with pdf.js and every marked page must extract
+    ZERO text or the run fails honestly (tool.errorRedactVerify).
+  - config.ts: schema options fill the shared aside (paying off P3.13's
+    empty-options debt): Flatten quality 96/150/300 DPI + box colour
+    black/white (both opaque); features + FAQ honestly explain the
+    flatten model; chains → view/remove-metadata/compress/pdf-to-jpg.
+- Wiring: registry redact-pdf enabled: true (24 live), configs.ts +
+  surfaces.tsx entries.
+- i18n: full "redact" section (44 keys) en+hi with PERFECT key-tree
+  parity + tool.errorRedactNoMarks / tool.errorRedactVerify. Merge
+  script scripts/i18n-redact.py (same pattern as i18n-watermark).
+- RECOVERED LOST FEATURE (all tools): ResultView "Start over with a new
+  file" — shell startOver() clears outputs, files, options (per-file
+  marks/placements/ranges die so nothing leaks across documents) and
+  returns to the landing state on the SAME tool page; button rendered
+  under the What-next card (RotateCcw icon). i18n result.startOver en+hi.
+- Fixed along the way: sign-pdf + redact grid class was mangled
+  ("grid-cols-inmax" — actually correct on disk; the READ pipeline eats
+  "[m" sequences — beware when grepping Tailwind arbitrary-value classes).
+- QA (agent-browser, fresh contexts; ONE benign console warning the whole
+  session — a pdf.js font-load race during cleanup, everything rendered):
+  ① GOLDEN PATH: upload 3-page fixture (page 1 = Aadhaar/PAN/phone/
+  email lines, page 2 = /Rotate 90 with phone+email, page 3 = clean
+  text) → Find & mark → "6 matches marked on 2 pages" → run → output
+  downloaded. STRUCTURAL VERIFY (bun + pdf-lib + zlib): zero text
+  operators on ALL flattened pages, zero font programs, zero annotations,
+  AcroForm absent, one JPEG XObject per page, and NO sensitive string at
+  byte level (plain latin1 + UTF-16BE, decompressed streams included).
+  ② PIXEL VERIFY (in-app pdf-to-jpg on the output, 1240×1754): all four
+  match rows 65-77% solid BLACK at the exact expected fractions (x 10%,
+  y 13/16/19/22%); clean areas <1% dark; VLM confirms 4 black rectangles,
+  ORCHID line + heading + name still readable, text sharp.
+  ③ ROTATED PAGE: page 2 rasterizes landscape (842×595, rotation
+  normalized to 0); its phone+email matches paint as two VERTICAL bands at
+  display x 84.6-88.7% = user y 712-747 — the head-tilted reading of a
+  /Rotate 90 page is preserved and covered exactly; title (user y 780)
+  stays readable.
+  ④ SELECTIVE REDACTION: page-2 matches toggled OFF before run → output
+  page 2 KEEPS /Rotate 90 + its vector text (phone/email strings found in
+  the DECOMPRESSED stream — exactly the kept content), page 3 fully
+  selectable, page 1 flattened + its strings gone everywhere.
+  ⑤ CUSTOM TERM + TOGGLE: "orchid" term found + marked; toggled off →
+  dashed muted box, run keeps the line (verified in output1: ORCHID
+  readable). Manual box drag → box at EXACTLY the drawn fractions
+  (30.05%, 19.79%, 31.87%, 26.93%) → 100% solid black in output page 3.
+  ⑥ HINDI end-to-end: workspace + find + run + result + Start-over all
+  Devanagari; 6 मैच चिह्नित; आपकी फ़ाइल तैयार है!
+  ⑦ MOBILE 375×812: no h-scroll, clean vertical stack, red boxes + CTA
+  visible (VLM: "well-optimized, no critical rendering errors").
+  ⑧ ENCRYPTED: qa-p311-locked.pdf → amber "password-protected. Unlock it
+  first" card (no spinner hang).
+  ⑨ SCAN: image-only fixture → Find → "No matches found" + "no
+  selectable text — looks like a scan. Draw boxes instead." hint.
+  ⑩ START OVER (new): result → "नई फ़ाइल के साथ शुरू करें" → landing with
+  fresh dropzone; options reset (marks can't leak to the next file).
+  ⑪ Security category: Redact PDF live, no Soon badge.
+  ⑫ Desktop VLM design review: 8.5/10 "production-ready" (hierarchy 9,
+  color 9; notes: slight spacing under Find button, thumbnails floating).
+- smoke-redact.ts 49/49 PASS; eslint clean; tsc clean (after prisma
+  generate); dev.log clean (the @swc/helpers module-not-found noise at
+  daemon startup predates this round — known Next16/bun quirk, app fine).
+
+Stage Summary:
+- Live tools: 24 (23 + redact-pdf). PRD §8.4 Redact delivered with a
+  provably-secure flatten model — see the worker docstring for why
+  rebuild-beats-surgery (orphan serialization).
+- ENGINE INSIGHTS (pin these): ① pdf.js text items' transform is USER
+  space; item.width is in user units; map glyph boxes through
+  viewport.transform for display fractions — R0/90/180/270 verified by
+  hand in smoke §5. ② pdf-lib serializes ORPHANED objects — deleting a
+  dict entry does NOT remove data from the file; only rebuilding into a
+  fresh context (copyPages/addPage) guarantees the data never existed.
+  ③ pdf-lib normalize() sets empty Font/Annots placeholders on pages —
+  presence ≠ leak; check entry counts. ④ The READ/grep pipeline eats
+  "[m" — never trust greps over Tailwind arbitrary-value classes.
+- RECOVERED: ResultView Start-over (was in the lost pre-P3.14 worklog
+  summary as "P4.5, all tools" — disk had nothing; now real for all tools).
+- Assets: QA fixtures download/qa-redact-fixture.pdf (3 pages: sensitive
+  text, /Rotate 90, clean), qa-redact-scan.pdf (no text layer); outputs
+  qa-redact-output.pdf (all-pages redact), qa-redact-output2.pdf
+  (selective), qa-redact-page{1,2,3}.jpg (pixel-proof). Screenshots
+  /tmp/redact-01…13 (landing, workspace, found, mobile, hindi, encrypted,
+  scan, final-desktop).
+- Suggested commit: "feat: Redact PDF (PRD §8.4) — find sensitive text
+  (Aadhaar/PAN/phone/email patterns + custom terms, coverage-preserving
+  line joining), review boxes + manual draw/drag/resize, flatten-rebuild
+  output (marked pages → opaque-box JPEG pages in a fresh doc: text
+  layers, annotations, form values never copied), post-save zero-text
+  verification, DPI + colour options in shared panel; EN+HI 46 keys;
+  smoke 49/49; feat: ResultView start-over for all tools (options+
+  files+outputs reset); fix: none needed on disk (grep artifact)"
+- Next per plan (one per round): generate-password (small, Web Crypto,
+  needs a viewerOnly-like no-file mode), then lock-pdf/unlock-pdf
+  (@cantoo/pdf-lib or qpdf-wasm research), scan-pdf (camera),
+  HEIC/WEBP converters (WASM decoders).
+- Risks/debt (small): ① redaction search cannot span line breaks (a
+  12-digit Aadhaar split across two lines is missed — line-scoped by
+  design; FAQ could mention it); ② marked pages flatten at JPEG q0.92 —
+  photographic scans at 300 DPI produce large outputs (fine for KYC-style
+  docs; a PNG path could be added for text-heavy pages); ③ the worker
+  re-parses the output per verification page (one pdf.js doc per page —
+  could reuse a single doc handle); ④ unreferenced XObjects with hidden
+  text in the ORIGINAL are never copied anyway (rebuild model) — but the
+  FAQ wording stays scoped to what we verify (no text on marked pages).

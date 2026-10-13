@@ -1,0 +1,994 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+     4→import {
+     5→  Calendar,
+     6→  Check,
+     7→  Loader2,
+     8→  Lock,
+     9→  MousePointerClick,
+    10→  PenTool,
+    11→  Plus,
+    12→  Signature,
+    13→  Trash2,
+    14→  TriangleAlert,
+    15→  Type as TypeIcon,
+    16→  UserRound,
+    17→} from "lucide-react";
+    18→
+    19→import { Button } from "@/components/ui/button";
+    20→import { Input } from "@/components/ui/input";
+    21→import { Label } from "@/components/ui/label";
+    22→import {
+    23→  Select,
+    24→  SelectContent,
+    25→  SelectItem,
+    26→  SelectTrigger,
+    27→  SelectValue,
+    28→} from "@/components/ui/select";
+    29→import { Slider } from "@/components/ui/slider";
+    30→import { useI18n } from "@/components/providers/locale-provider";
+    31→import { useToast } from "@/hooks/use-toast";
+    32→import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
+    33→import {
+    34→  getPdfPageCount,
+    35→  getPdfPagePixelSize,
+    36→  renderPdfThumbnail,
+    37→} from "@/lib/pdf/thumbnails";
+    38→import { cn } from "@/lib/utils";
+    39→import { loadFillProfile } from "../fill-out-pdf/profile";
+    40→import {
+    41→  PreviewFileHeader,
+    42→  PreviewPageStrip,
+    43→  PreviewZoomControl,
+    44→} from "../stamp-common/preview-parts";
+    45→import {
+    46→  type SignPlacement,
+    47→  parsePlacementsOption,
+    48→  placementTargets,
+    49→  placementsOnPage,
+    50→} from "./engine";
+    51→import { renderCheckmark, renderTextSignature } from "./raster";
+    52→import { SignatureDialog } from "./signature-dialog";
+    53→import {
+    54→  type StoredSignature,
+    55→  addSignature,
+    56→  listSignatures,
+    57→  removeSignature,
+    58→  subscribeSignatures,
+    59→} from "./signature-store";
+    60→
+    61→/**
+    62→ * Sign PDF live surface (PRD §7.6): page preview with click-to-place
+    63→ * signatures, direct-manipulation boxes (drag / resize handle / rotate
+    64→ * handle / delete), a quick-stamp rail (date, name, initials, checkmark)
+    65→ * and a per-placement inspector (pages, size, rotation, opacity).
+    66→ *
+    67→ * Placements live in the shell options under "p:<fileId>" as JSON —
+    68→ * replacing the file can never leak placements into another document.
+    69→ * The PNG signatures themselves ride the run as assets, never options.
+    70→ */
+    71→
+    72→const PREVIEW_MAX_DIM = 560;
+    73→const ZOOM_STEPS = [1, 1.5, 2] as const;
+    74→const KEY_PREFIX = "p:";
+    75→const SIGKEY_ID = "sigkey";
+    76→
+    77→type DragMode = "move" | "resize" | "rotate";
+    78→
+    79→interface DragState {
+    80→  mode: DragMode;
+    81→  id: string;
+    82→  orig: SignPlacement;
+    83→  grabDx: number;
+    84→  grabDy: number;
+    85→}
+    86→
+    87→interface Base {
+    88→  file: File;
+    89→  pageIndex: number;
+    90→  bitmap: ImageBitmap;
+    91→  dispW: number;
+    92→  dispH: number;
+    93→}
+    94→
+    95→let placementSeq = 0;
+    96→const nextPlacementId = (): string =>
+    97→  `pl${Date.now().toString(36)}${(placementSeq += 1).toString(36)}`;
+    98→
+    99→function initialsOf(name: string): string {
+   100→  const parts = name.trim().split(/\s+/).filter(Boolean);
+   101→  if (parts.length === 0) return "";
+   102→  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+   103→  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+   104→}
+   105→
+   106→export function SignSurface(props: ToolSurfaceProps): React.JSX.Element | null {
+   107→  const { files, values, onChange, setFileOrder, setRunBlocked } = props;
+   108→  const { t, locale } = useI18n();
+   109→  const { toast } = useToast();
+   110→  const file = files.length > 0 ? files[0].file : null;
+   111→  const fileId = files.length > 0 ? files[0].id : "";
+   112→
+   113→  const [pageCount, setPageCount] = useState(0);
+   114→  const [selectedPage, setSelectedPage] = useState(0);
+   115→  const [zoom, setZoom] = useState<number>(1);
+   116→  const [base, setBase] = useState<Base | null>(null);
+   117→  const [failed, setFailed] = useState<{ file: File; pageIndex: number } | null>(null);
+   118→  const overlayRef = useRef<HTMLDivElement>(null);
+   119→
+   120→  const [signatures, setSignatures] = useState<StoredSignature[]>(() =>
+   121→    typeof window === "undefined" ? [] : listSignatures()
+   122→  );
+   123→  const [armedId, setArmedId] = useState<string | null>(null);
+   124→  const [selectedId, setSelectedId] = useState<string | null>(null);
+   125→  const [dialogOpen, setDialogOpen] = useState(false);
+   126→  const [drag, setDrag] = useState<DragState | null>(null);
+   127→  const [angleFlash, setAngleFlash] = useState<number | null>(null);
+   128→  const [profileName, setProfileName] = useState("");
+   129→
+   130→  // --- Library subscription (draw/type/upload saves, removals) ----------
+   131→  useEffect(() => {
+   132→    const sync = (): void => setSignatures([...listSignatures()]);
+   133→    sync();
+   134→    return subscribeSignatures(sync);
+   135→  }, []);
+   136→
+   137→  useEffect(() => {
+   138→    if (typeof window !== "undefined") {
+   139→      setProfileName(loadFillProfile().name);
+   140→    }
+   141→  }, []);
+   142→
+   143→  // --- Placements (option "p:<fileId>") ---------------------------------
+   144→  const placementsKey = `${KEY_PREFIX}${fileId}`;
+   145→  const placements = useMemo(
+   146→    () => parsePlacementsOption(file ? values[placementsKey] : undefined),
+   147→    [file, values, placementsKey]
+   148→  );
+   149→
+   150→  const commit = useCallback(
+   151→    (next: SignPlacement[]): void => {
+   152→      onChange(placementsKey, JSON.stringify(next));
+   153→    },
+   154→    [onChange, placementsKey]
+   155→  );
+   156→
+   157→  // Stamp the current file id so the worker only reads this document's
+   158→  // placements — replacing the file can never leak them across.
+   159→  useEffect(() => {
+   160→    if (fileId !== "") onChange(SIGKEY_ID, fileId);
+   161→  }, [fileId, onChange]);
+   162→
+   163→  // --- Page count + preview ---------------------------------------------
+   164→  const [pageError, setPageError] = useState<null | "password" | "corrupt">(null);
+   165→  useEffect(() => {
+   166→    if (!file) return;
+   167→    let cancelled = false;
+   168→    setPageError(null);
+   169→    void (async () => {
+   170→      const count = await getPdfPageCount(file);
+   171→      if (cancelled) return;
+   172→      setPageCount(count);
+   173→      setSelectedPage((page) => Math.min(page, Math.max(0, count - 1)));
+   174→    })().catch((error: unknown) => {
+   175→      if (cancelled) return;
+   176→      // PasswordException arrives as the PdfParseError cause — the whole
+   177→      // preview pipeline would otherwise hang on pageCount 0.
+   178→      const cause = (error as { cause?: unknown })?.cause;
+   179→      const name =
+   180→        (cause as { name?: string } | undefined)?.name ??
+   181→        (error as { name?: string } | undefined)?.name ??
+   182→        "";
+   183→      const message = String((error as Error)?.message ?? "");
+   184→      setPageError(
+   185→        name === "PasswordException" || /password/i.test(message)
+   186→          ? "password"
+   187→          : "corrupt"
+   188→      );
+   189→      setPageCount(0);
+   190→    });
+   191→    return () => {
+   192→      cancelled = true;
+   193→    };
+   194→  }, [file]);
+   195→
+   196→  useEffect(() => {
+   197→    if (!file || pageCount === 0) return;
+   198→    let cancelled = false;
+   199→    void (async () => {
+   200→      const [thumb, pixel] = await Promise.all([
+   201→        renderPdfThumbnail(file, {
+   202→          pageIndex: selectedPage,
+   203→          maxDim: Math.round(PREVIEW_MAX_DIM * zoom),
+   204→        }),
+   205→        getPdfPagePixelSize(file, 1, selectedPage),
+   206→      ]);
+   207→      if (cancelled) return;
+   208→      const bitmap = await createImageBitmap(thumb.blob);
+   209→      if (cancelled) return;
+   210→      setFailed(null);
+   211→      setBase({ file, pageIndex: selectedPage, bitmap, dispW: pixel.width, dispH: pixel.height });
+   212→    })().catch(() => {
+   213→      if (!cancelled) {
+   214→        setFailed({ file, pageIndex: selectedPage });
+   215→        setBase(null);
+   216→      }
+   217→    });
+   218→    return () => {
+   219→      cancelled = true;
+   220→    };
+   221→  }, [file, pageCount, selectedPage, zoom]);
+   222→
+   223→  const canvasRef = useRef<HTMLCanvasElement>(null);
+   224→  useEffect(() => {
+   225→    const canvas = canvasRef.current;
+   226→    if (!canvas || !base) return;
+   227→    const ctx = canvas.getContext("2d");
+   228→    if (!ctx) return;
+   229→    canvas.width = base.bitmap.width;
+   230→    canvas.height = base.bitmap.height;
+   231→    ctx.clearRect(0, 0, canvas.width, canvas.height);
+   232→    ctx.drawImage(base.bitmap, 0, 0);
+   233→  }, [base]);
+   234→
+   235→  // --- CTA gating --------------------------------------------------------
+   236→  const blockedKey =
+   237→    !file || placements.length > 0 ? null : "sign.ctaNoSignatures";
+   238→  useEffect(() => {
+   239→    setRunBlocked(blockedKey);
+   240→  }, [blockedKey, setRunBlocked]);
+   241→
+   242→  // --- Derived helpers ---------------------------------------------------
+   243→  const sigById = useMemo(() => {
+   244→    const map = new Map<string, StoredSignature>();
+   245→    for (const sig of signatures) map.set(sig.id, sig);
+   246→    return map;
+   247→  }, [signatures]);
+   248→
+   249→  const current =
+   250→    base !== null && base.file === file && base.pageIndex === selectedPage ? base : null;
+   251→  const pagePlacements = useMemo(
+   252→    () => placementsOnPage(placements, selectedPage, pageCount),
+   253→    [placements, selectedPage, pageCount]
+   254→  );
+   255→
+   256→  const markedPages = useMemo(() => {
+   257→    const set = new Set<number>();
+   258→    for (const p of placements) {
+   259→      const targets = placementTargets(p, pageCount);
+   260→      if (targets) for (const i of targets) set.add(i);
+   261→    }
+   262→    return set;
+   263→  }, [placements, pageCount]);
+   264→
+   265→  const armed = armedId !== null ? sigById.get(armedId) ?? null : null;
+   266→  const selected = selectedId !== null ? placements.find((p) => p.id === selectedId) ?? null : null;
+   267→
+   268→  // --- Placement actions -------------------------------------------------
+   269→  const placeAt = useCallback(
+   270→    (fx: number, fy: number): void => {
+   271→      if (!armed || !file) return;
+   272→      const next: SignPlacement = {
+   273→        id: nextPlacementId(),
+   274→        sigId: armed.id,
+   275→        cx: Math.min(Math.max(fx, 0.05), 0.95),
+   276→        cy: Math.min(Math.max(fy, 0.05), 0.95),
+   277→        w: 0.25,
+   278→        rot: 0,
+   279→        op: 1,
+   280→        pages: "this",
+   281→        pageIndex: selectedPage,
+   282→      };
+   283→      commit([...placements, next]);
+   284→      setSelectedId(next.id);
+   285→    },
+   286→    [armed, commit, file, placements, selectedPage]
+   287→  );
+   288→
+   289→  const updatePlacement = useCallback(
+   290→    (id: string, patch: Partial<SignPlacement>): void => {
+   291→      commit(
+   292→        placements.map((p) =>
+   293→          p.id === id
+   294→            ? { ...p, ...patch, range: patch.range ?? (patch.pages === "range" ? p.range : undefined) }
+   295→            : p
+   296→        )
+   297→      );
+   298→    },
+   299→    [commit, placements]
+   300→  );
+   301→
+   302→  const removePlacement = useCallback(
+   303→    (id: string): void => {
+   304→      commit(placements.filter((p) => p.id !== id));
+   305→      if (selectedId === id) setSelectedId(null);
+   306→    },
+   307→    [commit, placements, selectedId]
+   308→  );
+   309→
+   310→  const handleRemoveSignature = useCallback(
+   311→    (id: string): void => {
+   312→      removeSignature(id);
+   313→      if (armedId === id) setArmedId(null);
+   314→      const stillUsed = placements.some((p) => p.sigId === id);
+   315→      if (stillUsed) commit(placements.filter((p) => p.sigId !== id));
+   316→    },
+   317→    [armedId, commit, placements]
+   318→  );
+   319→
+   320→  // --- Overlay pointer machinery (place / drag / resize / rotate) --------
+   321→  const fractionPos = (event: React.PointerEvent<Element>): { fx: number; fy: number } => {
+   322→    const overlay = overlayRef.current;
+   323→    if (!overlay) return { fx: 0, fy: 0 };
+   324→    const box = overlay.getBoundingClientRect();
+   325→    return {
+   326→      fx: (event.clientX - box.left) / box.width,
+   327→      fy: (event.clientY - box.top) / box.height,
+   328→    };
+   329→  };
+   330→
+   331→  const handleOverlayPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+   332→    if (!current || event.button !== 0) return;
+   333→    const overlay = overlayRef.current;
+   334→    if (!overlay) return;
+   335→    // Only empty-canvas clicks place — boxes stop propagation.
+   336→    const { fx, fy } = fractionPos(event);
+   337→    try {
+   338→      overlay.setPointerCapture(event.pointerId);
+   339→    } catch {
+   340→      // Synthetic pointers — the overlay handlers still cover the gesture.
+   341→    }
+   342→    if (armed) {
+   343→      placeAt(fx, fy);
+   344→      event.preventDefault();
+   345→    } else {
+   346→      setSelectedId(null);
+   347→    }
+   348→  };
+   349→
+   350→  const beginBoxDrag =
+   351→    (mode: DragMode, placement: SignPlacement) =>
+   352→    (event: React.PointerEvent<HTMLDivElement>): void => {
+   353→      if (!current || event.button !== 0 || drag) return;
+   354→      event.stopPropagation();
+   355→      const overlay = overlayRef.current;
+   356→      if (!overlay) return;
+   357→      try {
+   358→        overlay.setPointerCapture(event.pointerId);
+   359→      } catch {
+   360→        // See above — non-capturable pointers still drag via overlay.
+   361→      }
+   362→      const { fx, fy } = fractionPos(event);
+   363→      setSelectedId(placement.id);
+   364→      setArmedId(null);
+   365→      setDrag({
+   366→        mode,
+   367→        id: placement.id,
+   368→        orig: placement,
+   369→        grabDx: fx - placement.cx,
+   370→        grabDy: fy - placement.cy,
+   371→      });
+   372→      event.preventDefault();
+   373→    };
+   374→
+   375→  const handleOverlayPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+   376→    if (!drag) return;
+   377→    const { fx, fy } = fractionPos(event);
+   378→    const { orig, mode } = drag;
+   379→    switch (mode) {
+   380→      case "move": {
+   381→        const cx = Math.min(Math.max(fx - drag.grabDx, 0), 1);
+   382→        const cy = Math.min(Math.max(fy - drag.grabDy, 0), 1);
+   383→        setDrag({ ...drag, orig: { ...orig, cx, cy } });
+   384→        break;
+   385→      }
+   386→      case "resize": {
+   387→        const leftEdge = orig.cx - orig.w / 2;
+   388→        const w = Math.min(Math.max((fx - leftEdge) / 1, 0.05), 1.2);
+   389→        setDrag({ ...drag, orig: { ...orig, w } });
+   390→        break;
+   391→      }
+   392→      case "rotate": {
+   393→        const dx = fx - orig.cx;
+   394→        const dy = fy - orig.cy;
+   395→        let deg = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+   396→        // Snap to 15° steps when close — signatures usually sit straight.
+   397→        const snapped = Math.round(deg / 15) * 15;
+   398→        if (Math.abs(deg - snapped) < 5) deg = snapped;
+   399→        deg = Math.round(deg * 10) / 10;
+   400→        setDrag({ ...drag, orig: { ...orig, rot: Math.min(Math.max(deg, -180), 180) } });
+   401→        setAngleFlash(deg);
+   402→        break;
+   403→      }
+   404→    }
+   405→  };
+   406→
+   407→  const commitDrag = useCallback((): void => {
+   408→    if (!drag) return;
+   409→    commit(placements.map((p) => (p.id === drag.id ? drag.orig : p)));
+   410→    setDrag(null);
+   411→    if (angleFlash !== null) {
+   412→      window.setTimeout(() => setAngleFlash(null), 900);
+   413→    }
+   414→  }, [angleFlash, commit, drag, placements]);
+   415→
+   416→  const handleBoxKeyDown =
+   417→    (placement: SignPlacement) =>
+   418→    (event: React.KeyboardEvent<HTMLDivElement>): void => {
+   419→      const step = event.shiftKey ? 0.02 : 0.005;
+   420→      switch (event.key) {
+   421→        case "ArrowLeft":
+   422→          event.preventDefault();
+   423→          updatePlacement(placement.id, { cx: clampN(placement.cx - step, 0, 1) });
+   424→          break;
+   425→        case "ArrowRight":
+   426→          event.preventDefault();
+   427→          updatePlacement(placement.id, { cx: clampN(placement.cx + step, 0, 1) });
+   428→          break;
+   429→        case "ArrowUp":
+   430→          event.preventDefault();
+   431→          updatePlacement(placement.id, { cy: clampN(placement.cy - step, 0, 1) });
+   432→          break;
+   433→        case "ArrowDown":
+   434→          event.preventDefault();
+   435→          updatePlacement(placement.id, { cy: clampN(placement.cy + step, 0, 1) });
+   436→          break;
+   437→        case "Delete":
+   438→        case "Backspace":
+   439→          event.preventDefault();
+   440→          removePlacement(placement.id);
+   441→          break;
+   442→        case "Escape":
+   443→          setSelectedId(null);
+   444→          setArmedId(null);
+   445→          break;
+   446→        default:
+   447→          return;
+   448→      }
+   449→    };
+   450→
+   451→  // --- Quick stamps -------------------------------------------------------
+   452→  const quickStampBusy = useRef(false);
+   453→  const quickStamp = useCallback(
+   454→    (kind: "date" | "name" | "initials" | "check"): void => {
+   455→      if (quickStampBusy.current) return;
+   456→      quickStampBusy.current = true;
+   457→      void (async () => {
+   458→        try {
+   459→          if (kind === "check") {
+   460→            const mark = renderCheckmark("#1e3a5f");
+   461→            const sig = addSignature(
+   462→              { kind: "stamp", label: t("sign.quickCheck"), dataUrl: mark.dataUrl, w: mark.w, h: mark.h },
+   463→              { persist: false }
+   464→            );
+   465→            setArmedId(sig.id);
+   466→          } else if (kind === "date") {
+   467→            const date = new Date().toLocaleDateString(
+   468→              locale === "hi" ? "hi-IN" : "en-IN",
+   469→              { day: "numeric", month: "short", year: "numeric" }
+   470→            );
+   471→            const rendered = await renderTextSignature(
+   472→              date,
+   473→              'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+   474→              "#1e3a5f",
+   475→              88
+   476→            );
+   477→            const sig = addSignature(
+   478→              { kind: "stamp", label: date, dataUrl: rendered.dataUrl, w: rendered.w, h: rendered.h },
+   479→              { persist: false }
+   480→            );
+   481→            setArmedId(sig.id);
+   482→          } else {
+   483→            const name = profileName.trim();
+   484→            if (name.length === 0) {
+   485→              toast({ title: t("sign.quickNeedName") });
+   486→              return;
+   487→            }
+   488→            const text = kind === "initials" ? initialsOf(name) : name;
+   489→            const rendered = await renderTextSignature(text, "Great Vibes", "#111827", 96);
+   490→            const sig = addSignature(
+   491→              { kind: "stamp", label: text, dataUrl: rendered.dataUrl, w: rendered.w, h: rendered.h },
+   492→              { persist: false }
+   493→            );
+   494→            setArmedId(sig.id);
+   495→          }
+   496→        } finally {
+   497→          quickStampBusy.current = false;
+   498→        }
+   499→      })();
+   500→    },
+   501→    [locale, profileName, t, toast]
+   502→  );
+   503→
+   504→  const removeFile = useCallback((): void => {
+   505→    setFileOrder([]);
+   506→  }, [setFileOrder]);
+   507→
+   508→  if (!file) return null;
+   509→
+   510→  const aspectOf = (sigId: string): number => {
+   511→    const sig = sigById.get(sigId);
+   512→    if (!sig || sig.h <= 0) return 0.4;
+   513→    return sig.w / sig.h; // width/height — height fraction derives from it
+   514→  };
+   515→
+   516→  const renderPlacementBox = (placement: SignPlacement): React.JSX.Element | null => {
+   517→    const sig = sigById.get(placement.sigId);
+   518→    if (!sig) return null;
+   519→    const live = drag !== null && drag.id === placement.id ? drag.orig : placement;
+   520→    const aspectW = aspectOf(placement.sigId); // w/h
+   521→    const hFrac =
+   522→      (live.w * (current ? current.dispW / current.dispH : 1)) / Math.max(aspectW, 0.05);
+   523→    const isSel = selectedId === placement.id;
+   524→    return (
+   525→      <div
+   526→        key={placement.id}
+   527→        role="group"
+   528→        aria-label={t("sign.placementBox", { label: sig.label })}
+   529→        tabIndex={0}
+   530→        className={cn(
+   531→          "absolute rounded-[3px] outline-none transition-shadow",
+   532→          isSel
+   533→            ? "z-20 ring-2 ring-primary"
+   534→            : "z-10 ring-1 ring-primary/25 hover:ring-primary/60"
+   535→        )}
+   536→        style={{
+   537→          left: `${(live.cx - live.w / 2) * 100}%`,
+   538→          top: `${(live.cy - hFrac / 2) * 100}%`,
+   539→          width: `${live.w * 100}%`,
+   540→          height: `${hFrac * 100}%`,
+   541→          transform: `rotate(${live.rot}deg)`,
+   542→          cursor: drag?.mode === "move" ? "grabbing" : "grab",
+   543→          touchAction: "none",
+   544→        }}
+   545→        onPointerDown={beginBoxDrag("move", placement)}
+   546→        onKeyDown={handleBoxKeyDown(placement)}
+   547→      >
+   548→        { }
+   549→        <img
+   550→          src={sig.dataUrl}
+   551→          alt=""
+   552→          draggable={false}
+   553→          className="pointer-events-none h-full w-full select-none object-contain"
+   554→          style={{ opacity: live.op }}
+   555→        />
+   556→        {isSel ? (
+   557→          <>
+   558→            <button
+   559→              type="button"
+   560→              aria-label={t("sign.deletePlacement")}
+   561→              className="absolute -right-3 -top-3 z-30 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-transform hover:scale-110"
+   562→              onPointerDown={(e) => e.stopPropagation()}
+   563→              onClick={(e) => {
+   564→                e.stopPropagation();
+   565→                removePlacement(placement.id);
+   566→              }}
+   567→            >
+   568→              <span className="sr-only">{t("sign.deletePlacement")}</span>
+   569→              <span aria-hidden="true" className="text-sm leading-none">
+   570→                ×
+   571→              </span>
+   572→            </button>
+   573→            <span
+   574→              role="button"
+   575→              aria-label={t("sign.resizeHandle")}
+   576→              className="absolute -bottom-2 -right-2 z-30 size-4 cursor-nwse-resize rounded-full border-2 border-primary bg-background shadow"
+   577→              onPointerDown={beginBoxDrag("resize", placement)}
+   578→            />
+   579→            <span
+   580→              role="button"
+   581→              aria-label={t("sign.rotateHandle")}
+   582→              className="absolute -top-8 left-1/2 z-30 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-primary bg-background shadow"
+   583→              onPointerDown={beginBoxDrag("rotate", placement)}
+   584→            />
+   585→            {angleFlash !== null && drag?.id === placement.id && drag.mode === "rotate" ? (
+   586→              <span className="absolute -top-8 left-1/2 z-30 -translate-x-1/2 -translate-y-5 rounded-btn bg-primary px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-foreground">
+   587→                {Math.round(live.rot)}°
+   588→              </span>
+   589→            ) : null}
+   590→          </>
+   591→        ) : null}
+   592→      </div>
+   593→    );
+   594→  };
+   595→
+   596→  return (
+   597→    <div className="flex flex-col gap-4">
+   598→      <PreviewFileHeader
+   599→        file={file}
+   600→        pageCount={pageCount}
+   601→        onRemove={removeFile}
+   602→      />
+   603→
+   604→      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+   605→        {/* ---- Preview column ---- */}
+   606→        <div className="flex min-w-0 flex-col gap-3">
+   607→          {pageCount > 1 ? (
+   608→            <PreviewPageStrip
+   609→              file={file}
+   610→              pageCount={pageCount}
+   611→              selected={selectedPage}
+   612→              onSelect={setSelectedPage}
+   613→              markedSet={markedPages}
+   614→            />
+   615→          ) : null}
+   616→          <div className="flex items-center justify-between gap-2">
+   617→            <p className="flex min-w-0 items-center gap-1.5 truncate text-xs text-muted-foreground">
+   618→              {armed ? (
+   619→                <>
+   620→                  <MousePointerClick
+   621→                    className="size-3.5 shrink-0 text-primary"
+   622→                    aria-hidden="true"
+   623→                  />
+   624→                  <span className="truncate">
+   625→                    {t("sign.armHint", { label: armed.label })}
+   626→                  </span>
+   627→                </>
+   628→              ) : (
+   629→                <>
+   630→                  <Signature
+   631→                    className="size-3.5 shrink-0 text-muted-foreground"
+   632→                    aria-hidden="true"
+   633→                  />
+   634→                  <span className="truncate">{t("sign.previewHint")}</span>
+   635→                </>
+   636→              )}
+   637→            </p>
+   638→            <PreviewZoomControl
+   639→              steps={ZOOM_STEPS}
+   640→              value={zoom}
+   641→              onChange={(next) => setZoom(next)}
+   642→            />
+   643→          </div>
+   644→          <div className="flex justify-center overflow-auto rounded-card border border-border bg-checker p-3 sm:p-4">
+   645→            {current ? (
+   646→              <div
+   647→                className="relative w-full"
+   648→                style={{ maxWidth: Math.round(560 * zoom) }}
+   649→              >
+   650→                <canvas
+   651→                  ref={canvasRef}
+   652→                  className="block h-auto w-full rounded-sm bg-white shadow-sm"
+   653→                  aria-label={t("sign.previewCanvas", { page: selectedPage + 1 })}
+   654→                  role="img"
+   655→                />
+   656→                <div
+   657→                  ref={overlayRef}
+   658→                  className={cn(
+   659→                    "absolute inset-0 touch-none",
+   660→                    armed ? "cursor-crosshair" : "cursor-default"
+   661→                  )}
+   662→                  onPointerDown={handleOverlayPointerDown}
+   663→                  onPointerMove={handleOverlayPointerMove}
+   664→                  onPointerUp={commitDrag}
+   665→                  onPointerCancel={commitDrag}
+   666→                >
+   667→                  {pagePlacements.map(renderPlacementBox)}
+   668→                </div>
+   669→              </div>
+   670→            ) : pageError === "password" ? (
+   671→              <div
+   672→                className="flex w-full items-center gap-3 px-4 py-10 text-sm text-muted-foreground"
+   673→                role="alert"
+   674→              >
+   675→                <Lock
+   676→                  className="size-4 shrink-0 text-amber-600 dark:text-amber-400"
+   677→                  aria-hidden="true"
+   678→                />
+   679→                {t("tool.errorEncrypted")}
+   680→              </div>
+   681→            ) : pageError === "corrupt" ? (
+   682→              <div
+   683→                className="flex w-full items-center gap-3 px-4 py-10 text-sm text-muted-foreground"
+   684→                role="alert"
+   685→              >
+   686→                <TriangleAlert
+   687→                  className="size-4 shrink-0 text-amber-600 dark:text-amber-400"
+   688→                  aria-hidden="true"
+   689→                />
+   690→                {t("tool.errorCorrupt")}
+   691→              </div>
+   692→            ) : failed && failed.file === file && failed.pageIndex === selectedPage ? (
+   693→              <div
+   694→                className="flex w-full items-center gap-3 px-4 py-10 text-sm text-muted-foreground"
+   695→                role="alert"
+   696→              >
+   697→                <TriangleAlert
+   698→                  className="size-4 shrink-0 text-amber-600 dark:text-amber-400"
+   699→                  aria-hidden="true"
+   700→                />
+   701→                {t("sign.previewFailed")}
+   702→              </div>
+   703→            ) : (
+   704→              <div
+   705→                className="flex w-full items-center gap-3 px-4 py-10 text-sm text-muted-foreground"
+   706→                role="status"
+   707→              >
+   708→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   709→                {t("sign.previewLoading")}
+   710→              </div>
+   711→            )}
+   712→          </div>
+   713→          {placements.length > 0 ? (
+   714→            <p className="text-xs text-muted-foreground">
+   715→              {t("sign.placedCount", { count: placements.length })}
+   716→            </p>
+   717→          ) : null}
+   718→        </div>
+   719→
+   720→        {/* ---- Right rail ---- */}
+   721→        <div className="flex min-w-0 flex-col gap-4">
+   722→          {/* Signature library */}
+   723→          <div className="rounded-card border border-border bg-card p-4">
+   724→            <div className="flex items-center justify-between gap-2">
+   725→              <h3 className="text-sm font-semibold text-foreground">
+   726→                {t("sign.trayTitle")}
+   727→              </h3>
+   728→              <span className="text-[11px] text-muted-foreground">
+   729→                {t("sign.trayDeviceOnly")}
+   730→              </span>
+   731→            </div>
+   732→            {signatures.length > 0 ? (
+   733→              <div className="mt-3 grid grid-cols-2 gap-2">
+   734→                {signatures.map((sig) => (
+   735→                  <div
+   736→                    key={sig.id}
+   737→                    className={cn(
+   738→                      "group relative overflow-hidden rounded-btn border transition-all",
+   739→                      armedId === sig.id
+   740→                        ? "border-primary ring-2 ring-primary/30"
+   741→                        : "border-border hover:border-primary/50"
+   742→                    )}
+   743→                  >
+   744→                    <button
+   745→                      type="button"
+   746→                      className="flex h-20 w-full items-center justify-center bg-checker p-2"
+   747→                      onClick={() => {
+   748→                        setArmedId(armedId === sig.id ? null : sig.id);
+   749→                        setSelectedId(null);
+   750→                      }}
+   751→                      aria-pressed={armedId === sig.id}
+   752→                      aria-label={t("sign.trayPick", { label: sig.label })}
+   753→                    >
+   754→                      { }
+   755→                      <img
+   756→                        src={sig.dataUrl}
+   757→                        alt=""
+   758→                        draggable={false}
+   759→                        className="max-h-16 max-w-full select-none object-contain"
+   760→                      />
+   761→                    </button>
+   762→                    <div className="flex items-center justify-between gap-1 border-t border-border px-2 py-1">
+   763→                      <span className="flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground">
+   764→                        {sig.kind === "draw" ? (
+   765→                          <PenTool className="size-2.5 shrink-0" aria-hidden="true" />
+   766→                        ) : sig.kind === "upload" ? (
+   767→                          <Signature className="size-2.5 shrink-0" aria-hidden="true" />
+   768→                        ) : (
+   769→                          <TypeIcon className="size-2.5 shrink-0" aria-hidden="true" />
+   770→                        )}
+   771→                        <span className="truncate">{sig.label}</span>
+   772→                      </span>
+   773→                      <button
+   774→                        type="button"
+   775→                        onClick={() => handleRemoveSignature(sig.id)}
+   776→                        aria-label={t("sign.trayRemove", { label: sig.label })}
+   777→                        className="shrink-0 rounded-sm p-0.5 text-muted-foreground/60 opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+   778→                      >
+   779→                        <Trash2 className="size-3" aria-hidden="true" />
+   780→                      </button>
+   781→                    </div>
+   782→                  </div>
+   783→                ))}
+   784→              </div>
+   785→            ) : (
+   786→              <div className="mt-3 flex flex-col items-center gap-2 rounded-btn border border-dashed border-border px-3 py-6 text-center">
+   787→                <Signature className="size-6 text-muted-foreground/60" aria-hidden="true" />
+   788→                <p className="text-xs leading-relaxed text-muted-foreground">
+   789→                  {t("sign.trayEmpty")}
+   790→                </p>
+   791→              </div>
+   792→            )}
+   793→            <Button
+   794→              type="button"
+   795→              className="mt-3 w-full gap-1.5 rounded-btn"
+   796→              onClick={() => setDialogOpen(true)}
+   797→            >
+   798→              <Plus className="size-4" aria-hidden="true" />
+   799→              {t("sign.addSignature")}
+   800→            </Button>
+   801→          </div>
+   802→
+   803→          {/* Quick stamps */}
+   804→          <div className="rounded-card border border-border bg-card p-4">
+   805→            <h3 className="text-sm font-semibold text-foreground">
+   806→              {t("sign.quickTitle")}
+   807→            </h3>
+   808→            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+   809→              {t("sign.quickHint")}
+   810→            </p>
+   811→            <div className="mt-3 grid grid-cols-2 gap-2">
+   812→              <Button
+   813→                type="button"
+   814→                variant="outline"
+   815→                size="sm"
+   816→                className="h-auto justify-start gap-1.5 rounded-btn py-2 text-xs"
+   817→                onClick={() => quickStamp("date")}
+   818→              >
+   819→                <Calendar className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+   820→                {t("sign.quickDate")}
+   821→              </Button>
+   822→              <Button
+   823→                type="button"
+   824→                variant="outline"
+   825→                size="sm"
+   826→                className="h-auto justify-start gap-1.5 rounded-btn py-2 text-xs"
+   827→                onClick={() => quickStamp("name")}
+   828→              >
+   829→                <UserRound className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+   830→                {t("sign.quickName")}
+   831→              </Button>
+   832→              <Button
+   833→                type="button"
+   834→                variant="outline"
+   835→                size="sm"
+   836→                className="h-auto justify-start gap-1.5 rounded-btn py-2 text-xs"
+   837→                onClick={() => quickStamp("initials")}
+   838→              >
+   839→                <TypeIcon className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+   840→                {t("sign.quickInitials")}
+   841→              </Button>
+   842→              <Button
+   843→                type="button"
+   844→                variant="outline"
+   845→                size="sm"
+   846→                className="h-auto justify-start gap-1.5 rounded-btn py-2 text-xs"
+   847→                onClick={() => quickStamp("check")}
+   848→              >
+   849→                <Check className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+   850→                {t("sign.quickCheck")}
+   851→              </Button>
+   852→            </div>
+   853→          </div>
+   854→
+   855→          {/* Selected placement inspector */}
+   856→          {selected ? (
+   857→            <div className="rounded-card border border-primary/40 bg-card p-4 ring-1 ring-primary/15">
+   858→              <h3 className="text-sm font-semibold text-foreground">
+   859→                {t("sign.editTitle")}
+   860→              </h3>
+   861→              <div className="mt-3 flex flex-col gap-3">
+   862→                <div className="flex flex-col gap-1.5">
+   863→                  <Label htmlFor="sign-pages" className="text-xs font-medium">
+   864→                    {t("sign.pagesLabel")}
+   865→                  </Label>
+   866→                  <Select
+   867→                    value={selected.pages}
+   868→                    onValueChange={(v) =>
+   869→                      updatePlacement(selected.id, {
+   870→                        pages: v as SignPlacement["pages"],
+   871→                      })
+   872→                    }
+   873→                  >
+   874→                    <SelectTrigger id="sign-pages" className="h-10 w-full rounded-btn">
+   875→                      <SelectValue />
+   876→                    </SelectTrigger>
+   877→                    <SelectContent>
+   878→                      <SelectItem value="this">{t("sign.pagesThis")}</SelectItem>
+   879→                      <SelectItem value="all">{t("sign.pagesAll")}</SelectItem>
+   880→                      <SelectItem value="odd">{t("sign.pagesOdd")}</SelectItem>
+   881→                      <SelectItem value="even">{t("sign.pagesEven")}</SelectItem>
+   882→                      <SelectItem value="range">{t("sign.pagesRange")}</SelectItem>
+   883→                    </SelectContent>
+   884→                  </Select>
+   885→                  {selected.pages === "range" ? (
+   886→                    <Input
+   887→                      value={selected.range ?? ""}
+   888→                      onChange={(e) =>
+   889→                        updatePlacement(selected.id, { range: e.target.value })
+   890→                      }
+   891→                      placeholder={t("tool.pagesPlaceholder")}
+   892→                      className="mt-1 h-10 rounded-btn"
+   893→                      aria-label={t("sign.pagesRange")}
+   894→                    />
+   895→                  ) : null}
+   896→                </div>
+   897→                <div className="flex flex-col gap-1.5">
+   898→                  <div className="flex items-center justify-between">
+   899→                    <Label htmlFor="sign-size" className="text-xs font-medium">
+   900→                      {t("sign.sizeLabel")}
+   901→                    </Label>
+   902→                    <span className="text-[11px] tabular-nums text-muted-foreground">
+   903→                      {Math.round(selected.w * 100)}%
+   904→                    </span>
+   905→                  </div>
+   906→                  <Slider
+   907→                    id="sign-size"
+   908→                    value={[Math.round(selected.w * 100)]}
+   909→                    min={5}
+   910→                    max={100}
+   911→                    step={1}
+   912→                    onValueChange={([v]) =>
+   913→                      updatePlacement(selected.id, { w: v / 100 })
+   914→                    }
+   915→                  />
+   916→                </div>
+   917→                <div className="flex flex-col gap-1.5">
+   918→                  <div className="flex items-center justify-between">
+   919→                    <Label htmlFor="sign-rot" className="text-xs font-medium">
+   920→                      {t("sign.rotationLabel")}
+   921→                    </Label>
+   922→                    <span className="text-[11px] tabular-nums text-muted-foreground">
+   923→                      {Math.round(selected.rot)}°
+   924→                    </span>
+   925→                  </div>
+   926→                  <Slider
+   927→                    id="sign-rot"
+   928→                    value={[Math.round(selected.rot)]}
+   929→                    min={-90}
+   930→                    max={90}
+   931→                    step={1}
+   932→                    onValueChange={([v]) => updatePlacement(selected.id, { rot: v })}
+   933→                  />
+   934→                </div>
+   935→                <div className="flex flex-col gap-1.5">
+   936→                  <div className="flex items-center justify-between">
+   937→                    <Label htmlFor="sign-op" className="text-xs font-medium">
+   938→                      {t("sign.opacityLabel")}
+   939→                    </Label>
+   940→                    <span className="text-[11px] tabular-nums text-muted-foreground">
+   941→                      {Math.round(selected.op * 100)}%
+   942→                    </span>
+   943→                  </div>
+   944→                  <Slider
+   945→                    id="sign-op"
+   946→                    value={[Math.round(selected.op * 100)]}
+   947→                    min={20}
+   948→                    max={100}
+   949→                    step={5}
+   950→                    onValueChange={([v]) => updatePlacement(selected.id, { op: v / 100 })}
+   951→                  />
+   952→                </div>
+   953→                <Button
+   954→                  type="button"
+   955→                  variant="outline"
+   956→                  size="sm"
+   957→                  className="gap-1.5 rounded-btn text-destructive hover:text-destructive"
+   958→                  onClick={() => removePlacement(selected.id)}
+   959→                >
+   960→                  <Trash2 className="size-3.5" aria-hidden="true" />
+   961→                  {t("sign.deletePlacement")}
+   962→                </Button>
+   963→              </div>
+   964→            </div>
+   965→          ) : (
+   966→            <div className="rounded-card border border-border bg-card p-4">
+   967→              <h3 className="text-sm font-semibold text-foreground">
+   968→                {t("sign.editEmptyTitle")}
+   969→              </h3>
+   970→              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+   971→                {t("sign.editEmptyBody")}
+   972→              </p>
+   973→            </div>
+   974→          )}
+   975→        </div>
+   976→      </div>
+   977→
+   978→      <SignatureDialog
+   979→        open={dialogOpen}
+   980→        onOpenChange={setDialogOpen}
+   981→        profileName={profileName}
+   982→        onCreated={(sig) => {
+   983→          setArmedId(sig.id);
+   984→          toast({ title: t("sign.createdToast", { label: sig.label }) });
+   985→        }}
+   986→      />
+   987→    </div>
+   988→  );
+   989→}
+   990→
+   991→function clampN(n: number, min: number, max: number): number {
+   992→  return Math.min(Math.max(n, min), max);
+   993→}
+   994→
