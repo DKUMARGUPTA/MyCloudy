@@ -1,0 +1,32 @@
+{
+  "en": {
+    "nup": {
+      "previewTitle": "Live sheet preview",
+      "sheetAria": "Sheet {index} of {total} — {layout} pages per sheet · {size}, {orientation}",
+      "planNote": "{pages} pages → {sheets} sheets",
+      "sizeA4": "A4",
+      "sizeLetter": "US Letter",
+      "sizeMatch": "page-1 size",
+      "orientPortrait": "portrait",
+      "orientLandscape": "landscape",
+      "loading": "Drawing the sheet…",
+      "renderFailed": "The preview couldn't be drawn, but the sheet will still be built correctly.",
+      "hint": "Sheet 1 exactly as it will print — margins, gaps, borders and page order."
+    }
+  },
+  "hi": {
+    "nup": {
+      "previewTitle": "लाइव शीट प्रीव्यू",
+      "sheetAria": "शीट {index} / {total} — प्रति शीट {layout} पेज · {size}, {orientation}",
+      "planNote": "{pages} पेज → {sheets} शीट",
+      "sizeA4": "A4",
+      "sizeLetter": "US Letter",
+      "sizeMatch": "पेज-1 साइज़",
+      "orientPortrait": "पोर्ट्रेट",
+      "orientLandscape": "लैंडस्केप",
+      "loading": "शीट बन रही है…",
+      "renderFailed": "प्रीव्यू नहीं बन पाया, पर शीट सही बनेगी।",
+      "hint": "शीट 1 वैसी ही जैसी प्रिंट होगी — मार्जिन, गैप, बॉर्डर और क्रम।"
+    }
+  }
+}

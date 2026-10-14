@@ -1,0 +1,12 @@
+{
+  "en": {
+    "rasterize": {
+      "errorRender": "One of the pages couldn't be turned into an image — try a lower DPI."
+    }
+  },
+  "hi": {
+    "rasterize": {
+      "errorRender": "एक पेज तस्वीर में नहीं बन पाया — कम DPI आज़माएँ।"
+    }
+  }
+}

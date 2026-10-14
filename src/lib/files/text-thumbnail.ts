@@ -32,7 +32,12 @@ export async function renderTextThumbnail(
       : Object.assign(document.createElement("canvas"), {
           width,
           height });
-  const context = canvas.getContext("2d");
+  // The canvas union makes getContext return the bitmap-rendering union too;
+  // a 2d context is guaranteed here — narrow once for the drawing code below.
+  const context = canvas.getContext("2d") as
+    | OffscreenCanvasRenderingContext2D
+    | CanvasRenderingContext2D
+    | null;
   if (!context) return null;
 
   // Paper look: white page, soft hairline text in ink gray.

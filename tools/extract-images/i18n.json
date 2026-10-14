@@ -1,0 +1,56 @@
+{
+  "en": {
+    "exi": {
+      "surfaceLabel": "Embedded images workspace",
+      "reading": "Scanning your PDF for embedded images…",
+      "probeNone": "No embedded images found in this file. Scanned PDFs are usually one big photo per page — try PDF to JPG instead.",
+      "probeError": "Couldn't preview this file's images — Run still extracts them.",
+      "otherFiles": "Other files",
+      "otherFilesNote": "{count} files — previewing the first; the others extract in full.",
+      "selectedCount": "{selected} of {total} selected",
+      "selectAll": "Select all",
+      "selectNone": "None",
+      "minSizeLabel": "Minimum size",
+      "minAll": "All",
+      "min128": "128px+",
+      "min256": "256px+",
+      "min512": "512px+",
+      "minSizeHint": "Skips small icons and textures — the run uses the same filter.",
+      "gridLabel": "Embedded images preview",
+      "toggleLabel": "Include image {index} ({w}×{h}, page {page})",
+      "thumbAlt": "Embedded image from page {page}",
+      "chip": "p{page} · {w}×{h}",
+      "cardPosition": "Image {index} of {total}",
+      "moreNotShown": "Showing the first {count} images — Run extracts them all",
+      "ctaNothingSelected": "Nothing selected — nothing would be extracted",
+      "errorNoImages": "No embedded images were extracted. Scanned PDFs are one big photo per page, and the size filter can hide small images — lower it or try PDF to JPG."
+    }
+  },
+  "hi": {
+    "exi": {
+      "surfaceLabel": "जुड़ी तस्वीरें वर्कस्पेस",
+      "reading": "आपकी PDF में जुड़ी तस्वीरें खोजी जा रही हैं…",
+      "probeNone": "इस फ़ाइल में कोई जुड़ी तस्वीर नहीं मिली। स्कैन की PDF आमतौर पर हर पेज की एक ही बड़ी तस्वीर होती है — उसके लिए PDF से JPG आज़माएँ।",
+      "probeError": "इस फ़ाइल की तस्वीरें प्रीव्यू नहीं हो सकीं — फिर भी चलाने पर सब निकलेंगी।",
+      "otherFiles": "बाक़ी फ़ाइलें",
+      "otherFilesNote": "{count} फ़ाइलें — पहली का प्रीव्यू दिख रहा है; बाक़ी सबकी तस्वीरें पूरी निकलेंगी।",
+      "selectedCount": "{total} में से {selected} चुनी गईं",
+      "selectAll": "सभी चुनें",
+      "selectNone": "कोई नहीं",
+      "minSizeLabel": "न्यूनतम साइज़",
+      "minAll": "सभी",
+      "min128": "128px+",
+      "min256": "256px+",
+      "min512": "512px+",
+      "minSizeHint": "छोटे आइकन-टेक्सचर छोड़ने के लिए — रन भी यही फ़िल्टर लगाता है।",
+      "gridLabel": "जुड़ी तस्वीरों का प्रीव्यू ग्रिड",
+      "toggleLabel": "तस्वीर {index} ({w}×{h}, पेज {page}) शामिल करें",
+      "thumbAlt": "पेज {page} की जुड़ी तस्वीर",
+      "chip": "पेज {page} · {w}×{h}",
+      "cardPosition": "तस्वीर {index} / {total}",
+      "moreNotShown": "पहली {count} तस्वीरें दिख रही हैं — चलाने पर सब निकलेंगी",
+      "ctaNothingSelected": "कुछ भी चुना नहीं गया — निकालने के लिए तस्वीरें चुनें",
+      "errorNoImages": "कोई तस्वीर नहीं निकली। स्कैन PDF हर पेज की एक ही बड़ी तस्वीर होती है, और साइज़ फ़िल्टर छोटी तस्वीरें छिपा देता है — फ़िल्टर घटाएँ या PDF से JPG आज़माएँ।"
+    }
+  }
+}

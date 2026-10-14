@@ -2532,3 +2532,100 @@ Stage Summary:
   agent-browser `reload` (not `open`) after worker edits.
 - Next queue: pages-per-sheet (N-up 2/4/6/9/16 + live preview), halve-
   pdf-pages, overlay-pdf, bookmark-pdf, extract-images...
+
+---
+Task ID: P4.1
+Agent: main (Z.ai Code)
+Task: 14-tool wiring mega-batch — Oct 12 ke parallel agents dwara likhe gaye
+(unwired) tool implementations ko verify + wire + QA karke live karna.
+35 → 49 live tools.
+
+Work Log:
+- Discovery: worklog P3.20 pe khatam tha, par tools/ folder mein ~15 naye
+  tools ki COMPLETE files padi thi (engine/worker/panel/surface/config/
+  i18n.json + smoke scripts, Oct 12 06:10–18:08 timestamps). Ye P4.1-c2
+  era ke parallel agents ka kaam tha — agent-ctx/P4.1-c2.md ne confirm kiya
+  (extract-images + search-pdf) ki "orchestrator wiring needed" pending thi.
+- Verification: saare files padhe — configs schema-driven, engines pure,
+  workers pool-protocol compliant. tsc errors sirf config field names
+  (howStepKeys vs howKeys, noInput vs noFile) + missing qrcode dep + 6
+  stale/dangling files mein the — tool code khud solid tha.
+- Config fixes: 7 configs mein howStepKeys→howKeys rename; generate-qr-code
+  mein viewerOnly+noInput → noFile (generate-password precedent); bun add
+  qrcode + @types/qrcode (MIT, bundled — no CDN).
+- Wiring: registry.ts mein 14× enabled: true (script se, accepts line ke
+  baad); configs.ts +14 imports/entries; panels.tsx +6 (PagesPerSheetPanel,
+  HalvePanel, SearchPanel, BookmarkPanel, OverlayPanel, PageSizePanel);
+  surfaces.tsx +8 (ExtractImages, Search, Bookmark, Overlay, Compare,
+  GenerateQr, ConvertToPdf, ConvertFromPdf).
+- i18n merge: merge-p41-i18n.ts (91 keys: nup/halve/flatten/rasterize/exi/
+  search/txt2pdf/md2pdf) + merge-overlay-i18n.ts (47) + merge-pagesize-
+  i18n.ts (11) + 5-section manual node merge (bm/qr/compare/conv/convFrom,
+  216). Total +365 keys → 1452 = 1452 parity. rasterize section pehle kabhi
+  merge nahi hua tha (worker ka errorRender key missing tha — ab fix).
+- Dead code cleanup: tools/ocr/ (poora purana OCR experiment — sirf ek dead
+  script reference karta tha), tools/ocr-pdf/panel.tsx + surface.tsx
+  (refactored engine ke against likhe — resolveOcrOptions etc. kahin nahi
+  bacha), tools/redact-pdf/panel.tsx, tools/scan-pdf/adjust-dialog.tsx (dono
+  dangling upgrades with vanished APIs), tools/generate-password/gen.ts
+  (abandoned pin-mode split), scripts/smoke-cts.ts + smoke-generate-
+  password.ts + smoke-ocr.ts + make-lu-fixtures.ts + verify-lu-output.ts
+  (sab stale smokes purane engine APIs pe).
+- scripts/smoke-gpw.ts REWRITTEN against current engine API: 44/44 (randomInt
+  bounds, pool assembly + ambiguity strip, generateRandom membership/classes/
+  entropy/clamps, pronounceable, passphrase word counts/separators/capitalize/
+  addNumber entropy math, en/hi/both wordlists, strength bands, crack
+  buckets monotone ladder, passwordStats census).
+- src/lib/files/text-thumbnail.ts TS fix: getContext("2d") union type cast
+  (OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D).
+- Smokes: nup 29/29, halve 41/41, flatten 52/52, extract-images 65/65,
+  search-pdf 76/76, txt2pdf 39/39, md2pdf 36/36, bookmark 52/52, qr 62/62,
+  compare 77/77, overlay 52/52, pagesize 58/58, gpw 44/44 — SAB GREEN
+  (689 checks). Regression: compress 22/22, compress-to-size 25/25.
+- tsc --noEmit CLEAN (scripts/ bhi); eslint clean; dev.log clean.
+
+QA (agent-browser, dev server HTTP 200):
+  ① pages-per-sheet: 4-page A4 fixture → layout 4 → 1 A4 portrait sheet,
+    ALL 4 pages ka text searchable (form XObjects through pdf.js
+    getTextContent), live canvas preview, EN+HI, mobile 375px no h-scroll
+  ② txt-to-pdf: .txt → verbatim text PDF (Devanagari line included)
+  ③ markdown-to-pdf: headings/list items/blockquote rendered
+  ④ generate-qr-code: noFile surface (Hindi UI), URL typed → SVG live
+    preview, PNG/SVG/PDF downloads enabled, PNG click zero errors
+  ⑤ search-pdf: query "QA" → 4 live <mark> highlights (debounced surface);
+    full run → TXT report "Files searched: 1 | Pages read: 4 | Matches: 4"
+    with per-page lines
+  ⑥ extract-images: gradient-PNG fixture → "All sizes" filter switch →
+    preview + CTA enabled → valid PNG output (magic bytes verified).
+    NOTE: default 128px+ filter 64px fixture ko hide karta hai — expected
+  ⑦ bookmark-pdf: "One per page" → 4-bookmark tree → output outline
+    verified via pdf.js getOutline() ("Page 1".."Page 4")
+  ⑧ halve-pdf-pages: 4 → 8 pages
+  ⑨ flatten-pdf: fieldless fixture → honest flatten.errorNothing (CORRECT);
+    form fixture → AcroForm gone + "Ravi Kumar" value baked into page
+    content (getFieldObjects() null + getTextContent includes value)
+  ⑩ overlay-pdf: base+stamp → merged PDF with both docs' text
+  ⑪ compare-pdf: 4-page + 2-page → 5-page summary report
+  ⑫ change-pdf-page-size: A4→A4 default = passthrough (honest)
+  ⑬ convert-to-pdf: 1×1 JPG dropped → "tiny.jpg — JPG image" detected →
+    "Images to PDF" → #/tool/images-to-pdf routed
+  ⑭ All-tools view: saare 13 naye tool names visible; zero console errors;
+    network sab localhost (sirf 1 inline data: URI — koi external nahi)
+  QA pins naye: (a) worker-pool REUSES workers across runs on the same
+  page — blob-capture hook ke liye agent-browser `reload` PEHLE karo, phir
+  hook install, phir drop+run; (b) maxFiles=1 tools mein error ke baad
+  naya drop REJECT hota hai — "Remove" button click karo pehle; (c) flatten
+  QA ke liye form-field fixture chahiye (plain pdf-lib doc = errorNothing).
+  Screenshots: qa-p4x-nup-result.png, qa-p4x-nup-result-hi.png,
+  qa-p4x-nup-mobile.png, qa-p4x-qr-surface.png, qa-p4x-all-tools.png.
+  Fixtures cleaned from public/.
+
+Stage Summary:
+- Live tools: 49 (35 + 14). Organize 10/12, Edit 8/11, Create 3/10,
+  Optimize 4/8, Security 6/8, View 3/6, Convert-to 7/17, Convert-from 4/13,
+  Images 4/6, Invoices 0/6. i18n 1452=1452.
+- copy-from-pdf SIRF config.ts hai (engine/worker/surface nahi bane) —
+  wo tool abhi bhi pending hai, next agent isse build kare.
+- Next queue: make-pdf-fillable, copy-from-pdf (build from scratch),
+  svg-to-pdf + tiff-to-pdf (imgconv modules ready hain), assemble-pdf,
+  set-pdf-viewer-preferences, resize-image-kb, phir Phase 8 editor.

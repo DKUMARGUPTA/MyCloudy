@@ -1,0 +1,58 @@
+{
+  "en": {
+    "unlock": {
+      "modeTitle": "What do you want to remove?",
+      "modePassword": "Remove open password",
+      "modePasswordBody": "Pick this when you know the password — the PDF asks for it every time it opens.",
+      "modeRestrictions": "Remove owner restrictions",
+      "modeRestrictionsBody": "Pick this when the PDF opens freely but printing or copying is blocked — no password needed.",
+      "restrictionsDetail": "Works when the file already opens without a password — DocoPDF drops the permission flags and keeps the content untouched. No password needed.",
+      "passwordLabel": "PDF password",
+      "passwordPlaceholder": "The password this PDF opens with",
+      "passwordHint": "Used only in this browser tab — never stored, never sent.",
+      "show": "Show password",
+      "hide": "Hide password",
+      "policyLine": "Only unlock files you own or have permission to change — DocoPDF cannot and will not crack unknown passwords.",
+      "detectedPassword": "This PDF is password-protected — the open-password mode is selected for you.",
+      "detectedRestricted": "Owner restrictions detected — the restrictions mode is selected for you.",
+      "detectedPlain": "This PDF has no password or restrictions — there is nothing to remove.",
+      "detectedError": "This PDF couldn't be scanned on your device — run the tool and it will report exactly what is wrong.",
+      "readingFile": "Checking this PDF on your device…",
+      "errNeedPassword": "Enter the PDF's password to remove it.",
+      "errWrongPassword": "That password didn't work. Check it and try again.",
+      "errPasswordRequired": "This PDF needs its open password first — switch to “Remove open password”.",
+      "errNotEncrypted": "This PDF has no password to remove.",
+      "ctaReading": "Checking this PDF…",
+      "ctaNotEncrypted": "This PDF has no password to remove",
+      "ctaNeedPassword": "Enter the PDF password to continue"
+    }
+  },
+  "hi": {
+    "unlock": {
+      "modeTitle": "क्या हटाना है?",
+      "modePassword": "ओपन पासवर्ड हटाएँ",
+      "modePasswordBody": "यह चुनें जब आपको पासवर्ड पता है — PDF खुलते ही हर बार पासवर्ड माँगती है।",
+      "modeRestrictions": "ओनर पाबंदियाँ हटाएँ",
+      "modeRestrictionsBody": "यह चुनें जब PDF आसानी से खुलती है पर प्रिंट या कॉपी पर रोक लगी है — पासवर्ड की ज़रूरत नहीं।",
+      "restrictionsDetail": "बिना पासवर्ड खुलने वाली फ़ाइल पर चलता है — DocoPDF परमिशन फ़्लैग हटा देता है और कंटेंट जस का तस रहता है। किसी पासवर्ड की ज़रूरत नहीं।",
+      "passwordLabel": "PDF का पासवर्ड",
+      "passwordPlaceholder": "जिस पासवर्ड से यह PDF खुलती है",
+      "passwordHint": "सिर्फ़ इसी ब्राउज़र टैब में इस्तेमाल होता है — कहीं सेव नहीं, कहीं नहीं भेजा जाता।",
+      "show": "पासवर्ड दिखाएँ",
+      "hide": "पासवर्ड छिपाएँ",
+      "policyLine": "सिर्फ़ वही फ़ाइलें अनलॉक करें जो आपकी हैं या बदलने की इजाज़त है — DocoPDF अनजान पासवर्ड तोड़ नहीं सकता और तोड़ेगा भी नहीं।",
+      "detectedPassword": "यह PDF पासवर्ड से सुरक्षित है — ओपन पासवर्ड वाला मोड आपके लिए चुन दिया गया है।",
+      "detectedRestricted": "ओनर पाबंदियाँ मिलीं — पाबंदियाँ हटाने वाला मोड चुन दिया गया है।",
+      "detectedPlain": "इस PDF पर कोई पासवर्ड या पाबंदी नहीं है — हटाने को कुछ नहीं है।",
+      "detectedError": "यह PDF डिवाइस पर जाँची नहीं जा सकी — टूल चलाएँ, वह ठीक क्या गड़बड़ है वह बता देगा।",
+      "readingFile": "आपकी PDF डिवाइस पर जाँची जा रही है…",
+      "errNeedPassword": "हटाने के लिए PDF का पासवर्ड डालें।",
+      "errWrongPassword": "यह पासवर्ड सही नहीं है। जाँचकर दोबारा कोशिश करें।",
+      "errPasswordRequired": "इस PDF को पहले ओपन पासवर्ड चाहिए — “ओपन पासवर्ड हटाएँ” चुनें।",
+      "errNotEncrypted": "इस PDF पर कोई पासवर्ड नहीं है जो हटाना हो।",
+      "ctaReading": "PDF जाँची जा रही है…",
+      "ctaNotEncrypted": "इस PDF पर कोई पासवर्ड नहीं है जो हटाना हो",
+      "ctaNeedPassword": "आगे बढ़ने के लिए PDF का पासवर्ड डालें"
+    }
+  }
+}

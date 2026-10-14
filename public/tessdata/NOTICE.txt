@@ -1,0 +1,12 @@
+DocoPDF — OCR language data (self-hosted, no CDN)
+
+Files in this directory are Tesseract trained models from the
+"tessdata_fast" repository, distributed under the Apache License 2.0:
+https://github.com/tesseract-ocr/tessdata_fast
+(upstream: https://github.com/tesseract-ocr/tess, Apache-2.0)
+
+  eng.traineddata  (~4.0 MB)  English, LSTM "fast" integer model
+  hin.traineddata  (~1.1 MB)  Hindi (Devanagari), LSTM "fast" integer model
+
+These are static model files served from this origin only; they never
+leave the device after download (browser cache).

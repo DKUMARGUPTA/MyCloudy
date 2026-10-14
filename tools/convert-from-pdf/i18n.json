@@ -1,0 +1,32 @@
+{
+  "en": {
+    "convFrom": {
+      "how1": "Drop a PDF — it opens straight into the converter hub, entirely on your device.",
+      "how2": "Pick the output you need — images, text, or editable formats.",
+      "how3": "Live targets convert instantly; the rest carry honest Soon and Server badges.",
+      "reading": "Reading your file…",
+      "yourFile": "Your file",
+      "fileIsPdf": "PDF document",
+      "targetsTitle": "Convert to",
+      "notPdfTitle": "This isn't a PDF",
+      "notPdfDesc": "This tool needs a PDF file. Go back and pick one — or use the universal converter, which accepts any file.",
+      "notPdfAction": "Use the universal converter",
+      "serverNote": "Tools marked “Server” will process files on our servers and delete them right after — they arrive in a later phase."
+    }
+  },
+  "hi": {
+    "convFrom": {
+      "how1": "PDF डालें — वह सीधे कन्वर्टर हब में खुलती है, पूरी तरह आपके डिवाइस पर।",
+      "how2": "जो आउटपुट चाहिए वह चुनें — तस्वीरें, टेक्स्ट, या एडिट करने लायक़ फ़ॉर्मैट।",
+      "how3": "लाइव टारगेट तुरंत बदलते हैं; बाक़ी पर ईमानदार जल्द और सर्वर बैज लगे हैं।",
+      "reading": "आपकी फ़ाइल पढ़ी जा रही है…",
+      "yourFile": "आपकी फ़ाइल",
+      "fileIsPdf": "PDF दस्तावेज़",
+      "targetsTitle": "इसमें बदलें",
+      "notPdfTitle": "यह PDF नहीं है",
+      "notPdfDesc": "इस टूल को PDF फ़ाइल चाहिए। वापस जाकर एक चुनें — या यूनिवर्सल कन्वर्टर इस्तेमाल करें, जो कोई भी फ़ाइल लेता है।",
+      "notPdfAction": "यूनिवर्सल कन्वर्टर इस्तेमाल करें",
+      "serverNote": "“सर्वर” चिह्न वाले टूल फ़ाइलें हमारे सर्वर पर बदलेंगे और तुरंत बाद डिलीट कर देंगे — ये बाद के चरण में आएँगे।"
+    }
+  }
+}

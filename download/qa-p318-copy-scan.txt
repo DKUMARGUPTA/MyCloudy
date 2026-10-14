@@ -1,0 +1,17 @@
+DocoPDF OCR Quality Test
+
+The quick brown fox jumps over the lazy dog.
+Pack my box with five dozen liquor jugs.
+Invoice number 2026 dated 12 October.
+
+Total amount due: 1450 rupees only.
+DocoPDF keeps every file on your device.
+
+Second paragraph starts here for flow layout.
+How vexingly quick daft zebras jump!
+
+भारत A आपका स्वागत है
+नमस्ते दुनिया कैसी हो
+यह एक परीक्षण पृष्ठ है
+
+दस्तावेज़ सुरक्षित रहता है

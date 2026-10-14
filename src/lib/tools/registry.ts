@@ -419,6 +419,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: LayoutGrid,
     popularity: 18,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Pages per sheet (N-up)", hi: "एक शीट में कई पेज" },
     description: {
       en: "Place 2, 4, 6, 9 or 16 pages on one sheet with live preview.",
@@ -434,6 +435,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Scissors,
     popularity: 14,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Halve PDF pages", hi: "पेज आधे करें" },
     description: {
       en: "Cut scanned book spreads into left/right single pages.",
@@ -449,6 +451,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Bookmark,
     popularity: 14,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Bookmark PDF", hi: "बुकमार्क जोड़ें" },
     description: {
       en: "Add, rename and nest an outline tree for easy navigation.",
@@ -464,6 +467,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Images,
     popularity: 22,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Extract PDF images", hi: "तस्वीरें निकालें" },
     description: {
       en: "Pull every embedded image out as PNG or JPG, ZIP download.",
@@ -623,6 +627,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: SquareStack,
     popularity: 14,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Overlay PDF", hi: "ओवरले पीडीएफ़" },
     description: {
       en: "Stamp one PDF over another: position, opacity, page mapping.",
@@ -654,6 +659,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Ruler,
     popularity: 16,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Change PDF page size", hi: "पेज साइज़ बदलें" },
     description: {
       en: "A3/A4/A5/Letter/Legal or custom mm; fit, fill or keep content scale.",
@@ -845,6 +851,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: QrCode,
     popularity: 20,
     accepts: "any",
+    enabled: true,
     name: { en: "Generate QR code", hi: "QR कोड बनाएँ" },
     description: {
       en: "URL, UPI payment, WiFi or vCard QRs with colors and a center logo.",
@@ -1059,6 +1066,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: SquareStack,
     popularity: 18,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Flatten PDF", hi: "फ़्लैटन पीडीएफ़" },
     description: {
       en: "Merge form fields and annotations into the page content.",
@@ -1259,6 +1267,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: GitCompare,
     popularity: 16,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Compare PDFs", hi: "पीडीएफ़ तुलना करें" },
     description: {
       en: "Side-by-side sync scroll, overlay diff and a text change list.",
@@ -1274,6 +1283,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: FileSearch,
     popularity: 18,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Search in PDFs", hi: "पीडीएफ़ में खोजें" },
     description: {
       en: "Query or regex across many PDFs; jump to each match's page.",
@@ -1447,6 +1457,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: AlignLeft,
     popularity: 18,
     accepts: "text",
+    enabled: true,
     name: { en: "Text to PDF", hi: "टेक्स्ट से पीडीएफ़" },
     description: {
       en: "Plain text files into PDF with font and margin control.",
@@ -1462,6 +1473,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Hash,
     popularity: 14,
     accepts: "text",
+    enabled: true,
     name: { en: "Markdown to PDF", hi: "मार्कडाउन से पीडीएफ़" },
     description: {
       en: "READMEs and notes rendered with headings, lists and code blocks.",
@@ -1592,6 +1604,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: FileInput,
     popularity: 58,
     accepts: "any",
+    enabled: true,
     name: { en: "Universal converter", hi: "सब कुछ पीडीएफ़ में" },
     description: {
       en: "Drop any file — we detect the type and route you to the right tool.",
@@ -1804,6 +1817,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: FileOutput,
     popularity: 44,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Universal converter", hi: "पीडीएफ़ को बदलें" },
     description: {
       en: "Drop a PDF, pick a target format, we route to the right tool.",

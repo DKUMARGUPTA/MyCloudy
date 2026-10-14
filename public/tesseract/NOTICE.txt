@@ -1,0 +1,11 @@
+Tesseract.js engine assets (self-hosted, no CDN)
+
+  worker.min.js                      — tesseract.js 5.1.1 worker script (Apache-2.0)
+  tesseract-core-simd-lstm.wasm.js   — tesseract.js-core 5 LSTM engine, SIMD
+                                        (wasm embedded; Apache-2.0, see LICENSE)
+  tesseract-core-lstm.wasm.js        — tesseract.js-core 5 LSTM engine, no-SIMD
+                                        fallback (wasm embedded; Apache-2.0)
+
+Only LSTM cores ship here (legacyCore is disabled) — smaller + faster.
+License: Apache License 2.0 (LICENSE in this directory, from
+https://github.com/naptha/tesseract.js-core).

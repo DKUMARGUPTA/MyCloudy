@@ -1,0 +1,1669 @@
+     1→"use client";
+     2→
+     3→import {
+     4→  useCallback,
+     5→  useEffect,
+     6→  useMemo,
+     7→  useRef,
+     8→  useState,
+     9→} from "react";
+    10→import type {
+    11→  PDFDocumentProxy,
+    12→  PDFPageProxy,
+    13→} from "pdfjs-dist";
+    14→import type { TextLayer as PdfTextLayer } from "pdfjs-dist";
+    15→import {
+    16→  ChevronLeft,
+    17→  ChevronRight,
+    18→  Columns2,
+    19→  Download,
+    20→  FileText,
+    21→  Keyboard,
+    22→  List,
+    23→  ListTree,
+    24→  Loader2,
+    25→  Lock,
+    26→  Maximize2,
+    27→  Moon,
+    28→  PanelLeft,
+    29→  Printer,
+    30→  RotateCw,
+    31→  Rows3,
+    32→  Search,
+    33→  Share2,
+    34→  Square,
+    35→  StretchHorizontal,
+    36→  TriangleAlert,
+    37→  X,
+    38→  ZoomIn,
+    39→  ZoomOut,
+    40→} from "lucide-react";
+    41→
+    42→import { Button } from "@/components/ui/button";
+    43→import { Input } from "@/components/ui/input";
+    44→import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+    45→import { useI18n } from "@/components/providers/locale-provider";
+    46→import { useToast } from "@/hooks/use-toast";
+    47→import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
+    48→import { PDF_DOC_PARAMS, loadPdfjs } from "@/lib/pdf/pdfjs";
+    49→import { formatBytes } from "@/lib/storage/recent-files";
+    50→import { cn } from "@/lib/utils";
+    51→
+    52→/**
+    53→ * View PDF live surface (PRD §6.5) — a full viewer rendered right in the
+    54→ * ToolShell workspace. Everything happens on-device with the self-hosted
+    55→ * pdf.js: lazy page rendering (only pages near the viewport stay in
+    56→ * memory), a selectable text layer, full-text search with on-page
+    57→ * highlight boxes, thumbnails + outline sidebar, zoom 25-400% with
+    58→ * fit-width / fit-page, single-page and two-page spread, 90° view
+    59→ * rotation and a dark reading mode. Printing and downloading act on the
+    60→ * ORIGINAL file bytes; the password prompt for encrypted files is
+    61→ * resolved entirely in the browser.
+    62→ */
+    63→
+    64→/* ------------------------------ constants ------------------------------ */
+    65→
+    66→const MIN_ZOOM = 0.25;
+    67→const MAX_ZOOM = 4;
+    68→const ZOOM_STEPS = [
+    69→  0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4,
+    70→];
+    71→/** Sidebar thumbnail max edge (CSS px, before DPR). */
+    72→const THUMB_MAX_DIM = 108;
+    73→/** Page paddings inside the scroll column (per side). */
+    74→const VIEWPORT_PADDING = 24;
+    75→const SPREAD_GAP = 12;
+    76→
+    77→type LayoutMode = "continuous" | "single" | "spread";
+    78→type ZoomMode = "fit-width" | "fit-page" | number;
+    79→type DocStatus = "loading" | "ready" | "password" | "error";
+    80→
+    81→/** One search hit: the matched range inside one text item. */
+    82→interface SearchMatch {
+    83→  id: number;
+    84→  pageIndex: number;
+    85→  itemIndex: number;
+    86→  start: number;
+    87→  end: number;
+    88→  context: string;
+    89→}
+    90→
+    91→/** Flattened outline row (bookmarks keep their nesting depth). */
+    92→interface OutlineRow {
+    93→  title: string;
+    94→  page: number;
+    95→  depth: number;
+    96→}
+    97→
+    98→/** Display geometry of one text item, in device px at the current scale. */
+    99→interface ItemBox {
+   100→  left: number;
+   101→  top: number;
+   102→  width: number;
+   103→  height: number;
+   104→}
+   105→
+   106→/** One text item's geometry, keyed by its ORIGINAL pdf.js items[] index
+   107→ *  (search matches index the raw array — skipped/empty items must not
+   108→ *  compact the numbering or matches point at the wrong item). */
+   109→interface GeoItem extends ItemBox {
+   110→  itemIndex: number;
+   111→  str: string;
+   112→}
+   113→
+   114→interface HighlightBox extends ItemBox {
+   115→  matchId: number;
+   116→}
+   117→
+   118→/* --------------------------- geometry helpers -------------------------- */
+   119→
+   120→/** Display size (px at `scale`) of a page with the viewer rotation applied.
+   121→ *  `base` is the UNROTATED media size + the page's native /Rotate. */
+   122→function displaySize(
+   123→  base: { w: number; h: number; rot: number },
+   124→  scale: number,
+   125→  rotation: number
+   126→): { w: number; h: number } {
+   127→  const swap = (base.rot + rotation) % 180 === 90;
+   128→  const w = (swap ? base.h : base.w) * scale;
+   129→  const h = (swap ? base.w : base.h) * scale;
+   130→  return { w: Math.max(1, Math.round(w)), h: Math.max(1, Math.round(h)) };
+   131→}
+   132→
+   133→function clamp(value: number, lo: number, hi: number): number {
+   134→  return Math.min(hi, Math.max(lo, value));
+   135→}
+   136→
+   137→function nextZoomStep(current: number, dir: 1 | -1): number {
+   138→  if (dir === 1) {
+   139→    for (const step of ZOOM_STEPS) {
+   140→      if (step > current + 0.001) return step;
+   141→    }
+   142→    return MAX_ZOOM;
+   143→  }
+   144→  for (let i = ZOOM_STEPS.length - 1; i >= 0; i -= 1) {
+   145→    if (ZOOM_STEPS[i] < current - 0.001) return ZOOM_STEPS[i];
+   146→  }
+   147→  return MIN_ZOOM;
+   148→}
+   149→
+   150→/* ------------------------------ ViewerPage ----------------------------- */
+   151→
+   152→interface ViewerPageProps {
+   153→  pageNumber: number;
+   154→  docRef: React.RefObject<PDFDocumentProxy | null>;
+   155→  /** Bumped whenever a new document is opened (forces full re-render). */
+   156→  docEpoch: number;
+   157→  scale: number;
+   158→  rotation: number;
+   159→  /** Page media size at scale 1 (rotation 0) + native /Rotate — sizes
+   160→   *  the slot, which is the layout authority. */
+   161→  base: { w: number; h: number; rot: number };
+   162→  dark: boolean;
+   163→  /** Search matches that live on THIS page (sorted by item). */
+   164→  matches: SearchMatch[];
+   165→  activeMatchId: number | null;
+   166→  /** Register the page slot element for scroll math (stable callback). */
+   167→  registerSlot: (page: number, el: HTMLElement | null) => void;
+   168→  /** Element that clips + scrolls the pages (IntersectionObserver root). */
+   169→  scrollRootRef: React.RefObject<HTMLDivElement | null>;
+   170→}
+   171→
+   172→/**
+   173→ * One lazily rendered page: an IntersectionObserver keeps it mounted only
+   174→ * while it is near the viewport (about ±2 pages at typical zooms); the
+   175→ * canvas + text layer are rebuilt whenever scale/rotation/doc change.
+   176→ */
+   177→function ViewerPage({
+   178→  pageNumber,
+   179→  docRef,
+   180→  docEpoch,
+   181→  scale,
+   182→  rotation,
+   183→  base,
+   184→  dark,
+   185→  matches,
+   186→  activeMatchId,
+   187→  registerSlot,
+   188→  scrollRootRef,
+   189→}: ViewerPageProps): React.JSX.Element {
+   190→  const { t } = useI18n();
+   191→  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+   192→  const textLayerHostRef = useRef<HTMLDivElement | null>(null);
+   193→  const slotRef = useRef<HTMLDivElement | null>(null);
+   194→  const [visible, setVisible] = useState(false);
+   195→  /** Text-item geometry of the last completed render (device px, this scale). */
+   196→  const [geo, setGeo] = useState<{
+   197→    items: GeoItem[];
+   198→    renderKey: string;
+   199→  } | null>(null);
+   200→  const renderKey = `${docEpoch}:${scale.toFixed(4)}:${rotation}`;
+   201→  /** The slot is the layout authority: exact display px at this scale. */
+   202→  const disp = displaySize(base, scale, rotation);
+   203→
+   204→  const setSlotRef = useCallback(
+   205→    (el: HTMLDivElement | null) => {
+   206→      slotRef.current = el;
+   207→      registerSlot(pageNumber, el);
+   208→    },
+   209→    [pageNumber, registerSlot]
+   210→  );
+   211→
+   212→  // Lazy mount/unmount near the viewport (PRD §6.5 "visible ±2 pages").
+   213→  useEffect(() => {
+   214→    const slot = slotRef.current;
+   215→    const root = scrollRootRef.current;
+   216→    if (!slot || !root) return;
+   217→    const observer = new IntersectionObserver(
+   218→      (entries) => {
+   219→        for (const entry of entries) setVisible(entry.isIntersecting);
+   220→      },
+   221→      { root, rootMargin: "200% 0px 200% 0px" }
+   222→    );
+   223→    observer.observe(slot);
+   224→    return () => observer.disconnect();
+   225→  }, [scrollRootRef]);
+   226→
+   227→  // Canvas + text layer render. Cancelled through the `cancelled` flag +
+   228→  // renderTask.cancel() whenever deps change or the page unmounts.
+   229→  useEffect(() => {
+   230→    if (!visible) return;
+   231→    const doc = docRef.current;
+   232→    if (!doc) return;
+   233→    let cancelled = false;
+   234→    let renderTask: { cancel: () => void; promise: Promise<unknown> } | null =
+   235→      null;
+   236→    let textLayer: PdfTextLayer | null = null;
+   237→    const key = renderKey;
+   238→
+   239→    void (async () => {
+   240→      const pdfjs = await loadPdfjs();
+   241→      const page: PDFPageProxy = await doc.getPage(pageNumber);
+   242→      if (cancelled) return;
+   243→      const viewport = page.getViewport({
+   244→        scale,
+   245→        rotation: (page.rotate + rotation) % 360,
+   246→      });
+   247→
+   248→      const canvas = canvasRef.current;
+   249→      if (canvas) {
+   250→        const dpr = Math.min(
+   251→          typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
+   252→          2
+   253→        );
+   254→        canvas.width = Math.max(1, Math.floor(viewport.width * dpr));
+   255→        canvas.height = Math.max(1, Math.floor(viewport.height * dpr));
+   256→        canvas.style.width = `${Math.max(1, Math.round(viewport.width))}px`;
+   257→        canvas.style.height = `${Math.max(1, Math.round(viewport.height))}px`;
+   258→        const context = canvas.getContext("2d");
+   259→        if (context) {
+   260→          context.fillStyle = "#ffffff";
+   261→          context.fillRect(0, 0, canvas.width, canvas.height);
+   262→          const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined;
+   263→          const task = page.render({
+   264→            canvasContext: context,
+   265→            viewport,
+   266→            transform,
+   267→          });
+   268→          renderTask = task;
+   269→          await task.promise;
+   270→          if (cancelled) return;
+   271→        }
+   272→      }
+   273→
+   274→      // Text content: geometry for search highlights + the TextLayer.
+   275→      // itemIndex keys stay aligned with the RAW content.items order.
+   276→      const content = await page.getTextContent();
+   277→      if (cancelled) return;
+   278→      const items: GeoItem[] = [];
+   279→      for (let i = 0; i < content.items.length; i += 1) {
+   280→        const raw = content.items[i] as {
+   281→          str?: unknown;
+   282→          width?: unknown;
+   283→          transform?: unknown;
+   284→        };
+   285→        if (typeof raw.str !== "string" || raw.str.length === 0) continue;
+   286→        if (!Array.isArray(raw.transform) || typeof raw.width !== "number") {
+   287→          continue;
+   288→        }
+   289→        const tx = pdfjs.Util.transform(
+   290→          viewport.transform,
+   291→          raw.transform as number[]
+   292→        );
+   293→        items.push({
+   294→          itemIndex: i,
+   295→          str: raw.str,
+   296→          left: tx[4],
+   297→          top: tx[5],
+   298→          width: raw.width * viewport.scale,
+   299→          height: Math.hypot(tx[2], tx[3]),
+   300→        });
+   301→      }
+   302→      setGeo({ items, renderKey: key });
+   303→
+   304→      // Selectable text layer (PRD §6.5 "text select aur copy").
+   305→      const host = textLayerHostRef.current;
+   306→      if (host) {
+   307→        host.replaceChildren();
+   308→        host.style.setProperty("--scale-factor", String(viewport.scale));
+   309→        const layer = new pdfjs.TextLayer({
+   310→          textContentSource: page.streamTextContent(),
+   311→          container: host,
+   312→          viewport,
+   313→        });
+   314→        textLayer = layer;
+   315→        await layer.render();
+   316→        if (cancelled) return;
+   317→      }
+   318→    })().catch((error: unknown) => {
+   319→      const name =
+   320→        error !== null && typeof error === "object" && "name" in error
+   321→          ? String((error as { name: unknown }).name)
+   322→          : "";
+   323→      // Cancelled renders resolve quietly; real failures surface as a
+   324→      // blank page slot with the placeholder number still showing.
+   325→      if (cancelled || name === "RenderingCancelledException") return;
+   326→    });
+   327→
+   328→    return () => {
+   329→      cancelled = true;
+   330→      renderTask?.cancel();
+   331→      textLayer?.cancel();
+   332→      const host = textLayerHostRef.current;
+   333→      if (host) host.replaceChildren();
+   334→    };
+   335→  }, [visible, scale, rotation, docEpoch, pageNumber, docRef, renderKey]);
+   336→
+   337→  // Search highlight boxes for THIS page — a pure derivation from the
+   338→  // cached item geometry + the page's matches (proportional char ranges
+   339→  // inside each item; the canvas is NOT re-rendered for search).
+   340→  const boxes: HighlightBox[] = useMemo(() => {
+   341→    if (!geo || geo.renderKey !== renderKey || matches.length === 0) {
+   342→      return EMPTY_BOXES;
+   343→    }
+   344→    const out: HighlightBox[] = [];
+   345→    for (const match of matches) {
+   346→      const item = geo.items.find((x) => x.itemIndex === match.itemIndex);
+   347→      if (!item) continue;
+   348→      const len = item.str.length;
+   349→      if (len === 0) continue;
+   350→      const startFrac = clamp(match.start / len, 0, 1);
+   351→      const endFrac = clamp(match.end / len, 0, 1);
+   352→      const left = item.left + startFrac * item.width;
+   353→      const width = Math.max(4, (endFrac - startFrac) * item.width);
+   354→      out.push({
+   355→        matchId: match.id,
+   356→        left,
+   357→        top: item.top - item.height,
+   358→        width,
+   359→        height: Math.max(item.height, 6),
+   360→      });
+   361→    }
+   362→    return out;
+   363→  }, [geo, matches, renderKey]);
+   364→
+   365→  return (
+   366→    <div
+   367→      ref={setSlotRef}
+   368→      data-viewer-page={pageNumber}
+   369→      style={{ width: disp.w, height: disp.h }}
+   370→      className="relative shrink-0 overflow-hidden rounded-sm bg-white shadow-md ring-1 ring-border/60 dark:bg-neutral-100"
+   371→      aria-label={t("view.a11yPage", {
+   372→        page: pageNumber,
+   373→      })}
+   374→    >
+   375→      {visible ? (
+   376→        <>
+   377→          <canvas
+   378→            ref={canvasRef}
+   379→            className={cn(
+   380→              "block",
+   381→              dark && "[filter:invert(0.92)_hue-rotate(180deg)]"
+   382→            )}
+   383→          />
+   384→          <div ref={textLayerHostRef} className="pdf-textLayer" />
+   385→          {boxes.map((box) => (
+   386→            <div
+   387→              key={box.matchId}
+   388→              className={cn(
+   389→                "pointer-events-none absolute rounded-[2px]",
+   390→                box.matchId === activeMatchId
+   391→                  ? "bg-primary/45 ring-2 ring-primary"
+   392→                  : "bg-primary/25"
+   393→              )}
+   394→              style={{
+   395→                left: box.left,
+   396→                top: box.top,
+   397→                width: box.width,
+   398→                height: box.height,
+   399→              }}
+   400→            />
+   401→          ))}
+   402→        </>
+   403→      ) : (
+   404→        <div className="flex h-full w-full items-center justify-center bg-muted/50">
+   405→          <span className="text-xs font-medium text-muted-foreground/70">
+   406→            {pageNumber}
+   407→          </span>
+   408→        </div>
+   409→      )}
+   410→    </div>
+   411→  );
+   412→}
+   413→
+   414→/* ----------------------------- ViewerThumb ----------------------------- */
+   415→
+   416→interface ViewerThumbProps {
+   417→  pageNumber: number;
+   418→  active: boolean;
+   419→  docRef: React.RefObject<PDFDocumentProxy | null>;
+   420→  docEpoch: number;
+   421→  onGo: (page: number) => void;
+   422→  scrollRootRef: React.RefObject<HTMLDivElement | null>;
+   423→}
+   424→
+   425→/** Lazy sidebar thumbnail rendered straight from the open document. */
+   426→function ViewerThumb({
+   427→  pageNumber,
+   428→  active,
+   429→  docRef,
+   430→  docEpoch,
+   431→  onGo,
+   432→  scrollRootRef,
+   433→}: ViewerThumbProps): React.JSX.Element {
+   434→  const { t } = useI18n();
+   435→  const wrapRef = useRef<HTMLButtonElement | null>(null);
+   436→  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+   437→  const [visible, setVisible] = useState(false);
+   438→  const [done, setDone] = useState(-1);
+   439→
+   440→  useEffect(() => {
+   441→    const el = wrapRef.current;
+   442→    const root = scrollRootRef.current;
+   443→    if (!el || !root) return;
+   444→    const observer = new IntersectionObserver(
+   445→      (entries) => {
+   446→        for (const entry of entries) setVisible(entry.isIntersecting);
+   447→      },
+   448→      { root, rootMargin: "120% 0px" }
+   449→    );
+   450→    observer.observe(el);
+   451→    return () => observer.disconnect();
+   452→  }, [scrollRootRef]);
+   453→
+   454→  useEffect(() => {
+   455→    if (!visible || done === docEpoch) return;
+   456→    const doc = docRef.current;
+   457→    if (!doc) return;
+   458→    let cancelled = false;
+   459→    let renderTask: { cancel: () => void; promise: Promise<unknown> } | null =
+   460→      null;
+   461→    void (async () => {
+   462→      const page = await doc.getPage(pageNumber);
+   463→      if (cancelled) return;
+   464→      const canvas = canvasRef.current;
+   465→      if (!canvas) return;
+   466→      const dpr = Math.min(
+   467→        typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
+   468→        2
+   469→      );
+   470→      const base = page.getViewport({ scale: 1 });
+   471→      const scale = (THUMB_MAX_DIM * dpr) / Math.max(base.width, base.height);
+   472→      const viewport = page.getViewport({ scale });
+   473→      canvas.width = Math.max(1, Math.round(viewport.width));
+   474→      canvas.height = Math.max(1, Math.round(viewport.height));
+   475→      canvas.style.width = `${Math.round(viewport.width / dpr)}px`;
+   476→      canvas.style.height = `${Math.round(viewport.height / dpr)}px`;
+   477→      const context = canvas.getContext("2d");
+   478→      if (!context) return;
+   479→      context.fillStyle = "#ffffff";
+   480→      context.fillRect(0, 0, canvas.width, canvas.height);
+   481→      const task = page.render({ canvasContext: context, viewport });
+   482→      renderTask = task;
+   483→      await task.promise;
+   484→      if (cancelled) return;
+   485→      setDone(docEpoch);
+   486→    })().catch(() => {
+   487→      /* thumbnail failure is cosmetic — the page itself still renders */
+   488→    });
+   489→    return () => {
+   490→      cancelled = true;
+   491→      renderTask?.cancel();
+   492→      const canvas = canvasRef.current;
+   493→      if (canvas) {
+   494→        canvas.removeAttribute("style");
+   495→        canvas.removeAttribute("width");
+   496→        canvas.removeAttribute("height");
+   497→      }
+   498→    };
+   499→  }, [visible, done, docEpoch, pageNumber, docRef]);
+   500→
+   501→  return (
+   502→    <button
+   503→      type="button"
+   504→      ref={wrapRef}
+   505→      onClick={() => onGo(pageNumber)}
+   506→      aria-label={t("view.a11yThumb", { page: pageNumber })}
+   507→      aria-current={active ? "true" : undefined}
+   508→      className={cn(
+   509→        "group flex w-full flex-col items-center gap-1 rounded-card p-1.5 outline-none transition-colors",
+   510→        "hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+   511→        active && "bg-primary/10"
+   512→      )}
+   513→    >
+   514→      <span
+   515→        className={cn(
+   516→          "relative flex items-center justify-center overflow-hidden rounded-sm bg-white shadow-sm ring-1 ring-border/70",
+   517→          active ? "ring-2 ring-primary ring-offset-1 ring-offset-background" : ""
+   518→        )}
+   519→      >
+   520→        <canvas ref={canvasRef} className="block" />
+   521→      </span>
+   522→      <span
+   523→        className={cn(
+   524→          "text-[10px] font-medium tabular-nums",
+   525→          active ? "text-primary" : "text-muted-foreground"
+   526→        )}
+   527→      >
+   528→        {pageNumber}
+   529→      </span>
+   530→    </button>
+   531→  );
+   532→}
+   533→
+   534→/* ------------------------------ ViewSurface ---------------------------- */
+   535→
+   536→export function ViewSurface({
+   537→  files,
+   538→  onChain,
+   539→}: ToolSurfaceProps): React.JSX.Element | null {
+   540→  const { t } = useI18n();
+   541→  const { toast } = useToast();
+   542→  const file = files[0]?.file ?? null;
+   543→
+   544→  /* ---- document state ---- */
+   545→  const docRef = useRef<PDFDocumentProxy | null>(null);
+   546→  const [docEpoch, setDocEpoch] = useState(0);
+   547→  const [status, setStatus] = useState<DocStatus>("loading");
+   548→  const [wrongPassword, setWrongPassword] = useState(false);
+   549→  const [password, setPassword] = useState("");
+   550→  /** Retry counter — resubmitting the SAME wrong password still re-runs
+   551→   *  the open attempt (deps [file, password, pwTry]). */
+   552→  const [pwTry, setPwTry] = useState(0);
+   553→  const [passwordInput, setPasswordInput] = useState("");
+   554→  const [pageSizes, setPageSizes] = useState<
+   555→    { w: number; h: number; rot: number }[]
+   556→  >([]);
+   557→  const [outline, setOutline] = useState<OutlineRow[]>([]);
+   558→
+   559→  /* ---- view preferences ---- */
+   560→  const [layout, setLayout] = useState<LayoutMode>("continuous");
+   561→  const [zoomMode, setZoomMode] = useState<ZoomMode>("fit-width");
+   562→  const [rotation, setRotation] = useState(0);
+   563→  const [dark, setDark] = useState(false);
+   564→  const [sidebar, setSidebar] = useState<"thumbs" | "outline" | null>(null);
+   565→  const [currentPage, setCurrentPage] = useState(1);
+   566→
+   567→  /* ---- search state ---- */
+   568→  const [searchOpen, setSearchOpen] = useState(false);
+   569→  const [query, setQuery] = useState("");
+   570→  const [searchResult, setSearchResult] = useState<{
+   571→    query: string;
+   572→    matches: SearchMatch[];
+   573→  } | null>(null);
+   574→  const [activeMatch, setActiveMatch] = useState(0);
+   575→  const [searchState, setSearchState] = useState<"idle" | "searching" | "done">(
+   576→    "idle"
+   577→  );
+   578→  const [searchedPages, setSearchedPages] = useState(0);
+   579→
+   580→  /* ---- refs ---- */
+   581→  const scrollRef = useRef<HTMLDivElement | null>(null);
+   582→  const pageInputRef = useRef<HTMLInputElement | null>(null);
+   583→  const searchInputRef = useRef<HTMLInputElement | null>(null);
+   584→  const rootRef = useRef<HTMLDivElement | null>(null);
+   585→  const slotEls = useRef(new Map<number, HTMLElement>());
+   586→  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
+   587→
+   588→  const numPages = pageSizes.length;
+   589→
+   590→  /* ---- view-state reset when the file or password changes ----
+   591→     React's documented "adjust state during render" pattern: when the
+   592→     input identity changes, reset the view BEFORE the doc effect runs —
+   593→     no synchronous setState cascade inside the effect itself. */
+   594→  const [openedFor, setOpenedFor] = useState<{ file: File | null; password: string }>(
+   595→    () => ({ file, password })
+   596→  );
+   597→  if (openedFor.file !== file || openedFor.password !== password) {
+   598→    setOpenedFor({ file, password });
+   599→    setStatus("loading");
+   600→    setWrongPassword(false);
+   601→    setPageSizes([]);
+   602→    setOutline([]);
+   603→    setCurrentPage(1);
+   604→    setSearchResult(null);
+   605→    setActiveMatch(0);
+   606→  }
+   607→
+   608→  /* ---- open the document (password aware, retry on password) ---- */
+   609→  useEffect(() => {
+   610→    if (!file) return;
+   611→    let cancelled = false;
+   612→    void (async () => {
+   613→      const pdfjs = await loadPdfjs();
+   614→      const data = new Uint8Array(await file.arrayBuffer());
+   615→      const doc = await pdfjs.getDocument({
+   616→        data,
+   617→        ...(password ? { password } : {}),
+   618→        ...PDF_DOC_PARAMS,
+   619→      }).promise;
+   620→      if (cancelled) {
+   621→        void doc.destroy().catch(() => undefined);
+   622→        return;
+   623→      }
+   624→      docRef.current = doc;
+   625→
+   626→      const sizes: { w: number; h: number; rot: number }[] = [];
+   627→      for (let i = 1; i <= doc.numPages; i += 1) {
+   628→        const page = await doc.getPage(i);
+   629→        // Media size (rotation: 0) + native /Rotate — the slot math composes
+   630→        // both with the viewer rotation exactly like pdf.js viewports do.
+   631→        const viewport = page.getViewport({ scale: 1, rotation: 0 });
+   632→        sizes.push({
+   633→          w: viewport.width,
+   634→          h: viewport.height,
+   635→          rot: ((page.rotate % 360) + 360) % 360,
+   636→        });
+   637→      }
+   638→      if (cancelled) return;
+   639→      setPageSizes(sizes);
+   640→      setStatus("ready");
+   641→      setDocEpoch((epoch) => epoch + 1);
+   642→
+   643→      // Outline (bookmarks) flattened with depth, resolved to pages.
+   644→      try {
+   645→        const raw = await doc.getOutline();
+   646→        if (!raw || raw.length === 0) return;
+   647→        const rows: OutlineRow[] = [];
+   648→        const walk = async (
+   649→          items: typeof raw,
+   650→          depth: number
+   651→        ): Promise<void> => {
+   652→          for (const item of items) {
+   653→            let page = 0;
+   654→            try {
+   655→              const dest =
+   656→                typeof item.dest === "string"
+   657→                  ? await doc.getDestination(item.dest)
+   658→                  : item.dest;
+   659→              if (Array.isArray(dest) && dest.length > 0) {
+   660→                page = (await doc.getPageIndex(dest[0] as never)) + 1;
+   661→              }
+   662→            } catch {
+   663→              page = 0;
+   664→            }
+   665→            const title = (item.title ?? "").trim();
+   666→            if (page > 0) {
+   667→              rows.push({
+   668→                title: title.length > 0 ? title : `Bookmark ${rows.length + 1}`,
+   669→                page,
+   670→                depth,
+   671→              });
+   672→            }
+   673→            if (item.items && item.items.length > 0 && depth < 3) {
+   674→              await walk(item.items, depth + 1);
+   675→            }
+   676→          }
+   677→        };
+   678→        await walk(raw, 0);
+   679→        if (!cancelled) setOutline(rows.slice(0, 200));
+   680→      } catch {
+   681→        /* no outline — sidebar simply shows the empty state */
+   682→      }
+   683→    })().catch((error: unknown) => {
+   684→      if (cancelled) return;
+   685→      const name =
+   686→        error !== null && typeof error === "object" && "name" in error
+   687→          ? String((error as { name: unknown }).name)
+   688→          : "";
+   689→      if (name === "PasswordException") {
+   690→        setStatus("password");
+   691→        setWrongPassword(password !== "");
+   692→        docRef.current = null;
+   693→        return;
+   694→      }
+   695→      setStatus("error");
+   696→      docRef.current = null;
+   697→    });
+   698→    return () => {
+   699→      cancelled = true;
+   700→      const doc = docRef.current;
+   701→      docRef.current = null;
+   702→      if (doc) void doc.destroy().catch(() => undefined);
+   703→    };
+   704→  }, [file, password, pwTry]);
+   705→
+   706→  /* ---- container size (fit modes) — measured by the ResizeObserver,
+   707→     which always fires once right after observe(), so no sync setState ---- */
+   708→  useEffect(() => {
+   709→    const el = scrollRef.current;
+   710→    if (!el) return;
+   711→    const observer = new ResizeObserver(() => {
+   712→      setContainerSize({ w: el.clientWidth, h: el.clientHeight });
+   713→    });
+   714→    observer.observe(el);
+   715→    return () => observer.disconnect();
+   716→  }, [status]);
+   717→
+   718→  /* ---- effective scale ---- */
+   719→  const scale = useMemo(() => {
+   720→    if (pageSizes.length === 0) return 1;
+   721→    const { w, h } = containerSize;
+   722→    if (w <= 0) return 1;
+   723→    let maxW = 0;
+   724→    let maxH = 0;
+   725→    for (const size of pageSizes) {
+   726→      const disp = displaySize(size, 1, rotation);
+   727→      maxW = Math.max(maxW, disp.w);
+   728→      maxH = Math.max(maxH, disp.h);
+   729→    }
+   730→    const room = Math.max(80, w - VIEWPORT_PADDING * 2);
+   731→    if (zoomMode === "fit-width") {
+   732→      const divisor = layout === "spread" ? maxW * 2 + SPREAD_GAP : maxW;
+   733→      return clamp(room / divisor, 0.05, 8);
+   734→    }
+   735→    if (zoomMode === "fit-page") {
+   736→      const roomH = Math.max(120, h - VIEWPORT_PADDING * 2);
+   737→      const divisor = layout === "spread" ? maxW * 2 + SPREAD_GAP : maxW;
+   738→      return clamp(Math.min(room / divisor, roomH / maxH), 0.05, 8);
+   739→    }
+   740→    return clamp(zoomMode, MIN_ZOOM, MAX_ZOOM);
+   741→  }, [containerSize, pageSizes, rotation, zoomMode, layout]);
+   742→
+   743→  const zoomStep = useCallback(
+   744→    (dir: 1 | -1) => {
+   745→      setZoomMode(nextZoomStep(scale, dir));
+   746→    },
+   747→    [scale]
+   748→  );
+   749→
+   750→  /* ---- page slot registration (stable) ---- */
+   751→  const registerSlot = useCallback((page: number, el: HTMLElement | null) => {
+   752→    if (el) slotEls.current.set(page, el);
+   753→    else slotEls.current.delete(page);
+   754→  }, []);
+   755→
+   756→  /* ---- current page tracking while scrolling ---- */
+   757→  const handleScroll = useCallback(() => {
+   758→    const container = scrollRef.current;
+   759→    if (!container) return;
+   760→    const top = container.scrollTop;
+   761→    let best = 1;
+   762→    let bestTop = -1;
+   763→    for (const [page, el] of slotEls.current) {
+   764→      if (el.offsetTop <= top + 32 && el.offsetTop >= bestTop) {
+   765→        best = page;
+   766→        bestTop = el.offsetTop;
+   767→      }
+   768→    }
+   769→    setCurrentPage((prev) => (prev === best ? prev : best));
+   770→  }, []);
+   771→
+   772→  const scrollToPage = useCallback(
+   773→    (page: number, smooth = true) => {
+   774→      const container = scrollRef.current;
+   775→      const el = slotEls.current.get(page);
+   776→      if (!container || !el) return;
+   777→      const top =
+   778→        el.getBoundingClientRect().top -
+   779→        container.getBoundingClientRect().top +
+   780→        container.scrollTop -
+   781→        10;
+   782→      container.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
+   783→    },
+   784→    []
+   785→  );
+   786→
+   787→  const goToPage = useCallback(
+   788→    (page: number) => {
+   789→      const target = clamp(Math.round(page), 1, Math.max(1, numPages));
+   790→      setCurrentPage(target);
+   791→      if (layout === "single") return;
+   792→      scrollToPage(target);
+   793→    },
+   794→    [layout, numPages, scrollToPage]
+   795→  );
+   796→
+   797→  /* ---- search ----
+   798→     The result object carries its query so stale results from a previous
+   799→     query never render (pure derivation, no sync setState in the effect). */
+   800→  const needle = query.trim().toLocaleLowerCase();
+   801→  const queryValid = searchOpen && needle.length >= 2;
+   802→
+   803→  useEffect(() => {
+   804→    if (status !== "ready" || !queryValid) return;
+   805→    const doc = docRef.current;
+   806→    if (!doc) return;
+   807→    let cancelled = false;
+   808→    void (async () => {
+   809→      setSearchState("searching");
+   810→      setSearchedPages(0);
+   811→      const found: SearchMatch[] = [];
+   812→      let id = 0;
+   813→      for (let i = 0; i < doc.numPages; i += 1) {
+   814→        if (cancelled) return;
+   815→        try {
+   816→          const page = await doc.getPage(i + 1);
+   817→          const content = await page.getTextContent();
+   818→          for (let j = 0; j < content.items.length; j += 1) {
+   819→            const str = (content.items[j] as { str?: unknown }).str;
+   820→            if (typeof str !== "string" || str.length === 0) continue;
+   821→            const hay = str.toLocaleLowerCase();
+   822→            let at = hay.indexOf(needle);
+   823→            while (at !== -1 && found.length < 500) {
+   824→              found.push({
+   825→                id: (id += 1),
+   826→                pageIndex: i,
+   827→                itemIndex: j,
+   828→                start: at,
+   829→                end: at + needle.length,
+   830→                context: str.trim().slice(0, 90),
+   831→              });
+   832→              at = hay.indexOf(needle, at + needle.length);
+   833→            }
+   834→          }
+   835→        } catch {
+   836→          /* unreadable page — skip */
+   837→        }
+   838→        setSearchedPages(i + 1);
+   839→      }
+   840→      if (cancelled) return;
+   841→      setSearchResult({ query: needle, matches: found });
+   842→      setActiveMatch(found.length > 0 ? 1 : 0);
+   843→      setSearchState("done");
+   844→      // Land on the first match right away (PRD §6.5 "jump to each match").
+   845→      if (found.length > 0) goToPage(found[0].pageIndex + 1);
+   846→    })();
+   847→    return () => {
+   848→      cancelled = true;
+   849→    };
+   850→  }, [needle, queryValid, status, goToPage]);
+   851→
+   852→  /** Only the result of the CURRENT query is ever shown. */
+   853→  const visibleMatches =
+   854→    searchResult !== null && searchResult.query === needle
+   855→      ? searchResult.matches
+   856→      : EMPTY_MATCHES;
+   857→  const searchingNow = queryValid && searchState === "searching";
+   858→
+   859→  const matchesByPage = useMemo(() => {
+   860→    const map = new Map<number, SearchMatch[]>();
+   861→    for (const match of visibleMatches) {
+   862→      const list = map.get(match.pageIndex);
+   863→      if (list) list.push(match);
+   864→      else map.set(match.pageIndex, [match]);
+   865→    }
+   866→    return map;
+   867→  }, [visibleMatches]);
+   868→
+   869→  const activeMatchId =
+   870→    activeMatch > 0 && activeMatch <= visibleMatches.length
+   871→      ? visibleMatches[activeMatch - 1].id
+   872→      : null;
+   873→
+   874→  const focusMatch = useCallback(
+   875→    (index: number) => {
+   876→      if (visibleMatches.length === 0) return;
+   877→      const next =
+   878→        ((index - 1) % visibleMatches.length + visibleMatches.length) %
+   879→          visibleMatches.length +
+   880→        1;
+   881→      setActiveMatch(next);
+   882→      const match = visibleMatches[next - 1];
+   883→      goToPage(match.pageIndex + 1);
+   884→    },
+   885→    [goToPage, visibleMatches]
+   886→  );
+   887→
+   888→  /* ---- actions ---- */
+   889→  const printFile = useCallback(() => {
+   890→    if (!file) return;
+   891→    const url = URL.createObjectURL(file);
+   892→    const frame = document.createElement("iframe");
+   893→    frame.setAttribute("aria-hidden", "true");
+   894→    frame.tabIndex = -1;
+   895→    frame.style.position = "fixed";
+   896→    frame.style.inset = "auto 0 0 0";
+   897→    frame.style.width = "0";
+   898→    frame.style.height = "0";
+   899→    frame.style.border = "0";
+   900→    frame.src = url;
+   901→    frame.addEventListener("load", () => {
+   902→      try {
+   903→        frame.contentWindow?.focus();
+   904→        frame.contentWindow?.print();
+   905→      } catch {
+   906→        window.open(url, "_blank", "noopener");
+   907→      }
+   908→    });
+   909→    document.body.appendChild(frame);
+   910→    window.setTimeout(() => {
+   911→      URL.revokeObjectURL(url);
+   912→      frame.remove();
+   913→    }, 60_000);
+   914→  }, [file]);
+   915→
+   916→  const downloadFile = useCallback(() => {
+   917→    if (!file) return;
+   918→    const url = URL.createObjectURL(file);
+   919→    const anchor = document.createElement("a");
+   920→    anchor.href = url;
+   921→    anchor.download = file.name || "document.pdf";
+   922→    anchor.rel = "noopener";
+   923→    document.body.appendChild(anchor);
+   924→    anchor.click();
+   925→    anchor.remove();
+   926→    window.setTimeout(() => URL.revokeObjectURL(url), 5_000);
+   927→  }, [file]);
+   928→
+   929→  const shareFile = useCallback(async () => {
+   930→    if (!file || typeof navigator === "undefined" || !navigator.canShare) {
+   931→      return;
+   932→    }
+   933→    try {
+   934→      if (navigator.canShare({ files: [file] })) {
+   935→        await navigator.share({ files: [file], title: file.name });
+   936→      } else {
+   937→        toast({ title: t("view.shareUnsupported") });
+   938→      }
+   939→    } catch {
+   940→      /* user dismissed the share sheet — not an error */
+   941→    }
+   942→  }, [file, t, toast]);
+   943→
+   944→  const canShare =
+   945→    typeof navigator !== "undefined" &&
+   946→    typeof navigator.canShare === "function";
+   947→
+   948→  /* ---- keyboard (PRD §6.5) ---- */
+   949→  const handleKeyDown = useCallback(
+   950→    (event: React.KeyboardEvent<HTMLDivElement>) => {
+   951→      const target = event.target as HTMLElement | null;
+   952→      const inField =
+   953→        target !== null &&
+   954→        (target.tagName === "INPUT" ||
+   955→          target.tagName === "TEXTAREA" ||
+   956→          target.tagName === "SELECT" ||
+   957→          target.isContentEditable);
+   958→      if (event.key === "Escape" && searchOpen) {
+   959→        setSearchOpen(false);
+   960→        setQuery("");
+   961→        return;
+   962→      }
+   963→      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+   964→        event.preventDefault();
+   965→        setSearchOpen(true);
+   966→        window.setTimeout(() => searchInputRef.current?.focus(), 30);
+   967→        return;
+   968→      }
+   969→      if (inField) return;
+   970→      switch (event.key) {
+   971→        case "ArrowRight":
+   972→        case "PageDown":
+   973→          // PRD §6.5: arrows/pages move by PAGE in every layout (continuous
+   974→          // mode jump-scrolls to the slot, keeping the page indicator honest).
+   975→          event.preventDefault();
+   976→          goToPage(Math.min(numPages, currentPage + 1));
+   977→          break;
+   978→        case "ArrowLeft":
+   979→        case "PageUp":
+   980→          event.preventDefault();
+   981→          goToPage(Math.max(1, currentPage - 1));
+   982→          break;
+   983→        case "+":
+   984→        case "=":
+   985→          event.preventDefault();
+   986→          zoomStep(1);
+   987→          break;
+   988→        case "-":
+   989→          event.preventDefault();
+   990→          zoomStep(-1);
+   991→          break;
+   992→        case "0":
+   993→          event.preventDefault();
+   994→          setZoomMode("fit-width");
+   995→          break;
+   996→        case "g":
+   997→        case "G":
+   998→          event.preventDefault();
+   999→          pageInputRef.current?.focus();
+  1000→          pageInputRef.current?.select();
+  1001→          break;
+  1002→        case "r":
+  1003→        case "R":
+  1004→          event.preventDefault();
+  1005→          setRotation((deg) => (deg + 90) % 360);
+  1006→          break;
+  1007→        default:
+  1008→          break;
+  1009→      }
+  1010→    },
+  1011→    [
+  1012→      currentPage,
+  1013→      goToPage,
+  1014→      numPages,
+  1015→      searchOpen,
+  1016→      zoomStep,
+  1017→    ]
+  1018→  );
+  1019→
+  1020→  /* ---- derived rows for spread layout ---- */
+  1021→  const spreadRows = useMemo(() => {
+  1022→    const rows: { first: number; second: number | null }[] = [];
+  1023→    if (layout !== "spread") return rows;
+  1024→    for (let i = 0; i < numPages; i += 2) {
+  1025→      rows.push({ first: i + 1, second: i + 1 < numPages ? i + 2 : null });
+  1026→    }
+  1027→    return rows;
+  1028→  }, [layout, numPages]);
+  1029→
+  1030→  /* ---- guard: no file (shell renders the surface only with files) ---- */
+  1031→  if (!file) return null;
+  1032→
+  1033→  /* ============================ loading ============================= */
+  1034→  if (status === "loading") {
+  1035→    return (
+  1036→      <div className="flex h-[70vh] min-h-96 flex-col items-center justify-center gap-4 rounded-card border border-border bg-card">
+  1037→        <Loader2 className="size-8 animate-spin text-primary" aria-hidden="true" />
+  1038→        <div className="text-center">
+  1039→          <p className="text-sm font-semibold text-foreground">
+  1040→            {t("view.loadingTitle")}
+  1041→          </p>
+  1042→          <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+  1043→            {t("view.loadingBody")}
+  1044→          </p>
+  1045→        </div>
+  1046→        <p className="flex items-center gap-1.5 rounded-chip bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+  1047→          <Lock className="size-3" aria-hidden="true" />
+  1048→          {t("view.privateChip")}
+  1049→        </p>
+  1050→      </div>
+  1051→    );
+  1052→  }
+  1053→
+  1054→  /* ============================ password ============================= */
+  1055→  if (status === "password") {
+  1056→    return (
+  1057→      <div className="flex h-[70vh] min-h-96 items-center justify-center rounded-card border border-border bg-card p-6">
+  1058→        <form
+  1059→          className="w-full max-w-sm"
+  1060→          onSubmit={(event) => {
+  1061→            event.preventDefault();
+  1062→            setPassword(passwordInput);
+  1063→            setPwTry((n) => n + 1);
+  1064→          }}
+  1065→        >
+  1066→          <div className="flex size-11 items-center justify-center rounded-card bg-primary/10">
+  1067→            <Lock className="size-5 text-primary" aria-hidden="true" />
+  1068→          </div>
+  1069→          <h2 className="mt-4 text-base font-semibold text-foreground">
+  1070→            {t("view.passwordTitle")}
+  1071→          </h2>
+  1072→          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+  1073→            {t("view.passwordBody")}
+  1074→          </p>
+  1075→          <Input
+  1076→            type="password"
+  1077→            value={passwordInput}
+  1078→            onChange={(event) => setPasswordInput(event.target.value)}
+  1079→            placeholder={t("view.passwordPlaceholder")}
+  1080→            autoComplete="off"
+  1081→            autoFocus
+  1082→            className="mt-4"
+  1083→            aria-label={t("view.passwordPlaceholder")}
+  1084→          />
+  1085→          {wrongPassword ? (
+  1086→            <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-red-600 dark:text-red-400">
+  1087→              <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" />
+  1088→              {t("view.passwordWrong")}
+  1089→            </p>
+  1090→          ) : null}
+  1091→          <Button type="submit" size="touch" className="mt-4 w-full rounded-btn font-semibold">
+  1092→            {t("view.passwordUnlock")}
+  1093→          </Button>
+  1094→          <p className="mt-3 text-center text-[11px] text-muted-foreground">
+  1095→            {t("view.passwordNote")}
+  1096→          </p>
+  1097→        </form>
+  1098→      </div>
+  1099→    );
+  1100→  }
+  1101→
+  1102→  /* ============================= error ============================== */
+  1103→  if (status === "error") {
+  1104→    return (
+  1105→      <div className="flex h-[70vh] min-h-96 items-center justify-center rounded-card border border-border bg-card p-6">
+  1106→        <div className="max-w-sm text-center">
+  1107→          <div className="mx-auto flex size-11 items-center justify-center rounded-card bg-amber-500/10">
+  1108→            <TriangleAlert
+  1109→              className="size-5 text-amber-500"
+  1110→              aria-hidden="true"
+  1111→            />
+  1112→          </div>
+  1113→          <h2 className="mt-4 text-base font-semibold text-foreground">
+  1114→            {t("view.errorTitle")}
+  1115→          </h2>
+  1116→          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+  1117→            {t("view.errorBody")}
+  1118→          </p>
+  1119→        </div>
+  1120→      </div>
+  1121→    );
+  1122→  }
+  1123→
+  1124→  /* ============================= ready ============================== */
+  1125→  const singleMode = layout === "single";
+  1126→  const spreadMode = layout === "spread";
+  1127→
+  1128→  const pageNode = (pageNumber: number): React.JSX.Element => {
+  1129→    const base = pageSizes[pageNumber - 1] ?? { w: 612, h: 792, rot: 0 };
+  1130→    return (
+  1131→      <ViewerPage
+  1132→        key={pageNumber}
+  1133→        pageNumber={pageNumber}
+  1134→        docRef={docRef}
+  1135→        docEpoch={docEpoch}
+  1136→        scale={scale}
+  1137→        rotation={rotation}
+  1138→        base={base}
+  1139→        dark={dark}
+  1140→        matches={matchesByPage.get(pageNumber - 1) ?? EMPTY_MATCHES}
+  1141→        activeMatchId={activeMatchId}
+  1142→        registerSlot={registerSlot}
+  1143→        scrollRootRef={scrollRef}
+  1144→      />
+  1145→    );
+  1146→  };
+  1147→
+  1148→  const iconBtn =
+  1149→    "size-9 shrink-0 rounded-btn outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40";
+  1150→
+  1151→  return (
+  1152→    <div
+  1153→      ref={rootRef}
+  1154→      tabIndex={0}
+  1155→      onKeyDown={handleKeyDown}
+  1156→      className="flex flex-col overflow-hidden rounded-card border border-border bg-card outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+  1157→      role="application"
+  1158→      aria-label={t("view.a11yViewer")}
+  1159→    >
+  1160→      {/* ---------------- file meta strip ---------------- */}
+  1161→      <div className="flex items-center gap-2.5 border-b border-border bg-muted/40 px-3 py-2">
+  1162→        <FileText className="size-4 shrink-0 text-primary" aria-hidden="true" />
+  1163→        <p className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
+  1164→          {file.name}
+  1165→        </p>
+  1166→        <span className="hidden shrink-0 rounded-chip bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground sm:inline">
+  1167→          {formatBytes(file.size)}
+  1168→        </span>
+  1169→        <span className="shrink-0 rounded-chip bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+  1170→          {t("view.pagesCount", { count: numPages })}
+  1171→        </span>
+  1172→        <span className="hidden shrink-0 items-center gap-1 rounded-chip bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 sm:flex dark:text-emerald-400">
+  1173→          <Lock className="size-3" aria-hidden="true" />
+  1174→          {t("view.privateChip")}
+  1175→        </span>
+  1176→      </div>
+  1177→
+  1178→      {/* ---------------- toolbar ---------------- */}
+  1179→      <div className="flex items-center gap-1.5 overflow-x-auto border-b border-border px-2 py-1.5 scrollbar-none max-sm:flex-nowrap sm:flex-wrap">
+  1180→        <button
+  1181→          type="button"
+  1182→          onClick={() =>
+  1183→            setSidebar((prev) => (prev === null ? "thumbs" : null))
+  1184→          }
+  1185→          title={t("view.toolbarSidebar")}
+  1186→          aria-label={t("view.toolbarSidebar")}
+  1187→          aria-pressed={sidebar !== null}
+  1188→          className={cn(iconBtn, "grid shrink-0 place-items-center", sidebar !== null && "bg-muted")}
+  1189→        >
+  1190→          <PanelLeft className="size-4" aria-hidden="true" />
+  1191→        </button>
+  1192→
+  1193→        <span className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+  1194→
+  1195→        {/* page navigation */}
+  1196→        <button
+  1197→          type="button"
+  1198→          onClick={() => goToPage(currentPage - 1)}
+  1199→          disabled={currentPage <= 1}
+  1200→          title={t("view.toolbarPrev")}
+  1201→          aria-label={t("view.toolbarPrev")}
+  1202→          className={cn(iconBtn, "grid shrink-0 place-items-center")}
+  1203→        >
+  1204→          <ChevronLeft className="size-4" aria-hidden="true" />
+  1205→        </button>
+  1206→        <span className="flex shrink-0 items-center gap-1 text-xs font-medium tabular-nums text-foreground">
+  1207→          <input
+  1208→            ref={pageInputRef}
+  1209→            type="number"
+  1210→            min={1}
+  1211→            max={numPages || 1}
+  1212→            value={currentPage}
+  1213→            onChange={(event) => {
+  1214→              const parsed = Number.parseInt(event.target.value, 10);
+  1215→              if (Number.isFinite(parsed)) setCurrentPage(parsed);
+  1216→            }}
+  1217→            onBlur={(event) => {
+  1218→              const parsed = Number.parseInt(event.target.value, 10);
+  1219→              goToPage(Number.isFinite(parsed) ? parsed : currentPage);
+  1220→            }}
+  1221→            onKeyDown={(event) => {
+  1222→              if (event.key === "Enter") {
+  1223→                event.preventDefault();
+  1224→                const parsed = Number.parseInt(
+  1225→                  (event.target as HTMLInputElement).value,
+  1226→                  10
+  1227→                );
+  1228→                goToPage(Number.isFinite(parsed) ? parsed : currentPage);
+  1229→                (event.target as HTMLInputElement).blur();
+  1230→              }
+  1231→            }}
+  1232→            aria-label={t("view.goToPage")}
+  1233→            className="h-7 w-11 rounded-md border border-border bg-background px-1.5 text-center tabular-nums outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+  1234→          />
+  1235→          <span className="text-muted-foreground">/ {numPages}</span>
+  1236→        </span>
+  1237→        <button
+  1238→          type="button"
+  1239→          onClick={() => goToPage(currentPage + 1)}
+  1240→          disabled={currentPage >= numPages}
+  1241→          title={t("view.toolbarNext")}
+  1242→          aria-label={t("view.toolbarNext")}
+  1243→          className={cn(iconBtn, "grid shrink-0 place-items-center")}
+  1244→        >
+  1245→          <ChevronRight className="size-4" aria-hidden="true" />
+  1246→        </button>
+  1247→
+  1248→        <span className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+  1249→
+  1250→        {/* zoom */}
+  1251→        <button
+  1252→          type="button"
+  1253→          onClick={() => zoomStep(-1)}
+  1254→          disabled={scale <= MIN_ZOOM + 0.001}
+  1255→          title={t("view.zoomOut")}
+  1256→          aria-label={t("view.zoomOut")}
+  1257→          className={cn(iconBtn, "grid shrink-0 place-items-center")}
+  1258→        >
+  1259→          <ZoomOut className="size-4" aria-hidden="true" />
+  1260→        </button>
+  1261→        <span
+  1262→          className="w-11 shrink-0 text-center text-xs font-medium tabular-nums text-foreground"
+  1263→          aria-live="polite"
+  1264→        >
+  1265→          {Math.round(scale * 100)}%
+  1266→        </span>
+  1267→        <button
+  1268→          type="button"
+  1269→          onClick={() => zoomStep(1)}
+  1270→          disabled={scale >= MAX_ZOOM - 0.001}
+  1271→          title={t("view.zoomIn")}
+  1272→          aria-label={t("view.zoomIn")}
+  1273→          className={cn(iconBtn, "grid shrink-0 place-items-center")}
+  1274→        >
+  1275→          <ZoomIn className="size-4" aria-hidden="true" />
+  1276→        </button>
+  1277→        <button
+  1278→          type="button"
+  1279→          onClick={() => setZoomMode("fit-width")}
+  1280→          title={t("view.fitWidth")}
+  1281→          aria-label={t("view.fitWidth")}
+  1282→          aria-pressed={zoomMode === "fit-width"}
+  1283→          className={cn(
+  1284→            iconBtn,
+  1285→            "hidden shrink-0 place-items-center sm:grid",
+  1286→            zoomMode === "fit-width" && "bg-muted"
+  1287→          )}
+  1288→        >
+  1289→          <StretchHorizontal className="size-4" aria-hidden="true" />
+  1290→        </button>
+  1291→        <button
+  1292→          type="button"
+  1293→          onClick={() => setZoomMode("fit-page")}
+  1294→          title={t("view.fitPage")}
+  1295→          aria-label={t("view.fitPage")}
+  1296→          aria-pressed={zoomMode === "fit-page"}
+  1297→          className={cn(
+  1298→            iconBtn,
+  1299→            "hidden shrink-0 place-items-center sm:grid",
+  1300→            zoomMode === "fit-page" && "bg-muted"
+  1301→          )}
+  1302→        >
+  1303→          <Maximize2 className="size-4" aria-hidden="true" />
+  1304→        </button>
+  1305→
+  1306→        <span className="mx-0.5 hidden h-5 w-px bg-border sm:block" aria-hidden="true" />
+  1307→
+  1308→        {/* layout modes */}
+  1309→        <ToggleGroup
+  1310→          type="single"
+  1311→          value={layout}
+  1312→          onValueChange={(value) => {
+  1313→            if (value) setLayout(value as LayoutMode);
+  1314→          }}
+  1315→          className="flex items-center gap-0.5"
+  1316→          aria-label={t("view.layoutLabel")}
+  1317→        >
+  1318→          <ToggleGroupItem
+  1319→            value="continuous"
+  1320→            title={t("view.layoutContinuous")}
+  1321→            aria-label={t("view.layoutContinuous")}
+  1322→            className="size-8 rounded-btn p-0"
+  1323→          >
+  1324→            <Rows3 className="size-4" aria-hidden="true" />
+  1325→          </ToggleGroupItem>
+  1326→          <ToggleGroupItem
+  1327→            value="single"
+  1328→            title={t("view.layoutSingle")}
+  1329→            aria-label={t("view.layoutSingle")}
+  1330→            className="size-8 rounded-btn p-0"
+  1331→          >
+  1332→            <Square className="size-4" aria-hidden="true" />
+  1333→          </ToggleGroupItem>
+  1334→          <ToggleGroupItem
+  1335→            value="spread"
+  1336→            title={t("view.layoutSpread")}
+  1337→            aria-label={t("view.layoutSpread")}
+  1338→            className="size-8 rounded-btn p-0"
+  1339→          >
+  1340→            <Columns2 className="size-4" aria-hidden="true" />
+  1341→          </ToggleGroupItem>
+  1342→        </ToggleGroup>
+  1343→
+  1344→        <button
+  1345→          type="button"
+  1346→          onClick={() => setRotation((deg) => (deg + 90) % 360)}
+  1347→          title={t("view.rotate")}
+  1348→          aria-label={t("view.rotate")}
+  1349→          className={cn(iconBtn, "grid shrink-0 place-items-center")}
+  1350→        >
+  1351→          <RotateCw className="size-4" aria-hidden="true" />
+  1352→        </button>
+  1353→        <button
+  1354→          type="button"
+  1355→          onClick={() => setDark((prev) => !prev)}
+  1356→          title={t("view.darkMode")}
+  1357→          aria-label={t("view.darkMode")}
+  1358→          aria-pressed={dark}
+  1359→          className={cn(
+  1360→            iconBtn,
+  1361→            "grid shrink-0 place-items-center",
+  1362→            dark && "bg-muted text-primary"
+  1363→          )}
+  1364→        >
+  1365→          <Moon className="size-4" aria-hidden="true" />
+  1366→        </button>
+  1367→
+  1368→        <span className="ml-auto flex items-center gap-1.5">
+  1369→          <button
+  1370→            type="button"
+  1371→            onClick={() => {
+  1372→              setSearchOpen(true);
+  1373→              window.setTimeout(() => searchInputRef.current?.focus(), 30);
+  1374→            }}
+  1375→            title={t("view.search")}
+  1376→            aria-label={t("view.search")}
+  1377→            className={cn(iconBtn, "grid shrink-0 place-items-center", searchOpen && "bg-muted")}
+  1378→        >
+  1379→          <Search className="size-4" aria-hidden="true" />
+  1380→        </button>
+  1381→          <span className="hidden items-center text-[10px] text-muted-foreground md:flex" title={t("view.keysHint")}>
+  1382→            <Keyboard className="mr-1 size-3.5" aria-hidden="true" />
+  1383→            {t("view.keysHint")}
+  1384→          </span>
+  1385→          {canShare ? (
+  1386→            <button
+  1387→              type="button"
+  1388→              onClick={() => void shareFile()}
+  1389→              title={t("view.share")}
+  1390→              aria-label={t("view.share")}
+  1391→              className={cn(iconBtn, "hidden shrink-0 place-items-center sm:grid")}
+  1392→            >
+  1393→              <Share2 className="size-4" aria-hidden="true" />
+  1394→            </button>
+  1395→          ) : null}
+  1396→          <button
+  1397→            type="button"
+  1398→            onClick={printFile}
+  1399→            title={t("view.print")}
+  1400→            aria-label={t("view.print")}
+  1401→            className={cn(iconBtn, "grid shrink-0 place-items-center")}
+  1402→          >
+  1403→            <Printer className="size-4" aria-hidden="true" />
+  1404→          </button>
+  1405→          <button
+  1406→            type="button"
+  1407→            onClick={downloadFile}
+  1408→            title={t("view.download")}
+  1409→            aria-label={t("view.download")}
+  1410→            className={cn(iconBtn, "grid shrink-0 place-items-center")}
+  1411→          >
+  1412→            <Download className="size-4" aria-hidden="true" />
+  1413→          </button>
+  1414→        </span>
+  1415→      </div>
+  1416→
+  1417→      {/* ---------------- search bar ---------------- */}
+  1418→      {searchOpen ? (
+  1419→        <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-3 py-2">
+  1420→          <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+  1421→          <input
+  1422→            ref={searchInputRef}
+  1423→            type="search"
+  1424→            value={query}
+  1425→            onChange={(event) => setQuery(event.target.value)}
+  1426→            onKeyDown={(event) => {
+  1427→              if (event.key === "Enter") {
+  1428→                event.preventDefault();
+  1429→                focusMatch(
+  1430→                  event.shiftKey ? activeMatch - 1 : activeMatch + 1
+  1431→                );
+  1432→              }
+  1433→            }}
+  1434→            placeholder={t("view.searchPlaceholder")}
+  1435→            aria-label={t("view.search")}
+  1436→            className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2.5 text-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+  1437→          />
+  1438→          {searchingNow ? (
+  1439→            <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+  1440→              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+  1441→              {t("view.searchProgress", {
+  1442→                done: searchedPages,
+  1443→                total: numPages,
+  1444→              })}
+  1445→            </span>
+  1446→          ) : queryValid ? (
+  1447→            <span className="shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground">
+  1448→              {visibleMatches.length === 0
+  1449→                ? t("view.searchEmpty")
+  1450→                : t("view.searchCount", {
+  1451→                    current: activeMatch,
+  1452→                    total: visibleMatches.length,
+  1453→                  })}
+  1454→            </span>
+  1455→          ) : null}
+  1456→          <button
+  1457→            type="button"
+  1458→            onClick={() => focusMatch(activeMatch - 1)}
+  1459→            disabled={visibleMatches.length === 0}
+  1460→            title={t("view.searchPrev")}
+  1461→            aria-label={t("view.searchPrev")}
+  1462→            className={cn(iconBtn, "grid place-items-center")}
+  1463→          >
+  1464→            <ChevronLeft className="size-4" aria-hidden="true" />
+  1465→          </button>
+  1466→          <button
+  1467→            type="button"
+  1468→            onClick={() => focusMatch(activeMatch + 1)}
+  1469→            disabled={visibleMatches.length === 0}
+  1470→            title={t("view.searchNext")}
+  1471→            aria-label={t("view.searchNext")}
+  1472→            className={cn(iconBtn, "grid place-items-center")}
+  1473→          >
+  1474→            <ChevronRight className="size-4" aria-hidden="true" />
+  1475→          </button>
+  1476→          <button
+  1477→            type="button"
+  1478→            onClick={() => {
+  1479→              setSearchOpen(false);
+  1480→              setQuery("");
+  1481→            }}
+  1482→            title={t("view.searchClose")}
+  1483→            aria-label={t("view.searchClose")}
+  1484→            className={cn(iconBtn, "grid place-items-center")}
+  1485→          >
+  1486→            <X className="size-4" aria-hidden="true" />
+  1487→          </button>
+  1488→        </div>
+  1489→      ) : null}
+  1490→
+  1491→      {/* ---------------- sidebar + pages ---------------- */}
+  1492→      <div className="relative flex min-h-[70vh]">
+  1493→        {/* sidebar (thumbnails / outline) */}
+  1494→        {sidebar !== null ? (
+  1495→          <aside
+  1496→            className="absolute inset-y-0 left-0 z-20 flex w-44 flex-col border-r border-border bg-background/95 backdrop-blur md:static md:z-auto md:w-48 md:bg-transparent md:backdrop-blur-none"
+  1497→            aria-label={t("view.sidebarLabel")}
+  1498→          >
+  1499→            <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
+  1500→              <button
+  1501→                type="button"
+  1502→                onClick={() => setSidebar("thumbs")}
+  1503→                aria-pressed={sidebar === "thumbs"}
+  1504→                className={cn(
+  1505→                  "flex flex-1 items-center justify-center gap-1 rounded-btn px-2 py-1.5 text-[11px] font-semibold outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+  1506→                  sidebar === "thumbs"
+  1507→                    ? "bg-primary/10 text-primary"
+  1508→                    : "text-muted-foreground"
+  1509→                )}
+  1510→              >
+  1511→                <List className="size-3.5" aria-hidden="true" />
+  1512→                {t("view.thumbsTab")}
+  1513→              </button>
+  1514→              <button
+  1515→                type="button"
+  1516→                onClick={() => setSidebar("outline")}
+  1517→                aria-pressed={sidebar === "outline"}
+  1518→                className={cn(
+  1519→                  "flex flex-1 items-center justify-center gap-1 rounded-btn px-2 py-1.5 text-[11px] font-semibold outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+  1520→                  sidebar === "outline"
+  1521→                    ? "bg-primary/10 text-primary"
+  1522→                    : "text-muted-foreground"
+  1523→                )}
+  1524→              >
+  1525→                <ListTree className="size-3.5" aria-hidden="true" />
+  1526→                {t("view.outlineTab")}
+  1527→              </button>
+  1528→            </div>
+  1529→            {sidebar === "thumbs" ? (
+  1530→              <div className="flex-1 overflow-y-auto p-2 scrollbar-thin">
+  1531→                <div className="grid grid-cols-1 gap-1.5">
+  1532→                  {Array.from({ length: numPages }, (_, i) => (
+  1533→                    <ViewerThumb
+  1534→                      key={i + 1}
+  1535→                      pageNumber={i + 1}
+  1536→                      active={currentPage === i + 1}
+  1537→                      docRef={docRef}
+  1538→                      docEpoch={docEpoch}
+  1539→                      onGo={(page) => goToPage(page)}
+  1540→                      scrollRootRef={scrollRef}
+  1541→                    />
+  1542→                  ))}
+  1543→                </div>
+  1544→              </div>
+  1545→            ) : (
+  1546→              <div className="flex-1 overflow-y-auto p-2 scrollbar-thin">
+  1547→                {outline.length === 0 ? (
+  1548→                  <p className="px-2 py-6 text-center text-[11px] leading-relaxed text-muted-foreground">
+  1549→                    {t("view.outlineEmpty")}
+  1550→                  </p>
+  1551→                ) : (
+  1552→                  <ul className="space-y-0.5">
+  1553→                    {outline.map((row, index) => (
+  1554→                      <li key={`${row.page}-${index}`}>
+  1555→                        <button
+  1556→                          type="button"
+  1557→                          onClick={() => goToPage(row.page)}
+  1558→                          className="flex w-full items-baseline gap-1.5 rounded-btn px-2 py-1.5 text-left text-[11px] leading-snug outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
+  1559→                          style={{ paddingLeft: `${8 + row.depth * 12}px` }}
+  1560→                        >
+  1561→                          <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+  1562→                            {row.title}
+  1563→                          </span>
+  1564→                          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+  1565→                            {row.page}
+  1566→                          </span>
+  1567→                        </button>
+  1568→                      </li>
+  1569→                    ))}
+  1570→                  </ul>
+  1571→                )}
+  1572→              </div>
+  1573→            )}
+  1574→          </aside>
+  1575→        ) : null}
+  1576→
+  1577→        {/* pages */}
+  1578→        <div
+  1579→          ref={scrollRef}
+  1580→          onScroll={handleScroll}
+  1581→          className={cn(
+  1582→            "relative h-[70vh] min-h-96 flex-1 overflow-auto bg-neutral-100 scrollbar-thin dark:bg-neutral-900",
+  1583→            dark && "bg-neutral-900 dark:bg-black"
+  1584→          )}
+  1585→        >
+  1586→          {singleMode ? (
+  1587→            <div className="flex min-h-full items-start justify-center p-6">
+  1588→              {pageNode(clamp(currentPage, 1, numPages))}
+  1589→            </div>
+  1590→          ) : spreadMode ? (
+  1591→            <div className="flex flex-col items-center gap-4 p-6">
+  1592→              {spreadRows.map((row) => (
+  1593→                <div
+  1594→                  key={row.first}
+  1595→                  className="flex items-start justify-center gap-3"
+  1596→                >
+  1597→                  {pageNode(row.first)}
+  1598→                  {row.second !== null ? pageNode(row.second) : null}
+  1599→                </div>
+  1600→              ))}
+  1601→            </div>
+  1602→          ) : (
+  1603→            <div className="flex flex-col items-center gap-4 p-6">
+  1604→              {Array.from({ length: numPages }, (_, i) => pageNode(i + 1))}
+  1605→            </div>
+  1606→          )}
+  1607→        </div>
+  1608→      </div>
+  1609→
+  1610→      {/* ---------------- search results drawer ---------------- */}
+  1611→      {searchOpen && visibleMatches.length > 0 ? (
+  1612→        <div className="border-t border-border bg-muted/30">
+  1613→          <p className="px-3 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+  1614→            {t("view.searchResults", { count: visibleMatches.length })}
+  1615→          </p>
+  1616→          <ul className="max-h-40 overflow-y-auto px-2 py-2 scrollbar-thin">
+  1617→            {visibleMatches.slice(0, 100).map((match, index) => (
+  1618→              <li key={match.id}>
+  1619→                <button
+  1620→                  type="button"
+  1621→                  onClick={() => {
+  1622→                    setActiveMatch(index + 1);
+  1623→                    goToPage(match.pageIndex + 1);
+  1624→                  }}
+  1625→                  className={cn(
+  1626→                    "flex w-full items-center gap-2 rounded-btn px-2 py-1.5 text-left text-[11px] outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+  1627→                    index + 1 === activeMatch
+  1628→                      ? "bg-primary/10"
+  1629→                      : "bg-transparent"
+  1630→                  )}
+  1631→                >
+  1632→                  <span className="shrink-0 rounded-chip bg-background px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary">
+  1633→                    {match.pageIndex + 1}
+  1634→                  </span>
+  1635→                  <span className="min-w-0 flex-1 truncate text-muted-foreground">
+  1636→                    {match.context}
+  1637→                  </span>
+  1638→                </button>
+  1639→              </li>
+  1640→            ))}
+  1641→          </ul>
+  1642→        </div>
+  1643→      ) : null}
+  1644→
+  1645→      {/* ---------------- continue with ---------------- */}
+  1646→      <div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted/40 px-3 py-2.5">
+  1647→        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+  1648→          {t("view.continueTitle")}
+  1649→        </p>
+  1650→        {(["merge-pdf", "split-pdf", "rotate-pdf-pages", "fill-out-pdf"] as const).map(
+  1651→          (toolId) => (
+  1652→            <button
+  1653→              key={toolId}
+  1654→              type="button"
+  1655→              onClick={() => onChain?.(toolId)}
+  1656→              className="rounded-chip border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-foreground outline-none transition-colors hover:border-primary/50 hover:text-primary focus-visible:ring-[3px] focus-visible:ring-ring/50"
+  1657→            >
+  1658→              {t(`view.continue.${toolId}`)}
+  1659→            </button>
+  1660→          )
+  1661→        )}
+  1662→      </div>
+  1663→    </div>
+  1664→  );
+  1665→}
+  1666→
+  1667→const EMPTY_MATCHES: SearchMatch[] = [];
+  1668→const EMPTY_BOXES: HighlightBox[] = [];
+  1669→

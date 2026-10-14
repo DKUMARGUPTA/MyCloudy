@@ -14,6 +14,12 @@ import { HeaderFooterPanel } from "../../../tools/add-header-footer/panel";
 import { CropPanel } from "../../../tools/crop-pdf/panel";
 import { DocInfoPanel } from "../../../tools/change-pdf-doc-info/panel";
 import { RemoveMetaPanel } from "../../../tools/remove-pdf-metadata/panel";
+import { PagesPerSheetPanel } from "../../../tools/pages-per-sheet/panel";
+import { HalvePanel } from "../../../tools/halve-pdf-pages/panel";
+import { SearchPanel } from "../../../tools/search-pdf/panel";
+import { BookmarkPanel } from "../../../tools/bookmark-pdf/panel";
+import { OverlayPanel } from "../../../tools/overlay-pdf/panel";
+import { PageSizePanel } from "../../../tools/change-pdf-page-size/panel";
 
 /**
  * Custom tool panels (PRD §2.6 "Panel.tsx per tool").
@@ -56,6 +62,12 @@ export const TOOL_PANELS: Record<string, ComponentType<ToolPanelProps>> = {
   "crop-pdf": CropPanel,
   "change-pdf-doc-info": DocInfoPanel,
   "remove-pdf-metadata": RemoveMetaPanel,
+  "pages-per-sheet": PagesPerSheetPanel,
+  "halve-pdf-pages": HalvePanel,
+  "search-pdf": SearchPanel,
+  "bookmark-pdf": BookmarkPanel,
+  "overlay-pdf": OverlayPanel,
+  "change-pdf-page-size": PageSizePanel,
 };
 
 export function getToolPanel(

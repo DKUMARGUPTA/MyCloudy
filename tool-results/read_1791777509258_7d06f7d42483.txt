@@ -1,0 +1,702 @@
+    60→    60→
+    61→    61→/**
+    62→    62→ * Sign PDF live surface (PRD §7.6): page preview with click-to-place
+    63→    63→ * signatures, direct-manipulation boxes (drag / resize handle / rotate
+    64→    64→ * handle / delete), a quick-stamp rail (date, name, initials, checkmark)
+    65→    65→ * and a per-placement inspector (pages, size, rotation, opacity).
+    66→    66→ *
+    67→    67→ * Placements live in the shell options under "p:<fileId>" as JSON —
+    68→    68→ * replacing the file can never leak placements into another document.
+    69→    69→ * The PNG signatures themselves ride the run as assets, never options.
+    70→    70→ */
+    71→    71→
+    72→    72→const PREVIEW_MAX_DIM = 560;
+    73→    73→const ZOOM_STEPS = [1, 1.5, 2] as const;
+    74→    74→const KEY_PREFIX = "p:";
+    75→    75→const SIGKEY_ID = "sigkey";
+    76→    76→
+    77→    77→type DragMode = "move" | "resize" | "rotate";
+    78→    78→
+    79→    79→interface DragState {
+    80→    80→  mode: DragMode;
+    81→    81→  id: string;
+    82→    82→  orig: SignPlacement;
+    83→    83→  grabDx: number;
+    84→    84→  grabDy: number;
+    85→    85→}
+    86→    86→
+    87→    87→interface Base {
+    88→    88→  file: File;
+    89→    89→  pageIndex: number;
+    90→    90→  bitmap: ImageBitmap;
+    91→    91→  dispW: number;
+    92→    92→  dispH: number;
+    93→    93→}
+    94→    94→
+    95→    95→let placementSeq = 0;
+    96→    96→const nextPlacementId = (): string =>
+    97→    97→  `pl${Date.now().toString(36)}${(placementSeq += 1).toString(36)}`;
+    98→    98→
+    99→    99→function initialsOf(name: string): string {
+   100→   100→  const parts = name.trim().split(/\s+/).filter(Boolean);
+   101→   101→  if (parts.length === 0) return "";
+   102→   102→  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+   103→   103→  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+   104→   104→}
+   105→   105→
+   106→   106→export function SignSurface(props: ToolSurfaceProps): React.JSX.Element | null {
+   107→   107→  const { files, values, onChange, setFileOrder, setRunBlocked } = props;
+   108→   108→  const { t, locale } = useI18n();
+   109→   109→  const { toast } = useToast();
+   110→   110→  const file = files.length > 0 ? files[0].file : null;
+   111→   111→  const fileId = files.length > 0 ? files[0].id : "";
+   112→   112→
+   113→   113→  const [pageCount, setPageCount] = useState(0);
+   114→   114→  const [selectedPage, setSelectedPage] = useState(0);
+   115→   115→  const [zoom, setZoom] = useState<number>(1);
+   116→   116→  const [base, setBase] = useState<Base | null>(null);
+   117→   117→  const [failed, setFailed] = useState<{ file: File; pageIndex: number } | null>(null);
+   118→   118→  const overlayRef = useRef<HTMLDivElement>(null);
+   119→   119→
+   120→   120→  const [signatures, setSignatures] = useState<StoredSignature[]>(() =>
+   121→   121→    typeof window === "undefined" ? [] : listSignatures()
+   122→   122→  );
+   123→   123→  const [armedId, setArmedId] = useState<string | null>(null);
+   124→   124→  const [selectedId, setSelectedId] = useState<string | null>(null);
+   125→   125→  const [dialogOpen, setDialogOpen] = useState(false);
+   126→   126→  const [drag, setDrag] = useState<DragState | null>(null);
+   127→   127→  const [angleFlash, setAngleFlash] = useState<number | null>(null);
+   128→   128→  const [profileName, setProfileName] = useState("");
+   129→   129→
+   130→   130→  // --- Library subscription (draw/type/upload saves, removals) ----------
+   131→   131→  useEffect(() => {
+   132→   132→    const sync = (): void => setSignatures([...listSignatures()]);
+   133→   133→    sync();
+   134→   134→    return subscribeSignatures(sync);
+   135→   135→  }, []);
+   136→   136→
+   137→   137→  useEffect(() => {
+   138→   138→    if (typeof window !== "undefined") {
+   139→   139→      setProfileName(loadFillProfile().name);
+   140→   140→    }
+   141→   141→  }, []);
+   142→   142→
+   143→   143→  // --- Placements (option "p:<fileId>") ---------------------------------
+   144→   144→  const placementsKey = `${KEY_PREFIX}${fileId}`;
+   145→   145→  const placements = useMemo(
+   146→   146→    () => parsePlacementsOption(file ? values[placementsKey] : undefined),
+   147→   147→    [file, values, placementsKey]
+   148→   148→  );
+   149→   149→
+   150→   150→  const commit = useCallback(
+   151→   151→    (next: SignPlacement[]): void => {
+   152→   152→      onChange(placementsKey, JSON.stringify(next));
+   153→   153→    },
+   154→   154→    [onChange, placementsKey]
+   155→   155→  );
+   156→   156→
+   157→   157→  // Stamp the current file id so the worker only reads this document's
+   158→   158→  // placements — replacing the file can never leak them across.
+   159→   159→  useEffect(() => {
+   160→   160→    if (fileId !== "") onChange(SIGKEY_ID, fileId);
+   161→   161→  }, [fileId, onChange]);
+   162→   162→
+   163→   163→  // --- Page count + preview ---------------------------------------------
+   164→   164→  const [pageError, setPageError] = useState<null | "password" | "corrupt">(null);
+   165→   165→  useEffect(() => {
+   166→   166→    if (!file) return;
+   167→   167→    let cancelled = false;
+   168→   168→    setPageError(null);
+   169→   169→    void (async () => {
+   170→   170→      const count = await getPdfPageCount(file);
+   171→   171→      if (cancelled) return;
+   172→   172→      setPageCount(count);
+   173→   173→      setSelectedPage((page) => Math.min(page, Math.max(0, count - 1)));
+   174→   174→    })().catch((error: unknown) => {
+   175→   175→      if (cancelled) return;
+   176→   176→      // PasswordException arrives as the PdfParseError cause — the whole
+   177→   177→      // preview pipeline would otherwise hang on pageCount 0.
+   178→   178→      const cause = (error as { cause?: unknown })?.cause;
+   179→   179→      const name =
+   180→   180→        (cause as { name?: string } | undefined)?.name ??
+   181→   181→        (error as { name?: string } | undefined)?.name ??
+   182→   182→        "";
+   183→   183→      const message = String((error as Error)?.message ?? "");
+   184→   184→      setPageError(
+   185→   185→        name === "PasswordException" || /password/i.test(message)
+   186→   186→          ? "password"
+   187→   187→          : "corrupt"
+   188→   188→      );
+   189→   189→      setPageCount(0);
+   190→   190→    });
+   191→   191→    return () => {
+   192→   192→      cancelled = true;
+   193→   193→    };
+   194→   194→  }, [file]);
+   195→   195→
+   196→   196→  useEffect(() => {
+   197→   197→    if (!file || pageCount === 0) return;
+   198→   198→    let cancelled = false;
+   199→   199→    void (async () => {
+   200→   200→      const [thumb, pixel] = await Promise.all([
+   201→   201→        renderPdfThumbnail(file, {
+   202→   202→          pageIndex: selectedPage,
+   203→   203→          maxDim: Math.round(PREVIEW_MAX_DIM * zoom),
+   204→   204→        }),
+   205→   205→        getPdfPagePixelSize(file, 1, selectedPage),
+   206→   206→      ]);
+   207→   207→      if (cancelled) return;
+   208→   208→      const bitmap = await createImageBitmap(thumb.blob);
+   209→   209→      if (cancelled) return;
+   210→   210→      setFailed(null);
+   211→   211→      setBase({ file, pageIndex: selectedPage, bitmap, dispW: pixel.width, dispH: pixel.height });
+   212→   212→    })().catch(() => {
+   213→   213→      if (!cancelled) {
+   214→   214→        setFailed({ file, pageIndex: selectedPage });
+   215→   215→        setBase(null);
+   216→   216→      }
+   217→   217→    });
+   218→   218→    return () => {
+   219→   219→      cancelled = true;
+   220→   220→    };
+   221→   221→  }, [file, pageCount, selectedPage, zoom]);
+   222→   222→
+   223→   223→  const canvasRef = useRef<HTMLCanvasElement>(null);
+   224→   224→  useEffect(() => {
+   225→   225→    const canvas = canvasRef.current;
+   226→   226→    if (!canvas || !base) return;
+   227→   227→    const ctx = canvas.getContext("2d");
+   228→   228→    if (!ctx) return;
+   229→   229→    canvas.width = base.bitmap.width;
+   230→   230→    canvas.height = base.bitmap.height;
+   231→   231→    ctx.clearRect(0, 0, canvas.width, canvas.height);
+   232→   232→    ctx.drawImage(base.bitmap, 0, 0);
+   233→   233→  }, [base]);
+   234→   234→
+   235→   235→  // --- CTA gating --------------------------------------------------------
+   236→   236→  const blockedKey =
+   237→   237→    !file || placements.length > 0 ? null : "sign.ctaNoSignatures";
+   238→   238→  useEffect(() => {
+   239→   239→    setRunBlocked(blockedKey);
+   240→   240→  }, [blockedKey, setRunBlocked]);
+   241→   241→
+   242→   242→  // --- Derived helpers ---------------------------------------------------
+   243→   243→  const sigById = useMemo(() => {
+   244→   244→    const map = new Map<string, StoredSignature>();
+   245→   245→    for (const sig of signatures) map.set(sig.id, sig);
+   246→   246→    return map;
+   247→   247→  }, [signatures]);
+   248→   248→
+   249→   249→  const current =
+   250→   250→    base !== null && base.file === file && base.pageIndex === selectedPage ? base : null;
+   251→   251→  const pagePlacements = useMemo(
+   252→   252→    () => placementsOnPage(placements, selectedPage, pageCount),
+   253→   253→    [placements, selectedPage, pageCount]
+   254→   254→  );
+   255→   255→
+   256→   256→  const markedPages = useMemo(() => {
+   257→   257→    const set = new Set<number>();
+   258→   258→    for (const p of placements) {
+   259→   259→      const targets = placementTargets(p, pageCount);
+   260→   260→      if (targets) for (const i of targets) set.add(i);
+   261→   261→    }
+   262→   262→    return set;
+   263→   263→  }, [placements, pageCount]);
+   264→   264→
+   265→   265→  const armed = armedId !== null ? sigById.get(armedId) ?? null : null;
+   266→   266→  const selected = selectedId !== null ? placements.find((p) => p.id === selectedId) ?? null : null;
+   267→   267→
+   268→   268→  // --- Placement actions -------------------------------------------------
+   269→   269→  const placeAt = useCallback(
+   270→   270→    (fx: number, fy: number): void => {
+   271→   271→      if (!armed || !file) return;
+   272→   272→      const next: SignPlacement = {
+   273→   273→        id: nextPlacementId(),
+   274→   274→        sigId: armed.id,
+   275→   275→        cx: Math.min(Math.max(fx, 0.05), 0.95),
+   276→   276→        cy: Math.min(Math.max(fy, 0.05), 0.95),
+   277→   277→        w: 0.25,
+   278→   278→        rot: 0,
+   279→   279→        op: 1,
+   280→   280→        pages: "this",
+   281→   281→        pageIndex: selectedPage,
+   282→   282→      };
+   283→   283→      commit([...placements, next]);
+   284→   284→      setSelectedId(next.id);
+   285→   285→    },
+   286→   286→    [armed, commit, file, placements, selectedPage]
+   287→   287→  );
+   288→   288→
+   289→   289→  const updatePlacement = useCallback(
+   290→   290→    (id: string, patch: Partial<SignPlacement>): void => {
+   291→   291→      commit(
+   292→   292→        placements.map((p) =>
+   293→   293→          p.id === id
+   294→   294→            ? { ...p, ...patch, range: patch.range ?? (patch.pages === "range" ? p.range : undefined) }
+   295→   295→            : p
+   296→   296→        )
+   297→   297→      );
+   298→   298→    },
+   299→   299→    [commit, placements]
+   300→   300→  );
+   301→   301→
+   302→   302→  const removePlacement = useCallback(
+   303→   303→    (id: string): void => {
+   304→   304→      commit(placements.filter((p) => p.id !== id));
+   305→   305→      if (selectedId === id) setSelectedId(null);
+   306→   306→    },
+   307→   307→    [commit, placements, selectedId]
+   308→   308→  );
+   309→   309→
+   310→   310→  const handleRemoveSignature = useCallback(
+   311→   311→    (id: string): void => {
+   312→   312→      removeSignature(id);
+   313→   313→      if (armedId === id) setArmedId(null);
+   314→   314→      const stillUsed = placements.some((p) => p.sigId === id);
+   315→   315→      if (stillUsed) commit(placements.filter((p) => p.sigId !== id));
+   316→   316→    },
+   317→   317→    [armedId, commit, placements]
+   318→   318→  );
+   319→   319→
+   320→   320→  // --- Overlay pointer machinery (place / drag / resize / rotate) --------
+   321→   321→  const fractionPos = (event: React.PointerEvent<Element>): { fx: number; fy: number } => {
+   322→   322→    const overlay = overlayRef.current;
+   323→   323→    if (!overlay) return { fx: 0, fy: 0 };
+   324→   324→    const box = overlay.getBoundingClientRect();
+   325→   325→    return {
+   326→   326→      fx: (event.clientX - box.left) / box.width,
+   327→   327→      fy: (event.clientY - box.top) / box.height,
+   328→   328→    };
+   329→   329→  };
+   330→   330→
+   331→   331→  const handleOverlayPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+   332→   332→    if (!current || event.button !== 0) return;
+   333→   333→    const overlay = overlayRef.current;
+   334→   334→    if (!overlay) return;
+   335→   335→    // Only empty-canvas clicks place — boxes stop propagation.
+   336→   336→    const { fx, fy } = fractionPos(event);
+   337→   337→    try {
+   338→   338→      overlay.setPointerCapture(event.pointerId);
+   339→   339→    } catch {
+   340→   340→      // Synthetic pointers — the overlay handlers still cover the gesture.
+   341→   341→    }
+   342→   342→    if (armed) {
+   343→   343→      placeAt(fx, fy);
+   344→   344→      event.preventDefault();
+   345→   345→    } else {
+   346→   346→      setSelectedId(null);
+   347→   347→    }
+   348→   348→  };
+   349→   349→
+   350→   350→  const beginBoxDrag =
+   351→   351→    (mode: DragMode, placement: SignPlacement) =>
+   352→   352→    (event: React.PointerEvent<HTMLDivElement>): void => {
+   353→   353→      if (!current || event.button !== 0 || drag) return;
+   354→   354→      event.stopPropagation();
+   355→   355→      const overlay = overlayRef.current;
+   356→   356→      if (!overlay) return;
+   357→   357→      try {
+   358→   358→        overlay.setPointerCapture(event.pointerId);
+   359→   359→      } catch {
+   360→   360→        // See above — non-capturable pointers still drag via overlay.
+   361→   361→      }
+   362→   362→      const { fx, fy } = fractionPos(event);
+   363→   363→      setSelectedId(placement.id);
+   364→   364→      setArmedId(null);
+   365→   365→      setDrag({
+   366→   366→        mode,
+   367→   367→        id: placement.id,
+   368→   368→        orig: placement,
+   369→   369→        grabDx: fx - placement.cx,
+   370→   370→        grabDy: fy - placement.cy,
+   371→   371→      });
+   372→   372→      event.preventDefault();
+   373→   373→    };
+   374→   374→
+   375→   375→  const handleOverlayPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+   376→   376→    if (!drag) return;
+   377→   377→    const { fx, fy } = fractionPos(event);
+   378→   378→    const { orig, mode } = drag;
+   379→   379→    switch (mode) {
+   380→   380→      case "move": {
+   381→   381→        const cx = Math.min(Math.max(fx - drag.grabDx, 0), 1);
+   382→   382→        const cy = Math.min(Math.max(fy - drag.grabDy, 0), 1);
+   383→   383→        setDrag({ ...drag, orig: { ...orig, cx, cy } });
+   384→   384→        break;
+   385→   385→      }
+   386→   386→      case "resize": {
+   387→   387→        const leftEdge = orig.cx - orig.w / 2;
+   388→   388→        const w = Math.min(Math.max((fx - leftEdge) / 1, 0.05), 1.2);
+   389→   389→        setDrag({ ...drag, orig: { ...orig, w } });
+   390→   390→        break;
+   391→   391→      }
+   392→   392→      case "rotate": {
+   393→   393→        const dx = fx - orig.cx;
+   394→   394→        const dy = fy - orig.cy;
+   395→   395→        let deg = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+   396→   396→        // Snap to 15° steps when close — signatures usually sit straight.
+   397→   397→        const snapped = Math.round(deg / 15) * 15;
+   398→   398→        if (Math.abs(deg - snapped) < 5) deg = snapped;
+   399→   399→        deg = Math.round(deg * 10) / 10;
+   400→   400→        setDrag({ ...drag, orig: { ...orig, rot: Math.min(Math.max(deg, -180), 180) } });
+   401→   401→        setAngleFlash(deg);
+   402→   402→        break;
+   403→   403→      }
+   404→   404→    }
+   405→   405→  };
+   406→   406→
+   407→   407→  const commitDrag = useCallback((): void => {
+   408→   408→    if (!drag) return;
+   409→   409→    commit(placements.map((p) => (p.id === drag.id ? drag.orig : p)));
+   410→   410→    setDrag(null);
+   411→   411→    if (angleFlash !== null) {
+   412→   412→      window.setTimeout(() => setAngleFlash(null), 900);
+   413→   413→    }
+   414→   414→  }, [angleFlash, commit, drag, placements]);
+   415→   415→
+   416→   416→  const handleBoxKeyDown =
+   417→   417→    (placement: SignPlacement) =>
+   418→   418→    (event: React.KeyboardEvent<HTMLDivElement>): void => {
+   419→   419→      const step = event.shiftKey ? 0.02 : 0.005;
+   420→   420→      switch (event.key) {
+   421→   421→        case "ArrowLeft":
+   422→   422→          event.preventDefault();
+   423→   423→          updatePlacement(placement.id, { cx: clampN(placement.cx - step, 0, 1) });
+   424→   424→          break;
+   425→   425→        case "ArrowRight":
+   426→   426→          event.preventDefault();
+   427→   427→          updatePlacement(placement.id, { cx: clampN(placement.cx + step, 0, 1) });
+   428→   428→          break;
+   429→   429→        case "ArrowUp":
+   430→   430→          event.preventDefault();
+   431→   431→          updatePlacement(placement.id, { cy: clampN(placement.cy - step, 0, 1) });
+   432→   432→          break;
+   433→   433→        case "ArrowDown":
+   434→   434→          event.preventDefault();
+   435→   435→          updatePlacement(placement.id, { cy: clampN(placement.cy + step, 0, 1) });
+   436→   436→          break;
+   437→   437→        case "Delete":
+   438→   438→        case "Backspace":
+   439→   439→          event.preventDefault();
+   440→   440→          removePlacement(placement.id);
+   441→   441→          break;
+   442→   442→        case "Escape":
+   443→   443→          setSelectedId(null);
+   444→   444→          setArmedId(null);
+   445→   445→          break;
+   446→   446→        default:
+   447→   447→          return;
+   448→   448→      }
+   449→   449→    };
+   450→   450→
+   451→   451→  // --- Quick stamps -------------------------------------------------------
+   452→   452→  const quickStampBusy = useRef(false);
+   453→   453→  const quickStamp = useCallback(
+   454→   454→    (kind: "date" | "name" | "initials" | "check"): void => {
+   455→   455→      if (quickStampBusy.current) return;
+   456→   456→      quickStampBusy.current = true;
+   457→   457→      void (async () => {
+   458→   458→        try {
+   459→   459→          if (kind === "check") {
+   460→   460→            const mark = renderCheckmark("#1e3a5f");
+   461→   461→            const sig = addSignature(
+   462→   462→              { kind: "stamp", label: t("sign.quickCheck"), dataUrl: mark.dataUrl, w: mark.w, h: mark.h },
+   463→   463→              { persist: false }
+   464→   464→            );
+   465→   465→            setArmedId(sig.id);
+   466→   466→          } else if (kind === "date") {
+   467→   467→            const date = new Date().toLocaleDateString(
+   468→   468→              locale === "hi" ? "hi-IN" : "en-IN",
+   469→   469→              { day: "numeric", month: "short", year: "numeric" }
+   470→   470→            );
+   471→   471→            const rendered = await renderTextSignature(
+   472→   472→              date,
+   473→   473→              'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+   474→   474→              "#1e3a5f",
+   475→   475→              88
+   476→   476→            );
+   477→   477→            const sig = addSignature(
+   478→   478→              { kind: "stamp", label: date, dataUrl: rendered.dataUrl, w: rendered.w, h: rendered.h },
+   479→   479→              { persist: false }
+   480→   480→            );
+   481→   481→            setArmedId(sig.id);
+   482→   482→          } else {
+   483→   483→            const name = profileName.trim();
+   484→   484→            if (name.length === 0) {
+   485→   485→              toast({ title: t("sign.quickNeedName") });
+   486→   486→              return;
+   487→   487→            }
+   488→   488→            const text = kind === "initials" ? initialsOf(name) : name;
+   489→   489→            const rendered = await renderTextSignature(text, "Great Vibes", "#111827", 96);
+   490→   490→            const sig = addSignature(
+   491→   491→              { kind: "stamp", label: text, dataUrl: rendered.dataUrl, w: rendered.w, h: rendered.h },
+   492→   492→              { persist: false }
+   493→   493→            );
+   494→   494→            setArmedId(sig.id);
+   495→   495→          }
+   496→   496→        } finally {
+   497→   497→          quickStampBusy.current = false;
+   498→   498→        }
+   499→   499→      })();
+   500→   500→    },
+   501→   501→    [locale, profileName, t, toast]
+   502→   502→  );
+   503→   503→
+   504→   504→  const removeFile = useCallback((): void => {
+   505→   505→    setFileOrder([]);
+   506→   506→  }, [setFileOrder]);
+   507→   507→
+   508→   508→  if (!file) return null;
+   509→   509→
+   510→   510→  const aspectOf = (sigId: string): number => {
+   511→   511→    const sig = sigById.get(sigId);
+   512→   512→    if (!sig || sig.h <= 0) return 0.4;
+   513→   513→    return sig.w / sig.h; // width/height — height fraction derives from it
+   514→   514→  };
+   515→   515→
+   516→   516→  const renderPlacementBox = (placement: SignPlacement): React.JSX.Element | null => {
+   517→   517→    const sig = sigById.get(placement.sigId);
+   518→   518→    if (!sig) return null;
+   519→   519→    const live = drag !== null && drag.id === placement.id ? drag.orig : placement;
+   520→   520→    const aspectW = aspectOf(placement.sigId); // w/h
+   521→   521→    const hFrac =
+   522→   522→      (live.w * (current ? current.dispW / current.dispH : 1)) / Math.max(aspectW, 0.05);
+   523→   523→    const isSel = selectedId === placement.id;
+   524→   524→    return (
+   525→   525→      <div
+   526→   526→        key={placement.id}
+   527→   527→        role="group"
+   528→   528→        aria-label={t("sign.placementBox", { label: sig.label })}
+   529→   529→        tabIndex={0}
+   530→   530→        className={cn(
+   531→   531→          "absolute rounded-[3px] outline-none transition-shadow",
+   532→   532→          isSel
+   533→   533→            ? "z-20 ring-2 ring-primary"
+   534→   534→            : "z-10 ring-1 ring-primary/25 hover:ring-primary/60"
+   535→   535→        )}
+   536→   536→        style={{
+   537→   537→          left: `${(live.cx - live.w / 2) * 100}%`,
+   538→   538→          top: `${(live.cy - hFrac / 2) * 100}%`,
+   539→   539→          width: `${live.w * 100}%`,
+   540→   540→          height: `${hFrac * 100}%`,
+   541→   541→          transform: `rotate(${live.rot}deg)`,
+   542→   542→          cursor: drag?.mode === "move" ? "grabbing" : "grab",
+   543→   543→          touchAction: "none",
+   544→   544→        }}
+   545→   545→        onPointerDown={beginBoxDrag("move", placement)}
+   546→   546→        onKeyDown={handleBoxKeyDown(placement)}
+   547→   547→      >
+   548→   548→        { }
+   549→   549→        <img
+   550→   550→          src={sig.dataUrl}
+   551→   551→          alt=""
+   552→   552→          draggable={false}
+   553→   553→          className="pointer-events-none h-full w-full select-none object-contain"
+   554→   554→          style={{ opacity: live.op }}
+   555→   555→        />
+   556→   556→        {isSel ? (
+   557→   557→          <>
+   558→   558→            <button
+   559→   559→              type="button"
+   560→   560→              aria-label={t("sign.deletePlacement")}
+   561→   561→              className="absolute -right-3 -top-3 z-30 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-transform hover:scale-110"
+   562→   562→              onPointerDown={(e) => e.stopPropagation()}
+   563→   563→              onClick={(e) => {
+   564→   564→                e.stopPropagation();
+   565→   565→                removePlacement(placement.id);
+   566→   566→              }}
+   567→   567→            >
+   568→   568→              <span className="sr-only">{t("sign.deletePlacement")}</span>
+   569→   569→              <span aria-hidden="true" className="text-sm leading-none">
+   570→   570→                ×
+   571→   571→              </span>
+   572→   572→            </button>
+   573→   573→            <span
+   574→   574→              role="button"
+   575→   575→              aria-label={t("sign.resizeHandle")}
+   576→   576→              className="absolute -bottom-2 -right-2 z-30 size-4 cursor-nwse-resize rounded-full border-2 border-primary bg-background shadow"
+   577→   577→              onPointerDown={beginBoxDrag("resize", placement)}
+   578→   578→            />
+   579→   579→            <span
+   580→   580→              role="button"
+   581→   581→              aria-label={t("sign.rotateHandle")}
+   582→   582→              className="absolute -top-8 left-1/2 z-30 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-primary bg-background shadow"
+   583→   583→              onPointerDown={beginBoxDrag("rotate", placement)}
+   584→   584→            />
+   585→   585→            {angleFlash !== null && drag?.id === placement.id && drag.mode === "rotate" ? (
+   586→   586→              <span className="absolute -top-8 left-1/2 z-30 -translate-x-1/2 -translate-y-5 rounded-btn bg-primary px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-foreground">
+   587→   587→                {Math.round(live.rot)}°
+   588→   588→              </span>
+   589→   589→            ) : null}
+   590→   590→          </>
+   591→   591→        ) : null}
+   592→   592→      </div>
+   593→   593→    );
+   594→   594→  };
+   595→   595→
+   596→   596→  return (
+   597→   597→    <div className="flex flex-col gap-4">
+   598→   598→      <PreviewFileHeader
+   599→   599→        file={file}
+   600→   600→        pageCount={pageCount}
+   601→   601→        onRemove={removeFile}
+   602→   602→      />
+   603→   603→
+   604→   604→      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+   605→   605→        {/* ---- Preview column ---- */}
+   606→   606→        <div className="flex min-w-0 flex-col gap-3">
+   607→   607→          {pageCount > 1 ? (
+   608→   608→            <PreviewPageStrip
+   609→   609→              file={file}
+   610→   610→              pageCount={pageCount}
+   611→   611→              selected={selectedPage}
+   612→   612→              onSelect={setSelectedPage}
+   613→   613→              markedSet={markedPages}
+   614→   614→            />
+   615→   615→          ) : null}
+   616→   616→          <div className="flex items-center justify-between gap-2">
+   617→   617→            <p className="flex min-w-0 items-center gap-1.5 truncate text-xs text-muted-foreground">
+   618→   618→              {armed ? (
+   619→   619→                <>
+   620→   620→                  <MousePointerClick
+   621→   621→                    className="size-3.5 shrink-0 text-primary"
+   622→   622→                    aria-hidden="true"
+   623→   623→                  />
+   624→   624→                  <span className="truncate">
+   625→   625→                    {t("sign.armHint", { label: armed.label })}
+   626→   626→                  </span>
+   627→   627→                </>
+   628→   628→              ) : (
+   629→   629→                <>
+   630→   630→                  <Signature
+   631→   631→                    className="size-3.5 shrink-0 text-muted-foreground"
+   632→   632→                    aria-hidden="true"
+   633→   633→                  />
+   634→   634→                  <span className="truncate">{t("sign.previewHint")}</span>
+   635→   635→                </>
+   636→   636→              )}
+   637→   637→            </p>
+   638→   638→            <PreviewZoomControl
+   639→   639→              steps={ZOOM_STEPS}
+   640→   640→              value={zoom}
+   641→   641→              onChange={(next) => setZoom(next)}
+   642→   642→            />
+   643→   643→          </div>
+   644→   644→          <div className="flex justify-center overflow-auto rounded-card border border-border bg-checker p-3 sm:p-4">
+   645→   645→            {current ? (
+   646→   646→              <div
+   647→   647→                className="relative w-full"
+   648→   648→                style={{ maxWidth: Math.round(560 * zoom) }}
+   649→   649→              >
+   650→   650→                <canvas
+   651→   651→                  ref={canvasRef}
+   652→   652→                  className="block h-auto w-full rounded-sm bg-white shadow-sm"
+   653→   653→                  aria-label={t("sign.previewCanvas", { page: selectedPage + 1 })}
+   654→   654→                  role="img"
+   655→   655→                />
+   656→   656→                <div
+   657→   657→                  ref={overlayRef}
+   658→   658→                  className={cn(
+   659→   659→                    "absolute inset-0 touch-none",
+   660→   660→                    armed ? "cursor-crosshair" : "cursor-default"
+   661→   661→                  )}
+   662→   662→                  onPointerDown={handleOverlayPointerDown}
+   663→   663→                  onPointerMove={handleOverlayPointerMove}
+   664→   664→                  onPointerUp={commitDrag}
+   665→   665→                  onPointerCancel={commitDrag}
+   666→   666→                >
+   667→   667→                  {pagePlacements.map(renderPlacementBox)}
+   668→   668→                </div>
+   669→   669→              </div>
+   670→   670→            ) : pageError === "password" ? (
+   671→   671→              <div
+   672→   672→                className="flex w-full items-center gap-3 px-4 py-10 text-sm text-muted-foreground"
+   673→   673→                role="alert"
+   674→   674→              >
+   675→   675→                <Lock
+   676→   676→                  className="size-4 shrink-0 text-amber-600 dark:text-amber-400"
+   677→   677→                  aria-hidden="true"
+   678→   678→                />
+   679→   679→                {t("tool.errorEncrypted")}
+   680→   680→              </div>
+   681→   681→            ) : pageError === "corrupt" ? (
+   682→   682→              <div
+   683→   683→                className="flex w-full items-center gap-3 px-4 py-10 text-sm text-muted-foreground"
+   684→   684→                role="alert"
+   685→   685→              >
+   686→   686→                <TriangleAlert
+   687→   687→                  className="size-4 shrink-0 text-amber-600 dark:text-amber-400"
+   688→   688→                  aria-hidden="true"
+   689→   689→                />
+   690→   690→                {t("tool.errorCorrupt")}
+   691→   691→              </div>
+   692→   692→            ) : failed && failed.file === file && failed.pageIndex === selectedPage ? (
+   693→   693→              <div
+   694→   694→                className="flex w-full items-center gap-3 px-4 py-10 text-sm text-muted-foreground"
+   695→   695→                role="alert"
+   696→   696→              >
+   697→   697→                <TriangleAlert
+   698→   698→                  className="size-4 shrink-0 text-amber-600 dark:text-amber-400"
+   699→   699→                  aria-hidden="true"
+   700→   700→                />
+   701→   701→                {t("sign.previewFailed")}
+   702→   702→              </div>
+   703→   703→            ) : (
+   704→   704→              <div
+   705→   705→                className="flex w-full items-center gap-3 px-4 py-10 text-sm text-muted-foreground"
+   706→   706→                role="status"
+   707→   707→              >
+   708→   708→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   709→   709→                {t("sign.previewLoading")}
+   710→   710→              </div>
+   711→   711→            )}
+   712→   712→          </div>
+   713→   713→          {placements.length > 0 ? (
+   714→   714→            <p className="text-xs text-muted-foreground">
+   715→   715→              {t("sign.placedCount", { count: placements.length })}
+   716→   716→            </p>
+   717→   717→          ) : null}
+   718→   718→        </div>
+   719→   719→
+   720→   720→        {/* ---- Right rail ---- */}
+   721→   721→        <div className="flex min-w-0 flex-col gap-4">
+   722→   722→          {/* Signature library */}
+   723→   723→          <div className="rounded-card border border-border bg-card p-4">
+   724→   724→            <div className="flex items-center justify-between gap-2">
+   725→   725→              <h3 className="text-sm font-semibold text-foreground">
+   726→   726→                {t("sign.trayTitle")}
+   727→   727→              </h3>
+   728→   728→              <span className="text-[11px] text-muted-foreground">
+   729→   729→                {t("sign.trayDeviceOnly")}
+   730→   730→              </span>
+   731→   731→            </div>
+   732→   732→            {signatures.length > 0 ? (
+   733→   733→              <div className="mt-3 grid grid-cols-2 gap-2">
+   734→   734→                {signatures.map((sig) => (
+   735→   735→                  <div
+   736→   736→                    key={sig.id}
+   737→   737→                    className={cn(
+   738→   738→                      "group relative overflow-hidden rounded-btn border transition-all",
+   739→   739→                      armedId === sig.id
+   740→   740→                        ? "border-primary ring-2 ring-primary/30"
+   741→   741→                        : "border-border hover:border-primary/50"
+   742→   742→                    )}
+   743→   743→                  >
+   744→   744→                    <button
+   745→   745→                      type="button"
+   746→   746→                      className="flex h-20 w-full items-center justify-center bg-checker p-2"
+   747→   747→                      onClick={() => {
+   748→   748→                        setArmedId(armedId === sig.id ? null : sig.id);
+   749→   749→                        setSelectedId(null);
+   750→   750→                      }}
+   751→   751→                      aria-pressed={armedId === sig.id}
+   752→   752→                      aria-label={t("sign.trayPick", { label: sig.label })}
+   753→   753→                    >
+   754→   754→                      { }
+   755→   755→                      <img
+   756→   756→                        src={sig.dataUrl}
+   757→   757→                        alt=""
+   758→   758→                        draggable={false}
+   759→   759→                        className="max-h-16 max-w-full select-none object-contain"
+
+[showing lines 60-759 of 994; use offset=760 with limit to continue reading]

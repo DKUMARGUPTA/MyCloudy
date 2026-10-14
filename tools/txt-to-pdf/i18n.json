@@ -1,0 +1,24 @@
+{
+  "en": {
+    "txt2pdf": {
+      "how1": "Add one or more text files — .txt, .md, .csv or .log. They never leave your device.",
+      "how2": "Set page size, font size, line height, margins and the layout mode.",
+      "how3": "Run and download one PDF per file — ready to print or share.",
+      "errorBinary": "This doesn't look like a text file. {detail} contains binary data — try a .txt, .md, .csv or .log file.",
+      "errorEmpty": "Nothing to convert — {detail} has no readable text.",
+      "errorUnsupportedScript": "{detail} uses a script we can't embed yet. Latin and Devanagari (Hindi, Marathi…) are supported today.",
+      "errorFont": "Couldn't load the embedded font. Please try again."
+    }
+  },
+  "hi": {
+    "txt2pdf": {
+      "how1": "एक या कई टेक्स्ट फ़ाइल चुनें — .txt, .md, .csv, .log। फ़ाइल डिवाइस से बाहर नहीं जाती।",
+      "how2": "पेज साइज़, फ़ॉन्ट साइज़, लाइन-स्पेसिंग, मार्जिन और लेआउट मोड तय करें।",
+      "how3": "चलाएँ और हर फ़ाइल की अपनी PDF डाउनलोड करें — प्रिंट या शेयर के लिए तैयार।",
+      "errorBinary": "यह टेक्स्ट फ़ाइल नहीं लगती। {detail} में बाइनरी डेटा है — .txt, .md, .csv या .log फ़ाइल आज़माएँ।",
+      "errorEmpty": "बदलने को कुछ नहीं — {detail} में पढ़ने लायक़ टेक्स्ट नहीं है।",
+      "errorUnsupportedScript": "{detail} की लिपि अभी एम्बेड नहीं होती। अभी लैटिन और देवनागरी (हिंदी, मराठी…) समर्थित हैं।",
+      "errorFont": "एम्बेडेड फ़ॉन्ट लोड नहीं हो सका। कृपया फिर आज़माएँ।"
+    }
+  }
+}

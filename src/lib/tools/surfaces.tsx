@@ -18,6 +18,14 @@ import { PasswordSurface } from "../../../tools/generate-password/surface";
 import { LockSurface } from "../../../tools/lock-pdf/surface";
 import { UnlockSurface } from "../../../tools/unlock-pdf/surface";
 import { ScanSurface } from "../../../tools/scan-pdf/surface";
+import { ExtractImagesSurface } from "../../../tools/extract-images/surface";
+import { SearchSurface } from "../../../tools/search-pdf/surface";
+import { BookmarkSurface } from "../../../tools/bookmark-pdf/surface";
+import { OverlaySurface } from "../../../tools/overlay-pdf/surface";
+import { CompareSurface } from "../../../tools/compare-pdf/surface";
+import { GenerateQrSurface } from "../../../tools/generate-qr-code/surface";
+import { ConvertToPdfSurface } from "../../../tools/convert-to-pdf/surface";
+import { ConvertFromPdfSurface } from "../../../tools/convert-from-pdf/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -81,6 +89,14 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "lock-pdf": LockSurface,
   "unlock-pdf": UnlockSurface,
   "scan-pdf": ScanSurface,
+  "extract-images": ExtractImagesSurface,
+  "search-pdf": SearchSurface,
+  "bookmark-pdf": BookmarkSurface,
+  "overlay-pdf": OverlaySurface,
+  "compare-pdf": CompareSurface,
+  "generate-qr-code": GenerateQrSurface,
+  "convert-to-pdf": ConvertToPdfSurface,
+  "convert-from-pdf": ConvertFromPdfSurface,
 };
 
 export function getToolSurface(

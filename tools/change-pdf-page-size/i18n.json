@@ -1,0 +1,32 @@
+{
+  "en": {
+    "pgsz": {
+      "previewTitle": "Live preview",
+      "inventoryTitle": "Page sizes in this file",
+      "inventoryCount": "{count} pages",
+      "inventoryMore": "+ {n} more sizes",
+      "scanNote": "First {n} of {total} pages scanned",
+      "loading": "Drawing the new page…",
+      "renderFailed": "The preview couldn't be drawn, but the resize will still be correct.",
+      "canvasAria": "Page 1 drawn on the new paper size — preview",
+      "caption": "Page 1: {from} → {to}",
+      "scaleNote": "content at {pct}%",
+      "keptNote": "{n} pages are already at the target size — they stay untouched."
+    }
+  },
+  "hi": {
+    "pgsz": {
+      "previewTitle": "लाइव प्रीव्यू",
+      "inventoryTitle": "इस फ़ाइल में पेज साइज़ें",
+      "inventoryCount": "{count} पेज",
+      "inventoryMore": "+ {n} और साइज़ें",
+      "scanNote": "कुल {total} में से पहले {n} पेज स्कैन हुए",
+      "loading": "नया पेज बन रहा है…",
+      "renderFailed": "प्रीव्यू नहीं बन पाया, पर रिसाइज़ सही होगा।",
+      "canvasAria": "नई पेज साइज़ पर पेज 1 — प्रीव्यू",
+      "caption": "पेज 1: {from} → {to}",
+      "scaleNote": "कंटेंट {pct}%",
+      "keptNote": "{n} पेज पहले से सही साइज़ पर हैं — वे जस के तस रहेंगे।"
+    }
+  }
+}

@@ -34,6 +34,20 @@ import { config as heicToPng } from "../../../tools/heic-to-png/config";
 import { config as heicToPdf } from "../../../tools/heic-to-pdf/config";
 import { config as ocrPdf } from "../../../tools/ocr-pdf/config";
 import { config as compressPdfToSize } from "../../../tools/compress-pdf-to-size/config";
+import { config as pagesPerSheet } from "../../../tools/pages-per-sheet/config";
+import { config as halvePdfPages } from "../../../tools/halve-pdf-pages/config";
+import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
+import { config as extractImages } from "../../../tools/extract-images/config";
+import { config as searchPdf } from "../../../tools/search-pdf/config";
+import { config as txtToPdf } from "../../../tools/txt-to-pdf/config";
+import { config as markdownToPdf } from "../../../tools/markdown-to-pdf/config";
+import { config as bookmarkPdf } from "../../../tools/bookmark-pdf/config";
+import { config as generateQrCode } from "../../../tools/generate-qr-code/config";
+import { config as comparePdf } from "../../../tools/compare-pdf/config";
+import { config as overlayPdf } from "../../../tools/overlay-pdf/config";
+import { config as changePdfPageSize } from "../../../tools/change-pdf-page-size/config";
+import { config as convertToPdf } from "../../../tools/convert-to-pdf/config";
+import { config as convertFromPdf } from "../../../tools/convert-from-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -78,6 +92,20 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [heicToPdf.toolId]: heicToPdf,
   [ocrPdf.toolId]: ocrPdf,
   [compressPdfToSize.toolId]: compressPdfToSize,
+  [pagesPerSheet.toolId]: pagesPerSheet,
+  [halvePdfPages.toolId]: halvePdfPages,
+  [flattenPdf.toolId]: flattenPdf,
+  [extractImages.toolId]: extractImages,
+  [searchPdf.toolId]: searchPdf,
+  [txtToPdf.toolId]: txtToPdf,
+  [markdownToPdf.toolId]: markdownToPdf,
+  [bookmarkPdf.toolId]: bookmarkPdf,
+  [generateQrCode.toolId]: generateQrCode,
+  [comparePdf.toolId]: comparePdf,
+  [overlayPdf.toolId]: overlayPdf,
+  [changePdfPageSize.toolId]: changePdfPageSize,
+  [convertToPdf.toolId]: convertToPdf,
+  [convertFromPdf.toolId]: convertFromPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

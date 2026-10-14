@@ -1,0 +1,18 @@
+{
+  "en": {
+    "cts": {
+      "how1": "Drop a PDF and pick your limit — 100 KB, 200 KB, 500 KB, 1 MB, 2 MB or your own number.",
+      "how2": "Photos are re-encoded first so text stays selectable; tight targets flatten pages to images at the best DPI that still fits.",
+      "how3": "Download the file plus an honest report: target vs. achieved, every attempt, and whether text survived.",
+      "errorRender": "One of the pages couldn't be rendered while flattening. Try again, or use the Compress PDF tool instead."
+    }
+  },
+  "hi": {
+    "cts": {
+      "how1": "PDF डालें और अपनी सीमा चुनें — 100 KB, 200 KB, 500 KB, 1 MB, 2 MB या अपनी संख्या।",
+      "how2": "पहले तस्वीरें दोबारा एन्कोड होती हैं ताकि टेक्स्ट चुनने योग्य रहे; कम लक्ष्य में पेज सबसे अच्छी फ़िट DPI पर इमेज बन जाते हैं।",
+      "how3": "फ़ाइल डाउनलोड करें साथ में ईमानदार रिपोर्ट: लक्ष्य बनाम हासिल, हर कोशिश, और टेक्स्ट बचा या नहीं।",
+      "errorRender": "इमेज बनाते समय एक पेज रेंडर नहीं हो सका। दोबारा कोशिश करें, या Compress PDF टूल इस्तेमाल करें।"
+    }
+  }
+}

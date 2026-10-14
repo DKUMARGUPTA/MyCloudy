@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P3.20 ke baad — Compress to target size shipped — **35 tools live**.
+> **Updated:** P4.1 ke baad — 14 tools wired live — **49 tools live**.
 
 ---
 
@@ -12,38 +12,45 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **35** ✅ |
-| Pending (Coming Soon) | **62** ⏳ |
-| Phase | 3 (tools one-by-one) IN PROGRESS |
+| **Ready to use (LIVE)** | **49** ✅ |
+| Pending (Coming Soon) | **48** ⏳ |
+| Phase | 3/4 (tools one-by-one) IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1087 = 1087 keys parity) |
+| i18n | English + हिंदी (1452 = 1452 keys parity) |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 35 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 49 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
-### 🗂️ Organize (6/12)
+### 🗂️ Organize (10/12)
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
 - ✅ Split PDF (`split-pdf`) — ranges / every-N / size / visually
 - ✅ Rotate PDF pages (`rotate-pdf-pages`)
 - ✅ Rearrange PDF pages (`rearrange-pdf-pages`) — drag + keyboard
 - ✅ Remove PDF pages (`remove-pdf-pages`) — selection/blank-detect
 - ✅ Extract PDF pages (`extract-pdf-pages`) — new PDF ya one-per-page
+- ✅ Pages per sheet N-up (`pages-per-sheet`) — 2/4/6/9/16, live canvas preview, /Rotate-aware placement
+- ✅ Halve PDF pages (`halve-pdf-pages`) — book spreads left/right ya top/bottom, lossless windowing
+- ✅ Bookmark PDF (`bookmark-pdf`) — outline tree builder, "One per page" autofill
+- ✅ Extract images (`extract-images`) — embedded PNG/JPG, dedupe, min-size filter, ZIP/PNG/JPG
 
-### ✏️ Edit (6/11)
+### ✏️ Edit (8/11)
 - ✅ Fill out PDF forms (`fill-out-pdf`) — AcroForm scan, auto-fill profile (name/email/phone/address), Hindi Devanagari support, flatten switch
 - ✅ Add watermark (`add-watermark`) — text/logo, opacity, tiling
 - ✅ Add page numbers (`add-page-numbers`) — 8 formats, Roman/Hindi digits, 9-grid
 - ✅ Header & footer (`add-header-footer`) — {page} {date} {filename} variables
 - ✅ Crop PDF (`crop-pdf`) — visual crop box + auto-detect
 - ✅ Change document info (`change-pdf-doc-info`)
+- ✅ Overlay PDF (`overlay-pdf`) — base+stamp merge, page mapping, position/opacity
+- ✅ Change page size (`change-pdf-page-size`) — A3/A4/A5/Letter/custom mm, fit/fill/none
 
-### 📷 Create (2/10)
+### 📷 Create (3/10)
 - ✅ Scan to PDF (`scan-pdf`) — camera + edge detection + Magic/B&W filters + perspective correction
 - ✅ Images to PDF (`images-to-pdf`) — JPG/PNG/WEBP/HEIC/TIFF/SVG
+- ✅ Generate QR code (`generate-qr-code`) — link/text/WiFi/UPI/vCard/email/phone/WhatsApp, colors+logo, PNG/SVG/PDF
 
 ### 🔒 Security (6/8)
 - ✅ Protect PDF (`lock-pdf`) — AES-256 qpdf WASM
@@ -53,19 +60,25 @@
 - ✅ Remove PDF metadata (`remove-pdf-metadata`)
 - ✅ Generate password (`generate-password`)
 
-### ⚡ Optimize (3/8)
+### ⚡ Optimize (4/8)
 - ✅ Compress PDF (`compress-pdf`) — quality presets / custom DPI
 - ✅ PDF OCR (`ocr-pdf`) — P3.19: Tesseract LSTM, English + हिंदी, searchable PDF (GlyphLessFont invisible layer) ya TXT, 150/300 DPI, mixed-docs smart skip, per-page confidence chip
 - ✅ Compress to target size (`compress-pdf-to-size`) — P3.20: India forms — 100/200/500 KB/1 MB/custom target, iterative ladder (structural → image q/dim/gray → raster dpi/q), honest amber miss chip
+- ✅ Flatten PDF (`flatten-pdf`) — forms+annotations ya scoped, AcroForm bake, honest errorNothing
 
-### 👁️ View (1/6)
+### 👁️ View (3/6)
 - ✅ View PDF (`view-pdf`) — thumbnails, search, outline, dark mode
+- ✅ Compare PDF (`compare-pdf`) — side-by-side diff report, sensitivity, case/whitespace
+- ✅ Search in PDFs (`search-pdf`) — live surface highlights + TXT report, text/regex, case/whole-word
 
-### 📥 Convert to PDF (4/17)
+### 📥 Convert to PDF (7/17)
 - ✅ JPG to PDF (`jpg-to-pdf`) · ✅ PNG to PDF (`png-to-pdf`) · ✅ WEBP to PDF (`webp-to-pdf`) · ✅ HEIC to PDF (`heic-to-pdf`) — libheif WASM se har browser mein!
+- ✅ Text to PDF (`txt-to-pdf`) + Markdown to PDF (`markdown-to-pdf`) — headings/lists/quotes/code, Devanagari
+- ✅ Universal converter (`convert-to-pdf`) — smart routing surface, file detect → sahi tool
 
-### 📤 Convert from PDF (3/13)
+### 📤 Convert from PDF (4/13)
 - ✅ PDF to JPG (`pdf-to-jpg`) · ✅ PDF to PNG (`pdf-to-png`) · ✅ PDF to Text (`pdf-to-txt`)
+- ✅ Universal converter (`convert-from-pdf`) — smart routing surface
 
 ### 🖼️ Image Tools (4/6) — P3.18 NAYA!
 - ✅ HEIC to JPG (`heic-to-jpg`) — iPhone photos, har browser mein
@@ -80,29 +93,18 @@
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Pages per sheet / N-up** (`pages-per-sheet`) — 2,4,6,9,16 with live preview
-2. **Halve PDF pages** (`halve-pdf-pages`) — book spreads left/right
-3. **Overlay PDF** (`overlay-pdf`) — stamp one PDF over another
-4. **Bookmark PDF** (`bookmark-pdf`) — outline tree
-5. **Extract images** (`extract-images`) — embedded images PNG/JPG ZIP
-6. **Copy from PDF** (`copy-from-pdf`) — text/Markdown/CSV
-7. **Search in PDFs** (`search-pdf`) — query/regex across files
-8. **Flatten PDF** (`flatten-pdf`) — forms/annotations into content
-9. **Rasterize PDF** (`rasterize-pdf`) — pages to flat images (redact worker ka raster path reuse karo)
-10. **Make PDF fillable** (`make-pdf-fillable`) — auto-detect fields ya manual add
-11. **Change PDF page size** (`change-pdf-page-size`) — A3/A4/A5/Letter/custom mm
-12. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
-13. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
-14. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
-15. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
-16. **Text to PDF** (`txt-to-pdf`) + **Markdown to PDF** (`markdown-to-pdf`) + **SVG to PDF** + **TIFF to PDF**
-17. **Generate QR code** (`generate-qr-code`) — URL/UPI/WiFi/vCard + colors + logo
-18. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
-19. **Set viewer preferences** (`set-pdf-viewer-preferences`)
-20. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
-21. **Universal converters** — `convert-to-pdf`, `convert-from-pdf` (smart routing)
+1. **Make PDF fillable** (`make-pdf-fillable`) — auto-detect fields ya manual add
+2. **Copy from PDF** (`copy-from-pdf`) — text/Markdown/CSV — ⚠️ sirf config.ts likha hai (engine/worker/surface bana hai hi nahi)
+3. **SVG to PDF** (`svg-to-pdf`) + **TIFF to PDF** (`tiff-to-pdf`) — imgconv/imgconvert modules partially ready
+4. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
+5. **Set viewer preferences** (`set-pdf-viewer-preferences`)
+6. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
+7. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
+8. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
+9. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
+10. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
 
-*(P2 queue ka OCR item ✅ DONE in P3.19)*
+*(P4.1 mein shipped: pages-per-sheet, halve, overlay, bookmark, extract-images, search, flatten, change-page-size, txt/md-to-pdf, QR, compare, universal converters ✅)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -122,7 +124,7 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 `digital-signature` (PAdES .pfx/.p12), `request-signature` (expiring link, Pro)
 
 ### 🔍 View (baaki)
-`compare-pdf` (side-by-side diff), `verify-pdf-signatures`, `validate-pdfa` (S)
+`verify-pdf-signatures`, `validate-pdfa` (S)
 
 ### ⚙️ Optimize (baaki)
 `web-optimize-pdf` (linearize), `repair-pdf` (rebuild xref)
@@ -200,7 +202,17 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 
 ## 📝 Session Log (naya kaam yahan append karo)
 
-### P3.20 (latest) — Compress to target size ✅
+### P4.1 (latest) — 14-Tool Wiring Mega-Batch ✅
+- **Discovery:** Oct 12 ko parallel agents ne ~15 tools ki files (engine/worker/panel/surface/config/i18n + smokes) likhi thi, par orchestrator wiring kabhi nahi hui — registry flags, configs.ts, panels/surfaces maps, i18n merge sab pending tha. Ye session (Oct 14) ne sab verify karke live kiya.
+- **Wired 14 tools:** pages-per-sheet, halve-pdf-pages, flatten-pdf, extract-images, search-pdf, txt-to-pdf, markdown-to-pdf, bookmark-pdf, generate-qr-code, compare-pdf, overlay-pdf, change-pdf-page-size, convert-to-pdf, convert-from-pdf
+- **Config fixes:** howStepKeys→howKeys (7 configs), noInput→noFile (qr — generate-password pattern), qrcode pkg installed (MIT, bundled)
+- **i18n:** 3 merge scripts + 5-section manual merge — 365 naye keys (nup, halve, flatten, rasterize, exi, search, txt2pdf, md2pdf, overlay, pgsz, bm, qr, compare, conv, convFrom) — 1452=1452 parity
+- **Cleanup (dead code deleted):** tools/ocr/ (purana experiment), ocr-pdf/panel+surface (refactored engine ke against), redact/panel, scan/adjust-dialog (sab dangling + broken APIs), generate-password/gen.ts, 5 stale scripts (smoke-cts, smoke-generate-password, smoke-ocr, make-lu-fixtures, verify-lu-output)
+- **smoke-gpw.ts REWRITTEN** against current engine API — 44/44 (purana smoke purani API pe tha)
+- **QA:** nup (structure: 1 A4 sheet, 4 pages ka text searchable through XObjects), txt2pdf (verbatim text), md2pdf (headings/lists/quotes), QR (live preview + PNG/SVG/PDF downloads), search (4 live marks + TXT report), extract-images (PNG magic verified, min-size filter kaam karta hai), bookmark (One-per-page → 4-entry outline verified), halve (4→8), flatten (AcroForm gone, value baked in), overlay (dono texts merged), compare (5-page report), pagesize (A4→A4 passthrough), convert-to (JPG detect → images-to-pdf route). HI UI + mobile 375px + zero console errors + all-localhost requests.
+- Live: 49 | i18n: 1452=1452 | tsc clean | eslint clean | dev.log clean
+
+### P3.20 — Compress to target size ✅
 - compress-pdf-to-size: iterative ladder (passthrough → structural → image q/dim/gray → raster dpi/q), green "Under your target size" + amber "Target not reached" honest chips, customKB 30KB–10MB clamp
 - compress-pdf/worker.ts refactored → shared `tools/compress-common/recompress.ts` (verbatim extraction, regression PASS)
 - committedJpegBlob (canvas-commit guard, JPEG variant) — raster path blank-snapshot se bachata hai

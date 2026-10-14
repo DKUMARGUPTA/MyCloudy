@@ -1,0 +1,1979 @@
+     1→import type { LucideIcon } from "lucide-react";
+     2→import {
+     3→  AlignLeft,
+     4→  ArrowRightLeft,
+     5→  ArrowUpDown,
+     6→  Award,
+     7→  BadgeCheck,
+     8→  Bookmark,
+     9→  BookOpen,
+    10→  Braces,
+    11→  ClipboardCheck,
+    12→  ClipboardCopy,
+    13→  Code,
+    14→  Combine,
+    15→  Contact,
+    16→  Copy,
+    17→  Crop,
+    18→  Droplets,
+    19→  Eye,
+    20→  EyeOff,
+    21→  FileCheck,
+    22→  FileCode,
+    23→  FileImage,
+    24→  FileInput,
+    25→  FileMinus,
+    26→  FileOutput,
+    27→  FilePlus,
+    28→  FileSearch,
+    29→  FileSpreadsheet,
+    30→  FileText,
+    31→  FileType,
+    32→  FileX,
+    33→  Files,
+    34→  FormInput,
+    35→  Gauge,
+    36→  Gift,
+    37→  GitCompare,
+    38→  Globe,
+    39→  Hash,
+    40→  Image,
+    41→  ImagePlus,
+    42→  Images,
+    43→  Info,
+    44→  KeyRound,
+    45→  LayoutGrid,
+    46→  LayoutTemplate,
+    47→  ListChecks,
+    48→  ListOrdered,
+    49→  Lock,
+    50→  Minimize2,
+    51→  MessageSquare,
+    52→  Newspaper,
+    53→  Palette,
+    54→  PanelTop,
+    55→  PenLine,
+    56→  PenTool,
+    57→  Pencil,
+    58→  Presentation,
+    59→  QrCode,
+    60→  Receipt,
+    61→  RotateCw,
+    62→  Ruler,
+    63→  Scaling,
+    64→  ScanLine,
+    65→  ScanText,
+    66→  Scissors,
+    67→  Send,
+    68→  Settings2,
+    69→  Shapes,
+    70→  ShieldCheck,
+    71→  Split,
+    72→  SquareStack,
+    73→  Target,
+    74→  Wrench,
+    75→  Zap,
+    76→} from "lucide-react";
+    77→
+    78→/**
+    79→ * DocoPDF tool registry — THE source of truth for every tool (PRD §7).
+    80→ *
+    81→ * One config object per tool: id (== URL slug), category, mode D/S, roadmap
+    82→ * phase, icon, localized name/description (en + hi), search tags (en + hi),
+    83→ * accepted input type, curated popularity, and the `enabled` flag that flips
+    84→ * to true when the tool ships (Phases 2+). The shared ToolShell renders every
+    85→ * enabled tool from this registry — no per-tool pages are hand-written.
+    86→ *
+    87→ * NOTE on i18n: tool catalog strings live HERE as typed locale maps (not in
+    88→ * en.json/hi.json). This keeps the catalog a single source of truth and makes
+    89→ * a missing Hindi string a type error. UI chrome strings stay in the JSON
+    90→ * catalogs. Deploying with path locales (/hi) reads the same maps.
+    91→ */
+    92→
+    93→export type ToolMode = "D" | "S";
+    94→export type RoadmapPhase = "P1" | "P2" | "P3";
+    95→
+    96→export type ToolCategoryId =
+    97→  | "organize"
+    98→  | "edit"
+    99→  | "convert-to"
+   100→  | "convert-from"
+   101→  | "security"
+   102→  | "optimize"
+   103→  | "create"
+   104→  | "invoices"
+   105→  | "view"
+   106→  | "images";
+   107→
+   108→export type Accepts =
+   109→  | "pdf"
+   110→  | "image"
+   111→  | "word"
+   112→  | "office"
+   113→  | "text"
+   114→  | "url"
+   115→  | "any";
+   116→
+   117→export interface L10n {
+   118→  en: string;
+   119→  hi: string;
+   120→}
+   121→
+   122→export type CategoryColor =
+   123→  | "organize"
+   124→  | "edit"
+   125→  | "convert"
+   126→  | "security"
+   127→  | "optimize"
+   128→  | "create"
+   129→  | "invoices"
+   130→  | "view";
+   131→
+   132→export interface ToolCategory {
+   133→  id: ToolCategoryId;
+   134→  name: L10n;
+   135→  /** Detailed intro for the category view (PRD §6.2). */
+   136→  intro: L10n;
+   137→  color: CategoryColor;
+   138→  icon: LucideIcon;
+   139→}
+   140→
+   141→export interface ToolDef {
+   142→  id: string;
+   143→  category: ToolCategoryId;
+   144→  mode: ToolMode;
+   145→  phase: RoadmapPhase;
+   146→  icon: LucideIcon;
+   147→  name: L10n;
+   148→  description: L10n;
+   149→  tags: { en: string[]; hi: string[] };
+   150→  accepts: Accepts;
+   151→  /** Curated 0-100; drives "Popular" sorting and quick tools. */
+   152→  popularity: number;
+   153→  /** True once the tool is live (flipped per PRD phase plan). */
+   154→  enabled: boolean;
+   155→  pro: boolean;
+   156→}
+   157→
+   158→/* ------------------------------------------------------------------ */
+   159→/* Categories                                                          */
+   160→/* ------------------------------------------------------------------ */
+   161→
+   162→export const CATEGORIES: ToolCategory[] = [
+   163→  {
+   164→    id: "organize",
+   165→    color: "organize",
+   166→    icon: LayoutGrid,
+   167→    name: { en: "Organize", hi: "व्यवस्थित करें" },
+   168→    intro: {
+   169→      en: "Combine files, split them into parts, reorder, rotate or extract exactly the pages you need. All organizing happens on your device — even 100-page documents stay quick.",
+   170→      hi: "फ़ाइलें जोड़ें, बाँटें, क्रम बदलें, पेज घुमाएँ या ज़रूरी पेज निकालें। सारा काम आपके डिवाइस पर होता है — 100 पेज के दस्तावेज़ भी तेज़ चलते हैं।",
+   171→    },
+   172→  },
+   173→  {
+   174→    id: "edit",
+   175→    color: "edit",
+   176→    icon: PenLine,
+   177→    name: { en: "Edit", hi: "संपादित करें" },
+   178→    intro: {
+   179→      en: "A full editor plus quick edits: watermarks, page numbers, headers, crop and metadata. Change what you need without uploading anything.",
+   180→      hi: "पूरा एडिटर और साथ में झटपट बदलाव: वॉटरमार्क, पेज नंबर, हेडर-फुटर, क्रॉप और मेटाडेटा। कुछ भी अपलोड किए बिना बदलें।",
+   181→    },
+   182→  },
+   183→  {
+   184→    id: "convert-to",
+   185→    color: "convert",
+   186→    icon: FileInput,
+   187→    name: { en: "Convert to PDF", hi: "PDF बनाएँ" },
+   188→    intro: {
+   189→      en: "Turn Word, images, text or any other file into clean PDFs. Office conversions use server processing; images and text convert fully on your device.",
+   190→      hi: "वर्ड, तस्वीरें, टेक्स्ट या कोई भी फ़ाइल साफ़ PDF में बदलें। ऑफ़िस फ़ाइलों का रूपांतरण सर्वर पर होता है; तस्वीरें और टेक्स्ट पूरी तरह डिवाइस पर।",
+   191→    },
+   192→  },
+   193→  {
+   194→    id: "convert-from",
+   195→    color: "convert",
+   196→    icon: FileOutput,
+   197→    name: { en: "Convert from PDF", hi: "PDF से बदलें" },
+   198→    intro: {
+   199→      en: "Extract your PDF into JPG or PNG images, plain text, or editable Office formats. Device tools give instant results; Office exports use the server.",
+   200→      hi: "अपनी PDF को JPG/PNG तस्वीरों, सादे टेक्स्ट या एडिट करने योग्य ऑफ़िस फ़ॉर्मैट में बदलें। डिवाइस टूल तुरंत नतीजा देते हैं; ऑफ़िस एक्सपोर्ट सर्वर से।",
+   201→    },
+   202→  },
+   203→  {
+   204→    id: "security",
+   205→    color: "security",
+   206→    icon: ShieldCheck,
+   207→    name: { en: "Security", hi: "सुरक्षा" },
+   208→    intro: {
+   209→      en: "Password-protect, unlock your own files, sign, redact sensitive details and strip metadata — with honest badges showing where each job runs.",
+   210→      hi: "पासवर्ड लगाएँ, अपनी फ़ाइलें अनलॉक करें, हस्ताक्षर करें, संवेदनशील जानकारी छिपाएँ और मेटाडेटा हटाएँ — हर टूल पर ईमानदार बैज के साथ।",
+   211→    },
+   212→  },
+   213→  {
+   214→    id: "optimize",
+   215→    color: "optimize",
+   216→    icon: Gauge,
+   217→    name: { en: "Optimize", hi: "ऑप्टिमाइज़" },
+   218→    intro: {
+   219→      en: "Shrink PDFs for email or form portals, add searchable text with OCR, repair damaged files and flatten forms — right in the browser.",
+   220→      hi: "ईमेल या फ़ॉर्म पोर्टल के लिए PDF छोटी करें, OCR से खोजने योग्य टेक्स्ट जोड़ें, ख़राब फ़ाइलें ठीक करें और फ़ॉर्म फ़्लैटन करें — सब ब्राउज़र में।",
+   221→    },
+   222→  },
+   223→  {
+   224→    id: "create",
+   225→    color: "create",
+   226→    icon: FilePlus,
+   227→    name: { en: "Create", hi: "बनाएँ" },
+   228→    intro: {
+   229→      en: "Start from scratch: write documents, scan paper with your camera, build QR codes or resumes — and export finished PDFs.",
+   230→      hi: "शुरुआत से बनाएँ: दस्तावेज़ लिखें, कैमरे से स्कैन करें, QR कोड या रिज़्यूमे बनाएँ — और तैयार PDF एक्सपोर्ट करें।",
+   231→    },
+   232→  },
+   233→  {
+   234→    id: "invoices",
+   235→    color: "invoices",
+   236→    icon: Receipt,
+   237→    name: { en: "Invoices", hi: "इनवॉइस" },
+   238→    intro: {
+   239→      en: "India-ready GST invoices with automatic CGST/SGST/IGST splits, amount in words and UPI QR — plus e-invoice formats for EU business.",
+   240→      hi: "भारत के लिए GST इनवॉइस — CGST/SGST/IGST का अपने आप हिसाब, शब्दों में रक़म और UPI QR — साथ में EU के ई-इनवॉइस फ़ॉर्मैट।",
+   241→    },
+   242→  },
+   243→  {
+   244→    id: "view",
+   245→    color: "view",
+   246→    icon: Eye,
+   247→    name: { en: "View", hi: "देखें" },
+   248→    intro: {
+   249→      en: "Read, search and verify: a fast viewer, multi-file search, side-by-side comparison and signature checks — no upload needed.",
+   250→      hi: "पढ़ें, खोजें और जाँचें: तेज़ व्यूअर, कई फ़ाइलों में खोज, साथ-साथ तुलना और हस्ताक्षर जाँच — बिना अपलोड।",
+   251→    },
+   252→  },
+   253→  {
+   254→    id: "images",
+   255→    color: "convert",
+   256→    icon: Image,
+   257→    name: { en: "Image tools", hi: "तस्वीर टूल" },
+   258→    intro: {
+   259→      en: "Convert phone photos between HEIC, WEBP, JPG and PNG, resize to exact KB limits for government forms, and make passport photo sheets.",
+   260→      hi: "फ़ोन की तस्वीरें HEIC, WEBP, JPG और PNG में बदलें, सरकारी फ़ॉर्म के लिए तय KB तक छोटी करें और पासपोर्ट फ़ोटो शीट बनाएँ।",
+   261→    },
+   262→  },
+   263→];
+   264→
+   265→/* ------------------------------------------------------------------ */
+   266→/* Tools                                                               */
+   267→/* ------------------------------------------------------------------ */
+   268→
+   269→type ToolSpec = Omit<ToolDef, "enabled" | "pro"> & {
+   270→  enabled?: boolean;
+   271→  pro?: boolean;
+   272→};
+   273→
+   274→const def = (spec: ToolSpec): ToolDef => ({
+   275→  enabled: false,
+   276→  pro: false,
+   277→  ...spec,
+   278→});
+   279→
+   280→export const ALL_TOOLS: ToolDef[] = [
+   281→  /* ---------------- Organize (§7.1) ---------------- */
+   282→  def({
+   283→    id: "merge-pdf",
+   284→    category: "organize",
+   285→    mode: "D",
+   286→    phase: "P1",
+   287→    icon: Combine,
+   288→    popularity: 100,
+   289→    accepts: "pdf",
+   290→    enabled: true,
+   291→    name: { en: "Merge PDF", hi: "पीडीएफ़ जोड़ें" },
+   292→    description: {
+   293→      en: "Combine up to 50 PDFs into one, reorder files, pick page ranges.",
+   294→      hi: "50 तक PDF एक में जोड़ें, क्रम बदलें, पेज चुनें।",
+   295→    },
+   296→    tags: {
+   297→      en: ["combine", "join", "merge files"],
+   298→      hi: ["जोड़ना", "मिलाना", "jodein", "jodna"],
+   299→    },
+   300→  }),
+   301→  def({
+   302→    id: "split-pdf",
+   303→    category: "organize",
+   304→    mode: "D",
+   305→    phase: "P1",
+   306→    icon: Split,
+   307→    popularity: 95,
+   308→    accepts: "pdf",
+   309→    enabled: true,
+   310→    name: { en: "Split PDF", hi: "पीडीएफ़ बाँटें" },
+   311→    description: {
+   312→      en: "Split by ranges, every N pages, bookmarks, size or visually.",
+   313→      hi: "रेंज, हर N पेज, बुकमार्क या साइज़ से बाँटें।",
+   314→    },
+   315→    tags: {
+   316→      en: ["divide", "separate", "cut pdf"],
+   317→      hi: ["बाँटना", "तोड़ना", "baantein", "todna"],
+   318→    },
+   319→  }),
+   320→  def({
+   321→    id: "rotate-pdf-pages",
+   322→    category: "organize",
+   323→    mode: "D",
+   324→    phase: "P1",
+   325→    icon: RotateCw,
+   326→    popularity: 68,
+   327→    accepts: "pdf",
+   328→    enabled: true,
+   329→    name: { en: "Rotate PDF pages", hi: "पेज घुमाएँ" },
+   330→    description: {
+   331→      en: "Turn all or selected pages 90° left or right, sideways scans fixed.",
+   332→      hi: "सभी या चुने पेज 90° घुमाएँ, तिरछे स्कैन ठीक करें।",
+   333→    },
+   334→    tags: {
+   335→      en: ["turn", "landscape", "portrait"],
+   336→      hi: ["घुमाना", "sideways", "ghumaye"],
+   337→    },
+   338→  }),
+   339→  def({
+   340→    id: "rearrange-pdf-pages",
+   341→    category: "organize",
+   342→    mode: "D",
+   343→    phase: "P1",
+   344→    icon: ArrowUpDown,
+   345→    popularity: 45,
+   346→    accepts: "pdf",
+   347→    enabled: true,
+   348→    name: { en: "Rearrange PDF pages", hi: "पेज क्रम बदलें" },
+   349→    description: {
+   350→      en: "Drag thumbnails to a new order, with keyboard move buttons.",
+   351→      hi: "थंबनेल खींचकर क्रम बदलें, कीबोर्ड बटन भी।",
+   352→    },
+   353→    tags: {
+   354→      en: ["reorder", "sort pages", "move pages"],
+   355→      hi: ["क्रम", "order", "kram badlein"],
+   356→    },
+   357→  }),
+   358→  def({
+   359→    id: "remove-pdf-pages",
+   360→    category: "organize",
+   361→    mode: "D",
+   362→    phase: "P1",
+   363→    icon: FileMinus,
+   364→    popularity: 42,
+   365→    accepts: "pdf",
+   366→    enabled: true,
+   367→    name: { en: "Remove PDF pages", hi: "पेज हटाएँ" },
+   368→    description: {
+   369→      en: "Delete unwanted pages by selection, list or auto blank-page detect.",
+   370→      hi: "चुनकर, सूची से या ख़ाली पेज पहचान कर हटाएँ।",
+   371→    },
+   372→    tags: {
+   373→      en: ["delete pages", "blank pages"],
+   374→      hi: ["हटाना", "delete", "hataye"],
+   375→    },
+   376→  }),
+   377→  def({
+   378→    id: "extract-pdf-pages",
+   379→    category: "organize",
+   380→    mode: "D",
+   381→    phase: "P1",
+   382→    icon: FileOutput,
+   383→    popularity: 40,
+   384→    accepts: "pdf",
+   385→    enabled: true,
+   386→    name: { en: "Extract PDF pages", hi: "पेज निकालें" },
+   387→    description: {
+   388→      en: "Build a new PDF from selected pages, or one file per page.",
+   389→      hi: "चुने पेजों की नई PDF बनाएँ, या हर पेज अलग फ़ाइल।",
+   390→    },
+   391→    tags: {
+   392→      en: ["take out", "separate pages"],
+   393→      hi: ["निकालना", "extract", "nikalein"],
+   394→    },
+   395→  }),
+   396→  def({
+   397→    id: "assemble-pdf",
+   398→    category: "organize",
+   399→    mode: "D",
+   400→    phase: "P2",
+   401→    icon: Copy,
+   402→    popularity: 20,
+   403→    accepts: "pdf",
+   404→    name: { en: "Assemble PDF", hi: "पेज इकट्ठा करें" },
+   405→    description: {
+   406→      en: "Multi-document workspace: drag pages between files, zipper merge.",
+   407→      hi: "कई दस्तावेज़ एक साथ: पेज खींचकर शेयर करें।",
+   408→    },
+   409→    tags: {
+   410→      en: ["multi document", "zipper merge", "interleave"],
+   411→      hi: ["इकट्ठा", "assemble", "ikatta"],
+   412→    },
+   413→  }),
+   414→  def({
+   415→    id: "pages-per-sheet",
+   416→    category: "organize",
+   417→    mode: "D",
+   418→    phase: "P2",
+   419→    icon: LayoutGrid,
+   420→    popularity: 18,
+   421→    accepts: "pdf",
+   422→    name: { en: "Pages per sheet (N-up)", hi: "एक शीट में कई पेज" },
+   423→    description: {
+   424→      en: "Place 2, 4, 6, 9 or 16 pages on one sheet with live preview.",
+   425→      hi: "2, 4, 6, 9 या 16 पेज एक शीट पर, लाइव प्रीव्यू के साथ।",
+   426→    },
+   427→    tags: { en: ["n-up", "booklet", "grid"], hi: ["n-up", "grid", "sheet"] },
+   428→  }),
+   429→  def({
+   430→    id: "halve-pdf-pages",
+   431→    category: "organize",
+   432→    mode: "D",
+   433→    phase: "P2",
+   434→    icon: Scissors,
+   435→    popularity: 14,
+   436→    accepts: "pdf",
+   437→    name: { en: "Halve PDF pages", hi: "पेज आधे करें" },
+   438→    description: {
+   439→      en: "Cut scanned book spreads into left/right single pages.",
+   440→      hi: "स्कैन की किताब के पेज बाएँ/दाएँ आधे करें।",
+   441→    },
+   442→    tags: { en: ["book scan", "split page"], hi: ["आधा", "book scan"] },
+   443→  }),
+   444→  def({
+   445→    id: "bookmark-pdf",
+   446→    category: "organize",
+   447→    mode: "D",
+   448→    phase: "P2",
+   449→    icon: Bookmark,
+   450→    popularity: 14,
+   451→    accepts: "pdf",
+   452→    name: { en: "Bookmark PDF", hi: "बुकमार्क जोड़ें" },
+   453→    description: {
+   454→      en: "Add, rename and nest an outline tree for easy navigation.",
+   455→      hi: "आउटलाइन ट्री जोड़ें, नाम बदलें, क्रम बनाएँ।",
+   456→    },
+   457→    tags: { en: ["outline", "table of contents"], hi: ["बुकमार्क", "outline"] },
+   458→  }),
+   459→  def({
+   460→    id: "extract-images",
+   461→    category: "organize",
+   462→    mode: "D",
+   463→    phase: "P2",
+   464→    icon: Images,
+   465→    popularity: 22,
+   466→    accepts: "pdf",
+   467→    name: { en: "Extract PDF images", hi: "तस्वीरें निकालें" },
+   468→    description: {
+   469→      en: "Pull every embedded image out as PNG or JPG, ZIP download.",
+   470→      hi: "सभी जुड़ी तस्वीरें PNG/JPG में निकालें, ZIP डाउनलोड।",
+   471→    },
+   472→    tags: {
+   473→      en: ["save images", "photos from pdf"],
+   474→      hi: ["तस्वीर", "photo", "nikalein"],
+   475→    },
+   476→  }),
+   477→  def({
+   478→    id: "copy-from-pdf",
+   479→    category: "organize",
+   480→    mode: "D",
+   481→    phase: "P2",
+   482→    icon: ClipboardCopy,
+   483→    popularity: 24,
+   484→    accepts: "pdf",
+   485→    name: { en: "Copy from PDF", hi: "पीडीएफ़ से कॉपी करें" },
+   486→    description: {
+   487→      en: "Select paragraphs, tables or pictures; copy as text, Markdown or CSV.",
+   488→      hi: "पैराग्राफ़, टेबल चुनें; टेक्स्ट, Markdown या CSV में कॉपी करें।",
+   489→    },
+   490→    tags: {
+   491→      en: ["copy text", "copy table", "clipboard"],
+   492→      hi: ["कॉपी", "copy", "table"],
+   493→    },
+   494→  }),
+   495→
+   496→  /* ---------------- Edit (§7.2) ---------------- */
+   497→  def({
+   498→    id: "edit-pdf",
+   499→    category: "edit",
+   500→    mode: "D",
+   501→    phase: "P2",
+   502→    icon: PenLine,
+   503→    popularity: 90,
+   504→    accepts: "pdf",
+   505→    name: { en: "Edit PDF", hi: "पीडीएफ़ एडिट करें" },
+   506→    description: {
+   507→      en: "Word-style editor: text, images, shapes, whiteout and annotations.",
+   508→      hi: "वर्ड जैसा एडिटर: टेक्स्ट, तस्वीर, आकृति, मिटाना और टिप्पणी।",
+   509→    },
+   510→    tags: {
+   511→      en: ["editor", "word like", "modify"],
+   512→      hi: ["एडिटर", "editor", "badalna"],
+   513→    },
+   514→  }),
+   515→  def({
+   516→    id: "annotate-pdf",
+   517→    category: "edit",
+   518→    mode: "D",
+   519→    phase: "P2",
+   520→    icon: MessageSquare,
+   521→    popularity: 25,
+   522→    accepts: "pdf",
+   523→    name: { en: "Annotate PDF", hi: "टिप्पणी करें" },
+   524→    description: {
+   525→      en: "Highlights, underlines, sticky notes and comments that stick.",
+   526→      hi: "हाइलाइट, अंडरलाइन, स्टिकी नोट और टिप्पणियाँ।",
+   527→    },
+   528→    tags: { en: ["comment", "highlight", "review"], hi: ["टिप्पणी", "highlight"] },
+   529→  }),
+   530→  def({
+   531→    id: "fill-out-pdf",
+   532→    category: "edit",
+   533→    mode: "D",
+   534→    phase: "P1",
+   535→    icon: ClipboardCheck,
+   536→    popularity: 50,
+   537→    accepts: "pdf",
+   538→    enabled: true,
+   539→    name: { en: "Fill out PDF forms", hi: "फ़ॉर्म भरें" },
+   540→    description: {
+   541→      en: "Fill text fields, checkboxes and dropdowns; flatten when done.",
+   542→      hi: "टेक्स्ट, चेकबॉक्स भरें; काम पूरा होने पर फ़्लैटन करें।",
+   543→    },
+   544→    tags: {
+   545→      en: ["form filling", "application form"],
+   546→      hi: ["फ़ॉर्म", "form", "bharein"],
+   547→    },
+   548→  }),
+   549→  def({
+   550→    id: "make-pdf-fillable",
+   551→    category: "edit",
+   552→    mode: "D",
+   553→    phase: "P2",
+   554→    icon: ListChecks,
+   555→    popularity: 16,
+   556→    accepts: "pdf",
+   557→    name: { en: "Make PDF fillable", hi: "पीडीएफ़ को भरने योग्य बनाएँ" },
+   558→    description: {
+   559→      en: "Auto-detect form fields or add your own text boxes and checkboxes.",
+   560→      hi: "फ़ील्ड अपने आप पहचानें या ख़ुद टेक्स्ट बॉक्स जोड़ें।",
+   561→    },
+   562→    tags: { en: ["form fields", "acroform"], hi: ["फ़ॉर्म", "fillable"] },
+   563→  }),
+   564→  def({
+   565→    id: "add-watermark",
+   566→    category: "edit",
+   567→    mode: "D",
+   568→    phase: "P1",
+   569→    icon: Droplets,
+   570→    popularity: 55,
+   571→    accepts: "pdf",
+   572→    enabled: true,
+   573→    name: { en: "Add watermark", hi: "वॉटरमार्क लगाएँ" },
+   574→    description: {
+   575→      en: "Text or logo watermark: opacity, rotation, tiling, all pages or some.",
+   576→      hi: "टेक्स्ट या लोगो वॉटरमार्क: ओपैसिटी, झुकाव, सभी या कुछ पेज।",
+   577→    },
+   578→    tags: {
+   579→      en: ["stamp", "logo overlay", "copyright"],
+   580→      hi: ["वॉटरमार्क", "watermark", "chhaap"],
+   581→    },
+   582→  }),
+   583→  def({
+   584→    id: "add-page-numbers",
+   585→    category: "edit",
+   586→    mode: "D",
+   587→    phase: "P1",
+   588→    icon: ListOrdered,
+   589→    popularity: 38,
+   590→    accepts: "pdf",
+   591→    enabled: true,
+   592→    name: { en: "Add page numbers", hi: "पेज नंबर लगाएँ" },
+   593→    description: {
+   594→      en: "1, Page 1 of N, Roman or Hindi digits, 9 positions, skip first page.",
+   595→      hi: "1, Page 1 of N, रोमन या हिंदी अंक, 9 जगह, पहला पेज छोड़ें।",
+   596→    },
+   597→    tags: {
+   598→      en: ["numbering", "pagination"],
+   599→      hi: ["नंबर", "number", "ank"],
+   600→    },
+   601→  }),
+   602→  def({
+   603→    id: "add-header-footer",
+   604→    category: "edit",
+   605→    mode: "D",
+   606→    phase: "P1",
+   607→    icon: PanelTop,
+   608→    popularity: 30,
+   609→    accepts: "pdf",
+   610→    enabled: true,
+   611→    name: { en: "Header & footer", hi: "हेडर-फुटर लगाएँ" },
+   612→    description: {
+   613→      en: "Left/center/right text with {page}, {date}, {filename} variables.",
+   614→      hi: "बाएँ/बीच/दाएँ टेक्स्ट, {page}, {date} वेरिएबल के साथ।",
+   615→    },
+   616→    tags: { en: ["header", "footer", "running text"], hi: ["हेडर", "फुटर"] },
+   617→  }),
+   618→  def({
+   619→    id: "overlay-pdf",
+   620→    category: "edit",
+   621→    mode: "D",
+   622→    phase: "P2",
+   623→    icon: SquareStack,
+   624→    popularity: 14,
+   625→    accepts: "pdf",
+   626→    name: { en: "Overlay PDF", hi: "ओवरले पीडीएफ़" },
+   627→    description: {
+   628→      en: "Stamp one PDF over another: position, opacity, page mapping.",
+   629→      hi: "एक PDF दूसरी पर चढ़ाएँ: जगह, ओपैसिटी, पेज मैपिंग।",
+   630→    },
+   631→    tags: { en: ["stamp", "overlay", "merge layers"], hi: ["ओवरले", "overlay"] },
+   632→  }),
+   633→  def({
+   634→    id: "crop-pdf",
+   635→    category: "edit",
+   636→    mode: "D",
+   637→    phase: "P1",
+   638→    icon: Crop,
+   639→    popularity: 34,
+   640→    accepts: "pdf",
+   641→    enabled: true,
+   642→    name: { en: "Crop PDF", hi: "क्रॉप करें" },
+   643→    description: {
+   644→      en: "Visual crop box or numeric margins, auto-detect, all or selected pages.",
+   645→      hi: "क्रॉप बॉक्स या मार्जिन नंबर, ऑटो-डिटेक्ट, सभी या चुने पेज।",
+   646→    },
+   647→    tags: { en: ["trim", "margins", "cut edges"], hi: ["क्रॉप", "crop", "trim"] },
+   648→  }),
+   649→  def({
+   650→    id: "change-pdf-page-size",
+   651→    category: "edit",
+   652→    mode: "D",
+   653→    phase: "P2",
+   654→    icon: Ruler,
+   655→    popularity: 16,
+   656→    accepts: "pdf",
+   657→    name: { en: "Change PDF page size", hi: "पेज साइज़ बदलें" },
+   658→    description: {
+   659→      en: "A3/A4/A5/Letter/Legal or custom mm; fit, fill or keep content scale.",
+   660→      hi: "A3/A4/A5/Letter/Legal या कस्टम mm; फ़िट, फ़िल या वैसा ही।",
+   661→    },
+   662→    tags: { en: ["resize pages", "a4", "letter"], hi: ["साइज़", "a4", "letter"] },
+   663→  }),
+   664→  def({
+   665→    id: "change-pdf-doc-info",
+   666→    category: "edit",
+   667→    mode: "D",
+   668→    phase: "P1",
+   669→    icon: Info,
+   670→    popularity: 20,
+   671→    accepts: "pdf",
+   672→    enabled: true,
+   673→    name: { en: "Change document information", hi: "जानकारी बदलें" },
+   674→    description: {
+   675→      en: "Edit title, author, subject, keywords — or clear everything.",
+   676→      hi: "टाइटल, लेखक, विषय बदलें — या सब मिटाएँ।",
+   677→    },
+   678→    tags: {
+   679→      en: ["metadata", "properties", "author"],
+   680→      hi: ["जानकारी", "metadata", "info"],
+   681→    },
+   682→  }),
+   683→
+   684→  /* ---------------- Create (§7.3) ---------------- */
+   685→  def({
+   686→    id: "create-pdf",
+   687→    category: "create",
+   688→    mode: "D",
+   689→    phase: "P2",
+   690→    icon: FilePlus,
+   691→    popularity: 28,
+   692→    accepts: "any",
+   693→    name: { en: "Create PDF", hi: "पीडीएफ़ बनाएँ" },
+   694→    description: {
+   695→      en: "Blank pages or templates: letter, notes, planner, invoice, resume.",
+   696→      hi: "ख़ाली पेज या टेम्पलेट: पत्र, नोट्स, इनवॉइस, रिज़्यूमे।",
+   697→    },
+   698→    tags: { en: ["new pdf", "blank", "template"], hi: ["नई", "बनाएँ", "blank"] },
+   699→  }),
+   700→  def({
+   701→    id: "write-pdf",
+   702→    category: "create",
+   703→    mode: "D",
+   704→    phase: "P2",
+   705→    icon: Pencil,
+   706→    popularity: 26,
+   707→    accepts: "any",
+   708→    name: { en: "Write PDF", hi: "लिखकर पीडीएफ़ बनाएँ" },
+   709→    description: {
+   710→      en: "Word-processor style writing with Hindi fonts, tables and images.",
+   711→      hi: "वर्ड जैसा लेखन: हिंदी फ़ॉन्ट, टेबल और तस्वीरों के साथ।",
+   712→    },
+   713→    tags: {
+   714→      en: ["type pdf", "word processor", "letter"],
+   715→      hi: ["लिखें", "write", "khat"],
+   716→    },
+   717→  }),
+   718→  def({
+   719→    id: "scan-pdf",
+   720→    category: "create",
+   721→    mode: "D",
+   722→    enabled: true,
+   723→    phase: "P1",
+   724→    icon: ScanLine,
+   725→    popularity: 62,
+   726→    accepts: "image",
+   727→    name: { en: "Scan to PDF", hi: "स्कैन कर पीडीएफ़ बनाएँ" },
+   728→    description: {
+   729→      en: "Camera capture with edge detection, filters and multi-page scans.",
+   730→      hi: "कैमरा स्कैन: किनारा पहचान, फ़िल्टर, कई पेज एक साथ।",
+   731→    },
+   732→    tags: {
+   733→      en: ["camera", "document scanner", "photo to pdf"],
+   734→      hi: ["स्कैन", "कैमरा", "scan"],
+   735→    },
+   736→  }),
+   737→  def({
+   738→    id: "webpage-to-pdf",
+   739→    category: "create",
+   740→    mode: "S",
+   741→    phase: "P3",
+   742→    icon: Globe,
+   743→    popularity: 24,
+   744→    accepts: "url",
+   745→    name: { en: "Webpage to PDF", hi: "वेबपेज से पीडीएफ़" },
+   746→    description: {
+   747→      en: "Save any URL as a full-page PDF (server processing, deleted after).",
+   748→      hi: "कोई भी URL पूरा PDF में सेव करें (सर्वर प्रोसेसिंग)।",
+   749→    },
+   750→    tags: {
+   751→      en: ["url", "save page", "print website"],
+   752→      hi: ["वेबपेज", "url", "website"],
+   753→    },
+   754→  }),
+   755→  def({
+   756→    id: "images-to-pdf",
+   757→    category: "create",
+   758→    mode: "D",
+   759→    enabled: true,
+   760→    phase: "P1",
+   761→    icon: ImagePlus,
+   762→    popularity: 80,
+   763→    accepts: "image",
+   764→    name: { en: "Images to PDF", hi: "तस्वीरों से पीडीएफ़" },
+   765→    description: {
+   766→      en: "JPG, PNG, WEBP, HEIC, TIFF or SVG into one tidy PDF, camera ready.",
+   767→      hi: "JPG, PNG, WEBP, HEIC, TIFF या SVG से एक साफ़ PDF।",
+   768→    },
+   769→    tags: {
+   770→      en: ["photo to pdf", "picture", "jpg png"],
+   771→      hi: ["तस्वीर", "photo", "jpg"],
+   772→    },
+   773→  }),
+   774→  def({
+   775→    id: "create-photo-collage",
+   776→    category: "create",
+   777→    mode: "D",
+   778→    phase: "P3",
+   779→    icon: LayoutTemplate,
+   780→    popularity: 12,
+   781→    accepts: "image",
+   782→    name: { en: "Create photo collage", hi: "फ़ोटो कोलाज बनाएँ" },
+   783→    description: {
+   784→      en: "Grids, polaroids and passport sheets with text and stickers.",
+   785→      hi: "ग्रिड, पोलरॉइड और पासपोर्ट शीट, टेक्स्ट-स्टिकर के साथ।",
+   786→    },
+   787→    tags: { en: ["collage", "grid photos"], hi: ["कोलाज", "collage"] },
+   788→  }),
+   789→  def({
+   790→    id: "create-card",
+   791→    category: "create",
+   792→    mode: "D",
+   793→    phase: "P3",
+   794→    icon: Gift,
+   795→    popularity: 12,
+   796→    accepts: "image",
+   797→    name: { en: "Create card", hi: "कार्ड बनाएँ" },
+   798→    description: {
+   799→      en: "Greetings and invitations with Hindi festival templates, mail merge.",
+   800→      hi: "शुभकामना और निमंत्रण कार्ड, हिंदी त्योहार टेम्पलेट।",
+   801→    },
+   802→    tags: {
+   803→      en: ["greeting", "invitation", "postcard"],
+   804→      hi: ["कार्ड", "निमंत्रण", "card"],
+   805→    },
+   806→  }),
+   807→  def({
+   808→    id: "create-fillable-pdf-form",
+   809→    category: "create",
+   810→    mode: "D",
+   811→    phase: "P3",
+   812→    icon: FormInput,
+   813→    popularity: 12,
+   814→    accepts: "any",
+   815→    name: { en: "Create PDF form", hi: "नया फ़ॉर्म बनाएँ" },
+   816→    description: {
+   817→      en: "Visual form builder with fields, calculations and validation.",
+   818→      hi: "फ़ील्ड, गणना और जाँच वाला फ़ॉर्म बिल्डर।",
+   819→    },
+   820→    tags: { en: ["form builder", "fields"], hi: ["फ़ॉर्म", "form builder"] },
+   821→  }),
+   822→  def({
+   823→    id: "create-resume",
+   824→    category: "create",
+   825→    mode: "D",
+   826→    phase: "P3",
+   827→    icon: Contact,
+   828→    popularity: 18,
+   829→    accepts: "any",
+   830→    name: { en: "Create resume", hi: "रिज़्यूमे बनाएँ" },
+   831→    description: {
+   832→      en: "Step-by-step form, 8 templates, live preview, data stays local.",
+   833→      hi: "स्टेप-बाय-स्टेप फ़ॉर्म, 8 टेम्पलेट, डेटा डिवाइस पर।",
+   834→    },
+   835→    tags: {
+   836→      en: ["cv", "job application", "biodata"],
+   837→      hi: ["रिज़्यूमे", "biodata", "cv"],
+   838→    },
+   839→  }),
+   840→  def({
+   841→    id: "generate-qr-code",
+   842→    category: "create",
+   843→    mode: "D",
+   844→    phase: "P2",
+   845→    icon: QrCode,
+   846→    popularity: 20,
+   847→    accepts: "any",
+   848→    enabled: true,
+   849→    name: { en: "Generate QR code", hi: "QR कोड बनाएँ" },
+   850→    description: {
+   851→      en: "URL, UPI payment, WiFi or vCard QRs with colors and a center logo.",
+   852→      hi: "URL, UPI, WiFi या vCard QR — रंग और बीच में लोगो।",
+   853→    },
+   854→    tags: { en: ["qr", "upi qr", "barcode"], hi: ["क्यूआर", "qr", "upi"] },
+   855→  }),
+   856→
+   857→  /* ---------------- Invoices (§7.4) ---------------- */
+   858→  def({
+   859→    id: "create-invoice",
+   860→    category: "invoices",
+   861→    mode: "D",
+   862→    phase: "P3",
+   863→    icon: Receipt,
+   864→    popularity: 32,
+   865→    accepts: "any",
+   866→    name: { en: "Create invoice (GST ready)", hi: "GST इनवॉइस बनाएँ" },
+   867→    description: {
+   868→      en: "CGST/SGST/IGST auto-split, amount in words, UPI QR, saved profile.",
+   869→      hi: "CGST/SGST/IGST अपने आप, शब्दों में रक़म, UPI QR।",
+   870→    },
+   871→    tags: {
+   872→      en: ["gst invoice", "bill", "tax invoice"],
+   873→      hi: ["बिल", "गस्ट", "invoice", "bill banaye"],
+   874→    },
+   875→  }),
+   876→  def({
+   877→    id: "create-invoice-visually",
+   878→    category: "invoices",
+   879→    mode: "D",
+   880→    phase: "P3",
+   881→    icon: Palette,
+   882→    popularity: 10,
+   883→    accepts: "any",
+   884→    name: { en: "Create invoice visually", hi: "इनवॉइस डिज़ाइन करें" },
+   885→    description: {
+   886→      en: "Drag-and-drop invoice design on canvas, still GST-ready.",
+   887→      hi: "ड्रैग-एंड-ड्रॉप इनवॉइस डिज़ाइन, GST-रेडी।",
+   888→    },
+   889→    tags: { en: ["invoice design", "canvas"], hi: ["इनवॉइस", "design"] },
+   890→  }),
+   891→  def({
+   892→    id: "create-electronic-invoice",
+   893→    category: "invoices",
+   894→    mode: "S",
+   895→    phase: "P3",
+   896→    icon: FileCode,
+   897→    popularity: 8,
+   898→    accepts: "pdf",
+   899→    name: { en: "Electronic invoice (Factur-X)", hi: "ई-इनवॉइस (Factur-X)" },
+   900→    description: {
+   901→      en: "PDF/A-3 with embedded XML for EU Factur-X/ZUGFeRD workflows.",
+   902→      hi: "PDF/A-3 और जुड़ा XML — EU Factur-X के लिए।",
+   903→    },
+   904→    tags: { en: ["factur-x", "zugferd", "e-invoice"], hi: ["ई-इनवॉइस", "factur"] },
+   905→  }),
+   906→  def({
+   907→    id: "pdf-to-e-invoice",
+   908→    category: "invoices",
+   909→    mode: "S",
+   910→    phase: "P3",
+   911→    icon: ArrowRightLeft,
+   912→    popularity: 8,
+   913→    accepts: "pdf",
+   914→    name: { en: "PDF invoice to e-invoice", hi: "पीडीएफ़ से ई-इनवॉइस" },
+   915→    description: {
+   916→      en: "Turn an existing PDF invoice into an e-invoice with XML data.",
+   917→      hi: "मौजूदा PDF इनवॉइस को XML डेटा के साथ ई-इनवॉइस बनाएँ।",
+   918→    },
+   919→    tags: { en: ["convert invoice", "xml"], hi: ["इनवॉइस", "e-invoice"] },
+   920→  }),
+   921→  def({
+   922→    id: "xml-invoice-to-pdf",
+   923→    category: "invoices",
+   924→    mode: "D",
+   925→    phase: "P3",
+   926→    icon: FileText,
+   927→    popularity: 8,
+   928→    accepts: "text",
+   929→    name: { en: "XML e-invoice to PDF", hi: "XML से इनवॉइस पीडीएफ़" },
+   930→    description: {
+   931→      en: "Readable PDF from UBL/CII e-invoice XML, on your device.",
+   932→      hi: "UBL/CII XML से पढ़ने योग्य PDF, डिवाइस पर ही।",
+   933→    },
+   934→    tags: { en: ["xml invoice", "ubl"], hi: ["xml", "इनवॉइस"] },
+   935→  }),
+   936→  def({
+   937→    id: "validate-e-invoice",
+   938→    category: "invoices",
+   939→    mode: "S",
+   940→    phase: "P3",
+   941→    icon: BadgeCheck,
+   942→    popularity: 6,
+   943→    accepts: "pdf",
+   944→    name: { en: "Validate e-invoice", hi: "ई-इनवॉइस जाँचें" },
+   945→    description: {
+   946→      en: "Rule checks with a clear error list before you send it out.",
+   947→      hi: "भेजने से पहले नियम-जाँच और ग़लतियों की सूची।",
+   948→    },
+   949→    tags: { en: ["validate", "check invoice"], hi: ["जाँच", "validate"] },
+   950→  }),
+   951→
+   952→  /* ---------------- Optimize (§7.5) ---------------- */
+   953→  def({
+   954→    id: "compress-pdf",
+   955→    category: "optimize",
+   956→    mode: "D",
+   957→    phase: "P1",
+   958→    icon: Minimize2,
+   959→    popularity: 92,
+   960→    accepts: "pdf",
+   961→    enabled: true,
+   962→    name: { en: "Compress PDF", hi: "पीडीएफ़ कंप्रेस करें" },
+   963→    description: {
+   964→      en: "Quality presets or custom DPI — smaller file, same readable text.",
+   965→      hi: "क्वालिटी प्रीसेट या कस्टम DPI — छोटी फ़ाइल, साफ़ टेक्स्ट।",
+   966→    },
+   967→    tags: {
+   968→      en: ["reduce size", "smaller", "shrink"],
+   969→      hi: ["छोटा", "कंप्रेस", "compress karein"],
+   970→    },
+   971→  }),
+   972→  def({
+   973→    id: "compress-pdf-to-size",
+   974→    category: "optimize",
+   975→    mode: "D",
+   976→    phase: "P2",
+   977→    icon: Target,
+   978→    popularity: 48,
+   979→    accepts: "pdf",
+   980→    enabled: true,
+   981→    name: { en: "Compress to target size", hi: "लक्ष्य साइज़ में कंप्रेस" },
+   982→    description: {
+   983→      en: "Under 100 KB / 200 KB / 1 MB for form portals and email limits.",
+   984→      hi: "100 KB / 200 KB / 1 MB से कम — फ़ॉर्म और ईमेल के लिए।",
+   985→    },
+   986→    tags: {
+   987→      en: ["100kb", "200kb", "target size"],
+   988→      hi: ["100kb", "200kb", "छोटा karein"],
+   989→    },
+   990→  }),
+   991→  def({
+   992→    id: "web-optimize-pdf",
+   993→    category: "optimize",
+   994→    mode: "D",
+   995→    phase: "P3",
+   996→    icon: Zap,
+   997→    popularity: 10,
+   998→    accepts: "pdf",
+   999→    name: { en: "Web optimize (linearize)", hi: "वेब ऑप्टिमाइज़ करें" },
+  1000→    description: {
+  1001→      en: "Linearize for fast first-page loading in browsers.",
+  1002→      hi: "ब्राउज़र में पहला पेज तेज़ खुले — लीनियराइज़।",
+  1003→    },
+  1004→    tags: { en: ["linearize", "fast web view"], hi: ["ऑप्टिमाइज़", "fast"] },
+  1005→  }),
+  1006→  def({
+  1007→    id: "ocr-pdf",
+  1008→    category: "optimize",
+  1009→    mode: "D",
+  1010→    phase: "P2",
+  1011→    icon: ScanText,
+  1012→    popularity: 52,
+  1013→    accepts: "pdf",
+  1014→    enabled: true,
+  1015→    name: { en: "PDF OCR", hi: "पीडीएफ़ OCR" },
+  1016→    description: {
+  1017→      en: "Make scanned PDFs searchable; English and Hindi models included.",
+  1018→      hi: "स्कैन PDF खोजने योग्य बनाएँ; हिंदी मॉडल सहित।",
+  1019→    },
+  1020→    tags: {
+  1021→      en: ["searchable", "hindi ocr", "text recognition"],
+  1022→      hi: ["ओसीआर", "ocr", "हिंदी पहचान"],
+  1023→    },
+  1024→  }),
+  1025→  def({
+  1026→    id: "repair-pdf",
+  1027→    category: "optimize",
+  1028→    mode: "D",
+  1029→    phase: "P3",
+  1030→    icon: Wrench,
+  1031→    popularity: 22,
+  1032→    accepts: "pdf",
+  1033→    name: { en: "Repair PDF", hi: "पीडीएफ़ ठीक करें" },
+  1034→    description: {
+  1035→      en: "Rebuild broken cross-reference tables; report recovered pages.",
+  1036→      hi: "टूटी फ़ाइल ठीक करें; बचे पेजों की रिपोर्ट।",
+  1037→    },
+  1038→    tags: { en: ["fix pdf", "corrupt", "damaged"], hi: ["मरम्मत", "repair", "theek"] },
+  1039→  }),
+  1040→  def({
+  1041→    id: "rasterize-pdf",
+  1042→    category: "optimize",
+  1043→    mode: "D",
+  1044→    phase: "P2",
+  1045→    icon: Image,
+  1046→    popularity: 14,
+  1047→    accepts: "pdf",
+  1048→    enabled: true,
+  1049→    name: { en: "Rasterize PDF", hi: "पेज तस्वीर बनाएँ" },
+  1050→    description: {
+  1051→      en: "Convert pages to flat images so nothing can be edited or extracted.",
+  1052→      hi: "पेज तस्वीर बना दें — कुछ बदला न जा सके।",
+  1053→    },
+  1054→    tags: { en: ["flatten to image", "non editable"], hi: ["रास्टर", "तस्वीर"] },
+  1055→  }),
+  1056→  def({
+  1057→    id: "flatten-pdf",
+  1058→    category: "optimize",
+  1059→    mode: "D",
+  1060→    phase: "P2",
+  1061→    icon: SquareStack,
+  1062→    popularity: 18,
+  1063→    accepts: "pdf",
+  1064→    name: { en: "Flatten PDF", hi: "फ़्लैटन पीडीएफ़" },
+  1065→    description: {
+  1066→      en: "Merge form fields and annotations into the page content.",
+  1067→      hi: "फ़ॉर्म फ़ील्ड और टिप्पणियाँ पेज में मिला दें।",
+  1068→    },
+  1069→    tags: { en: ["flatten forms", "annotations"], hi: ["फ़्लैटन", "flatten"] },
+  1070→  }),
+  1071→  def({
+  1072→    id: "pdf-to-pdfa",
+  1073→    category: "optimize",
+  1074→    mode: "S",
+  1075→    phase: "P3",
+  1076→    icon: FileCheck,
+  1077→    popularity: 10,
+  1078→    accepts: "pdf",
+  1079→    name: { en: "PDF to PDF/A", hi: "PDF/A बनाएँ" },
+  1080→    description: {
+  1081→      en: "Archive-grade PDF/A-1b/2b/3b with a conformance report.",
+  1082→      hi: "अभिलेख-ग्रेड PDF/A, रिपोर्ट के साथ।",
+  1083→    },
+  1084→    tags: { en: ["pdfa", "archive"], hi: ["पीडीएफ़ए", "archive"] },
+  1085→  }),
+  1086→
+  1087→  /* ---------------- Security (§7.6) ---------------- */
+  1088→  def({
+  1089→    id: "lock-pdf",
+  1090→    category: "security",
+  1091→    mode: "D",
+  1092→    phase: "P1",
+  1093→    icon: Lock,
+  1094→    popularity: 78,
+  1095→    accepts: "pdf",
+  1096→    enabled: true,
+  1097→    name: { en: "Protect PDF", hi: "पासवर्ड लगाएँ" },
+  1098→    description: {
+  1099→      en: "AES-256 password with print/copy/edit permission switches.",
+  1100→      hi: "AES-256 पासवर्ड, प्रिंट/कॉपी/एडिट अनुमति के साथ।",
+  1101→    },
+  1102→    tags: {
+  1103→      en: ["password", "encrypt", "secure"],
+  1104→      hi: ["पासवर्ड", "लॉक", "password lagaye"],
+  1105→    },
+  1106→  }),
+  1107→  def({
+  1108→    id: "unlock-pdf",
+  1109→    category: "security",
+  1110→    mode: "D",
+  1111→    phase: "P1",
+  1112→    icon: EyeOff,
+  1113→    popularity: 75,
+  1114→    accepts: "pdf",
+  1115→    enabled: true,
+  1116→    name: { en: "Unlock PDF", hi: "लॉक हटाएँ" },
+  1117→    description: {
+  1118→      en: "Remove a password you know, or owner restrictions — no cracking.",
+  1119→      hi: "अपना पासवर्ड हटाएँ — तोड़ना नहीं, हटाना।",
+  1120→    },
+  1121→    tags: {
+  1122→      en: ["remove password", "decrypt"],
+  1123→      hi: ["अनलॉक", "unlock", "hataye"],
+  1124→    },
+  1125→  }),
+  1126→  def({
+  1127→    id: "sign-pdf",
+  1128→    category: "security",
+  1129→    mode: "D",
+  1130→    phase: "P1",
+  1131→    icon: PenTool,
+  1132→    popularity: 88,
+  1133→    accepts: "pdf",
+  1134→    name: { en: "Sign PDF", hi: "हस्ताक्षर करें" },
+  1135→    description: {
+  1136→      en: "Draw, type or upload your signature; place it on any page.",
+  1137→      hi: "हस्ताक्षर बनाएँ या अपलोड करें; किसी भी पेज पर लगाएँ।",
+  1138→    },
+  1139→    tags: {
+  1140→      en: ["signature", "esign", "sign document"],
+  1141→      hi: ["हस्ताक्षर", "sign", "signature"],
+  1142→    },
+  1143→  }),
+  1144→  def({
+  1145→    id: "digital-signature",
+  1146→    category: "security",
+  1147→    mode: "D",
+  1148→    phase: "P3",
+  1149→    icon: ShieldCheck,
+  1150→    popularity: 12,
+  1151→    accepts: "pdf",
+  1152→    name: { en: "Digital signature", hi: "डिजिटल हस्ताक्षर" },
+  1153→    description: {
+  1154→      en: "Certificate-based PAdES signing with your .pfx/.p12 file.",
+  1155→      hi: "सर्टिफ़िकेट (.pfx/.p12) से PAdES हस्ताक्षर।",
+  1156→    },
+  1157→    tags: {
+  1158→      en: ["pades", "certificate", "p12"],
+  1159→      hi: ["डिजिटल", "certificate"],
+  1160→    },
+  1161→  }),
+  1162→  def({
+  1163→    id: "redact-pdf",
+  1164→    category: "security",
+  1165→    mode: "D",
+  1166→    phase: "P3",
+  1167→    icon: EyeOff,
+  1168→    popularity: 28,
+  1169→    accepts: "pdf",
+  1170→    name: { en: "Redact PDF", hi: "रिडैक्ट करें" },
+  1171→    description: {
+  1172→      en: "Permanently hide Aadhaar, PAN, phone or custom text — verified gone.",
+  1173→      hi: "आधार, पैन, फ़ोन नंबर हमेशा के लिए छिपाएँ।",
+  1174→    },
+  1175→    tags: {
+  1176→      en: ["aadhaar", "pan", "black out", "censor"],
+  1177→      hi: ["आधार", "छिपाएँ", "aadhaar"],
+  1178→    },
+  1179→  }),
+  1180→  def({
+  1181→    id: "remove-pdf-metadata",
+  1182→    category: "security",
+  1183→    mode: "D",
+  1184→    phase: "P1",
+  1185→    icon: FileX,
+  1186→    popularity: 20,
+  1187→    accepts: "pdf",
+  1188→    enabled: true,
+  1189→    name: { en: "Remove PDF metadata", hi: "मेटाडेटा हटाएँ" },
+  1190→    description: {
+  1191→      en: "See every hidden field — author, software, dates — then strip them.",
+  1192→      hi: "छुपी जानकारी देखें — फिर साफ़ मिटाएँ।",
+  1193→    },
+  1194→    tags: {
+  1195→      en: ["metadata", "privacy clean", "xmp"],
+  1196→      hi: ["मेटाडेटा", "metadata", "saf"],
+  1197→    },
+  1198→  }),
+  1199→  def({
+  1200→    id: "generate-password",
+  1201→    category: "security",
+  1202→    mode: "D",
+  1203→    phase: "P1",
+  1204→    icon: KeyRound,
+  1205→    popularity: 26,
+  1206→    accepts: "any",
+  1207→    enabled: true,
+  1208→    name: { en: "Generate password", hi: "पासवर्ड बनाएँ" },
+  1209→    description: {
+  1210→      en: "Strong random or pronounceable passwords — nothing stored.",
+  1211→      hi: "मज़बूत पासवर्ड — कुछ भी सेव नहीं होता।",
+  1212→    },
+  1213→    tags: {
+  1214→      en: ["random password", "passphrase"],
+  1215→      hi: ["पासवर्ड", "password banaye"],
+  1216→    },
+  1217→  }),
+  1218→  def({
+  1219→    id: "request-signature",
+  1220→    category: "security",
+  1221→    mode: "S",
+  1222→    phase: "P3",
+  1223→    icon: Send,
+  1224→    popularity: 8,
+  1225→    accepts: "pdf",
+  1226→    name: { en: "Request signature", hi: "हस्ताक्षर मँगाएँ" },
+  1227→    description: {
+  1228→      en: "Send an expiring link so someone else can sign (Pro, server).",
+  1229→      hi: "एक्सपायर होने वाला लिंक भेजें (प्रो, सर्वर)।",
+  1230→    },
+  1231→    tags: {
+  1232→      en: ["send for signature", "audit trail"],
+  1233→      hi: ["हस्ताक्षर मँगाएँ", "request sign"],
+  1234→    },
+  1235→  }),
+  1236→
+  1237→  /* ---------------- View (§7.7) ---------------- */
+  1238→  def({
+  1239→    id: "view-pdf",
+  1240→    category: "view",
+  1241→    mode: "D",
+  1242→    phase: "P1",
+  1243→    icon: Eye,
+  1244→    popularity: 60,
+  1245→    accepts: "pdf",
+  1246→    enabled: true,
+  1247→    name: { en: "View PDF", hi: "पीडीएफ़ देखें" },
+  1248→    description: {
+  1249→      en: "Fast viewer: thumbnails, search, outline, dark reading mode.",
+  1250→      hi: "तेज़ व्यूअर: थंबनेल, खोज, आउटलाइन, डार्क मोड।",
+  1251→    },
+  1252→    tags: { en: ["reader", "open pdf", "viewer"], hi: ["देखें", "reader", "viewer"] },
+  1253→  }),
+  1254→  def({
+  1255→    id: "compare-pdf",
+  1256→    category: "view",
+  1257→    mode: "D",
+  1258→    phase: "P3",
+  1259→    icon: GitCompare,
+  1260→    popularity: 16,
+  1261→    accepts: "pdf",
+  1262→    name: { en: "Compare PDFs", hi: "पीडीएफ़ तुलना करें" },
+  1263→    description: {
+  1264→      en: "Side-by-side sync scroll, overlay diff and a text change list.",
+  1265→      hi: "साथ-साथ स्क्रॉल, ओवरले डिफ़, बदलावों की सूची।",
+  1266→    },
+  1267→    tags: { en: ["diff", "side by side"], hi: ["तुलना", "compare", "diff"] },
+  1268→  }),
+  1269→  def({
+  1270→    id: "search-pdf",
+  1271→    category: "view",
+  1272→    mode: "D",
+  1273→    phase: "P2",
+  1274→    icon: FileSearch,
+  1275→    popularity: 18,
+  1276→    accepts: "pdf",
+  1277→    name: { en: "Search in PDFs", hi: "पीडीएफ़ में खोजें" },
+  1278→    description: {
+  1279→      en: "Query or regex across many PDFs; jump to each match's page.",
+  1280→      hi: "कई PDF में खोजें; हर मैच के पेज पर जाएँ।",
+  1281→    },
+  1282→    tags: { en: ["find text", "regex search"], hi: ["खोजें", "search", "khojein"] },
+  1283→  }),
+  1284→  def({
+  1285→    id: "validate-pdfa",
+  1286→    category: "view",
+  1287→    mode: "S",
+  1288→    phase: "P3",
+  1289→    icon: BadgeCheck,
+  1290→    popularity: 6,
+  1291→    accepts: "pdf",
+  1292→    name: { en: "Check PDF/A & PDF/UA", hi: "PDF/A जाँचें" },
+  1293→    description: {
+  1294→      en: "Pass/fail rule report with page references for archives.",
+  1295→      hi: "पास/फ़ेल रिपोर्ट, पेज संदर्भों के साथ।",
+  1296→    },
+  1297→    tags: { en: ["validate pdfa", "accessibility check"], hi: ["जाँच", "pdfa"] },
+  1298→  }),
+  1299→  def({
+  1300→    id: "verify-pdf-signatures",
+  1301→    category: "view",
+  1302→    mode: "D",
+  1303→    phase: "P3",
+  1304→    icon: Award,
+  1305→    popularity: 8,
+  1306→    accepts: "pdf",
+  1307→    name: { en: "Verify PDF signatures", hi: "हस्ताक्षर जाँचें" },
+  1308→    description: {
+  1309→      en: "Signer, time, certificate status and tamper detection.",
+  1310→      hi: "हस्ताक्षरकर्ता, समय, सर्टिफ़िकेट और छेड़छाड़ जाँच।",
+  1311→    },
+  1312→    tags: {
+  1313→      en: ["check signature", "tamper"],
+  1314→      hi: ["हस्ताक्षर जाँच", "verify"],
+  1315→    },
+  1316→  }),
+  1317→  def({
+  1318→    id: "set-pdf-viewer-preferences",
+  1319→    category: "view",
+  1320→    mode: "D",
+  1321→    phase: "P2",
+  1322→    icon: Settings2,
+  1323→    popularity: 6,
+  1324→    accepts: "pdf",
+  1325→    name: { en: "Set viewer preferences", hi: "व्यूअर सेटिंग बदलें" },
+  1326→    description: {
+  1327→      en: "Choose how the file opens: layout, zoom, window title.",
+  1328→      hi: "फ़ाइल कैसे खुले: लेआउट, ज़ूम, टाइटल।",
+  1329→    },
+  1330→    tags: { en: ["open settings", "initial view"], hi: ["व्यूअर", "settings"] },
+  1331→  }),
+  1332→
+  1333→  /* ---------------- Convert to PDF (§7.8) ---------------- */
+  1334→  def({
+  1335→    id: "word-to-pdf",
+  1336→    category: "convert-to",
+  1337→    mode: "S",
+  1338→    phase: "P3",
+  1339→    icon: FileText,
+  1340→    popularity: 85,
+  1341→    accepts: "word",
+  1342→    name: { en: "Word to PDF", hi: "वर्ड से पीडीएफ़" },
+  1343→    description: {
+  1344→      en: "DOC/DOCX to clean PDF; deleted from the server right after.",
+  1345→      hi: "DOC/DOCX से साफ़ PDF; काम के बाद तुरंत डिलीट।",
+  1346→    },
+  1347→    tags: {
+  1348→      en: ["docx", "doc", "word document"],
+  1349→      hi: ["वर्ड", "docx", "word"],
+  1350→    },
+  1351→  }),
+  1352→  def({
+  1353→    id: "powerpoint-to-pdf",
+  1354→    category: "convert-to",
+  1355→    mode: "S",
+  1356→    phase: "P3",
+  1357→    icon: Presentation,
+  1358→    popularity: 30,
+  1359→    accepts: "office",
+  1360→    name: { en: "PowerPoint to PDF", hi: "पावरपॉइंट से पीडीएफ़" },
+  1361→    description: {
+  1362→      en: "PPT/PPTX slides as pages, with notes option.",
+  1363→      hi: "PPT/PPTX स्लाइड पेज बनें, नोट्स के विकल्प सहित।",
+  1364→    },
+  1365→    tags: { en: ["pptx", "slides"], hi: ["पावरपॉइंट", "pptx"] },
+  1366→  }),
+  1367→  def({
+  1368→    id: "excel-to-pdf",
+  1369→    category: "convert-to",
+  1370→    mode: "S",
+  1371→    phase: "P3",
+  1372→    icon: FileSpreadsheet,
+  1373→    popularity: 28,
+  1374→    accepts: "office",
+  1375→    name: { en: "Excel to PDF", hi: "एक्सेल से पीडीएफ़" },
+  1376→    description: {
+  1377→      en: "XLS/XLSX sheets fitted to page width, selected sheets or all.",
+  1378→      hi: "XLS/XLSX शीट पेज-चौड़ाई में, सब या चुनी शीट।",
+  1379→    },
+  1380→    tags: { en: ["xlsx", "spreadsheet"], hi: ["एक्सेल", "xlsx"] },
+  1381→  }),
+  1382→  def({
+  1383→    id: "publisher-to-pdf",
+  1384→    category: "convert-to",
+  1385→    mode: "S",
+  1386→    phase: "P3",
+  1387→    icon: Newspaper,
+  1388→    popularity: 6,
+  1389→    accepts: "office",
+  1390→    name: { en: "Publisher to PDF", hi: "पब्लिशर से पीडीएफ़" },
+  1391→    description: {
+  1392→      en: "PUB files converted with LibreOffice (limited layout fidelity).",
+  1393→      hi: "PUB फ़ाइलें (लेआउट में कुछ सीमा)।",
+  1394→    },
+  1395→    tags: { en: ["pub", "publisher"], hi: ["पब्लिशर", "pub"] },
+  1396→  }),
+  1397→  def({
+  1398→    id: "odt-to-pdf",
+  1399→    category: "convert-to",
+  1400→    mode: "S",
+  1401→    phase: "P3",
+  1402→    icon: Files,
+  1403→    popularity: 8,
+  1404→    accepts: "office",
+  1405→    name: { en: "OpenDocument to PDF", hi: "ओपनडॉक्यूमेंट से पीडीएफ़" },
+  1406→    description: {
+  1407→      en: "ODT/ODS/ODP/ODG from LibreOffice or Google Docs.",
+  1408→      hi: "ODT/ODS/ODP/ODG — LibreOffice या Google Docs की फ़ाइलें।",
+  1409→    },
+  1410→    tags: { en: ["odt", "ods", "odp"], hi: ["ओपनडॉक्यूमेंट", "odt"] },
+  1411→  }),
+  1412→  def({
+  1413→    id: "rtf-to-pdf",
+  1414→    category: "convert-to",
+  1415→    mode: "S",
+  1416→    phase: "P3",
+  1417→    icon: FileType,
+  1418→    popularity: 6,
+  1419→    accepts: "office",
+  1420→    name: { en: "RTF to PDF", hi: "RTF से पीडीएफ़" },
+  1421→    description: {
+  1422→      en: "Rich Text Format documents into tidy PDFs.",
+  1423→      hi: "RTF दस्तावेज़ साफ़ PDF में।",
+  1424→    },
+  1425→    tags: { en: ["rtf", "rich text"], hi: ["आरटीएफ़", "rtf"] },
+  1426→  }),
+  1427→  def({
+  1428→    id: "epub-to-pdf",
+  1429→    category: "convert-to",
+  1430→    mode: "S",
+  1431→    phase: "P3",
+  1432→    icon: BookOpen,
+  1433→    popularity: 10,
+  1434→    accepts: "text",
+  1435→    name: { en: "EPUB to PDF", hi: "EPUB से पीडीएफ़" },
+  1436→    description: {
+  1437→      en: "Ebooks reflowed onto printable PDF pages.",
+  1438→      hi: "ईबुक को प्रिंट-योग्य PDF पेजों में।",
+  1439→    },
+  1440→    tags: { en: ["ebook", "epub"], hi: ["ईबुक", "epub"] },
+  1441→  }),
+  1442→  def({
+  1443→    id: "txt-to-pdf",
+  1444→    category: "convert-to",
+  1445→    mode: "D",
+  1446→    phase: "P2",
+  1447→    icon: AlignLeft,
+  1448→    popularity: 18,
+  1449→    accepts: "text",
+  1450→    name: { en: "Text to PDF", hi: "टेक्स्ट से पीडीएफ़" },
+  1451→    description: {
+  1452→      en: "Plain text files into PDF with font and margin control.",
+  1453→      hi: "टेक्स्ट फ़ाइल से PDF — फ़ॉन्ट और मार्जिन चुनें।",
+  1454→    },
+  1455→    tags: { en: ["txt", "plain text"], hi: ["टेक्स्ट", "txt"] },
+  1456→  }),
+  1457→  def({
+  1458→    id: "markdown-to-pdf",
+  1459→    category: "convert-to",
+  1460→    mode: "D",
+  1461→    phase: "P2",
+  1462→    icon: Hash,
+  1463→    popularity: 14,
+  1464→    accepts: "text",
+  1465→    name: { en: "Markdown to PDF", hi: "मार्कडाउन से पीडीएफ़" },
+  1466→    description: {
+  1467→      en: "READMEs and notes rendered with headings, lists and code blocks.",
+  1468→      hi: "हेडिंग, लिस्ट और कोड के साथ सजा PDF।",
+  1469→    },
+  1470→    tags: { en: ["md", "readme"], hi: ["मार्कडाउन", "markdown"] },
+  1471→  }),
+  1472→  def({
+  1473→    id: "html-to-pdf",
+  1474→    category: "convert-to",
+  1475→    mode: "S",
+  1476→    phase: "P3",
+  1477→    icon: Code,
+  1478→    popularity: 12,
+  1479→    accepts: "url",
+  1480→    name: { en: "HTML to PDF", hi: "HTML से पीडीएफ़" },
+  1481→    description: {
+  1482→      en: "Pasted HTML or a URL rendered to PDF (server, SSRF-protected).",
+  1483→      hi: "HTML या URL से PDF (सर्वर, सुरक्षित)।",
+  1484→    },
+  1485→    tags: { en: ["web page", "html file"], hi: ["एचटीएमएल", "html"] },
+  1486→  }),
+  1487→  def({
+  1488→    id: "jpg-to-pdf",
+  1489→    category: "convert-to",
+  1490→    mode: "D",
+  1491→    enabled: true,
+  1492→    phase: "P1",
+  1493→    icon: FileImage,
+  1494→    popularity: 72,
+  1495→    accepts: "image",
+  1496→    name: { en: "JPG to PDF", hi: "JPG से पीडीएफ़" },
+  1497→    description: {
+  1498→      en: "Photos to PDF with page size, margins and orientation options.",
+  1499→      hi: "फ़ोटो से PDF — साइज़, मार्जिन, दिशा चुनें।",
+  1500→    },
+  1501→    tags: {
+  1502→      en: ["jpeg", "photo pdf", "jpg file"],
+  1503→      hi: ["जेपीजी", "photo se pdf", "jpg"],
+  1504→    },
+  1505→  }),
+  1506→  def({
+  1507→    id: "png-to-pdf",
+  1508→    category: "convert-to",
+  1509→    mode: "D",
+  1510→    enabled: true,
+  1511→    phase: "P1",
+  1512→    icon: FileImage,
+  1513→    popularity: 56,
+  1514→    accepts: "image",
+  1515→    name: { en: "PNG to PDF", hi: "PNG से पीडीएफ़" },
+  1516→    description: {
+  1517→      en: "Keep transparency or white background — your choice.",
+  1518→      hi: "पारदर्शिता या सफ़ेद पृष्ठभूमि — आप चुनें।",
+  1519→    },
+  1520→    tags: { en: ["png image", "screenshot"], hi: ["पीएनजी", "png"] },
+  1521→  }),
+  1522→  def({
+  1523→    id: "webp-to-pdf",
+  1524→    category: "convert-to",
+  1525→    mode: "D",
+  1526→    enabled: true,
+  1527→    phase: "P1",
+  1528→    icon: FileImage,
+  1529→    popularity: 22,
+  1530→    accepts: "image",
+  1531→    name: { en: "WEBP to PDF", hi: "WEBP से पीडीएफ़" },
+  1532→    description: {
+  1533→      en: "Modern web images converted on your device.",
+  1534→      hi: "नई वेब तस्वीरें, डिवाइस पर ही बदलें।",
+  1535→    },
+  1536→    tags: { en: ["webp image"], hi: ["वेबपी", "webp"] },
+  1537→  }),
+  1538→  def({
+  1539→    id: "heic-to-pdf",
+  1540→    category: "convert-to",
+  1541→    mode: "D",
+  1542→    phase: "P2",
+  1543→    icon: FileImage,
+  1544→    popularity: 26,
+  1545→    accepts: "image",
+  1546→    name: { en: "HEIC to PDF", hi: "HEIC से पीडीएफ़" },
+  1547→    description: {
+  1548→      en: "iPhone photos decoded in the browser and placed into PDFs.",
+  1549→      hi: "iPhone फ़ोटो ब्राउज़र में खुलें, PDF बनें।",
+  1550→    },
+  1551→    tags: {
+  1552→      en: ["iphone photo", "heic decoder"],
+  1553→      hi: ["आईफ़ोन फ़ोटो", "heic"],
+  1554→    },
+  1555→  }),
+  1556→  def({
+  1557→    id: "svg-to-pdf",
+  1558→    category: "convert-to",
+  1559→    mode: "D",
+  1560→    phase: "P2",
+  1561→    icon: Shapes,
+  1562→    popularity: 12,
+  1563→    accepts: "image",
+  1564→    name: { en: "SVG to PDF", hi: "SVG से पीडीएफ़" },
+  1565→    description: {
+  1566→      en: "Vector graphics rendered at any scale into PDF pages.",
+  1567→      hi: "वेक्टर ग्राफ़िक्स, किसी भी स्केल पर PDF में।",
+  1568→    },
+  1569→    tags: { en: ["vector", "svg file"], hi: ["एसवीजी", "svg"] },
+  1570→  }),
+  1571→  def({
+  1572→    id: "tiff-to-pdf",
+  1573→    category: "convert-to",
+  1574→    mode: "D",
+  1575→    phase: "P2",
+  1576→    icon: FileImage,
+  1577→    popularity: 10,
+  1578→    accepts: "image",
+  1579→    name: { en: "TIFF to PDF", hi: "TIFF से पीडीएफ़" },
+  1580→    description: {
+  1581→      en: "Multi-page TIFF scans into one PDF, in order.",
+  1582→      hi: "मल्टी-पेज TIFF स्कैन एक PDF में, क्रम से।",
+  1583→    },
+  1584→    tags: { en: ["tif", "fax scan"], hi: ["टिफ़", "tiff"] },
+  1585→  }),
+  1586→  def({
+  1587→    id: "convert-to-pdf",
+  1588→    category: "convert-to",
+  1589→    mode: "D",
+  1590→    phase: "P1",
+  1591→    icon: FileInput,
+  1592→    popularity: 58,
+  1593→    accepts: "any",
+  1594→    name: { en: "Universal converter", hi: "सब कुछ पीडीएफ़ में" },
+  1595→    description: {
+  1596→      en: "Drop any file — we detect the type and route you to the right tool.",
+  1597→      hi: "कोई भी फ़ाइल डालें — टाइप पहचान कर सही टूल मिलेगा।",
+  1598→    },
+  1599→    tags: {
+  1600→      en: ["any file", "auto detect", "convert"],
+  1601→      hi: ["कोई भी", "sab kuch", "converter"],
+  1602→    },
+  1603→  }),
+  1604→
+  1605→  /* ---------------- Convert from PDF (§7.9) ---------------- */
+  1606→  def({
+  1607→    id: "pdf-to-word",
+  1608→    category: "convert-from",
+  1609→    mode: "S",
+  1610→    phase: "P3",
+  1611→    icon: FileText,
+  1612→    popularity: 83,
+  1613→    accepts: "pdf",
+  1614→    name: { en: "PDF to Word", hi: "पीडीएफ़ से वर्ड" },
+  1615→    description: {
+  1616→      en: "Editable DOCX with honest quality notes and a first-page preview.",
+  1617→      hi: "एडिट करने योग्य DOCX — ईमानदार क्वालिटी नोट के साथ।",
+  1618→    },
+  1619→    tags: {
+  1620→      en: ["docx", "editable word"],
+  1621→      hi: ["वर्ड", "docx", "word file"],
+  1622→    },
+  1623→  }),
+  1624→  def({
+  1625→    id: "pdf-to-powerpoint",
+  1626→    category: "convert-from",
+  1627→    mode: "S",
+  1628→    phase: "P3",
+  1629→    icon: Presentation,
+  1630→    popularity: 22,
+  1631→    accepts: "pdf",
+  1632→    name: { en: "PDF to PowerPoint", hi: "पीडीएफ़ से पावरपॉइंट" },
+  1633→    description: {
+  1634→      en: "Each page becomes an editable slide where possible.",
+  1635→      hi: "हर पेज एक स्लाइड — जहाँ संभव हो, एडिट करने योग्य।",
+  1636→    },
+  1637→    tags: { en: ["pptx", "slides"], hi: ["पावरपॉइंट", "pptx"] },
+  1638→  }),
+  1639→  def({
+  1640→    id: "pdf-to-excel",
+  1641→    category: "convert-from",
+  1642→    mode: "S",
+  1643→    phase: "P3",
+  1644→    icon: FileSpreadsheet,
+  1645→    popularity: 24,
+  1646→    accepts: "pdf",
+  1647→    name: { en: "PDF to Excel", hi: "पीडीएफ़ से एक्सेल" },
+  1648→    description: {
+  1649→      en: "Detected tables become clean sheets with tidy numbers.",
+  1650→      hi: "पहचानी टेबल साफ़ शीट बनें, नंबर ठीक।",
+  1651→    },
+  1652→    tags: { en: ["xlsx", "tables to sheet"], hi: ["एक्सेल", "xlsx", "table"] },
+  1653→  }),
+  1654→  def({
+  1655→    id: "pdf-to-jpg",
+  1656→    category: "convert-from",
+  1657→    mode: "D",
+  1658→    enabled: true,
+  1659→    phase: "P1",
+  1660→    icon: Image,
+  1661→    popularity: 84,
+  1662→    accepts: "pdf",
+  1663→    name: { en: "PDF to JPG", hi: "पीडीएफ़ से JPG" },
+  1664→    description: {
+  1665→      en: "Every page a JPG at your DPI, single file or ZIP.",
+  1666→      hi: "हर पेज एक JPG — DPI चुनें, एक फ़ाइल या ZIP।",
+  1667→    },
+  1668→    tags: {
+  1669→      en: ["jpg images", "pages to images"],
+  1670→      hi: ["जेपीजी", "jpg", "tasveer"],
+  1671→    },
+  1672→  }),
+  1673→  def({
+  1674→    id: "pdf-to-png",
+  1675→    category: "convert-from",
+  1676→    mode: "D",
+  1677→    enabled: true,
+  1678→    phase: "P1",
+  1679→    icon: Image,
+  1680→    popularity: 70,
+  1681→    accepts: "pdf",
+  1682→    name: { en: "PDF to PNG", hi: "पीडीएफ़ से PNG" },
+  1683→    description: {
+  1684→      en: "Lossless pages, optional transparent background.",
+  1685→      hi: "बिना नुक़सान पेज, चाहें तो पारदर्शी पृष्ठभूमि।",
+  1686→    },
+  1687→    tags: { en: ["png images", "transparent"], hi: ["पीएनजी", "png"] },
+  1688→  }),
+  1689→  def({
+  1690→    id: "pdf-to-webp",
+  1691→    category: "convert-from",
+  1692→    mode: "D",
+  1693→    phase: "P2",
+  1694→    icon: Image,
+  1695→    popularity: 16,
+  1696→    accepts: "pdf",
+  1697→    name: { en: "PDF to WEBP", hi: "पीडीएफ़ से WEBP" },
+  1698→    description: {
+  1699→      en: "Small modern web images straight from pages.",
+  1700→      hi: "पेजों से छोटी, नई वेब तस्वीरें।",
+  1701→    },
+  1702→    tags: { en: ["webp images"], hi: ["वेबपी", "webp"] },
+  1703→  }),
+  1704→  def({
+  1705→    id: "pdf-to-tiff",
+  1706→    category: "convert-from",
+  1707→    mode: "D",
+  1708→    phase: "P2",
+  1709→    icon: Image,
+  1710→    popularity: 8,
+  1711→    accepts: "pdf",
+  1712→    name: { en: "PDF to TIFF", hi: "पीडीएफ़ से TIFF" },
+  1713→    description: {
+  1714→      en: "Archive/fax-friendly TIFF output with DPI control.",
+  1715→      hi: "अभिलेख/फ़ैक्स के लिए TIFF, DPI नियंत्रण के साथ।",
+  1716→    },
+  1717→    tags: { en: ["tiff images", "fax"], hi: ["टिफ़", "tiff"] },
+  1718→  }),
+  1719→  def({
+  1720→    id: "pdf-to-svg",
+  1721→    category: "convert-from",
+  1722→    mode: "S",
+  1723→    phase: "P3",
+  1724→    icon: Shapes,
+  1725→    popularity: 10,
+  1726→    accepts: "pdf",
+  1727→    name: { en: "PDF to SVG", hi: "पीडीएफ़ से SVG" },
+  1728→    description: {
+  1729→      en: "Vector pages for design tools (server processing).",
+  1730→      hi: "डिज़ाइन टूल के लिए वेक्टर पेज (सर्वर)।",
+  1731→    },
+  1732→    tags: { en: ["vector", "svg file"], hi: ["एसवीजी", "svg"] },
+  1733→  }),
+  1734→  def({
+  1735→    id: "pdf-to-txt",
+  1736→    category: "convert-from",
+  1737→    mode: "D",
+  1738→    enabled: true,
+  1739→    phase: "P1",
+  1740→    icon: AlignLeft,
+  1741→    popularity: 65,
+  1742→    accepts: "pdf",
+  1743→    name: { en: "PDF to Text", hi: "पीडीएफ़ से टेक्स्ट" },
+  1744→    description: {
+  1745→      en: "Extract all text instantly; OCR fallback for scans.",
+  1746→      hi: "सारा टेक्स्ट तुरंत निकालें; स्कैन के लिए OCR।",
+  1747→    },
+  1748→    tags: {
+  1749→      en: ["extract text", "plain text", "copy all"],
+  1750→      hi: ["टेक्स्ट", "text", "nikalein"],
+  1751→    },
+  1752→  }),
+  1753→  def({
+  1754→    id: "pdf-to-html",
+  1755→    category: "convert-from",
+  1756→    mode: "D",
+  1757→    phase: "P3",
+  1758→    icon: Code,
+  1759→    popularity: 10,
+  1760→    accepts: "pdf",
+  1761→    name: { en: "PDF to HTML", hi: "पीडीएफ़ से HTML" },
+  1762→    description: {
+  1763→      en: "Web-ready HTML from text PDFs; images in a ZIP.",
+  1764→      hi: "वेब के लिए HTML; तस्वीरें ZIP में।",
+  1765→    },
+  1766→    tags: { en: ["html file", "web page"], hi: ["एचटीएमएल", "html"] },
+  1767→  }),
+  1768→  def({
+  1769→    id: "pdf-to-markdown",
+  1770→    category: "convert-from",
+  1771→    mode: "D",
+  1772→    phase: "P3",
+  1773→    icon: Braces,
+  1774→    popularity: 10,
+  1775→    accepts: "pdf",
+  1776→    name: { en: "PDF to Markdown", hi: "पीडीएफ़ से मार्कडाउन" },
+  1777→    description: {
+  1778→      en: "Notes and docs into Markdown with heading heuristics.",
+  1779→      hi: "नोट्स/दस्तावेज़ मार्कडाउन में, हेडिंग पहचान के साथ।",
+  1780→    },
+  1781→    tags: { en: ["md", "markdown notes"], hi: ["मार्कडाउन", "markdown"] },
+  1782→  }),
+  1783→  def({
+  1784→    id: "pdf-to-odt",
+  1785→    category: "convert-from",
+  1786→    mode: "S",
+  1787→    phase: "P3",
+  1788→    icon: Files,
+  1789→    popularity: 8,
+  1790→    accepts: "pdf",
+  1791→    name: { en: "PDF to ODT / RTF / EPUB", hi: "पीडीएफ़ से ODT/RTF/EPUB" },
+  1792→    description: {
+  1793→      en: "Open formats for LibreOffice and ebook readers.",
+  1794→      hi: "LibreOffice और ईबुक रीडर के लिए खुले फ़ॉर्मैट।",
+  1795→    },
+  1796→    tags: { en: ["odt", "rtf", "epub"], hi: ["ओडीटी", "odt"] },
+  1797→  }),
+  1798→  def({
+  1799→    id: "convert-from-pdf",
+  1800→    category: "convert-from",
+  1801→    mode: "D",
+  1802→    phase: "P1",
+  1803→    icon: FileOutput,
+  1804→    popularity: 44,
+  1805→    accepts: "pdf",
+  1806→    name: { en: "Universal converter", hi: "पीडीएफ़ को बदलें" },
+  1807→    description: {
+  1808→      en: "Drop a PDF, pick a target format, we route to the right tool.",
+  1809→      hi: "PDF डालें, फ़ॉर्मैट चुनें — सही टूल खुलेगा।",
+  1810→    },
+  1811→    tags: {
+  1812→      en: ["any format", "convert pdf"],
+  1813→      hi: ["बदलें", "convert", "badlein"],
+  1814→    },
+  1815→  }),
+  1816→
+  1817→  /* ---------------- Image tools (§7.10) ---------------- */
+  1818→  def({
+  1819→    id: "heic-to-jpg",
+  1820→    category: "images",
+  1821→    mode: "D",
+  1822→    phase: "P1",
+  1823→    icon: Image,
+  1824→    popularity: 36,
+  1825→    accepts: "image",
+  1826→    name: { en: "HEIC to JPG", hi: "HEIC से JPG" },
+  1827→    description: {
+  1828→      en: "iPhone photos to universally readable JPG, in your browser.",
+  1829→      hi: "iPhone फ़ोटो हर जगह चलने वाली JPG में।",
+  1830→    },
+  1831→    tags: {
+  1832→      en: ["iphone", "heic convert"],
+  1833→      hi: ["आईफ़ोन", "heic", "iphone photo"],
+  1834→    },
+  1835→  }),
+  1836→  def({
+  1837→    id: "heic-to-png",
+  1838→    category: "images",
+  1839→    mode: "D",
+  1840→    phase: "P1",
+  1841→    icon: Image,
+  1842→    popularity: 20,
+  1843→    accepts: "image",
+  1844→    name: { en: "HEIC to PNG", hi: "HEIC से PNG" },
+  1845→    description: {
+  1846→      en: "Lossless PNG from HEIC without losing quality.",
+  1847→      hi: "HEIC से बिना नुक़सान PNG।",
+  1848→    },
+  1849→    tags: { en: ["iphone png", "heic"], hi: ["आईफ़ोन", "heic png"] },
+  1850→  }),
+  1851→  def({
+  1852→    id: "webp-to-jpg",
+  1853→    category: "images",
+  1854→    mode: "D",
+  1855→    phase: "P1",
+  1856→    icon: Image,
+  1857→    popularity: 24,
+  1858→    accepts: "image",
+  1859→    name: { en: "WEBP to JPG", hi: "WEBP से JPG" },
+  1860→    description: {
+  1861→      en: "Older apps need JPG? Convert instantly, on device.",
+  1862→      hi: "पुराने ऐप JPG माँगते हैं? तुरंत बदलें।",
+  1863→    },
+  1864→    tags: { en: ["webp jpg"], hi: ["वेबपी", "webp jpg"] },
+  1865→  }),
+  1866→  def({
+  1867→    id: "webp-to-png",
+  1868→    category: "images",
+  1869→    mode: "D",
+  1870→    phase: "P1",
+  1871→    icon: Image,
+  1872→    popularity: 14,
+  1873→    accepts: "image",
+  1874→    name: { en: "WEBP to PNG", hi: "WEBP से PNG" },
+  1875→    description: {
+  1876→      en: "Lossless PNG from WEBP images.",
+  1877→      hi: "WEBP से बिना नुक़सान PNG।",
+  1878→    },
+  1879→    tags: { en: ["webp png"], hi: ["वेबपी", "webp png"] },
+  1880→  }),
+  1881→  def({
+  1882→    id: "resize-image-kb",
+  1883→    category: "images",
+  1884→    mode: "D",
+  1885→    phase: "P2",
+  1886→    icon: Scaling,
+  1887→    popularity: 46,
+  1888→    accepts: "image",
+  1889→    name: { en: "Resize image to KB", hi: "फ़ोटो साइज़ KB में" },
+  1890→    description: {
+  1891→      en: "Photo + signature under 100/200 KB for exam and government forms.",
+  1892→      hi: "फ़ोटो और साइन 100/200 KB से कम — फ़ॉर्म के लिए।",
+  1893→    },
+  1894→    tags: {
+  1895→      en: ["photo 100kb", "signature resize", "form photo"],
+  1896→      hi: ["फ़ोटो 100kb", "साइन", "photo kb"],
+  1897→    },
+  1898→  }),
+  1899→  def({
+  1900→    id: "passport-photo",
+  1901→    category: "images",
+  1902→    mode: "D",
+  1903→    phase: "P3",
+  1904→    icon: Contact,
+  1905→    popularity: 20,
+  1906→    accepts: "image",
+  1907→    name: { en: "Passport photo maker", hi: "पासपोर्ट फ़ोटो बनाएँ" },
+  1908→    description: {
+  1909→      en: "India photo sizes, white background and print-ready sheets.",
+  1910→      hi: "भारतीय साइज़, सफ़ेद पृष्ठभूमि, प्रिंट-रेडी शीट।",
+  1911→    },
+  1912→    tags: {
+  1913→      en: ["passport size", "photo sheet"],
+  1914→      hi: ["पासपोर्ट", "photo size"],
+  1915→    },
+  1916→  }),
+  1917→];
+  1918→
+  1919→/* ------------------------------------------------------------------ */
+  1920→/* Lookups & helpers                                                   */
+  1921→/* ------------------------------------------------------------------ */
+  1922→
+  1923→export const totalToolCount = ALL_TOOLS.length;
+  1924→
+  1925→const toolIndex = new Map(ALL_TOOLS.map((tool) => [tool.id, tool]));
+  1926→
+  1927→export function getTool(id: string): ToolDef | undefined {
+  1928→  return toolIndex.get(id);
+  1929→}
+  1930→
+  1931→export function getCategory(id: ToolCategoryId): ToolCategory {
+  1932→  const category = CATEGORIES.find((c) => c.id === id);
+  1933→  if (!category) throw new Error(`Unknown category: ${id}`);
+  1934→  return category;
+  1935→}
+  1936→
+  1937→export function toolsByCategory(id: ToolCategoryId): ToolDef[] {
+  1938→  return ALL_TOOLS.filter((tool) => tool.category === id).sort(
+  1939→    (a, b) => b.popularity - a.popularity
+  1940→  );
+  1941→}
+  1942→
+  1943→/** Top tools by curated popularity (quick tools, popular suggestions). */
+  1944→export function popularTools(limit: number): ToolDef[] {
+  1945→  return [...ALL_TOOLS]
+  1946→    .sort((a, b) => b.popularity - a.popularity)
+  1947→    .slice(0, limit);
+  1948→}
+  1949→
+  1950→export const PHASE_LABELS: Record<RoadmapPhase, { en: string; hi: string }> = {
+  1951→  P1: { en: "Phase 1 · MVP", hi: "चरण 1 · एमवीपी" },
+  1952→  P2: { en: "Phase 2", hi: "चरण 2" },
+  1953→  P3: { en: "Phase 3", hi: "चरण 3" },
+  1954→};
+  1955→
+  1956→/** Tinted chip classes per category color (tokens handle light + dark). */
+  1957→export const categoryChipClass: Record<CategoryColor, string> = {
+  1958→  organize: "bg-cat-organize/10 text-cat-organize",
+  1959→  edit: "bg-cat-edit/10 text-cat-edit",
+  1960→  convert: "bg-cat-convert/10 text-cat-convert",
+  1961→  security: "bg-cat-security/10 text-cat-security",
+  1962→  optimize: "bg-cat-optimize/10 text-cat-optimize",
+  1963→  create: "bg-cat-create/10 text-cat-create",
+  1964→  invoices: "bg-cat-invoices/10 text-cat-invoices",
+  1965→  view: "bg-cat-view/10 text-cat-view",
+  1966→};
+  1967→
+  1968→/** Card hover border accent per category color. */
+  1969→export const categoryHoverClass: Record<CategoryColor, string> = {
+  1970→  organize: "hover:border-cat-organize/40",
+  1971→  edit: "hover:border-cat-edit/40",
+  1972→  convert: "hover:border-cat-convert/40",
+  1973→  security: "hover:border-cat-security/40",
+  1974→  optimize: "hover:border-cat-optimize/40",
+  1975→  create: "hover:border-cat-create/40",
+  1976→  invoices: "hover:border-cat-invoices/40",
+  1977→  view: "hover:border-cat-view/40",
+  1978→};
+  1979→

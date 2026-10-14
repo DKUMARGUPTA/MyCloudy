@@ -1,0 +1,32 @@
+{
+  "en": {
+    "halve": {
+      "previewTitle": "How the cut works",
+      "descVertical": "Vertical cut at {pos}% — the {which} half comes out first.",
+      "descHorizontal": "Horizontal cut at {pos}% — the {which} half comes out first.",
+      "whichLeft": "left",
+      "whichRight": "right",
+      "whichTop": "top",
+      "whichBottom": "bottom",
+      "legendFirst": "First output page",
+      "legendSecond": "Second output page",
+      "reverseNote": "Whole output order reversed — the last half comes out first.",
+      "count": "{before} pages → {after} pages"
+    }
+  },
+  "hi": {
+    "halve": {
+      "previewTitle": "काट कैसे लगती है",
+      "descVertical": "लंबवत काट {pos}% पर — पहले {which} आधा निकलता है।",
+      "descHorizontal": "क्षैतिज काट {pos}% पर — पहले {which} आधा निकलता है।",
+      "whichLeft": "बायाँ",
+      "whichRight": "दायाँ",
+      "whichTop": "ऊपर का",
+      "whichBottom": "नीचे का",
+      "legendFirst": "पहला आउटपुट पेज",
+      "legendSecond": "दूसरा आउटपुट पेज",
+      "reverseNote": "पूरा क्रम उलटा — आख़िरी आधा पहले निकलता है।",
+      "count": "{before} पेज → {after} पेज"
+    }
+  }
+}

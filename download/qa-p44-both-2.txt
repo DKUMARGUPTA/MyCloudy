@@ -1,0 +1,12 @@
+INVOICE #2026-789
+
+Date: 12 October 2026
+
+Bill To: DocoPDF Customer
+
+Widget Pro 2 599.00
+Gadget Lite 1 249.50
+Super Cable 3 99.00
+TOTAL: 1645.50
+
+Thank you for your business!

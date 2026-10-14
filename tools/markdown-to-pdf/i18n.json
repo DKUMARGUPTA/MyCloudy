@@ -1,0 +1,24 @@
+{
+  "en": {
+    "md2pdf": {
+      "how1": "Add your Markdown files — READMEs, notes, docs. They stay on your device.",
+      "how2": "Pick page size, margins, body and code size, and the paper theme.",
+      "how3": "Run and get a clean PDF with headings, lists, code blocks and a Links list.",
+      "errorBinary": "This doesn't look like a text file. {detail} contains binary data — Markdown is plain text.",
+      "errorEmpty": "Nothing to convert — {detail} has no readable text.",
+      "errorUnsupportedScript": "{detail} uses a script we can't embed yet. Latin and Devanagari (Hindi, Marathi…) are supported today.",
+      "errorFont": "Couldn't load the embedded font. Please try again."
+    }
+  },
+  "hi": {
+    "md2pdf": {
+      "how1": "अपनी मार्कडाउन फ़ाइलें जोड़ें — README, नोट्स, डॉक्यूमेंट। ये डिवाइस पर ही रहती हैं।",
+      "how2": "पेज साइज़, मार्जिन, बॉडी और कोड साइज़, और काग़ज़ की थीम चुनें।",
+      "how3": "चलाएँ — हेडिंग, लिस्ट, कोड-ब्लॉक और लिंक-सूची के साथ साफ़-सुथरी PDF पाएँ।",
+      "errorBinary": "यह टेक्स्ट फ़ाइल नहीं लगती। {detail} में बाइनरी डेटा है — मार्कडाउन सादा टेक्स्ट होता है।",
+      "errorEmpty": "बदलने को कुछ नहीं — {detail} में पढ़ने लायक़ टेक्स्ट नहीं है।",
+      "errorUnsupportedScript": "{detail} की लिपि अभी एम्बेड नहीं होती। अभी लैटिन और देवनागरी (हिंदी, मराठी…) समर्थित हैं।",
+      "errorFont": "एम्बेडेड फ़ॉन्ट लोड नहीं हो सका। कृपया फिर आज़माएँ।"
+    }
+  }
+}
