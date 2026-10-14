@@ -2732,3 +2732,81 @@ Stage Summary:
 - Next queue: copy-from-pdf (sirf config hai — scratch se build), then
   svg-to-pdf + tiff-to-pdf (imgconv modules partial), assemble-pdf,
   set-pdf-viewer-preferences, resize-image-kb.
+
+---
+Task ID: P4.3
+Agent: main (Z.ai Code)
+Task: User "ok greate next" — priority queue #1: copy-from-pdf full implementation (PRD §747 click-to-select + clipboard Text/Markdown/CSV + OCR export path).
+
+Work Log:
+- Read PRD §553/§747 + existing draft config (points at deleted ../ocr/
+  worker — stale), search-pdf surface + ocr-pdf worker + make-pdf-fillable
+  detect.ts patterns.
+- tools/copy-from-pdf/engine.ts (PURE, display-space):
+  * buildLines: baseline grouping (half-font tolerance), 3 gap tiers —
+    0.25×size space insert, 1.4× CSV cell split, 3× COLUMN split (line
+    itself splits so side-by-side columns never glue; split lines share
+    baseline so CSV re-groups them into table rows later).
+  * buildBlocks: STREAMING open-blocks — reading order, newest-first
+    match (tight leading ≤1.75×size, x-overlap ≥25%, size ratio ≤1.35);
+    bullets always start their own block; wrapped bullet continuation
+    only when indented past the marker.
+  * heading detect (≥1.22× body, ≤2 lines, ≤90 chars); joinFlowLines
+    dehyphenation (Latin+Devanagari SCRIPT classes; capital keeps hyphen);
+    linesToFlowText page paragraphs; blocksToText/Markdown (h1≥23pt,
+    h2≥18, h3 else; bullets → "- ")/Csv (RFC 4180, page+baseline row
+    regroup, cells x-sorted); textToLines (OCR → synthetic lines, blank
+    line = paragraph gap); harvestPieces via viewport.transform matrix.
+  * 3 bugs found by smoke: (1) `xEnd` shorthand vs `endX` var name;
+    (2) column-split AFTER cell building (initial design merged
+    same-baseline pieces → columns glued; smoke 2.7 caught it);
+    (3) needsOcr leftover `&& (i >= 0)`.
+- tools/copy-from-pdf/extract.ts: main-thread pdf.js walker (per page
+  getTextContent → harvestPieces → blocks, 200-page guard, progress).
+- tools/copy-from-pdf/worker.ts: ocr-pdf recipe adapted — native lines
+  per page, needsOcr auto <30 chars (copy promises "OCR only pages
+  without text" — NOT ocr-pdf's 150), tesseract warm singleton +
+  committedPngBlob guard, txt (flow/lines + page marks) / md output.
+- tools/copy-from-pdf/surface.tsx: extraction on load (progress),
+  page strip (marked pages show selection dots), canvas + percent-
+  positioned block overlay (height: max(h%, 44px) touch targets,
+  aria-pressed/aria-label), toolbar (format select + Select page +
+  Clear + Download + Copy + live plural summary), clipboard writeText
+  with execCommand fallback, scan-page amber notice, 44px targets.
+- config.ts rewritten (6 options: format/ocrMode/lang/layout/pages/
+  pageMarks + howKeys), registry enabled:true, configs.ts + surfaces.tsx
+  wiring, i18n 29 keys × 2 via scripts/i18n-copy-from.py (1514=1514).
+- scripts/smoke-copy-from-pdf.ts: 55/55 GREEN.
+- QA (agent-browser): blocks merge + dehyphenate ("demonstration"),
+  click→copy exact 115-char paragraph, Markdown "## heading" + bullets,
+  CSV columns + RFC quoting, Select page 4 blocks + cross-page, worker
+  .txt export content verified verbatim via preview, HI UI, mobile 375
+  no-overflow + VLM visual check (highlight EXACTLY on paragraph), zero
+  console errors, all requests same-origin.
+- **CRITICAL BUG FOUND & FIXED (the 2-hour hunt):** paragraphs were not
+  merging — pdf.js `convertToViewportPoint` returns a BARE ARRAY
+  [x, y], not {x, y}! `.x/.y` access = undefined → NaN geometry.
+  FIX: apply `viewport.transform` matrix directly (Util.applyTransform
+  math). Pinned in CONTEXT-MEMORY insights.
+- **PRE-EXISTING ENV REGRESSION DISCOVERED (NOT caused by this tool):**
+  worker-side pdf.js rendering of IMAGE-based PDFs returns BLANK.
+  Verified: ocr-pdf fails identically on ocr-eng-fixture (conf 0 →
+  errorNoText); pdf-to-jpg fails on the scan but works on text PDFs;
+  main-thread render fine (2161 dark px); tesseract in blob worker
+  fine (conf 96); fillText/drawImage on worker OffscreenCanvas fine;
+  dev-server restart did NOT fix. Affects: ocr-pdf, pdf-to-jpg,
+  pdf-to-png, rasterize-pdf + copy-from-pdf's OCR fallback (image
+  scans only — text-PDF OCR verified working earlier at 95% conf).
+  Root cause inside pdf.js's internal JPEG path (suspect: Chrome 153
+  worker canvas commit timing — committedPngBlob's "stable blank"
+  blind spot). NEXT SESSION: investigate with priority.
+- Dev server restarted once (setsid orphan pattern) — back to clean
+  HTTP 200.
+
+Stage Summary:
+- Live: 51 → **52** (copy-from-pdf). Pending: 45. i18n 1514=1514.
+- Smoke 55/55, tsc clean, eslint clean, dev.log clean.
+- Next queue: svg-to-pdf + tiff-to-pdf (imgconv modules partial),
+  assemble-pdf, set-pdf-viewer-preferences, resize-image-kb.
+- RISK: image-PDF worker render regression (see above) — affects 4
+  existing tools; needs a dedicated debugging session.

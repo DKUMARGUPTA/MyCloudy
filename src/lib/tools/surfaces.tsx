@@ -20,6 +20,7 @@ import { UnlockSurface } from "../../../tools/unlock-pdf/surface";
 import { ScanSurface } from "../../../tools/scan-pdf/surface";
 import { ExtractImagesSurface } from "../../../tools/extract-images/surface";
 import { SearchSurface } from "../../../tools/search-pdf/surface";
+import { CopyFromPdfSurface } from "../../../tools/copy-from-pdf/surface";
 import { BookmarkSurface } from "../../../tools/bookmark-pdf/surface";
 import { OverlaySurface } from "../../../tools/overlay-pdf/surface";
 import { CompareSurface } from "../../../tools/compare-pdf/surface";
@@ -92,6 +93,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "scan-pdf": ScanSurface,
   "extract-images": ExtractImagesSurface,
   "search-pdf": SearchSurface,
+  "copy-from-pdf": CopyFromPdfSurface,
   "bookmark-pdf": BookmarkSurface,
   "overlay-pdf": OverlaySurface,
   "compare-pdf": CompareSurface,

@@ -1,21 +1,39 @@
 import type { ToolConfig } from "@/lib/tools/config-types";
 
 /**
- * Copy from PDF (PRD §7.1, §8.1 table) — pull text out of any PDF,
- * including scans. Embedded text is read directly (instant); pages
- * without selectable text fall back to on-device OCR — automatically in
- * Auto mode, for every page in Always mode, never in Fast mode.
+ * Copy from PDF (PRD §7.1, §8.1 table) — click paragraphs on the page
+ * and copy them to the clipboard as text, Markdown or CSV; embedded
+ * text is read instantly. The run exports the whole file as .txt / .md,
+ * with on-device OCR for scanned pages (auto / always / off).
  */
 export const config: ToolConfig = {
   toolId: "copy-from-pdf",
   createWorker: () =>
-    new Worker(new URL("../ocr/worker.ts", import.meta.url), {
+    new Worker(new URL("./worker.ts", import.meta.url), {
       type: "module",
     }),
   outputKind: "text",
   minFiles: 1,
   maxFiles: 5,
+  howKeys: ["copyFrom.how1", "copyFrom.how2", "copyFrom.how3"],
   options: [
+    {
+      kind: "select",
+      id: "format",
+      label: { en: "Export file", hi: "एक्सपोर्ट फ़ाइल" },
+      hint: {
+        en: "The run button saves the whole document; the page view copies to the clipboard",
+        hi: "रन बटन पूरा दस्तावेज़ सेव करता है; पेज व्यू क्लिपबोर्ड पर कॉपी करता है",
+      },
+      choices: [
+        { value: "txt", label: { en: "Text (.txt)", hi: "टेक्स्ट (.txt)" } },
+        {
+          value: "md",
+          label: { en: "Markdown (.md)", hi: "Markdown (.md)" },
+        },
+      ],
+      default: "txt",
+    },
     {
       kind: "select",
       id: "ocrMode",
@@ -55,7 +73,7 @@ export const config: ToolConfig = {
     {
       kind: "select",
       id: "layout",
-      label: { en: "Layout", hi: "लेआउट" },
+      label: { en: "Text layout", hi: "टेक्स्ट लेआउट" },
       hint: {
         en: "Flow merges lines into clean paragraphs; lines keeps every break",
         hi: "Flow पैराग्राफ़ बनाता है; lines हर लाइन-ब्रेक रखता है",
@@ -95,35 +113,39 @@ export const config: ToolConfig = {
   ],
   features: [
     {
+      en: "Click any paragraph, list or heading on the page — copy just that, nothing else.",
+      hi: "पेज पर कोई भी पैराग्राफ़, लिस्ट या हेडिंग क्लिक करें — वही कॉपी हो, और कुछ नहीं।",
+    },
+    {
+      en: "Copy as clean text, Markdown (headings and bullets) or CSV (columns from gaps).",
+      hi: "साफ़ टेक्स्ट, Markdown (हेडिंग-बुलेट) या CSV (गैप से कॉलम) में कॉपी करें।",
+    },
+    {
       en: "Text from normal PDFs is read instantly — no OCR wait, no model download.",
       hi: "सामान्य PDF का टेक्स्ट तुरंत निकलता है — न OCR का इंतज़ार, न मॉडल डाउनलोड।",
     },
     {
-      en: "Scanned pages are detected automatically and recognized on-device — the file never uploads.",
-      hi: "स्कैन पेज अपने आप पहचाने जाते हैं और डिवाइस पर ही पढ़े जाते हैं — फ़ाइल कहीं अपलोड नहीं होती।",
+      en: "Scanned pages are detected automatically and recognized on-device when you export.",
+      hi: "एक्सपोर्ट के वक़्त स्कैन पेज अपने आप पहचान कर डिवाइस पर ही पढ़े जाते हैं।",
     },
     {
       en: "English and Hindi OCR built in; models download once, then work offline.",
       hi: "अंग्रेज़ी और हिंदी OCR शामिल; मॉडल एक बार डाउनलोड, फिर ऑफ़लाइन।",
     },
     {
-      en: "Flow layout rebuilds paragraphs — copy-paste into any editor reads like the original.",
-      hi: "Flow लेआउट पैराग्राफ़ बनाता है — किसी भी एडिटर में पेस्ट करने पर मूल जैसा पढ़ा जाता है।",
-    },
-    {
-      en: "Page ranges and page markers keep citations easy.",
-      hi: "पेज रेंज और पेज मार्कर — हवाले देना आसान।",
+      en: "100% on-device — the file never uploads, the clipboard never leaves.",
+      hi: "100% डिवाइस पर — फ़ाइल कहीं अपलोड नहीं, क्लिपबोर्ड बाहर नहीं जाता।",
     },
   ],
   faq: [
     {
       q: {
-        en: "What is the difference between Auto and Always OCR?",
-        hi: "ऑटो और हमेशा OCR में क्या फ़र्क़ है?",
+        en: "How do I copy just one paragraph or table?",
+        hi: "सिर्फ़ एक पैराग्राफ़ या टेबल कैसे कॉपी करूँ?",
       },
       a: {
-        en: "Auto reads embedded text where it exists and only runs OCR on pages that have none — the fastest honest result. Always re-recognizes every page with OCR, useful when a PDF's embedded text is broken or mismatched.",
-        hi: "ऑटो जहाँ टेक्स्ट मौजूद है वहीं पढ़ता है, सिर्फ़ खाली पेजों पर OCR चलाता है — सबसे तेज़ ईमानदार नतीजा। हमेशा हर पेज को OCR से दोबारा पढ़ता है — तब उपयोगी जब PDF का जुड़ा टेक्स्ट खराब हो।",
+        en: "Upload the PDF and click the paragraphs you need on the preview — each click highlights the block. Then pick a format and press Copy. Selected blocks copy in reading order, even across pages.",
+        hi: "PDF अपलोड करें और प्रीव्यू पर ज़रूरी पैराग्राफ़ क्लिक करें — हर क्लिक ब्लॉक को हाइलाइट करता है। फिर फ़ॉर्मैट चुनकर कॉपी दबाएँ। चुने ब्लॉक पढ़ने के क्रम में कॉपी होते हैं, पेजों के पार भी।",
       },
     },
     {
@@ -132,8 +154,18 @@ export const config: ToolConfig = {
         hi: "क्या टेबल CSV में कॉपी हो सकती है?",
       },
       a: {
-        en: "Table-aware CSV export is on the roadmap — today you get the text of the page in clean reading order, and tables come through as aligned lines.",
-        hi: "टेबल-जागरूक CSV एक्सपोर्ट रोडमैप पर है — आज आपको पेज का टेक्स्ट साफ़ पढ़ने के क्रम में मिलता है, और टेबलें सीधी लाइनों में आती हैं।",
+        en: "Pick the CSV format, select the table area's blocks and copy — wide gaps inside a line become columns, every visual line becomes a row. Perfect for aligned tables; tricky multi-line layouts may need a quick tidy-up after pasting.",
+        hi: "CSV फ़ॉर्मैट चुनें, टेबल के ब्लॉक सेलेक्ट करके कॉपी करें — लाइन के भीतर बड़े गैप कॉलम बनते हैं, हर लाइन एक रो बनती है। सीधी-सपाट टेबल के लिए बढ़िया; उलझे लेआउट पर पेस्ट के बाद थोड़ी सफ़ाई करनी पड़ सकती है।",
+      },
+    },
+    {
+      q: {
+        en: "What about scanned PDFs?",
+        hi: "स्कैन की हुई PDF का क्या?",
+      },
+      a: {
+        en: "Scanned pages have no clickable text, so the page view shows an honest notice. Press the run button with Scanned pages set to Auto or Always — every page is recognized on-device (English + Hindi) and exported as a .txt or .md file.",
+        hi: "स्कैन पेजों में क्लिक करने लायक़ टेक्स्ट नहीं होता, इसलिए पेज व्यू में साफ़ सूचना दिखती है। स्कैन पेज को ऑटो या हमेशा रखकर रन बटन दबाएँ — हर पेज डिवाइस पर पढ़ा जाता है (अंग्रेज़ी + हिंदी) और .txt या .md फ़ाइल बनती है।",
       },
     },
     {
@@ -147,5 +179,5 @@ export const config: ToolConfig = {
       },
     },
   ],
-  chainToolIds: ["txt-to-pdf", "markdown-to-pdf"],
+  chainToolIds: ["txt-to-pdf", "markdown-to-pdf", "ocr-pdf"],
 };

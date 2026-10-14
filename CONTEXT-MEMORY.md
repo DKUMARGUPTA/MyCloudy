@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P4.2 ke baad — rasterize-pdf wired + make-pdf-fillable shipped — **51 tools live**.
+> **Updated:** P4.3 ke baad — copy-from-pdf shipped (click-to-select + clipboard) — **52 tools live**.
 
 ---
 
@@ -12,20 +12,20 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **51** ✅ |
-| Pending (Coming Soon) | **46** ⏳ |
+| **Ready to use (LIVE)** | **52** ✅ |
+| Pending (Coming Soon) | **45** ⏳ |
 | Phase | 3/4 (tools one-by-one) IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1485 = 1485 keys parity) |
+| i18n | English + हिंदी (1514 = 1514 keys parity) |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 51 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 52 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
-### 🗂️ Organize (10/12)
+### 🗂️ Organize (11/12)
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
 - ✅ Split PDF (`split-pdf`) — ranges / every-N / size / visually
 - ✅ Rotate PDF pages (`rotate-pdf-pages`)
@@ -36,6 +36,7 @@
 - ✅ Halve PDF pages (`halve-pdf-pages`) — book spreads left/right ya top/bottom, lossless windowing
 - ✅ Bookmark PDF (`bookmark-pdf`) — outline tree builder, "One per page" autofill
 - ✅ Extract images (`extract-images`) — embedded PNG/JPG, dedupe, min-size filter, ZIP/PNG/JPG
+- ✅ Copy from PDF (`copy-from-pdf`) — P4.3: click-to-select paragraphs (columns/tables split, headings+bullets), clipboard copy Text/Markdown/CSV, run exports .txt/.md with auto-OCR (⚠️ image-scan OCR abhi env-regression mein — niche dekho)
 
 ### ✏️ Edit (9/11)
 - ✅ Fill out PDF forms (`fill-out-pdf`) — AcroForm scan, auto-fill profile (name/email/phone/address), Hindi Devanagari support, flatten switch
@@ -91,21 +92,20 @@
 
 ---
 
-## ⏳ 46 PENDING TOOLS (Kaam baki hai)
+## ⏳ 45 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Copy from PDF** (`copy-from-pdf`) — text/Markdown/CSV — ⚠️ sirf config.ts likha hai (engine/worker/surface bana hai hi nahi)
-2. **SVG to PDF** (`svg-to-pdf`) + **TIFF to PDF** (`tiff-to-pdf`) — imgconv/imgconvert modules partially ready
-3. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
-4. **Set viewer preferences** (`set-pdf-viewer-preferences`)
-5. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
-6. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
-7. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
-8. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
-9. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
+1. **SVG to PDF** (`svg-to-pdf`) + **TIFF to PDF** (`tiff-to-pdf`) — imgconv/imgconvert modules partially ready
+2. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
+3. **Set viewer preferences** (`set-pdf-viewer-preferences`)
+4. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
+5. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
+6. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
+7. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
+8. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
 
-*(P4.1 mein shipped: pages-per-sheet, halve, overlay, bookmark, extract-images, search, flatten, change-page-size, txt/md-to-pdf, QR, compare, universal converters ✅)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -194,8 +194,11 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - **HEIC decode recipe:** libheif-js@1.23.5 wasm-bundle.mjs (wasm EMBEDDED — single file, no separate .wasm) → copy to /public/libheif/, load via variable-URL dynamic import + turbopackIgnore (pdf.js pattern). Default export = FACTORY function — call it: `await factory()`. Then `new libheif.HeifDecoder().decode(bytes)` → image array → `image.display({data,width,height},cb)` fills RGBA. Empty array = corrupt/unsupported. Bun can smoke-test it directly!
 - **QA harness pins (P3.18):** agent-browser `open` SAME URL = NO reload (stale state!) — use `reload`; fetch(blob:) BLOCKED by CSP connect-src 'self' — verify pixels via drawImage(liveImg) ya Worker.prototype.onmessage hook (defineProperty wrap) se blob capture (blob.arrayBuffer() CSP bypass karta hai); dropzone label input ka SIBLING hai — `main label` pe dispatch karo (bubble hota hai div.onDrop tak)
 - **Devanagari in PDFs:** pdf-lib `save()` non-Latin pe WinAnsi Helvetica ke saath THROW karta hai — pre-render with embedded fontkit subset ya NeedAppearances fallback (pattern: `tools/fill-out-pdf/worker.ts`)
-- **Agent-browser upload flaky:** CDP setFileInputFiles wale Files DropZone clear hone ke baad UNREADABLE ho jate hain — recipe: public/ se fetch karke synthetic `DragEvent('drop')` + DataTransfer bhejo
+- **Agent-browser upload flaky:** CDP setFileInputFiles wale Files DropZone clear hone ke baad UNREADABLE ho jate hain — recipe: public/ se fetch karke synthetic `DragEvent('drop')` + DataTransfer bhejo. **Label matcher DONO languages ke liye rakho** — `l.textContent.includes('फ़ाइलें यहाँ') || l.toLowerCase().includes('drop files here')` — warna HI UI pe drop silently fail.
 - **agent-browser click flaky** re-rendered React buttons pe — `eval .click()` + delayed reads use karo; toasts ke liye MutationObserver lagao
+- **⚠️ pdf.js `convertToViewportPoint` returns ARRAY `[x, y]`, object NAHI (v4.10.38)!** `.x`/`.y` access = undefined = NaN geometry (P4.3 mein copy-from-pdf ke paragraphs isliye merge nahi ho rahe the). FIX: `viewport.transform` matrix `[a,b,c,d,e,f]` khud apply karo: `x' = a*x + c*y + e; y' = b*x + d*y + f`. Fully typed, no runtime shape guessing.
+- **⚠️ WORKER-SIDE pdf.js render of IMAGE-based PDFs abhi BLANK de raha hai (P4.3 discovered, PRE-EXISTING env regression):** ocr-eng-fixture (JPEG scan) ko worker mein render karke tesseract ko diya → conf 0 + empty → errorNoText. **ocr-pdf + pdf-to-jpg + rasterize-pdf sab equally affected hain** (main-thread render theek chalta hai; text-PDF worker render theek; fillText/drawImage OffscreenCanvas worker mein theek; standalone tesseract in blob worker conf 96). Root cause pdf.js ke INTERNAL JPEG path mein hai (probably Chrome 153 canvas commit timing — committedPngBlob guard ka "stable blank" blind spot). Dev server restart se fix NAHI hua. **Agla session isko priority pe investigate kare.**
+- **Streaming open-blocks algorithm (P4.3):** side-by-side columns wale pages pe paragraphs group karne ke liye — lines reading order mein aati hain, har line newest-open-block se match hoti hai (tight leading + x-overlap ≥25% + size ratio ≤1.35), bullet lines hamesha naya block, wrapped bullet continuation sirf indent-check se. Columns kabhi cross nahi hote, reading order banta rehta hai.
 - **Remount-detection-kicker:** effects jo `[files.length]` pe keyed hain mount pe fire hote hain
 - **Cancel path:** worker pool instant terminate + OPFS cleanup — 600 DPI 400-page run pe 6% pe catch verified
 
@@ -203,7 +206,18 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 
 ## 📝 Session Log (naya kaam yahan append karo)
 
-### P4.2 (latest) — Rasterize wired + Make PDF fillable ✅ 2 TOOLS
+### P4.3 (latest) — Copy from PDF ✅ 52nd TOOL
+- **copy-from-pdf** (PRD §747: "Click paragraph/table/list to select; copy as text, Markdown, CSV") full implementation:
+  - `engine.ts` PURE (display-space, bun-testable): buildLines (baseline grouping + space/cell/column gap tiers: 0.25×/1.4×/3× font), buildBlocks **streaming open-blocks** (columns separate, bullets one-block-each, hanging-indent continuation), heading detect (size ≥1.22× body, ≤2 lines, ≤90 chars), joinFlowLines dehyphenation (SCRIPT regex Latin+Devanagari), blocksToText/Markdown (h1/h2/h3 by absolute pt)/Csv (cells from gaps, RFC 4180 quoting, **page+baseline row re-grouping** — column-split lines wapas table rows bante hain), textToLines (OCR fallback, blank-line paragraph gaps), harvestPieces (viewport.transform matrix — upar wala array gotcha!)
+  - `extract.ts` main-thread pdf.js: per-page getTextContent → blocks (200-page guard), progress callbacks
+  - `worker.ts` ocr-pdf recipe adapted: native lines per page → needsOcr (auto: <30 chars — copy ka promise "OCR only pages without text" isliye ocr-pdf ke 150 se low) → tesseract (warm singleton + committedPngBlob) → txt (flow/lines + page marks) ya md (blocksToMarkdown)
+  - `surface.tsx`: file load pe extraction (spinner + page progress), page strip (marked pages = selected dots), canvas + block overlay (percent-positioned buttons, `height: max(h%, 44px)` touch targets, aria-pressed), toolbar (format select Text/Markdown/CSV + live selection summary with plurals + Select page/Clear/Download/Copy), clipboard writeText + execCommand fallback, scan-page amber notice, add-more dropzone
+  - **QA verified:** 4 blocks on fixture (headings/paras merged, dehyphenated "demonstration"), click→copy exact text, markdown `##` heading + `-` bullets, CSV columns + quoting, Select page 4 blocks, cross-page selection, toast plurals, worker .txt export content verbatim, HI UI (सादा टेक्स्ट/कॉपी करें/चुनें:), mobile 375px no-overflow + VLM visual check (highlight paragraph pe EXACT aligned), zero console errors, all requests same-origin
+  - **OCR fallback image-scans pe env regression se blocked** (upar wali insight) — text PDFs pe OCR path works (pehle 95% conf verified jab threshold 150 tha)
+- Registry enabled + configs.ts + surfaces.tsx + i18n 29 keys × 2 (1514=1514)
+- Live: 52 | tsc clean | eslint clean | smoke 55/55 GREEN | dev.log clean (post-restart)
+
+### P4.2 — Rasterize wired + Make PDF fillable ✅ 2 TOOLS
 - **rasterize-pdf**: folder P3.16 se ready tha par kabhi wired nahi hua tha — registry enabled:true + configs.ts + i18n pehle se merged tha. Smoke 32/32. QA: 2.3KB text PDF → 88KB image-only PDF (fonts: 0, AcroForm: 0, 2 JPEGs, zero Tj/TJ ops — text completely unextractable), HI UI, mobile 375px, zero console errors. **50th tool milestone!**
 - **make-pdf-fillable**: PRD §8.2 full implementation:
   - `engine.ts` PURE (pdf-lib): mergeLineSegments (dashed underline 14pt-gap merge, 30pt min), classifyRect (7–20pt square→checkbox, ≥50pt wide 10–46pt tall→textbox), labelForRect (left-label 240pt window text fields ke liye, above-label checkboxes ke liye; "Name:"→"Name" cleaning), uniqueName (Name, Name 2, Name 3...), all-4-rotation PDF↔display transforms (pdf.js PageViewport table mirrored, crop-box offsets), sanitizeSpecs clamp, buildFieldPdf (AcroForm: PDFTextField + multiline flag + PDFCheckBox square-centered + existing-name dedupe) — **68/68 smoke GREEN**

@@ -39,6 +39,7 @@ import { config as halvePdfPages } from "../../../tools/halve-pdf-pages/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
+import { config as copyFromPdf } from "../../../tools/copy-from-pdf/config";
 import { config as txtToPdf } from "../../../tools/txt-to-pdf/config";
 import { config as markdownToPdf } from "../../../tools/markdown-to-pdf/config";
 import { config as bookmarkPdf } from "../../../tools/bookmark-pdf/config";
@@ -99,6 +100,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,
+  [copyFromPdf.toolId]: copyFromPdf,
   [txtToPdf.toolId]: txtToPdf,
   [markdownToPdf.toolId]: markdownToPdf,
   [bookmarkPdf.toolId]: bookmarkPdf,

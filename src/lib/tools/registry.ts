@@ -486,6 +486,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: ClipboardCopy,
     popularity: 24,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Copy from PDF", hi: "पीडीएफ़ से कॉपी करें" },
     description: {
       en: "Select paragraphs, tables or pictures; copy as text, Markdown or CSV.",
