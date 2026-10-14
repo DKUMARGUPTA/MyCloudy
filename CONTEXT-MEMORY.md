@@ -89,7 +89,7 @@
 
 ---
 
-## ⏳ 62 PENDING TOOLS (Kaam baki hai)
+## ⏳ 48 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
@@ -239,7 +239,7 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - Smoke 54/54, EN+HI 1073=1073 keys, QA screenshots saved
 
 ### Pehle ke rounds (short)
-- P3.16: rasterize-pdf, web-optimize-pdf
+- P3.16: lock-pdf + unlock-pdf (qpdf WASM) — *session log mein pehle galat likha tha rasterize/web-optimize; dono abhi pending hain — rasterize ka folder ready hai par unwired, web-optimize bana hi nahi*
 - P3.15: redact-pdf
 - P3.14: generate-password
 - P3.13: sign-pdf (Phase 5 done early)
