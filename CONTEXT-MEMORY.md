@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P4.1 ke baad — 14 tools wired live — **49 tools live**.
+> **Updated:** P4.2 ke baad — rasterize-pdf wired + make-pdf-fillable shipped — **51 tools live**.
 
 ---
 
@@ -12,18 +12,18 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **49** ✅ |
-| Pending (Coming Soon) | **48** ⏳ |
+| **Ready to use (LIVE)** | **51** ✅ |
+| Pending (Coming Soon) | **46** ⏳ |
 | Phase | 3/4 (tools one-by-one) IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1452 = 1452 keys parity) |
+| i18n | English + हिंदी (1485 = 1485 keys parity) |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 49 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 51 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (10/12)
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -37,8 +37,9 @@
 - ✅ Bookmark PDF (`bookmark-pdf`) — outline tree builder, "One per page" autofill
 - ✅ Extract images (`extract-images`) — embedded PNG/JPG, dedupe, min-size filter, ZIP/PNG/JPG
 
-### ✏️ Edit (8/11)
+### ✏️ Edit (9/11)
 - ✅ Fill out PDF forms (`fill-out-pdf`) — AcroForm scan, auto-fill profile (name/email/phone/address), Hindi Devanagari support, flatten switch
+- ✅ Make PDF fillable (`make-pdf-fillable`) — P4.2: auto-detect (underlines/boxes/checkbox squares) + manual drag-draw + rename/type-edit + AcroForm export
 - ✅ Add watermark (`add-watermark`) — text/logo, opacity, tiling
 - ✅ Add page numbers (`add-page-numbers`) — 8 formats, Roman/Hindi digits, 9-grid
 - ✅ Header & footer (`add-header-footer`) — {page} {date} {filename} variables
@@ -60,11 +61,12 @@
 - ✅ Remove PDF metadata (`remove-pdf-metadata`)
 - ✅ Generate password (`generate-password`)
 
-### ⚡ Optimize (4/8)
+### ⚡ Optimize (5/8)
 - ✅ Compress PDF (`compress-pdf`) — quality presets / custom DPI
 - ✅ PDF OCR (`ocr-pdf`) — P3.19: Tesseract LSTM, English + हिंदी, searchable PDF (GlyphLessFont invisible layer) ya TXT, 150/300 DPI, mixed-docs smart skip, per-page confidence chip
 - ✅ Compress to target size (`compress-pdf-to-size`) — P3.20: India forms — 100/200/500 KB/1 MB/custom target, iterative ladder (structural → image q/dim/gray → raster dpi/q), honest amber miss chip
 - ✅ Flatten PDF (`flatten-pdf`) — forms+annotations ya scoped, AcroForm bake, honest errorNothing
+- ✅ Rasterize PDF (`rasterize-pdf`) — P4.2: har page flat image — 72–300 DPI, JPEG/PNG + quality, pages range, 40MP clamp; output mein fonts/AcroForm/text-ops ZERO
 
 ### 👁️ View (3/6)
 - ✅ View PDF (`view-pdf`) — thumbnails, search, outline, dark mode
@@ -89,20 +91,19 @@
 
 ---
 
-## ⏳ 48 PENDING TOOLS (Kaam baki hai)
+## ⏳ 46 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Make PDF fillable** (`make-pdf-fillable`) — auto-detect fields ya manual add
-2. **Copy from PDF** (`copy-from-pdf`) — text/Markdown/CSV — ⚠️ sirf config.ts likha hai (engine/worker/surface bana hai hi nahi)
-3. **SVG to PDF** (`svg-to-pdf`) + **TIFF to PDF** (`tiff-to-pdf`) — imgconv/imgconvert modules partially ready
-4. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
-5. **Set viewer preferences** (`set-pdf-viewer-preferences`)
-6. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
-7. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
-8. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
-9. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
-10. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
+1. **Copy from PDF** (`copy-from-pdf`) — text/Markdown/CSV — ⚠️ sirf config.ts likha hai (engine/worker/surface bana hai hi nahi)
+2. **SVG to PDF** (`svg-to-pdf`) + **TIFF to PDF** (`tiff-to-pdf`) — imgconv/imgconvert modules partially ready
+3. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
+4. **Set viewer preferences** (`set-pdf-viewer-preferences`)
+5. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
+6. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
+7. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
+8. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
+9. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
 
 *(P4.1 mein shipped: pages-per-sheet, halve, overlay, bookmark, extract-images, search, flatten, change-page-size, txt/md-to-pdf, QR, compare, universal converters ✅)*
 
@@ -202,7 +203,19 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 
 ## 📝 Session Log (naya kaam yahan append karo)
 
-### P4.1 (latest) — 14-Tool Wiring Mega-Batch ✅
+### P4.2 (latest) — Rasterize wired + Make PDF fillable ✅ 2 TOOLS
+- **rasterize-pdf**: folder P3.16 se ready tha par kabhi wired nahi hua tha — registry enabled:true + configs.ts + i18n pehle se merged tha. Smoke 32/32. QA: 2.3KB text PDF → 88KB image-only PDF (fonts: 0, AcroForm: 0, 2 JPEGs, zero Tj/TJ ops — text completely unextractable), HI UI, mobile 375px, zero console errors. **50th tool milestone!**
+- **make-pdf-fillable**: PRD §8.2 full implementation:
+  - `engine.ts` PURE (pdf-lib): mergeLineSegments (dashed underline 14pt-gap merge, 30pt min), classifyRect (7–20pt square→checkbox, ≥50pt wide 10–46pt tall→textbox), labelForRect (left-label 240pt window text fields ke liye, above-label checkboxes ke liye; "Name:"→"Name" cleaning), uniqueName (Name, Name 2, Name 3...), all-4-rotation PDF↔display transforms (pdf.js PageViewport table mirrored, crop-box offsets), sanitizeSpecs clamp, buildFieldPdf (AcroForm: PDFTextField + multiline flag + PDFCheckBox square-centered + existing-name dedupe) — **68/68 smoke GREEN**
+  - `detect.ts` main-thread pdf.js: operator-list walker (OPS.constructPath rectangles + horizontal moveTo→lineTo runs, |dy|<1.5pt), text-layer label naming, widget-annot existing count, 100-page guard, reading-order sort
+  - `worker.ts` thin shim: fkey → `f:<fileId>` blob {specs, pageViews} (redact epoch-key pattern) — **BUG FOUND & FIXED: worker pehle opts[fkey] padh raha tha, redact pattern `m:${mkey}` prefix mangta hai → `f:${fkey}`**
+  - `surface.tsx`: auto-detect on load (progress spinner), green boxes toggle (keep/skip), drag-move + corner-resize, draw-mode (text/checkbox), properties panel (rename + type switch), existing-fields amber notice, setRunBlocked 0 fields pe
+  - QA: 4/4 underlines detected with names (Full Name/Email/Phone/Address), rename ✓, manual checkbox draw ✓ (PointerEvent 100ms delays ke saath — React state commit time), run → output PDF verified: 4 PDFTextField rects EXACT (140,679,420,695 = underline+2pt lift, 16pt h) + PDFCheckBox "चेकबॉक्स 1" Hindi नाम के साथ, HI UI, mobile 375px, zero console errors, 71 requests all-localhost
+- i18n: 33 keys × 2 (1485=1485), protocol RunDetail.fields added
+- **Fast Refresh trap (P4.2 naya insight):** QA ke दौरान worker.ts edit karne se full page reload hota hai → workspace state RESET — QA flow me pehla run click hamesha fail hoga jab tak worker pehli baar compile na ho. Fresh reload ke baad sab stable.
+- Live: 51 | i18n: 1485=1485 | tsc clean | eslint clean | dev.log clean
+
+### P4.1 — 14-Tool Wiring Mega-Batch ✅
 - **Discovery:** Oct 12 ko parallel agents ne ~15 tools ki files (engine/worker/panel/surface/config/i18n + smokes) likhi thi, par orchestrator wiring kabhi nahi hui — registry flags, configs.ts, panels/surfaces maps, i18n merge sab pending tha. Ye session (Oct 14) ne sab verify karke live kiya.
 - **Wired 14 tools:** pages-per-sheet, halve-pdf-pages, flatten-pdf, extract-images, search-pdf, txt-to-pdf, markdown-to-pdf, bookmark-pdf, generate-qr-code, compare-pdf, overlay-pdf, change-pdf-page-size, convert-to-pdf, convert-from-pdf
 - **Config fixes:** howStepKeys→howKeys (7 configs), noInput→noFile (qr — generate-password pattern), qrcode pkg installed (MIT, bundled)
@@ -239,7 +252,7 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - Smoke 54/54, EN+HI 1073=1073 keys, QA screenshots saved
 
 ### Pehle ke rounds (short)
-- P3.16: lock-pdf + unlock-pdf (qpdf WASM) — *session log mein pehle galat likha tha rasterize/web-optimize; dono abhi pending hain — rasterize ka folder ready hai par unwired, web-optimize bana hi nahi*
+- P3.16: lock-pdf + unlock-pdf (qpdf WASM) — *rasterize ab P4.2 mein wired ho gaya, web-optimize bana hi nahi (yaad rahe: P3.16 sirf lock/unlock tha)*
 - P3.15: redact-pdf
 - P3.14: generate-password
 - P3.13: sign-pdf (Phase 5 done early)

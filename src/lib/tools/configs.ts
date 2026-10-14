@@ -48,6 +48,8 @@ import { config as overlayPdf } from "../../../tools/overlay-pdf/config";
 import { config as changePdfPageSize } from "../../../tools/change-pdf-page-size/config";
 import { config as convertToPdf } from "../../../tools/convert-to-pdf/config";
 import { config as convertFromPdf } from "../../../tools/convert-from-pdf/config";
+import { config as rasterizePdf } from "../../../tools/rasterize-pdf/config";
+import { config as makePdfFillable } from "../../../tools/make-pdf-fillable/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -106,6 +108,8 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [changePdfPageSize.toolId]: changePdfPageSize,
   [convertToPdf.toolId]: convertToPdf,
   [convertFromPdf.toolId]: convertFromPdf,
+  [rasterizePdf.toolId]: rasterizePdf,
+  [makePdfFillable.toolId]: makePdfFillable,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

@@ -35,6 +35,8 @@ export interface RunDetail {
   confidence?: number;
   /** Whether the output fit the byte budget (compress-pdf-to-size). */
   targetHit?: boolean;
+  /** Form fields added to the output (make-pdf-fillable). */
+  fields?: number;
 }
 
 export interface ToolOutput {

@@ -2629,3 +2629,106 @@ Stage Summary:
 - Next queue: make-pdf-fillable, copy-from-pdf (build from scratch),
   svg-to-pdf + tiff-to-pdf (imgconv modules ready hain), assemble-pdf,
   set-pdf-viewer-preferences, resize-image-kb, phir Phase 8 editor.
+
+---
+
+Task ID: P4.2
+Agent: main (Z.ai Code)
+Task: User "ok go ahead" — (1) rasterize-pdf wire karke 50-tool milestone, (2) PRD priority queue #1 make-pdf-fillable full implementation.
+
+Work Log:
+- Registry recount script: 97 total / 49 enabled / 48 disabled confirmed.
+- RASTERIZE-PDF WIRED (50th tool):
+  - Folder P3.16 se ready tha (config/worker/i18n exist karte the, smoke
+    bhi tha) par orchestrator wiring kabhi nahi hui thi.
+  - registry.ts enabled:true + configs.ts import + [rasterizePdf.toolId]
+    entry. i18n keys pehle se merged the (rasterize.errorRender).
+  - smoke-rasterize.ts: 32/32 GREEN (DPI math, 40MP clamp, pdf-lib
+    rebuild byte-identical DCT).
+  - QA (agent-browser): drop qa-text-sample.pdf (2.3KB text) → 150 DPI
+    JPEG default → result 88KB "qa-text-sample-rasterized.pdf". Output
+    blob capture + structural verify: isPdf ✓, hasFonts **false** (0 fonts),
+    hasAcroForm false, jpegCount 2 (1/page), NO Tj/TJ text ops — text
+    completely unextractable. HI UI, mobile 375px no-overflow, zero
+    console errors, 60 requests all-localhost.
+- MAKE-PDF-FILLABLE SHIPPED (51st tool) — PRD §8.2 "Make fillable":
+  - tools/make-pdf-fillable/engine.ts (PURE pdf-lib, 68/68 smoke):
+    * mergeLineSegments: same-baseline horizontal segments 1pt-grid snap,
+      14pt gap merge (dashed underlines), 30pt min length filter.
+    * classifyRect: 7–20pt squareish → checkbox; ≥50pt wide × 10–46pt
+      tall → textbox; baaki decoration → null.
+    * lineToSpecRect: field line se 2pt upar, 16pt height.
+    * labelForRect: text fields = left-label 240pt window (mid-Y overlap);
+      checkbox = above-label (0–28pt upar, same column). "Name:"→"Name"
+      bullet/colon/ws cleaning.
+    * uniqueName: "Name", "Name 2", ... dedupe chain.
+    * PDF↔display transforms ALL 4 rotations + crop-box offsets —
+      pdf.js PageViewport transform table mirrored. **SMOKE BUGS FIXED:
+      (a) 270 inverse y: y0+dx → y1-dx; (b) 90 inverse mein dx/dy swap
+      tha (x: dx+x0 → dy+x0, y: dy+y0 → dx+y0); (c) baseline snap 0.5pt
+      → 1pt grid (0.4pt jitter merge test).**
+    * sanitizeSpecs: enabled filter + page-bounds clamp + tiny-drop.
+    * buildFieldPdf: AcroForm builder — createTextField (+enableMultiline
+      flag bit 13), createCheckBox (square, rect mein centered), existing
+      name dedupe, outlinedTextFields option (borderWidth 0 default —
+      underline already visual hai).
+  - detect.ts (main-thread pdf.js): operator-list walker —
+    OPS.constructPath se rectangles (checkbox/textbox classify) + moveTo→
+    lineTo horizontal runs (|dy|<1.5pt) → mergeLineSegments. OPS codes
+    pdfjs module se runtime pe (hardcode NAHI). getTextContent labels.
+    Widget-annot count (existingCount honest notice). 100-page guard.
+    Reading-order sort (display-space top→bottom, left→right).
+    NOTE: pdf-lib banaya hua fixture checkbox square `re` op use nahi
+    karta (4 lineTo) — real Acrobat/Word forms use karte hain.
+  - worker.ts thin shim: options.fkey pointer → **`f:${fkey}` blob key**
+    (redact `m:${mkey}` pattern) — blob = {specs, pageViews} JSON.
+    **BUG FOUND IN QA: worker pehle opts[fkey] padh raha tha (empty) →
+    errorNoFields toast. Fix: opts[`f:${fkey}`].**
+  - surface.tsx (visual editor): auto-detect on file load (spinner +
+    page progress), green suggestion boxes (enabled) vs dashed (skipped),
+    click select → properties panel (name input + type select text/
+    multiline/checkbox), drag-move + SE corner resize, draw-mode buttons
+    (Text field / Checkbox) → drag on page = new field, toggle keep/skip,
+    delete (× on hover), existing-fields amber notice, touched-pages dots
+    on page strip, setRunBlocked(makeFillable.blockedNoFields) at 0.
+    queueMicrotask(() => runDetect(file)) — react-hooks/set-state-in-effect
+    lint rule satisfy karne ke liye (runDetect sync setState karta hai).
+  - config.ts: border option (invisible suggested / light outline) +
+    features + 3 FAQs. registry enabled:true + configs.ts + surfaces.tsx
+    wiring. protocol RunDetail.fields added.
+  - i18n: 33 keys × 2 (makeFillable section) — en+hi 1485=1485 parity.
+    scripts/i18n-make-fillable.py merge script.
+  - scripts/smoke-make-fillable.ts: 68/68 GREEN — merge/classify/label/
+    uniqueName/rotation roundtrips/crop offsets + buildFieldPdf end-to-end
+    (fixture form → specs → output AcroForm verify: field count, types,
+    multiline flag, unique names, widget /Rect exact, dedupe rebuild,
+    sanitize clamp). pdf-lib widget /T PARENT dict pe hota hai (/Parent
+    follow karna padta), PDFHexString decodeText().
+  - QA (agent-browser): mf-fixture.pdf (4 underline fields + checkbox
+    square) drop → **4/4 underlines detected with names Full Name/
+    Email/Phone/Address**. Rename → "Applicant Full Name" ✓. Checkbox
+    mode + synthetic PointerEvents (100ms delays — React state commit
+    time chahiye between pointerdown/move/up) → "Checkbox 1 ☐" field
+    created. Run → "mf-fixture-fillable.pdf 2.9 KB" — output parsed:
+    4 PDFTextField + 1 PDFCheckBox, widget rects EXACT (140,679,420,695
+    = underline + 2pt lift, 16pt height, full line width), Hindi UI mein
+    drawn checkbox ka naam "चेकबॉक्स 1" output mein intact. HI UI
+    (workspace + summary "4 फ़ील्ड / 4 · 1 पेज" + result), mobile 375px
+    no-overflow, zero console errors, 71 requests all-localhost.
+- **NEW PINNED INSIGHT — Fast Refresh worker trap:** dev ke दौरान
+  worker.ts edit → Turbopack full page reload → workspace state RESET.
+  QA flow mein pehla run click fail dikhega jab tak worker pehli baar
+  compile na ho. Fresh `agent-browser reload` ke baad flow stable.
+  Also: dev server OOM-mar sakta hai (next-server 2.2GB + chrome
+  renderers 3.9GB budget mein fit nahi) — restart karne ka tarika:
+  `( setsid bun run dev > dev.log 2>&1 < /dev/null & )` — subshell-orphan
+  pattern hi boundary-cross survive karta hai (`& disown` mara jata hai).
+
+Stage Summary:
+- Live: 49 → **51** (rasterize-pdf wired, make-pdf-fillable shipped).
+  Pending: 46 (unme se ~20 Mode S server-based hain).
+- i18n: 1485 = 1485 en/hi parity. tsc clean, eslint clean, smoke
+  32/32 + 68/68 GREEN, dev.log clean, port 3000 HTTP 200.
+- Next queue: copy-from-pdf (sirf config hai — scratch se build), then
+  svg-to-pdf + tiff-to-pdf (imgconv modules partial), assemble-pdf,
+  set-pdf-viewer-preferences, resize-image-kb.

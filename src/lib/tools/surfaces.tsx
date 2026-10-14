@@ -26,6 +26,7 @@ import { CompareSurface } from "../../../tools/compare-pdf/surface";
 import { GenerateQrSurface } from "../../../tools/generate-qr-code/surface";
 import { ConvertToPdfSurface } from "../../../tools/convert-to-pdf/surface";
 import { ConvertFromPdfSurface } from "../../../tools/convert-from-pdf/surface";
+import { MakeFillableSurface } from "../../../tools/make-pdf-fillable/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -97,6 +98,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "generate-qr-code": GenerateQrSurface,
   "convert-to-pdf": ConvertToPdfSurface,
   "convert-from-pdf": ConvertFromPdfSurface,
+  "make-pdf-fillable": MakeFillableSurface,
 };
 
 export function getToolSurface(

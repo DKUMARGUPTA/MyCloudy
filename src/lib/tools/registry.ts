@@ -558,6 +558,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: ListChecks,
     popularity: 16,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Make PDF fillable", hi: "पीडीएफ़ को भरने योग्य बनाएँ" },
     description: {
       en: "Auto-detect form fields or add your own text boxes and checkboxes.",
@@ -1051,6 +1052,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Image,
     popularity: 14,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Rasterize PDF", hi: "पेज तस्वीर बनाएँ" },
     description: {
       en: "Convert pages to flat images so nothing can be edited or extracted.",
