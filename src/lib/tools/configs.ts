@@ -32,6 +32,8 @@ import { config as webpToPng } from "../../../tools/webp-to-png/config";
 import { config as heicToJpg } from "../../../tools/heic-to-jpg/config";
 import { config as heicToPng } from "../../../tools/heic-to-png/config";
 import { config as heicToPdf } from "../../../tools/heic-to-pdf/config";
+import { config as tiffToPdf } from "../../../tools/tiff-to-pdf/config";
+import { config as svgToPdf } from "../../../tools/svg-to-pdf/config";
 import { config as ocrPdf } from "../../../tools/ocr-pdf/config";
 import { config as compressPdfToSize } from "../../../tools/compress-pdf-to-size/config";
 import { config as pagesPerSheet } from "../../../tools/pages-per-sheet/config";
@@ -93,6 +95,8 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [heicToJpg.toolId]: heicToJpg,
   [heicToPng.toolId]: heicToPng,
   [heicToPdf.toolId]: heicToPdf,
+  [tiffToPdf.toolId]: tiffToPdf,
+  [svgToPdf.toolId]: svgToPdf,
   [ocrPdf.toolId]: ocrPdf,
   [compressPdfToSize.toolId]: compressPdfToSize,
   [pagesPerSheet.toolId]: pagesPerSheet,

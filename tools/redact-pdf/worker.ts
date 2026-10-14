@@ -4,6 +4,10 @@ import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
+import {
+  loadPdfjsInWorker,
+  workerDocumentShim,
+} from "../pdfjs-common/worker-lib";
 import { fileBaseName } from "../stamp-common/layout";
 import {
   type RedactMark,
@@ -37,32 +41,6 @@ import {
  */
 
 type PdfjsModule = typeof import("pdfjs-dist");
-
-let pdfjsPromise: Promise<PdfjsModule> | null = null;
-
-async function loadPdfjsInWorker(): Promise<PdfjsModule> {
-  if (!pdfjsPromise) {
-    pdfjsPromise = (async () => {
-      if (
-        typeof (globalThis as { document?: unknown }).document === "undefined"
-      ) {
-        (globalThis as { document?: unknown }).document = {
-          baseURI: self.location.href,
-        };
-      }
-      const libUrl = "/pdfjs/pdf.min.mjs";
-      const workerUrl = "/pdfjs/pdf.worker.min.mjs";
-      const lib = (await import(
-        /* webpackIgnore: true */ /* turbopackIgnore: true */ libUrl
-      )) as PdfjsModule;
-      await import(
-        /* webpackIgnore: true */ /* turbopackIgnore: true */ workerUrl
-      );
-      return lib;
-    })();
-  }
-  return pdfjsPromise;
-}
 
 function post(response: WorkerResponse): void {
   self.postMessage(response);
@@ -142,6 +120,7 @@ async function pageSelectableText(
 ): Promise<string> {
   const doc = await pdfjs.getDocument({
     data,
+    ownerDocument: workerDocumentShim() as unknown as HTMLDocument,
     cMapUrl: "/pdfjs/cmaps/",
     cMapPacked: true,
     standardFontDataUrl: "/pdfjs/standard_fonts/",
@@ -202,6 +181,9 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const pdfjs = await loadPdfjsInWorker();
   const jsDoc = await pdfjs.getDocument({
     data: bytes.slice(),
+    // Worker-safe canvas factory — image pages need createElement
+    // (DOMCanvasFactory._createCanvas), the baseURI-only shim blanks them.
+    ownerDocument: workerDocumentShim() as unknown as HTMLDocument,
     cMapUrl: "/pdfjs/cmaps/",
     cMapPacked: true,
     standardFontDataUrl: "/pdfjs/standard_fonts/",

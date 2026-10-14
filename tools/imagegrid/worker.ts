@@ -1,24 +1,39 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
-import type { OptionValues } from "@/lib/tools/config-types";
-import { parseImageGridOption } from "./model";
-import { decodeHeicToBitmap } from "@/lib/heic/heic-decode";
 import {
+  parsePageSpec,
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
+import type { OptionValues } from "@/lib/tools/config-types";
+import { parseImageGridOption } from "./model";
+import { decodeHeicToBitmap } from "@/lib/heic/heic-decode";
+import { isTiffBytes, TiffFile, TiffError } from "../imgconv/tiff";
 
 /**
  * Images → PDF worker (PRD §8.6) — shared by images-to-pdf and its
- * jpg/png/webp/heic-to-pdf presets. Device-only: files arrive by structured
- * clone, pdf-lib embeds them, the PDF Blob goes straight back.
+ * jpg/png/webp/heic/tiff/svg-to-pdf presets. Device-only: files arrive by
+ * structured clone, pdf-lib embeds them, the PDF Blob goes straight back.
  *
  * Quality policy (honest, no silent re-compression):
- * - unrotated JPG/PNG → the ORIGINAL bytes are embedded (zero quality loss)
- * - rotated images, or WEBP/GIF/HEIC sources → decoded (createImageBitmap,
- *   with the self-hosted libheif WASM as HEIC fallback so Chromium works
- *   too), drawn (rotated) onto an OffscreenCanvas and re-encoded (JPEG 0.92
- *   for photos, PNG when alpha is possible)
+ * - unrotated JPG/PNG (and unrotated SVG rasters) → the ORIGINAL bytes are
+ *   embedded (zero quality loss)
+ * - rotated images, or WEBP/GIF/HEIC/TIFF sources → decoded (createImageBitmap,
+ *   self-hosted libheif WASM as the HEIC fallback so Chromium works too, and
+ *   the clean-room TIFF reader tools/imgconv/tiff.ts for scans/faxes), drawn
+ *   (rotated) onto an OffscreenCanvas and re-encoded (JPEG 0.92 for photos,
+ *   PNG when the source may carry alpha)
+ *
+ * TIFF (tiff-to-pdf preset): every page of a multi-page IFD chain becomes a
+ * PDF page in order (the "pages" option picks ranges per file), decoded one
+ * page at a time so a 100-page fax never spikes memory. "Fit to image" uses
+ * the scan's own DPI — a 300-DPI A4 scan lands at exactly A4.
+ *
+ * SVG (svg-to-pdf preset): workers cannot rasterise SVG (Chrome/Firefox
+ * reject SVG blobs in createImageBitmap), so the surface rasterises each
+ * SVG on the main thread while its card preview loads and hands the PNGs
+ * over as run assets, in workspace file order. This worker pairs the k-th
+ * SVG file with the k-th asset. The raster's CSS px map to PDF pt at 96 DPI.
  */
 
 const A4: [number, number] = [595.28, 841.89];
@@ -34,7 +49,7 @@ function post(response: WorkerResponse): void {
   self.postMessage(response);
 }
 
-type ImageKind = "jpeg" | "png" | "webp" | "gif" | "heic" | "unknown";
+type ImageKind = "jpeg" | "png" | "webp" | "gif" | "heic" | "tiff" | "svg" | "unknown";
 
 function sniffImageKind(head: Uint8Array): ImageKind {
   const has = (bytes: number[], offset = 0) =>
@@ -58,7 +73,18 @@ function sniffImageKind(head: Uint8Array): ImageKind {
       return "heic";
     }
   }
+  if (isTiffBytes(head)) return "tiff";
   return "unknown";
+}
+
+/** "<svg" within the first KB (after xml decl / doctype / comments). */
+function isSvgBytes(head: Uint8Array): boolean {
+  const window = head.subarray(0, 1024);
+  let text = "";
+  for (let i = 0; i < window.length; i += 1) {
+    text += String.fromCharCode(window[i]);
+  }
+  return /<svg[\s>]/i.test(text);
 }
 
 /** PNG IHDR dimensions — no decode needed (bytes 16..24, big-endian). */
@@ -74,6 +100,63 @@ interface PreparedImage {
   bytes: Uint8Array;
   width: number;
   height: number;
+  /**
+   * Display size in PDF points for "fit" pages: px as-is for regular
+   * images, px × 72/dpi for TIFF scans (their own DPI is the truth),
+   * px × 0.75 for SVG rasters (CSS px are 96 DPI).
+   */
+  ptW: number;
+  ptH: number;
+}
+
+/**
+ * Encodes one RGBA raster (TIFF page) applying the entry's quarter-turn
+ * rotation in the same pass. Bilevel/palette pages (preferPng) keep PNG
+ * crispness; everything else embeds as JPEG 0.92 over white.
+ */
+async function encodeRgbaPage(
+  rgba: Uint8ClampedArray<ArrayBuffer>,
+  width: number,
+  height: number,
+  rotation: number,
+  preferPng: boolean,
+  onError: (code: string, detail: string) => never
+): Promise<PreparedImage> {
+  const source = new OffscreenCanvas(width, height);
+  const sourceCtx = source.getContext("2d");
+  if (!sourceCtx) onError("tool.images.errorDecode", "canvas");
+  sourceCtx.putImageData(
+    new ImageData(rgba, width, height) as unknown as ImageData,
+    0,
+    0
+  );
+
+  const swap = rotation === 90 || rotation === 270;
+  const outW = swap ? height : width;
+  const outH = swap ? width : height;
+  const target = new OffscreenCanvas(outW, outH);
+  const targetCtx = target.getContext("2d");
+  if (!targetCtx) onError("tool.images.errorDecode", "canvas");
+  if (!preferPng) {
+    targetCtx.fillStyle = "#ffffff";
+    targetCtx.fillRect(0, 0, outW, outH);
+  }
+  targetCtx.translate(outW / 2, outH / 2);
+  targetCtx.rotate((rotation * Math.PI) / 180);
+  targetCtx.drawImage(source, -width / 2, -height / 2);
+
+  const blob = await target.convertToBlob({
+    type: preferPng ? "image/png" : "image/jpeg",
+    quality: preferPng ? undefined : 0.92,
+  });
+  return {
+    kind: preferPng ? "png" : "jpeg",
+    bytes: new Uint8Array(await blob.arrayBuffer()),
+    width: outW,
+    height: outH,
+    ptW: outW,
+    ptH: outH,
+  };
 }
 
 /**
@@ -96,7 +179,14 @@ async function prepareImage(
         ? pngSize(raw)
         : await bitmapSize(file, onError).catch(() => null);
     if (size) {
-      return { kind, bytes: raw, width: size.width, height: size.height };
+      return {
+        kind,
+        bytes: raw,
+        width: size.width,
+        height: size.height,
+        ptW: size.width,
+        ptH: size.height,
+      };
     }
   }
 
@@ -152,6 +242,87 @@ async function prepareImage(
       bytes: new Uint8Array(await blob.arrayBuffer()),
       width,
       height,
+      ptW: width,
+      ptH: height,
+    };
+  } finally {
+    bitmap.close();
+  }
+}
+
+/** Prepares an already-rasterised PNG (the SVG asset) for embedding. */
+async function preparePngRaster(
+  raster: File,
+  rotation: number,
+  onError: (code: string, detail: string) => never,
+  natural?: { w: number; h: number }
+): Promise<PreparedImage> {
+  const raw = new Uint8Array(await raster.arrayBuffer());
+  const size = pngSize(raw);
+  if (size) {
+    // "Fit" pages follow the graphic's own CSS size when the manifest
+    // carried it; otherwise the raster's px (both are 96 DPI → pt × 0.75).
+    const fitW = (natural?.w ?? size.width) * 0.75;
+    const fitH = (natural?.h ?? size.height) * 0.75;
+    // Unrotated → embed the raster bytes exactly as rasterised.
+    if (rotation === 0) {
+      return {
+        kind: "png",
+        bytes: raw,
+        width: size.width,
+        height: size.height,
+        ptW: fitW,
+        ptH: fitH,
+      };
+    }
+    // Rotated → same fast path with swapped fit dims.
+    return {
+      kind: "png",
+      bytes: raw,
+      width: size.width,
+      height: size.height,
+      ptW: fitH,
+      ptH: fitW,
+    };
+  }
+  // Rasters are written by our own canvas.toBlob — IHDR is always there.
+  // Defensive fallback: decode + rotate through the canvas path.
+  return rotatePngBytes(raw, rotation, raster.name, onError);
+}
+
+async function rotatePngBytes(
+  raw: Uint8Array,
+  rotation: number,
+  name: string,
+  onError: (code: string, detail: string) => never
+): Promise<PreparedImage> {
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(
+      new Blob([raw as unknown as BlobPart], { type: "image/png" })
+    );
+  } catch {
+    onError("tool.images.errorDecode", name);
+  }
+  try {
+    const swap = rotation === 90 || rotation === 270;
+    const width = swap ? bitmap.height : bitmap.width;
+    const height = swap ? bitmap.width : bitmap.height;
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext("2d");
+    if (!context) onError("tool.images.errorDecode", name);
+    context.fillStyle = "rgba(0,0,0,0)";
+    context.translate(width / 2, height / 2);
+    context.rotate((rotation * Math.PI) / 180);
+    context.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2);
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    return {
+      kind: "png",
+      bytes: new Uint8Array(await blob.arrayBuffer()),
+      width,
+      height,
+      ptW: width * 0.75,
+      ptH: height * 0.75,
     };
   } finally {
     bitmap.close();
@@ -208,8 +379,15 @@ function fitInto(
   return { x: cell.x + (cell.w - w) / 2, y: cell.y + (cell.h - h) / 2, w, h };
 }
 
+/** Maps a TiffError to the honest i18n code (detail = file name). */
+function tiffErrorCode(error: TiffError): string {
+  if (error.kind === "tiff-corrupt") return "tool.images.errorTiffCorrupt";
+  if (error.kind === "tiff-too-large") return "tool.images.errorTiffTooLarge";
+  return "tool.images.errorTiffUnsupported";
+}
+
 async function run(request: WorkerRunRequest): Promise<void> {
-  const { runId, options, files } = request;
+  const { runId, options, files, assets } = request;
   type WorkerEntry = { source: number; rotation: number };
   const entries: WorkerEntry[] =
     parseImageGridOption(options.images, files.length) ??
@@ -230,40 +408,171 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const twoUp = String(options.layout ?? "one") === "two";
   const background = BG_RGB[String(options.background ?? "white")] ?? BG_RGB.white;
   const pageNumbers = options.pageNumbers === true;
+  const pagesSpec = String(options.pages ?? "all");
+
+  /* ---------------- file classification (bytes, once) ---------------- */
+
+  // TIFF files keep their parsed TiffFile (on-demand page decode); SVG
+  // files pair with raster assets by workspace order (see svg-raster.ts).
+  // The SVG asset list ends with a svg-dims.json manifest carrying each
+  // graphic's natural CSS size — "fit" pages follow the graphic's own
+  // size, never the upscaled raster's.
+  const tiffByFile = new Map<number, TiffFile>();
+  const tiffPagesByFile = new Map<number, number[]>();
+  const svgAssetByFile = new Map<number, File>();
+  const svgNaturalByFile = new Map<number, { w: number; h: number }>();
+  {
+    // Pop the manifest (last asset) first when present — its entries are
+    // aligned with the raster assets (k-th SVG file ↔ k-th of each).
+    let svgAssets = assets ?? [];
+    const naturalList: Array<{ w: number; h: number }> = [];
+    if (
+      svgAssets.length > 0 &&
+      svgAssets[svgAssets.length - 1].name === "svg-dims.json"
+    ) {
+      const manifest = svgAssets[svgAssets.length - 1];
+      svgAssets = svgAssets.slice(0, -1);
+      try {
+        const parsed = JSON.parse(await manifest.text()) as unknown;
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (
+              item &&
+              typeof item === "object" &&
+              Number.isFinite((item as { w?: unknown }).w) &&
+              Number.isFinite((item as { h?: unknown }).h)
+            ) {
+              const { w, h } = item as { w: number; h: number };
+              if (w > 0 && h > 0) {
+                naturalList.push({ w, h });
+              }
+            }
+          }
+        }
+      } catch {
+        // Unreadable manifest — fit falls back to raster px (96 DPI).
+      }
+    }
+    let assetIndex = 0;
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      const head = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+      const isSvg =
+        file.type === "image/svg+xml" ||
+        /\.svg$/i.test(file.name) ||
+        isSvgBytes(head);
+      if (isSvg) {
+        svgAssetByFile.set(index, svgAssets[assetIndex] ?? fail("tool.images.errorSvgRaster", file.name));
+        const natural = naturalList[assetIndex];
+        if (natural) svgNaturalByFile.set(index, natural);
+        assetIndex += 1;
+        continue;
+      }
+      if (isTiffBytes(head)) {
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const tiff = TiffFile.parse(bytes);
+          const wanted = parsePageSpec(pagesSpec, tiff.pageCount);
+          if (wanted === null || wanted.length === 0) {
+            post({ type: "error", runId, code: "tool.errorInvalidPages" });
+            return;
+          }
+          tiffByFile.set(index, tiff);
+          tiffPagesByFile.set(index, wanted);
+        } catch (error) {
+          if (error instanceof TiffError) {
+            fail(tiffErrorCode(error), file.name);
+          }
+          throw error;
+        }
+      }
+    }
+  }
+
+  /* ---------------- expand multi-page TIFF entries ---------------- */
+
+  // A TIFF entry becomes one expanded item per wanted page (so the two-up
+  // grid, fit sizing and progress all count real pages); every other entry
+  // stays a single item.
+  interface ExpandedItem {
+    source: number;
+    rotation: number;
+    tiffPage: number | null;
+  }
+  const expanded: ExpandedItem[] = [];
+  for (const entry of entries) {
+    const tiffPages = tiffPagesByFile.get(entry.source);
+    if (tiffPages) {
+      for (const page of tiffPages) {
+        expanded.push({ ...entry, tiffPage: page });
+      }
+    } else {
+      expanded.push({ ...entry, tiffPage: null });
+    }
+  }
 
   const pdf = await PDFDocument.create();
   const font = pageNumbers
     ? await pdf.embedFont(StandardFonts.Helvetica)
     : null;
 
-  const groups: { source: number; rotation: number }[][] = [];
+  const groups: ExpandedItem[][] = [];
   if (twoUp) {
-    for (let i = 0; i < entries.length; i += 2) {
-      groups.push(entries.slice(i, i + 2));
+    for (let i = 0; i < expanded.length; i += 2) {
+      groups.push(expanded.slice(i, i + 2));
     }
   } else {
-    groups.push(...entries.map((entry) => [entry]));
+    groups.push(...expanded.map((item) => [item]));
   }
 
   for (let g = 0; g < groups.length; g += 1) {
     const group = groups[g];
     const prepared: PreparedImage[] = [];
-    for (const entry of group) {
-      prepared.push(
-        await prepareImage(files[entry.source], entry.rotation, fail)
-      );
+    for (const item of group) {
+      if (item.tiffPage !== null) {
+        // TIFF page: on-demand decode (one page in memory at a time),
+        // rotation + honest preferPng encode in one pass.
+        const tiff = tiffByFile.get(item.source)!;
+        const page = tiff.decodePage(item.tiffPage);
+        const ptPerPx = page.dpi && page.dpi > 0 ? 72 / page.dpi : 1;
+        // Orientation 5-8 are already swapped by the reader; rotation then
+        // swaps again — encodeRgbaPage reports the final dims.
+        prepared.push(
+          await encodeRgbaPage(
+            page.rgba,
+            page.width,
+            page.height,
+            item.rotation,
+            page.preferPng,
+            fail
+          ).then((image) => ({
+            ...image,
+            ptW: image.width * ptPerPx,
+            ptH: image.height * ptPerPx,
+          }))
+        );
+      } else if (svgAssetByFile.has(item.source)) {
+        const raster = svgAssetByFile.get(item.source)!;
+        prepared.push(
+          await preparePngRaster(raster, item.rotation, fail, svgNaturalByFile.get(item.source))
+        );
+      } else {
+        prepared.push(
+          await prepareImage(files[item.source], item.rotation, fail)
+        );
+      }
     }
 
     // Page size: fixed (A4/Letter, orientation-forced or auto) or fitted.
     let pageW: number;
     let pageH: number;
     if (pageSize === "fit") {
-      pageW = Math.max(...prepared.map((p) => p.width)) + margin * 2;
-      pageH = Math.max(...prepared.map((p) => p.height)) + margin * 2;
+      pageW = Math.max(...prepared.map((p) => p.ptW)) + margin * 2;
+      pageH = Math.max(...prepared.map((p) => p.ptH)) + margin * 2;
     } else {
       const base = pageSize === "letter" ? LETTER : A4;
-      const widest = Math.max(...prepared.map((p) => p.width));
-      const tallest = Math.max(...prepared.map((p) => p.height));
+      const widest = Math.max(...prepared.map((p) => p.ptW));
+      const tallest = Math.max(...prepared.map((p) => p.ptH));
       const landscape =
         orientation === "landscape" ||
         (orientation === "auto" && widest > tallest);
@@ -298,13 +607,25 @@ async function run(request: WorkerRunRequest): Promise<void> {
         };
         const box = fitInto(prepared[i], cell);
         const img = await embed(prepared[i]);
-        page.drawImage(img, { ...box });
+        // pdf-lib wants width/height — w/h from fitInto would be silently
+        // ignored and the image drawn at its native pixel size (P4.4 bug).
+        page.drawImage(img, {
+          x: box.x,
+          y: box.y,
+          width: box.w,
+          height: box.h,
+        });
       }
     } else {
       const cell = { x: margin, y: margin, w: pageW - margin * 2, h: pageH - margin * 2 };
       const box = fitInto(prepared[0], cell);
       const img = await embed(prepared[0]);
-      page.drawImage(img, { ...box });
+      page.drawImage(img, {
+        x: box.x,
+        y: box.y,
+        width: box.w,
+        height: box.h,
+      });
     }
 
     post({
@@ -349,7 +670,10 @@ async function run(request: WorkerRunRequest): Promise<void> {
         }),
       },
     ],
-    detail: { files: 1, pages: groups.length },
+    detail: {
+      files: 1,
+      pages: groups.length,
+    },
   });
 }
 

@@ -1,6 +1,11 @@
 import type { WorkerRunRequest, WorkerResponse } from "@/lib/workers/protocol";
 
 import {
+  loadPdfjsInWorker,
+  workerDocumentShim,
+} from "../pdfjs-common/worker-lib";
+
+import {
   classifyExtractError,
   expandToRGBA,
   EXI_FORMATS,
@@ -27,36 +32,6 @@ import { collectImages, type PdfjsWalkLib, type RawImage } from "./collect";
  */
 
 type PdfjsModule = typeof import("pdfjs-dist");
-
-let pdfjsPromise: Promise<PdfjsModule> | null = null;
-
-async function loadPdfjsInWorker(): Promise<PdfjsModule> {
-  if (!pdfjsPromise) {
-    pdfjsPromise = (async () => {
-      // pdf.js's default CMap/StandardFont factories resolve URLs against
-      // `document.baseURI`, which does not exist inside Web Workers. A
-      // one-property shim (same-origin base) keeps the self-hosted build
-      // working without touching its internals.
-      if (typeof (globalThis as { document?: unknown }).document === "undefined") {
-        (globalThis as { document?: unknown }).document = {
-          baseURI: self.location.href,
-        };
-      }
-      const libUrl = "/pdfjs/pdf.min.mjs";
-      const workerUrl = "/pdfjs/pdf.worker.min.mjs";
-      const lib = (await import(
-        /* webpackIgnore: true */ /* turbopackIgnore: true */ libUrl
-      )) as PdfjsModule;
-      // Pre-load the worker module into THIS thread → fake-worker mode
-      // (pdf.js then runs on our own thread — no nested worker needed).
-      await import(
-        /* webpackIgnore: true */ /* turbopackIgnore: true */ workerUrl
-      );
-      return lib;
-    })();
-  }
-  return pdfjsPromise;
-}
 
 function post(response: WorkerResponse): void {
   self.postMessage(response);
@@ -118,6 +93,9 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const data = new Uint8Array(await file.arrayBuffer());
     const doc = await pdfjs.getDocument({
       data,
+      // Worker-safe canvas factory — image pages need createElement
+      // (DOMCanvasFactory._createCanvas), the baseURI-only shim blanks them.
+      ownerDocument: workerDocumentShim() as unknown as HTMLDocument,
       cMapUrl: "/pdfjs/cmaps/",
       cMapPacked: true,
       standardFontDataUrl: "/pdfjs/standard_fonts/",

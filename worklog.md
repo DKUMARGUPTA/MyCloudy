@@ -2810,3 +2810,145 @@ Stage Summary:
   assemble-pdf, set-pdf-viewer-preferences, resize-image-kb.
 - RISK: image-PDF worker render regression (see above) — affects 4
   existing tools; needs a dedicated debugging session.
+
+---
+
+Task ID: P4.4
+Agent: main (Z.ai Code)
+Task: User "go ahead next" — P4.3 ka flagged #1 risk: worker-side pdf.js
+image-PDF blank render regression investigate + fix (5 tools affected).
+
+Work Log:
+- Fresh fixture banaya: download/qa-scan-image.pdf (262 KB, PIL-rendered
+  English invoice JPEG scan, 300 DPI A4 → pdf-lib embedJpg). scripts/
+  make-ocr-fixtures.py reuse kiya + PNG→JPG + image-only PDF assemble.
+- A/B root-cause proof (agent-browser, Worker-result hook se output blob
+  capture + main-thread pdf.js render se dark-pixel count):
+  * rasterize-pdf (pehle se migrated: pdfjs-common/worker-lib) → 64525B
+    output, /DCTDecode true, **1743 dark px** — KAAM KARTA HAI.
+  * ocr-pdf (us waqt purana baseURI-only shim) → same scan →
+    "No text was recognized" (conf 0, errorNoText) — BLANK render.
+- Root cause (minified source se confirm): pdf.js `getDocument` transport
+  `canvasFactory: new DOMCanvasFactory({ownerDocument})` banata hai
+  (pdf.min.mjs @182608) → render task CanvasGraphics ko canvasFactory
+  deta hai → `CachedCanvases.getCanvas()` → `DOMCanvasFactory._createCanvas`
+  → `this._document.createElement("canvas")` (@174658). IMAGE pages pe
+  ye path hit hota hai; purana shim `{baseURI}` tha → createElement
+  undefined → pdf.js image draw SILENTLY skip → blank canvas, koi error
+  nahi (isliye "stable blank" laga tha — canvas-commit race nahi tha!).
+- FIX (pattern pichhle adhoore session se mila, aur complete kiya):
+  `tools/pdfjs-common/worker-lib.ts` — `workerDocumentShim()`
+  (baseURI + createElement→new OffscreenCanvas(1,1) + documentElement
+  stub) + `loadPdfjsInWorker()` shared loader + har getDocument mein
+  explicit `ownerDocument: workerDocumentShim()`.
+- **8 workers migrated** (duplicate inline loaders DELETE hue, import
+  se replace): ocr-pdf, copy-from-pdf, pdf-to-images (pdf-to-jpg+png),
+  compress-pdf-to-size (raster ladder renderDoc), redact-pdf (2 call
+  sites), pdf-to-txt, search-pdf, extract-images. (rasterize + compare
+  pehle se migrated the — total 10 ab shared lib pe.)
+- Post-migration verification (sab agent-browser, Worker hook):
+  * ocr-pdf scan → **conf 95**, output 109735B, searchable text layer
+    verbatim: "INVOICE #2026-789 … TOTAL: 1645.50 Thank you…" (163 chars).
+  * pdf-to-jpg scan → 1240×1754 JPG 63573B, sample dark px 516 (non-blank).
+  * copy-from-pdf scan → .txt export 293B OCR fallback verbatim
+    ("INVOICE #2026-789 … Thank you for your business!").
+  * compress-pdf-to-size raster ladder → error-free poora chala
+    (vector-heavy 30-page + dense 3-page fixtures). Non-blank logical
+    proof: agar raster pages blank hote to ~3KB JPEGs se raster attempt
+    jeet jaata + targetHit:true — structural (281787B) jeeta = raster
+    JPEGs mein real dense content tha. Honest targetHit:false preserved.
+  * Text-PDF regression: ocr-pdf passthrough → selectable text intact.
+- QA suite: EN + HI UI end-to-end (Hindi mein OCR run bhi conf 95,
+  "आपकी फ़ाइल तैयार है!"), mobile 375px no-overflow (docW=clientW=375),
+  zero console errors, network sab localhost (sirf /pdfjs, /tesseract,
+  blob: + fixture fetch), tsc exit 0, eslint clean, dev.log clean.
+- QA pins naye: (a) "Open file preview in a new tab" button CURRENT TAB
+  ko blob: URL pe le jaata hai — hooks install karne se PEHLE click
+  mat karo; (b) URL.createObjectURL hook se result capture NAHI hota
+  (app Download pe blob URL lazy/anchor se handle karta hai) — Worker
+  constructor wrap + addEventListener('message') hi reliable capture hai;
+  (c) shadcn combobox options `[role=option]` pe milte hain, number
+  input ke liye native setter + input event bhejo.
+- Fixtures cleaned from public/ (qa-scan-image, qa-text-reg,
+  qa-vector-heavy, qa-dense-3p). download/ mein PNG/JPG source reh gaya.
+
+--- (P4.4 contd. — same session, second half) ---
+
+- **53rd TOOL — tiff-to-pdf WIRED + IMPLEMENTED** (config P3 se ready tha
+  par imagegrid worker mein TIFF path hi nahi tha):
+  * imagegrid/worker.ts: file classification phase (1024B head per file,
+    isTiffBytes) → TiffFile.parse + parsePageSpec(pages option per file);
+    entries ko per-page EXPANDED items mein phelaya (two-up grouping, fit
+    sizing, progress sab real pages count karte hain); per-page on-demand
+    decodePage (100-page fax = ek page memory mein), encodeRgbaPage()
+    rotation + preferPng (bilevel/palette → PNG crisp; warna JPEG 0.92
+    white-composited) ek hi canvas pass mein.
+  * "Fit" sizing: scan ka apna DPI — pt = px × 72/dpi (150-DPI A4 scan →
+    exactly A4). dpi null → 1px=1pt fallback.
+  * Surface (shared ImageGridSurface): TIFF card preview — pure-TS reader
+    main-thread dynamic import se page-1 PNG ≤512px + "N pages" chip
+    (igrid.tiffPages plural, EN+HI). looksTiff = type || extension.
+  * Errors: TiffError kinds → tool.images.errorTiffCorrupt/Unsupported/
+    TooLarge (naye i18n keys EN+HI, {detail} = filename).
+  * QA: 3-page 19MB uncompressed TIFF (PIL, 150 DPI) → 197KB PDF, 3× A4
+    pages, har page pe title+rule+ellipse (dark 560→2844@0.5 + red 174
+    outline pixel fix ke baad), pages "1,3" → 2 pages, HI UI (3 पेज chip),
+    TIFF preview img complete.
+- **54th TOOL — svg-to-pdf NEW** (tools/svg-to-pdf/config.ts + shared
+  imagegrid worker):
+  * Discovery: Chrome/Firefox createImageBitmap SVG blobs REJECT karta hai
+    ("The source image could not be decoded" — browser mein direct verify).
+    Worker-side SVG raster WASM ke bina impossible.
+  * DESIGN (logo-store pattern): surface card preview (<img> SVG native)
+    ke saath rasterizeSvgFile() — Image + canvas drawImage AT TARGET SIZE
+    (Chrome SVG ko drawn size pe vector-raster karta hai — crisp), target
+    longest side 2400px (≈290 DPI A4), ≤30MP cap, PNG alpha keep.
+  * tools/imagegrid/svg-raster.ts store: Map<name:size:mtime → File> +
+    setSvgRasterOrder (surface files sync) + getSvgRastersInOrder (STRICT:
+    koi raster missing → sab reject, k-th pairing kabhi galat NAHI) +
+    svg-dims.json manifest LAST asset (natural CSS dims — fit page graphic
+    ke apne size pe, upscaled raster pe NAHI) + pending counter with
+    useSyncExternalStore → CTA blocked jab tak raster ready
+    (igrid.svgRasterizing).
+  * Worker: SVG files ko assets se pair (k-th SVG file ↔ k-th asset,
+    manifest pop first), preparePngRaster: unrotated → original raster
+    bytes embed (IHDR se dims), rotated → canvas rotate PNG; ptW/ptH =
+    natural × 0.75 (CSS 96 DPI).
+  * collectAssets: svg-to-pdf config mein (add-watermark logo pattern).
+  * QA: A4 default → page 595×842 + red circle 61,934 px + triangle; fit
+    mode → 632×878 (794×0.75+36 — graphic ka apna size!); mixed SVG+PNG
+    drop → 2 pages sahi pairing; CTA gate works.
+- **⚠️ PRE-EXISTING BUG FOUND & FIXED — pdf-lib drawImage w/h (galti se
+  SVG test ne pakda):** imagegrid worker `page.drawImage(img, {...box})`
+  spread karta tha jahan fitInto {x,y,w,h} return karta hai — pdf-lib
+  options sirf width/height peek karta hai (source padha: PDFPage.js:932
+  `options.width ?? image.size().width`) — w/h SILENTLY IGNORE → har
+  image NATIVE PIXEL SIZE pe draw hoti thi (1697px raster = 596pt page pe
+  2.3× overflow, top-right clip!). Chhote fixtures pe px≈pt visually
+  theek dikhta tha isliye P3 se pakda nahi gaya. FIX: explicit
+  {x, y, width, height} dono call sites (single + two-up). rasterize +
+  compress-to-size already sahi the (width/height likhte the).
+  Family regression: images-to-pdf 2480×3508 PNG → A4 contained ✓,
+  TIFF re-run → ellipse ab poora visible ✓, SVG re-run → circle ✓.
+- Post-restart worker compile scare: console mein pdf-to-txt/compress
+  worker errors dikhe — STALE nikle (mid-edit window ke). Dono live
+  re-verified: pdf-to-txt → 35B txt ✓, compress-to-size scan 262KB →
+  90KB hit:true ✓. Zero current console errors.
+- Registry recount (strict parser): 97 total / **54 enabled** / 43
+  pending. i18n 1520=1520 (+6 keys × 2). tsc clean, eslint clean,
+  dev.log clean (ek OOM restart chahiya tha — setsid orphan pattern).
+- Fixtures cleaned (qa-multi.tiff, qa-fixture.svg, qa-big.png, etc.).
+  Screenshots: qa-p44-tiff-mobile.png.
+
+Stage Summary:
+- Live: 52 → **54** (tiff-to-pdf + svg-to-pdf). i18n 1520=1520 parity.
+  tsc clean, eslint clean, dev.log clean.
+- **5 scan-tools fixed** (worker shim) + **6 image-tools fixed**
+  (drawImage width/height — images/jpg/png/webp/heic/tiff/svg-to-pdf
+  sab ab badi images contain karte hain).
+- RULES pinned (insights mein): (1) worker mein pdf.js → pdfjs-common
+  worker-lib only; (2) pdf-lib draw calls mein explicit width/height —
+  spread kabhi nahi; (3) worker mein SVG → main-thread raster +
+  collectAssets bridge + svg-dims.json manifest pattern.
+- Next queue: assemble-pdf, set-pdf-viewer-preferences,
+  resize-image-kb, phir Phase 8 editor.

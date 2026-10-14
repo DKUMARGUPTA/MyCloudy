@@ -77,6 +77,8 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "png-to-pdf": ImageGridSurface,
   "webp-to-pdf": ImageGridSurface,
   "heic-to-pdf": ImageGridSurface,
+  "tiff-to-pdf": ImageGridSurface,
+  "svg-to-pdf": ImageGridSurface,
   "add-watermark": WatermarkSurface,
   "add-page-numbers": PageNumbersStampSurface,
   "add-header-footer": HeaderFooterStampSurface,

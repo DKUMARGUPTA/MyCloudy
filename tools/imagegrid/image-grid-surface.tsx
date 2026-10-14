@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import {
@@ -25,6 +26,13 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { looksHeic, resolveHeicPreview } from "@/lib/heic/heic-preview";
+import {
+  looksSvg,
+  rasterizeSvgFile,
+  setSvgRasterOrder,
+  subscribeSvgPending,
+  svgRastersPending,
+} from "./svg-raster";
 import {
   ArrowDownAZ,
   ChevronDown,
@@ -55,6 +63,56 @@ import {
   type ImageEntry,
 } from "./model";
 
+/** Cheap TIFF check without reading bytes (type or extension). */
+function looksTiff(file: File): boolean {
+  return file.type === "image/tiff" || /\.(tif|tiff)$/i.test(file.name);
+}
+
+/** Downscaled first-page preview for TIFF cards (pure-TS reader, main thread). */
+async function tiffPreview(
+  file: File
+): Promise<{ url: string; width: number; height: number; pages: number } | null> {
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const { TiffFile } = await import("../imgconv/tiff");
+    const tiff = TiffFile.parse(bytes);
+    if (tiff.pageCount === 0) return null;
+    const page = tiff.decodePage(0);
+    // Full-resolution page canvas, then one downscaled draw for the card.
+    const full = document.createElement("canvas");
+    full.width = page.width;
+    full.height = page.height;
+    const fullCtx = full.getContext("2d");
+    if (!fullCtx) return null;
+    fullCtx.putImageData(
+      new ImageData(page.rgba, page.width, page.height) as unknown as ImageData,
+      0,
+      0
+    );
+    const scale = Math.min(1, 512 / Math.max(page.width, page.height));
+    const width = Math.max(1, Math.round(page.width * scale));
+    const height = Math.max(1, Math.round(page.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.drawImage(full, 0, 0, width, height);
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/png")
+    );
+    if (!blob) return null;
+    return {
+      url: URL.createObjectURL(blob),
+      width: page.width,
+      height: page.height,
+      pages: tiff.pageCount,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * ImageGrid surface (PRD §8.6 "Images to PDF") — the image sibling of the
  * PageGrid: one shared interactive card grid powering images-to-pdf and its
@@ -83,15 +141,34 @@ export function ImageGridSurface({
     createInitialImageGrid(files.length)
   );
   const [prevFileCount, setPrevFileCount] = useState(files.length);
+  // SVG rasters are prepared on the main thread while card previews load —
+  // the CTA stays blocked (honest reason) until every one has landed.
+  const svgPending = useSyncExternalStore(subscribeSvgPending, svgRastersPending);
 
   /* ---------------- state sync (promise callbacks only) ---------------- */
 
   const syncBlocked = useCallback(
     (next: ImageEntry[]) => {
-      setRunBlocked(next.length === 0 ? "igrid.ctaNoImages" : null);
+      setRunBlocked(
+        svgPending > 0
+          ? "igrid.svgRasterizing"
+          : next.length === 0
+            ? "igrid.ctaNoImages"
+            : null
+      );
     },
-    [setRunBlocked]
+    [setRunBlocked, svgPending]
   );
+
+  // Keep the SVG raster bridge in sync with the workspace file order, and
+  // re-evaluate the CTA gate when rasterisation state changes.
+  useEffect(() => {
+    setSvgRasterOrder(files.map((item) => item.file));
+  }, [files]);
+
+  useEffect(() => {
+    syncBlocked(entries);
+  }, [entries, syncBlocked]);
 
   // Reconcile when the shell file list changes (add-more / chain). Runs in
   // a microtask callback — never synchronously inside the effect body.
@@ -304,13 +381,17 @@ function ImageCard({
   } = useSortable({ id: entry.uid });
 
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  const [pages, setPages] = useState<number | null>(null);
   const [url, setUrl] = useState<string | null>(null);
 
   // Object URL + natural size for the preview (promise callbacks only —
   // never setState synchronously in the effect body). HEIC inputs get a
   // queued libheif preview (Safari's native <img> path is kept for itself);
-  // preview URLs from the HEIC cache are NOT revoked here — the cache owns
-  // them, unlike the object URL this card creates for non-HEIC images.
+  // TIFF cards get a first-page PNG from the clean-room reader (no browser
+  // shows TIFF in <img> outside Safari); SVG files rasterise into the
+  // main-thread store on load so collectAssets can hand them to the worker.
+  // Preview URLs from the HEIC cache are NOT revoked here — the cache owns
+  // them, unlike the object URLs this card creates for other inputs.
   useEffect(() => {
     if (!file) return;
     let cancelled = false;
@@ -327,8 +408,29 @@ function ImageCard({
         }
         // Byte-sniff says not HEIC after all — fall through to <img>.
       }
+      if (looksTiff(file)) {
+        const preview = await tiffPreview(file);
+        if (cancelled) {
+          if (preview) URL.revokeObjectURL(preview.url);
+          return;
+        }
+        if (preview) {
+          objectUrl = preview.url;
+          setUrl(preview.url);
+          setDims({ w: preview.width, h: preview.height });
+          setPages(preview.pages);
+          return;
+        }
+        // Unreadable TIFF — keep the pulse placeholder and let the honest
+        // worker error explain (tiff-to-pdf config copy covers it).
+        return;
+      }
       objectUrl = URL.createObjectURL(file);
       setUrl(objectUrl);
+      if (looksSvg(file)) {
+        // Rasterise for the run while the <img> preview loads itself.
+        void rasterizeSvgFile(file).catch(() => undefined);
+      }
       const img = new Image();
       img.onload = () => {
         if (!cancelled) setDims({ w: img.naturalWidth, h: img.naturalHeight });
@@ -383,6 +485,11 @@ function ImageCard({
           >
             {index + 1}
           </span>
+          {pages !== null && pages > 1 ? (
+            <span className="pointer-events-none absolute bottom-1.5 left-1.5 rounded-chip bg-cat-create/95 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-sm">
+              {t("igrid.tiffPages", { count: pages })}
+            </span>
+          ) : null}
           {entry.rotation !== 0 ? (
             <span className="pointer-events-none absolute right-1.5 top-1.5 rounded-chip bg-amber-500/95 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-sm">
               {entry.rotation}°

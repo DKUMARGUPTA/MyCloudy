@@ -5,6 +5,10 @@ import {
   type WorkerResponse,
 } from "@/lib/workers/protocol";
 import {
+  loadPdfjsInWorker,
+  workerDocumentShim,
+} from "../pdfjs-common/worker-lib";
+import {
   countChars,
   joinTextItems,
   joinTxtPages,
@@ -86,36 +90,6 @@ function assetUrl(path: string): string {
   const blobOrigin = /^blob:(https?:\/\/[^/]+)/i.exec(self.location.href);
   if (blobOrigin) return `${blobOrigin[1]}${path}`;
   return path;
-}
-
-/* ------------------------------------------------------------------ */
-/* pdf.js (fake-worker mode — same recipe as pdf-to-images)            */
-/* ------------------------------------------------------------------ */
-
-let pdfjsPromise: Promise<PdfjsModule> | null = null;
-
-async function loadPdfjsInWorker(): Promise<PdfjsModule> {
-  if (!pdfjsPromise) {
-    pdfjsPromise = (async () => {
-      if (
-        typeof (globalThis as { document?: unknown }).document === "undefined"
-      ) {
-        (globalThis as { document?: unknown }).document = {
-          baseURI: self.location.href,
-        };
-      }
-      const libUrl = "/pdfjs/pdf.min.mjs";
-      const workerUrl = "/pdfjs/pdf.worker.min.mjs";
-      const lib = (await import(
-        /* webpackIgnore: true */ /* turbopackIgnore: true */ libUrl
-      )) as PdfjsModule;
-      await import(
-        /* webpackIgnore: true */ /* turbopackIgnore: true */ workerUrl
-      );
-      return lib;
-    })();
-  }
-  return pdfjsPromise;
 }
 
 /* ------------------------------------------------------------------ */
@@ -293,6 +267,9 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const data = new Uint8Array(await file.arrayBuffer());
     const doc = await pdfjs.getDocument({
       data,
+      // Worker-safe canvas factory — image pages need createElement
+      // (DOMCanvasFactory._createCanvas), the baseURI-only shim blanks them.
+      ownerDocument: workerDocumentShim() as unknown as HTMLDocument,
       cMapUrl: "/pdfjs/cmaps/",
       cMapPacked: true,
       standardFontDataUrl: "/pdfjs/standard_fonts/",

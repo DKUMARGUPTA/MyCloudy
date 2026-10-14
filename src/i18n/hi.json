@@ -351,7 +351,11 @@
       "errorUnsupported": "यह इमेज फ़ॉर्मैट यहाँ नहीं चलेगा ({detail})। पहले JPG या PNG में बदलें।",
       "errorDecode": "{detail} डिकोड नहीं हो सकी — फ़ाइल ख़राब या इस ब्राउज़र पर असमर्थित हो सकती है।",
       "errorNoImages": "बदलने के लिए कोई तस्वीर नहीं बची।",
-      "errorHeicDecode": "{detail} नहीं खुल पाई — फ़ाइल ख़राब है या असमर्थित HEIC प्रकार की है।"
+      "errorHeicDecode": "{detail} नहीं खुल पाई — फ़ाइल ख़राब है या असमर्थित HEIC प्रकार की है।",
+      "errorTiffCorrupt": "{detail} पढ़ी नहीं जा सकी — TIFF फ़ाइल शायद ख़राब है।",
+      "errorTiffUnsupported": "{detail} वैसी TIFF है जो अभी नहीं चलती (LZW, Deflate, PackBits या फ़ैक्स आज़माएँ)।",
+      "errorTiffTooLarge": "{detail} का कोई पेज डिकोड के लिए बहुत बड़ा है — छोटी फ़ाइल आज़माएँ।",
+      "errorSvgRaster": "{detail} अभी तैयार हो रही है — थोड़ी देर में फिर कोशिश करें।"
     },
     "errorNoText": "कोई चुनने-योग्य टेक्स्ट नहीं मिला — यह PDF शायद स्कैन है। PDF OCR टूल आज़माएँ।",
     "errorWatermarkMissing": "पहले वॉटरमार्क टेक्स्ट (या लोगो) जोड़ें।",
@@ -589,6 +593,8 @@
     "hint": "क्रम बदलने के लिए खींचें · हर तस्वीर घुमाएँ या हटाएँ · नीचे और जोड़ें",
     "emptyHint": "सभी तस्वीरें हट गईं — चलाने से पहले कम से कम एक वापस जोड़ें।",
     "ctaNoImages": "पहले कम से कम एक तस्वीर जोड़ें",
+    "svgRasterizing": "SVG ग्राफ़िक्स तैयार हो रहे हैं…",
+    "tiffPages": "{count, plural, =1 {1 पेज} other {# पेज}}",
     "addMore": "और तस्वीरें जोड़ें",
     "cardPosition": "तस्वीर {index} / {total}",
     "rotateLeftLabel": "{name} को 90° बाएँ घुमाएँ",

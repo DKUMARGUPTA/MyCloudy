@@ -1577,6 +1577,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Shapes,
     popularity: 12,
     accepts: "image",
+    enabled: true,
     name: { en: "SVG to PDF", hi: "SVG से पीडीएफ़" },
     description: {
       en: "Vector graphics rendered at any scale into PDF pages.",
@@ -1592,6 +1593,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: FileImage,
     popularity: 10,
     accepts: "image",
+    enabled: true,
     name: { en: "TIFF to PDF", hi: "TIFF से पीडीएफ़" },
     description: {
       en: "Multi-page TIFF scans into one PDF, in order.",

@@ -347,7 +347,11 @@
       "errorUnsupported": "This image format can't be read here ({detail}). Convert it to JPG or PNG first.",
       "errorDecode": "Couldn't decode {detail} — the file may be damaged or unsupported on this browser.",
       "errorNoImages": "No images left to convert.",
-      "errorHeicDecode": "{detail} could not be decoded — it may be damaged or use an unsupported HEIC variant."
+      "errorHeicDecode": "{detail} could not be decoded — it may be damaged or use an unsupported HEIC variant.",
+      "errorTiffCorrupt": "{detail} could not be read — the TIFF appears damaged.",
+      "errorTiffUnsupported": "{detail} uses a TIFF flavour we can't read yet (try LZW, Deflate, PackBits or fax).",
+      "errorTiffTooLarge": "A page inside {detail} is too large to decode — try a smaller file.",
+      "errorSvgRaster": "{detail} is still being prepared — try again in a moment."
     },
     "errorNoText": "No selectable text found — this PDF is probably a scan. Try the PDF OCR tool.",
     "errorWatermarkMissing": "Add the watermark text (or a logo) first.",
@@ -589,6 +593,8 @@
     "hint": "Drag cards to reorder · rotate or remove per image · add more below",
     "emptyHint": "All images removed — add at least one back before you run.",
     "ctaNoImages": "Add at least one image first",
+    "svgRasterizing": "Preparing SVG graphics…",
+    "tiffPages": "{count, plural, =1 {1 page} other {# pages}}",
     "addMore": "Add more images",
     "cardPosition": "Image {index} of {total}",
     "rotateLeftLabel": "Rotate {name} 90° left",

@@ -15,6 +15,7 @@ export const config: ToolConfig = {
   outputKind: "pdf",
   minFiles: 1,
   maxFiles: 50,
+  howKeys: ["imgc.how1", "imgc.how2", "imgc.how3"],
   chainToolIds: ["ocr-pdf", "compress-pdf"],
   options: [
     {
