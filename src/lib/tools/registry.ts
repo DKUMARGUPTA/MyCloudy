@@ -1336,6 +1336,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Settings2,
     popularity: 6,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Set viewer preferences", hi: "व्यूअर सेटिंग बदलें" },
     description: {
       en: "Choose how the file opens: layout, zoom, window title.",

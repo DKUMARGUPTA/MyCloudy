@@ -2978,3 +2978,92 @@ Stage Summary:
 - **dnd-kit useSortable transform accumulation**: the FIRST pointermove after pointerdown is CONSUMED by the distance-6 activation (no onMove) — transform stays 0 until the SECOND move. QA instrumentation must move ≥2 times before reading transforms.
 - Tool state: 55 live / 97 total | i18n 1546=1546 | fixtures public/asm-fronts.pdf + asm-backs.pdf kept for future QA rounds.
 - Next per priority queue: set-pdf-viewer-preferences (P2), then resize-image-kb (P2, exam/govt forms), then edit-pdf (Phase 8, big).
+
+---
+Task ID: P4.6
+Agent: main (Z.ai Code orchestrator)
+Task: Set viewer preferences (set-pdf-viewer-preferences) — PRD §8.5 priority-queue tool #1: initial page layout, zoom, window title show, hide toolbars, fullscreen. 56th live tool.
+
+Work Log:
+- Read CONTEXT-MEMORY.md + worklog.md: rasterize-pdf + make-pdf-fillable were ALREADY done in P4.2 (the carried-over session summary was 4 phases stale) — real next-in-queue was set-pdf-viewer-preferences.
+- No ready files existed (empty folder verified) — built from scratch like P4.5:
+  - tools/set-pdf-viewer-preferences/config.ts — 11 tri-state options ("keep" = don't touch):
+    layout (SinglePage/OneColumn/TwoColumnLeft/TwoColumnRight/TwoPageLeft/TwoPageRight),
+    pageMode (UseNone/UseThumbs/UseOutlines/UseAttachments/FullScreen),
+    exitFsMode (showWhen pageMode=FullScreen; UseNone/UseThumbs/UseOutlines),
+    zoom (50/75/100/125/150/200% + fitPage/fitWidth), startPage (number, default 1),
+    showTitle/hideToolbar/hideMenubar/hideWindowUI/fitWindow/centerWindow (keep/on/off).
+    Features x6 + FAQ x3 bilingual inline L10n. chainToolIds: view-pdf,
+    change-pdf-doc-info, compress-pdf, lock-pdf. minFiles/maxFiles 1, outputKind pdf.
+  - tools/set-pdf-viewer-preferences/worker.ts — pure pdf-lib (no pdf.js, no canvas):
+    catalog.set(PageLayout/PageMode) when chosen; getOrCreateViewerPreferences()
+    ONLY when a boolean choice exists or fullscreen (all-keeps never creates the
+    dict); setters setDisplayDocTitle/HideToolbar/HideMenubar/HideWindowUI/
+    FitWindow/CenterWindow; NonFullScreenPageMode when fullscreen (pdf-lib TS ENUM
+    must be imported — plain string literal won't assign); OpenAction destination
+    [pageRef /XYZ null null zoom] | [/Fit] | [/FitH null] built with ctx.obj,
+    written when zoom chosen OR startPage>1 (zoom null = page jump only);
+    startPage clamped to [1, pageCount]; whitelisted value parsing (unknown →
+    keep); updateMetadata: false; error mapping password→Encrypted else Corrupt.
+  - Wiring: registry def enabled:true (55→56), configs.ts import + map entry.
+    No custom surface (config-driven OptionsPanel), no new i18n keys (parity
+    1546=1546 verified by key-flatten count).
+- Smoke: scripts/smoke-viewer-prefs.ts — imports the REAL worker module in bun
+  with a self/postMessage shim (worker is pure pdf-lib so this works — no logic
+  copy). 11 cases / 50 assertions, 50/50 GREEN: full battery (every option set,
+  OpenAction [page2 /XYZ null null 1.5] with page-2 MediaBox proof), all-defaults
+  (NOTHING written — no PageLayout/PageMode/OpenAction/ViewerPreferences dict),
+  zoom-only /FitH, fitPage /Fit, startPage-only (XYZ with null zoom), explicit
+  off writes false, startPage 99 clamps to last page, fullscreen exit default
+  UseNone, unknown values ignored (whitelist), garbage bytes → tool.errorCorrupt,
+  pre-existing PageLayout replaced. NOTE: pdf-lib getters return false even for
+  missing keys — "untouched" must be asserted via vp.dict.lookup(key) undefined;
+  OpenAction page entries resolve to page dicts, so assert by MediaBox not ref.
+  process.exit(0) on success needed (dangling async keeps bun alive).
+- QA (agent-browser, EN + HI + mobile 375px):
+  - Landing renders (h1, How it works, my 3 FAQs, What you get, related tools).
+  - Drop asm-fronts.pdf (fetch→DataTransfer→DragEvent on label, bilingual matcher)
+    → workspace + all 11 option fields with correct labels.
+  - shadcn selects are click-racy: agent-browser click on re-rendered triggers
+    often no-ops — ROBUST RECIPE: one eval that getElementById('opt-<id>')
+    (stable ids: opt-layout, opt-pageMode, opt-exitFsMode, ...) → .click() →
+    wait 350ms → find [role="option"] by text → .click() → wait. Radix Select
+    options live in a portal listbox while open.
+  - showWhen verified: "After leaving fullscreen" field appears with Fullscreen.
+  - Full battery run → result screen ("Your file is ready!", Download/Rename/
+    Save to Files, What next? chain = my chainToolIds exactly).
+  - Output blob captured via Worker subclass constructor tap (window.Worker =
+    class extends OrigWorker { addEventListener('message', ...) } — installed
+    BEFORE the run; result blob → arrayBuffer → base64 → decode in bun):
+    PageLayout=/TwoColumnLeft, PageMode=/FullScreen,
+    NonFullScreenPageMode=UseOutlines, HideToolbar/HideWindowUI/
+    DisplayDocTitle=true, HideMenubar/FitWindow/CenterWindow keys ABSENT
+    (tri-state keep honored), OpenAction=[page2 /XYZ null null 1.5] with page-2
+    MediaBox [0 0 300 400] confirmed.
+  - HI UI: all labels Devanagari (पेज लेआउट/साइड पैनल/ज़ूम/इस पेज पर खोलें/
+    विंडो टाइटल/टूलबार/मेन्यू बार/विंडो कंट्रोल/विंडो साइज़/विंडो की जगह), Devanagari
+    dropdown options select fine, Hindi filename output फ़्रंट्स-viewersettings.pdf,
+    HI run structurally verified (FullScreen + /Fit + UseNone default).
+  - Mobile 375px: scrollWidth 375 = clientWidth (zero overflow elements),
+    options sheet (विकल्प button) renders all 11 fields.
+  - Corrupt file: magic-byte toast at drop ("यह PDF नहीं है…"), never reaches
+    worker (worker-level corrupt also smoke-locked). maxFiles=1 limit toast works.
+  - Zero page errors, console clean (only HMR), all network requests localhost/blob.
+- Screenshots: public/qa-vp-desktop.png, qa-vp-mobile.png, qa-vp-mobile-sheet.png.
+- Verified: registry 97 defs / 56 enabled / 41 pending; i18n 1546=1546;
+  bunx tsc --noEmit clean; bun run lint clean; dev.log clean (HTTP 200).
+
+Stage Summary:
+- 56th TOOL live: set-pdf-viewer-preferences — PRD §8.5 complete (layout, zoom +
+  start page, fullscreen, side panel, window title, hide toolbar/menubar/UI,
+  window fit/center), honest tri-state "keep" semantics throughout.
+- Pinned insights: (1) pdf-lib NonFullScreenPageMode is a TS enum — import it,
+  string literals won't type-check; (2) pdf-lib ViewerPreferences getters fall
+  back to false for missing keys — verify "untouched" via vp.dict.lookup;
+  (3) pure-pdf-lib workers can be smoke-tested in bun by importing the real
+  module with a self shim (no logic duplication); (4) shadcn/Radix selects in
+  QA: stable trigger ids (opt-<optionId>) + eval click + 350ms + option text
+  click beats agent-browser ref clicks.
+- Tool state: 56 live / 97 total | i18n 1546=1546 | tsc + eslint + dev.log clean.
+- Next per priority queue: resize-image-kb (P2, exam/govt forms — under
+  100/200KB), then edit-pdf (Phase 8, big — 6 sub-phases).

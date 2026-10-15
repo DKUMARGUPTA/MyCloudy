@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P4.5 ke baad — Assemble PDF (multi-doc columns workspace) shipped — **55 tools live**.
+> **Updated:** P4.6 ke baad — Set viewer preferences (layout/zoom/fullscreen/window) shipped — **56 tools live**.
 
 ---
 
@@ -12,18 +12,18 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **55** ✅ |
-| Pending (Coming Soon) | **42** ⏳ |
+| **Ready to use (LIVE)** | **56** ✅ |
+| Pending (Coming Soon) | **41** ⏳ |
 | Phase | 3/4 (tools one-by-one) IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1520 = 1520 keys parity) |
+| i18n | English + हिंदी (1546 = 1546 keys parity) |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 55 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 56 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (12/12) — CATEGORY COMPLETE
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -70,10 +70,11 @@
 - ✅ Flatten PDF (`flatten-pdf`) — forms+annotations ya scoped, AcroForm bake, honest errorNothing
 - ✅ Rasterize PDF (`rasterize-pdf`) — P4.2: har page flat image — 72–300 DPI, JPEG/PNG + quality, pages range, 40MP clamp; output mein fonts/AcroForm/text-ops ZERO
 
-### 👁️ View (3/6)
+### 👁️ View (4/6)
 - ✅ View PDF (`view-pdf`) — thumbnails, search, outline, dark mode
 - ✅ Compare PDF (`compare-pdf`) — side-by-side diff report, sensitivity, case/whitespace
 - ✅ Search in PDFs (`search-pdf`) — live surface highlights + TXT report, text/regex, case/whole-word
+- ✅ Set viewer preferences (`set-pdf-viewer-preferences`) — P4.6: PageLayout (6), PageMode (fullscreen/thumbnails/bookmarks), zoom 50–200%//Fit//FitH + start page, DisplayDocTitle, hide toolbar/menubar/window-UI, fit/center window — tri-state "keep" semantics
 
 ### 📥 Convert to PDF (9/17)
 - ✅ JPG to PDF (`jpg-to-pdf`) · ✅ PNG to PDF (`png-to-pdf`) · ✅ WEBP to PDF (`webp-to-pdf`) · ✅ HEIC to PDF (`heic-to-pdf`) — libheif WASM se har browser mein!
@@ -95,18 +96,17 @@
 
 ---
 
-## ⏳ 43 PENDING TOOLS (Kaam baki hai)
+## ⏳ 41 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Set viewer preferences** (`set-pdf-viewer-preferences`)
-2. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
-3. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
-4. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
-5. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
-6. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
+1. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
+2. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
+3. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
+4. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
+5. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -208,6 +208,16 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 ---
 
 ## 📝 Session Log (naya kaam yahan append karo)
+
+### P4.6 — Set viewer preferences ✅ 56th TOOL
+- **PRD §8.5** "Viewer preferences: Initial page layout, zoom, window title show, hide toolbars, fullscreen" — no ready files thi, scratch se bana (P4.5 assemble pattern).
+- `tools/set-pdf-viewer-preferences/` — config (11 tri-state options) + worker (pure pdf-lib). **ZERO new i18n keys** (sab copy inline L10n) — parity 1546=1546.
+- Options: layout (6 PDF PageLayout values), pageMode (UseNone/UseThumbs/UseOutlines/UseAttachments/FullScreen), exitFsMode (showWhen pageMode=FullScreen — exit ke baad kya dikhe), zoom (50–200% + fitPage/fitWidth), startPage (OpenAction destination), showTitle/hideToolbar/hideMenubar/hideWindowUI/fitWindow/centerWindow (keep/on/off tri-state).
+- Worker: `catalog.set(PageLayout/PageMode)` + `getOrCreateViewerPreferences()` (pdf-lib setters — HideMenubar "keep" pe dict entry NAHI likhta) + `NonFullScreenPageMode` (pdf-lib ka TS ENUM — string literal se assign NAHI hota, import karke use karo!) + OpenAction `[pageRef /XYZ null null zoom|/Fit|/FitH null]` (zoom null + startPage>1 = sirf page jump). `updateMetadata: false` (ModDate/Producer ko touch nahi karta).
+- **Smoke 50/50 GREEN** (`scripts/smoke-viewer-prefs.ts` — REAL worker module bun mein self-shim se import hota hai, logic copy NAHI): full battery, all-keeps (kuch bhi likha nahi jaata — empty ViewerPreferences dict tak nahi banti), zoom-only, fitPage, startPage-only, explicit off, clamp, fs-default, whitelist defense, garbage error, replace semantics.
+- **QA (agent-browser)**: EN landing/FAQ/features; drop → 11 options panel; showWhen field appeared with Fullscreen; full battery run → output blob captured (Worker subclass constructor tap + base64) → pdf-lib se verify: PageLayout=/TwoColumnLeft, PageMode=/FullScreen, NonFullScreenPageMode=UseOutlines, HideToolbar/HideWindowUI/DisplayDocTitle=true, **HideMenubar/FitWindow/CenterWindow ABSENT (tri-state keep)**, OpenAction=[page2 /XYZ null null 1.5] (MediaBox 300×400 se page-2 confirm); result screen chain = view-pdf/change-doc-info/compress/lock (mere chainToolIds); HI UI full (साइड पैनल/फ़ुलस्क्रीन मोड/ज़ूम/विंडो की जगह + Devanagari dropdown options + Hindi filename output फ़्रंट्स-viewersettings.pdf) + HI run structurally verified (FullScreen + /Fit + UseNone); mobile 375px no-overflow + options sheet 11 fields; corrupt file magic-byte toast at drop; zero page errors; console clean; sab requests localhost.
+- Registry: 97 total / **56 enabled** / 41 pending. tsc clean, eslint clean, dev.log clean.
+- Live: 55 → **56** | Next queue: resize-image-kb (P2), phir edit-pdf (Phase 8, big)
 
 ### P4.5 — Assemble PDF ✅ 55th TOOL
 - **PRD §8.1** "Multiple documents ek hi screen me, columns ki tarah; pages ek document se doosre me drag; new document column; sabko alag save ya merge; zipper merge (front/back scans), reverse, save all as ZIP" — complete from scratch.

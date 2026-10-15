@@ -54,6 +54,7 @@ import { config as convertToPdf } from "../../../tools/convert-to-pdf/config";
 import { config as convertFromPdf } from "../../../tools/convert-from-pdf/config";
 import { config as rasterizePdf } from "../../../tools/rasterize-pdf/config";
 import { config as makePdfFillable } from "../../../tools/make-pdf-fillable/config";
+import { config as setPdfViewerPreferences } from "../../../tools/set-pdf-viewer-preferences/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -118,6 +119,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [convertFromPdf.toolId]: convertFromPdf,
   [rasterizePdf.toolId]: rasterizePdf,
   [makePdfFillable.toolId]: makePdfFillable,
+  [setPdfViewerPreferences.toolId]: setPdfViewerPreferences,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {
