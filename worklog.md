@@ -2952,3 +2952,29 @@ Stage Summary:
   collectAssets bridge + svg-dims.json manifest pattern.
 - Next queue: assemble-pdf, set-pdf-viewer-preferences,
   resize-image-kb, phir Phase 8 editor.
+
+---
+
+Task ID: P4.5
+Agent: main (Z.ai Code orchestrator)
+Task: Assemble PDF (assemble-pdf) — PRD §8.1 priority-queue tool #1: multi-document workspace with drag-pages-between-docs, new document columns, zipper merge, separate/ZIP save.
+
+Work Log:
+- Read CONTEXT-MEMORY.md + worklog.md (54 tools live; next in queue: assemble-pdf).
+- Built tools/assemble-pdf/ from scratch (no ready files existed — verified empty folder):
+  - model.ts — PURE: AsmPageRef {uid, fileId, page} + AsmDoc columns, createDocFromFile, createEmptyDoc, transferPage (cross-column, the PRD core action), movePageWithinDoc, deletePages, reverseDocPages, removeDoc, renameDoc, dropFilePages (files leaving the workspace — keeps user-created empty columns, only drops docs emptied BY the drop), planAssemble (merge concat / zipper round-robin interleave / reverse final / separate one-per-column — the SAME pure planner decides surface preview + worker output), serializeAssemble wire format [[name, [[fileId, page]...]]...], parseAssembleOption (strict validation), asmStats.
+  - worker.ts — pdf-lib: hydrates wire format → planAssemble → executes. Sources load lazily ONCE (Map fileId → PDFDocument), pages copy one-by-one so interleaved orders stay exact. merge: one PDF (+ outputName option, fallback <first>-assembled.pdf); separate: one PDF per non-empty column (multi-output — shell result view already offers per-file download + Download-all-ZIP = PRD "save all as ZIP" for free). Name dedupe (Same.pdf, Same 2.pdf). Errors: asm.errorNoPages / tool.errorCorrupt / tool.errorEncrypted / tool.errorInvalidPages mapped like merge worker.
+  - surface.tsx — multi-COLUMN dnd workspace: files → columns (async page counts via getPdfPageCount, StrictMode-safe known-file set, no cleanup cancellation needed), "New document" column (button + always-last affordance), per-column rename (no history spam) / reverse / clear / delete, per-page lazy IO thumbnails (renderPdfThumbnail 128px, objectURL revoke), undo/redo (history reducer with commit/replace/undo/redo), DragOverlay REMOVED in favor of grid-cell pattern (see insight below), cross-column a11y buttons ←/→ on every page (44px rule), droppable column bodies (empty columns catch drops), options-sync effect (single honest mirror: onChange("assemble") + setRunBlocked ctaNoPages/ctaReading).
+  - config.ts — options: outputMode select (merge/separate), zipper + reverse + outputName switches (showWhen outputMode=merge), features ×4, FAQ ×3 (bilingual inline L10n).
+- Smoke (temp, deleted after): model 31/31 GREEN (transfer/zipper-unequal/reverse/serialize round-trip/error paths), worker 22/22 GREEN in bun (page provenance via distinctive widths 100/200pt: zipper output F1,B1,F2,B2,F3 EXACT; separate 2 outputs; mixed columns; empty-skip; 3 error paths; dedupe).
+- Wiring: registry enabled:true (55 live), configs.ts + surfaces.tsx registered.
+- i18n: asm.* 26 keys ×2 (en+hi real Devanagari) — parity 1546=1546.
+- QA (agent-browser): drop 2 fixtures → 2 columns (3+2 pages, stats chip, thumbnails); a11y button move (fronts→backs) ✓; undo ✓; merge run → "1 file, 5 pages" + Download; zipper run → captured blob bytes decoded: page order F1,B1,F2,B2,F3 VERIFIED; separate mode → 2 named outputs + Download all (ZIP); showWhen hides zipper/reverse in separate ✓; cross-column pointer drag (page-on-page) ✓ (fronts 3→4, backs 2→1); empty-column drag via native Playwright drag ✓ (दस्तावेज़ 3 got the page); within-column reorder via drag ✓; final merge after drag edits ✓; HI UI full (कॉलम, नया दस्तावेज़, खींचें hint, dropzone matcher); mobile 375px: no page overflow, workspace horizontal scroll; zero console/runtime errors; dev.log clean; tsc clean; eslint clean.
+- KEY QA LESSIONS: (1) consent banner (fixed inset-x-4 bottom) + short viewport can COVER page cells — CDP mouse events respect hit-testing, eval .click() doesn't; dismiss banner + big viewport before drag QA. (2) agent-browser manual mouse-move drags are flaky (stuck buttons, single-move activation = dist 0) — use `agent-browser drag @src @dst` (native Playwright) for dnd-kit verification.
+
+Stage Summary:
+- 55th TOOL live: assemble-pdf — PRD §8.1 multi-doc workspace complete (columns, drag between docs, new-doc columns, zipper merge, reverse, separate+ZIP).
+- **NEW PINNED INSIGHT — dnd-kit v6.3.1 + DragOverlay + closestCenter = cross-container drops resolve against the ACTIVE item's STATIC rect** (the overlay does not update the collision rect; over stays in the source column). FIX: no DragOverlay — the sortable cell itself follows the pointer (grid-cell pattern; lift styling z-20 scale-[1.03] shadow-xl). Verified: with overlay, cross-column drop impossible; without, works perfectly.
+- **dnd-kit useSortable transform accumulation**: the FIRST pointermove after pointerdown is CONSUMED by the distance-6 activation (no onMove) — transform stays 0 until the SECOND move. QA instrumentation must move ≥2 times before reading transforms.
+- Tool state: 55 live / 97 total | i18n 1546=1546 | fixtures public/asm-fronts.pdf + asm-backs.pdf kept for future QA rounds.
+- Next per priority queue: set-pdf-viewer-preferences (P2), then resize-image-kb (P2, exam/govt forms), then edit-pdf (Phase 8, big).

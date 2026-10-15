@@ -1,0 +1,228 @@
+import { PDFDocument } from "pdf-lib";
+
+import type { OptionValues } from "@/lib/tools/config-types";
+import type { WorkerRunRequest, WorkerResponse } from "@/lib/workers/protocol";
+import {
+  parseAssembleOption,
+  planAssemble,
+  type AsmDoc,
+  type AsmOutputMode,
+} from "./model";
+
+/**
+ * Assemble PDF — device-only worker (PRD §8.1; pdf-lib, MIT).
+ *
+ * Rebuilds the workspace columns the surface serialized into the
+ * "assemble" option, then executes the plan the SAME pure model
+ * computes (planAssemble) so preview and output can never disagree:
+ *
+ * - merge: one PDF from all columns — optionally zipper-interleaved
+ *   (front/back scans) and/or reversed
+ * - separate: one PDF per column (multi-output; the result view offers
+ *   per-file downloads plus "Download all (ZIP)")
+ *
+ * Source files load lazily and ONCE (Map), pages copy one-by-one so
+ * interleaved orders stay exact. Never touches the network.
+ */
+
+function post(response: WorkerResponse): void {
+  self.postMessage(response);
+}
+
+function sanitizeName(raw: string, fallback: string): string {
+  const cleaned = raw
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const base = cleaned.length > 0 ? cleaned.slice(0, 120) : fallback;
+  return base.toLowerCase().endsWith(".pdf") ? base : `${base}.pdf`;
+}
+
+interface ResolvedOptions {
+  mode: AsmOutputMode;
+  zipper: boolean;
+  reverse: boolean;
+  outputName: string;
+}
+
+function resolveOptions(options: OptionValues): ResolvedOptions {
+  const rawMode = String(options.outputMode ?? "merge");
+  return {
+    mode: rawMode === "separate" ? "separate" : "merge",
+    zipper: options.zipper === true,
+    reverse: options.reverse === true,
+    outputName:
+      typeof options.outputName === "string" ? options.outputName : "",
+  };
+}
+
+async function run(request: WorkerRunRequest): Promise<void> {
+  const { runId, options, files, fileIds } = request;
+  const resolved = resolveOptions(options);
+
+  const parsed = parseAssembleOption(options.assemble);
+  if (parsed === null) {
+    post({ type: "error", runId, code: "tool.errorCorrupt" });
+    return;
+  }
+
+  // Hydrate the wire format into the model shape so the SAME pure
+  // planner decides both the surface preview and this worker output.
+  const docs: AsmDoc[] = parsed.map((entry) => ({
+    id: -1,
+    name: entry.name,
+    pages: entry.pages.map(([fileId, page]) => ({
+      uid: -1,
+      fileId,
+      page,
+    })),
+  }));
+
+  const plan = planAssemble(docs, {
+    mode: resolved.mode,
+    zipper: resolved.zipper,
+    reverse: resolved.reverse,
+  });
+  if (plan.length === 0) {
+    // Safety net — the CTA is disabled before this can happen.
+    post({ type: "error", runId, code: "asm.errorNoPages" });
+    return;
+  }
+
+  // Resolve workspace file ids -> Files (positions can shift; ids don't).
+  const fileById = new Map<string, File>();
+  if (fileIds !== undefined) {
+    for (let index = 0; index < fileIds.length; index += 1) {
+      fileById.set(fileIds[index], files[index]);
+    }
+  } else {
+    for (let index = 0; index < files.length; index += 1) {
+      fileById.set(String(index), files[index]);
+    }
+  }
+  for (const doc of plan) {
+    for (const [fileId] of doc.pages) {
+      if (!fileById.has(fileId)) {
+        post({ type: "error", runId, code: "tool.errorCorrupt" });
+        return;
+      }
+    }
+  }
+
+  const totalPages = plan.reduce(
+    (sum, doc) => sum + doc.pages.length,
+    0
+  );
+  const sources = new Map<string, PDFDocument>();
+
+  const loadSource = async (fileId: string): Promise<PDFDocument> => {
+    const cached = sources.get(fileId);
+    if (cached !== undefined) return cached;
+    const file = fileById.get(fileId);
+    if (file === undefined) {
+      throw new Error("missing-file");
+    }
+    post({
+      type: "progress",
+      runId,
+      pct: 2,
+      stage: "reading",
+      detail: { pages: 1 },
+    });
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const doc = await PDFDocument.load(bytes, {
+      ignoreEncryption: false,
+      updateMetadata: false,
+    });
+    sources.set(fileId, doc);
+    return doc;
+  };
+
+  let donePages = 0;
+  const outputs: {
+    name: string;
+    mime: string;
+    blob: Blob;
+  }[] = [];
+  const usedNames = new Set<string>();
+
+  for (let docIndex = 0; docIndex < plan.length; docIndex += 1) {
+    const doc = plan[docIndex];
+    const out = await PDFDocument.create();
+
+    for (let index = 0; index < doc.pages.length; index += 1) {
+      const [fileId, pageIndex] = doc.pages[index];
+      const source = await loadSource(fileId);
+      if (pageIndex >= source.getPageCount()) {
+        post({ type: "error", runId, code: "tool.errorInvalidPages" });
+        return;
+      }
+      const [copied] = await out.copyPages(source, [pageIndex]);
+      out.addPage(copied);
+
+      donePages += 1;
+      post({
+        type: "progress",
+        runId,
+        pct: Math.round(4 + (donePages / totalPages) * 90),
+        stage: "processing",
+        detail: { page: donePages, pages: totalPages },
+      });
+    }
+
+    if (doc.pages.length > 0) {
+      post({
+        type: "progress",
+        runId,
+        pct: 95,
+        stage: "saving",
+        detail: { page: docIndex + 1, pages: plan.length },
+      });
+    }
+
+    const saved = await out.save({ useObjectStreams: true });
+
+    // Merge mode keeps the typed output name; columns keep their own.
+    let name: string;
+    if (resolved.mode === "merge") {
+      const fallback = `${plan[0].name.slice(0, 100)}-assembled`;
+      name = sanitizeName(resolved.outputName, fallback);
+    } else {
+      name = sanitizeName(doc.name, `document-${docIndex + 1}`);
+    }
+    if (usedNames.has(name)) {
+      let counter = 2;
+      let candidate = name.replace(/\.pdf$/i, "");
+      while (usedNames.has(`${candidate} ${counter}.pdf`)) counter += 1;
+      name = `${candidate} ${counter}.pdf`;
+    }
+    usedNames.add(name);
+
+    outputs.push({
+      name,
+      mime: "application/pdf",
+      blob: new Blob([saved as unknown as BlobPart], {
+        type: "application/pdf",
+      }),
+    });
+  }
+
+  post({
+    type: "result",
+    runId,
+    outputs,
+    detail: { files: outputs.length, pages: totalPages },
+  });
+}
+
+self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
+  const data = event.data;
+  if (data?.type !== "run") return;
+  run(data).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = /encrypt/i.test(message)
+      ? "tool.errorEncrypted"
+      : "tool.errorCorrupt";
+    post({ type: "error", runId: data.runId, code, detail: undefined });
+  });
+};

@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P4.4 ke baad — worker image-render FIX + TIFF/SVG to PDF shipped + pdf-lib drawImage bug FIXED — **54 tools live**.
+> **Updated:** P4.5 ke baad — Assemble PDF (multi-doc columns workspace) shipped — **55 tools live**.
 
 ---
 
@@ -12,8 +12,8 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **54** ✅ |
-| Pending (Coming Soon) | **43** ⏳ |
+| **Ready to use (LIVE)** | **55** ✅ |
+| Pending (Coming Soon) | **42** ⏳ |
 | Phase | 3/4 (tools one-by-one) IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
@@ -23,10 +23,11 @@
 
 ---
 
-## ✅ 54 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 55 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
-### 🗂️ Organize (11/12)
+### 🗂️ Organize (12/12) — CATEGORY COMPLETE
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
+- ✅ Assemble PDF (`assemble-pdf`) — P4.5: multi-doc COLUMNS, pages drag karke dusre doc me, new-doc columns, zipper merge (front/back scans), reverse, per-column rename/reverse/clear/delete, undo/redo, separate+ZIP
 - ✅ Split PDF (`split-pdf`) — ranges / every-N / size / visually
 - ✅ Rotate PDF pages (`rotate-pdf-pages`)
 - ✅ Rearrange PDF pages (`rearrange-pdf-pages`) — drag + keyboard
@@ -98,15 +99,14 @@
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Assemble PDF** (`assemble-pdf`) — multi-document drag workspace, zipper merge
-2. **Set viewer preferences** (`set-pdf-viewer-preferences`)
-3. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
-4. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
-5. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
-6. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
-7. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
+1. **Set viewer preferences** (`set-pdf-viewer-preferences`)
+2. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
+3. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
+4. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
+5. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
+6. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -209,7 +209,18 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 
 ## 📝 Session Log (naya kaam yahan append karo)
 
-### P4.4 (latest) — Worker image-render FIX + TIFF/SVG to PDF ✅ 2 TOOLS + pdf-lib bug FIX
+### P4.5 — Assemble PDF ✅ 55th TOOL
+- **PRD §8.1** "Multiple documents ek hi screen me, columns ki tarah; pages ek document se doosre me drag; new document column; sabko alag save ya merge; zipper merge (front/back scans), reverse, save all as ZIP" — complete from scratch.
+- `model.ts` PURE (31/31 smoke): AsmDoc columns + AsmPageRef, transferPage/movePageWithinDoc/deletePages/reverseDocPages, **planAssemble** (merge concat / zipper round-robin / reverse / separate — surface + worker SAME planner), serializeAssemble wire format, dropFilePages (user-created empty columns ko bachata hai).
+- `worker.ts` (22/22 bun smoke — page provenance via distinctive widths): sources lazily load ONCE per fileId, per-page copyPages exact interleave F1,B1,F2,B2,F3 real output bytes se verified; separate = multi-output (shell ZIP free); name dedupe.
+- `surface.tsx`: files→columns (StrictMode-safe known-set), New-document column, per-column rename/reverse/clear/delete, lazy IO thumbnails (128px), undo/redo, a11y ←/→ cross-column buttons (44px), droppable empty bodies, options mirror effect + cta gating (ctaNoPages/ctaReading).
+- Wiring: registry enabled (55 live) + configs + surfaces; i18n asm.* 26 keys ×2 — 1546=1546.
+- QA: EN+HI, drags (cross-column page-on-page, empty-column native drag, within-column reorder, a11y buttons), undo, zipper bytes verified, separate 2 outputs + ZIP button, mobile 375px no-overflow, zero errors, tsc/lint clean.
+- **⚠️ NEW dnd-kit INSIGHT (pin kiya): DragOverlay + closestCenter = cross-container drops ACTIVE item ke STATIC rect se resolve hote hain — overlay collision rect update NAHI karta. FIX: DragOverlay mat use karo; sortable khud pointer follow kare (grid-cell pattern, z-20 scale lift styling).**
+- **dnd-kit transform gotcha: pehla pointermove distance-6 activation me CONSUME hota hai — transform tab tak 0 jab tak dusra move na aaye (QA instrumentation me ≥2 moves zaroori).**
+- QA recipe: consent banner (fixed bottom) + short viewport page cells ko COVER kar sakte hain — drag QA se pehle banner dismiss + viewport bada karo; manual mouse-move drags flaky (stuck buttons) — `agent-browser drag @src @dst` (native) use karo. Fixtures public/ me rakhe: asm-fronts.pdf (3 pages) + asm-backs.pdf (2 pages).
+
+### P4.4 — Worker image-render FIX + TIFF/SVG to PDF ✅ 2 TOOLS + pdf-lib bug FIX
 - **P4.3 ka flagged risk resolve hua:** worker-side pdf.js image-based PDFs blank render — 5 tools affected the (ocr-pdf, pdf-to-jpg/png, rasterize, copy-from-pdf OCR, compress-to-size raster).
 - **Root cause (minified source se verify):** `getDocument` transport `canvasFactory: new DOMCanvasFactory({ownerDocument})` banata hai (pdf.min.mjs @182608) → render task `CanvasGraphics` → `CachedCanvases.getCanvas()` → `_createCanvas` → `this._document.createElement("canvas")` (@174658). Purana worker shim sirf `{baseURI}` tha → image pages pe createElement missing → pdf.js image draw SILENTLY skip → blank canvas, koi error nahi.
 - **Fix:** `tools/pdfjs-common/worker-lib.ts` — `workerDocumentShim()` (baseURI + createElement→OffscreenCanvas + documentElement stub) + har getDocument mein explicit `ownerDocument`.

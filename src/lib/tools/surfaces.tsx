@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 
 import type { ToolSurfaceProps } from "./panel-types";
 import { GridSurface } from "../../../tools/pagegrid/grid-surface";
+import { AssembleSurface } from "../../../tools/assemble-pdf/surface";
 import { ImageGridSurface } from "../../../tools/imagegrid/image-grid-surface";
 import { WatermarkSurface } from "../../../tools/add-watermark/wm-surface";
 import { StampSurface } from "../../../tools/stamp-common/stamp-surface";
@@ -72,6 +73,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "rearrange-pdf-pages": RearrangeGridSurface,
   "remove-pdf-pages": RemoveGridSurface,
   "extract-pdf-pages": ExtractGridSurface,
+  "assemble-pdf": AssembleSurface,
   "images-to-pdf": ImageGridSurface,
   "jpg-to-pdf": ImageGridSurface,
   "png-to-pdf": ImageGridSurface,

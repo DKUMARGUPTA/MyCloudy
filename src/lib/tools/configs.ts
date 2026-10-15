@@ -1,6 +1,7 @@
 import type { ToolConfig } from "@/lib/tools/config-types";
 import { config as rotatePdfPages } from "../../../tools/rotate-pdf-pages/config";
 import { config as mergePdf } from "../../../tools/merge-pdf/config";
+import { config as assemblePdf } from "../../../tools/assemble-pdf/config";
 import { config as splitPdf } from "../../../tools/split-pdf/config";
 import { config as rearrangePdfPages } from "../../../tools/rearrange-pdf-pages/config";
 import { config as removePdfPages } from "../../../tools/remove-pdf-pages/config";
@@ -64,6 +65,7 @@ import { config as makePdfFillable } from "../../../tools/make-pdf-fillable/conf
 export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [rotatePdfPages.toolId]: rotatePdfPages,
   [mergePdf.toolId]: mergePdf,
+  [assemblePdf.toolId]: assemblePdf,
   [splitPdf.toolId]: splitPdf,
   [rearrangePdfPages.toolId]: rearrangePdfPages,
   [removePdfPages.toolId]: removePdfPages,

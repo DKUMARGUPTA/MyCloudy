@@ -401,6 +401,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Copy,
     popularity: 20,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Assemble PDF", hi: "पेज इकट्ठा करें" },
     description: {
       en: "Multi-document workspace: drag pages between files, zipper merge.",
