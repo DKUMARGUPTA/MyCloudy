@@ -1912,6 +1912,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Scaling,
     popularity: 46,
     accepts: "image",
+    enabled: true,
     name: { en: "Resize image to KB", hi: "फ़ोटो साइज़ KB में" },
     description: {
       en: "Photo + signature under 100/200 KB for exam and government forms.",

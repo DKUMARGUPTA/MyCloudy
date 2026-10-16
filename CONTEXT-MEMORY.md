@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P4.6 ke baad — Set viewer preferences (layout/zoom/fullscreen/window) shipped — **56 tools live**.
+> **Updated:** P4.7 ke baad — Resize image to KB (exam/govt forms photo+signature) shipped — **57 tools live**.
 
 ---
 
@@ -12,8 +12,8 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **56** ✅ |
-| Pending (Coming Soon) | **41** ⏳ |
+| **Ready to use (LIVE)** | **57** ✅ |
+| Pending (Coming Soon) | **40** ⏳ |
 | Phase | 3/4 (tools one-by-one) IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
@@ -23,7 +23,7 @@
 
 ---
 
-## ✅ 56 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 57 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (12/12) — CATEGORY COMPLETE
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -87,26 +87,26 @@
 - ✅ PDF to JPG (`pdf-to-jpg`) · ✅ PDF to PNG (`pdf-to-png`) · ✅ PDF to Text (`pdf-to-txt`)
 - ✅ Universal converter (`convert-from-pdf`) — smart routing surface
 
-### 🖼️ Image Tools (4/6) — P3.18 NAYA!
+### 🖼️ Image Tools (5/6) — P3.18 NAYA!
 - ✅ HEIC to JPG (`heic-to-jpg`) — iPhone photos, har browser mein
 - ✅ HEIC to PNG (`heic-to-png`) — lossless
 - ✅ WEBP to JPG (`webp-to-jpg`) — alpha flattening + quality
 - ✅ WEBP to PNG (`webp-to-png`) — transparency preserved
-- ⏳ resize-image-kb (P2), passport-photo (P3)
+- ✅ Resize image to KB (`resize-image-kb`) — P4.7: exam/govt forms — 20/50/100/200/500 KB/custom target, JPEG quality binary-search + ×0.8 dim ladder (120px floor), PNG dim ladder, passthrough, honest amber miss chip, JPG/PNG/WEBP/HEIC/GIF/BMP input
+- ⏳ passport-photo (P3)
 
 ---
 
-## ⏳ 41 PENDING TOOLS (Kaam baki hai)
+## ⏳ 40 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Resize image to KB** (`resize-image-kb`) — exam/govt forms ke liye under 100/200KB
-2. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
-3. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
-4. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
-5. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
+1. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
+2. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
+3. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
+4. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -202,12 +202,24 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - **⚠️ pdf-lib `drawImage` SILENTLY IGNORES `w`/`h` — sirf `width`/`height` accept karta hai (P4.4 bug):** imagegrid worker `page.drawImage(img, {...box})` spread kar raha tha jahan box = {x,y,w,h} — pdf-lib w/h ko IGNORE karta hai aur image ko NATIVE PIXEL SIZE pe draw karta hai (1697px SVG raster = 1697pt = 2.3 A4 pages, page ke bahar clip!). Chhote test images pe visually theek dikhta tha (300px photo = 300pt = page ke andar) isliye pakda nahi gaya. FIX: `{x: box.x, y: box.y, width: box.w, height: box.h}`. **RULE: pdf-lib draw calls mein kabhi spread mat karo — explicit width/height likho.** (rasterize/compress-to-size already sahi the — sirf imagegrid affected)
 - **SVG in workers IMPOSSIBLE without WASM (P4.4):** Chrome/Firefox `createImageBitmap` SVG blobs reject karta hai ("The source image could not be decoded") — direct verify kiya. SOLUTION: **main-thread raster** — Image element + canvas drawImage (SVG vector ko DRAWN SIZE pe raster karta hai, crisp) + `collectAssets` bridge (add-watermark logo-store pattern): surface card preview ke dauraan rasterize → store (Map keyed name:size:mtime) → config ka collectAssets run-time pe File[] deta hai → worker k-th SVG file ↔ k-th asset pairing. Natural dims side-car `svg-dims.json` manifest (LAST asset) — "fit" pages graphic ke apne 96-DPI size pe, upscaled raster pe NAHI. Pending gate: useSyncExternalStore + pending counter → CTA blocked (igrid.svgRasterizing).
 - **Streaming open-blocks algorithm (P4.3):** side-by-side columns wale pages pe paragraphs group karne ke liye — lines reading order mein aati hain, har line newest-open-block se match hoti hai (tight leading + x-overlap ≥25% + size ratio ≤1.35), bullet lines hamesha naya block, wrapped bullet continuation sirf indent-check se. Columns kabhi cross nahi hote, reading order banta rehta hai.
+- **Worker bundle hygiene (P4.7):** shared helper se sirf ek chhota function chahiye to TRANSITIVE DEPS check karo — `compress-common/recompress.ts` se `committedJpegBlob` import karna pdf-lib + engine graph worker bundle mein kheench lata. 20-line guard inline karna better hai jab function chhota ho. Lekin PURE logic (engine.ts) hamesha shared rahe — wo test hota hai.
+- **KB-targeting ladder recipe (P4.7):** size-first, quality-second — har dim step pe quality binary search (monotone size(q)), hope-less steps sirf 1 probe se skip; canvas-commit guard HAR encode pe (blank JPEG budget mein "fit" ho ke silently jeet jata — corrupt output user ko milta); passthrough same-format already-under; floor miss = smallest + targetHit:false amber.
 - **Remount-detection-kicker:** effects jo `[files.length]` pe keyed hain mount pe fire hote hain
 - **Cancel path:** worker pool instant terminate + OPFS cleanup — 600 DPI 400-page run pe 6% pe catch verified
 
 ---
 
 ## 📝 Session Log (naya kaam yahan append karo)
+
+### P4.7 — Resize image to KB ✅ 57th TOOL
+- **PRD §7.10** "Photo + signature under 100/200 KB for exam and government forms" — scratch se bana (P4.5/P4.6 pattern: engine PURE + worker + config).
+- `tools/resize-image-kb/` — **engine.ts** PURE (resolveTargetBytes presets+custom clamp 10–5000KB, capDimensions maxDim+40MP floor, dimLadder ×0.8 steps + exact 120px floor landing, searchQuality monotone binary search q∈[0.30,0.92]) + **worker.ts** (JPG/PNG/WEBP/GIF/BMP native decode + HEIC libheif; JPEG ladder = per-dim-step quality binary search, PNG ladder = dims only; **canvas-commit guard HAR encode pe** (committedJpeg/committedPng inline — compress-common import pdf-lib kheenchta, isliye 20-line inline copy); passthrough same-format already-under; honest targetHit miss) + **config.ts** (target 20/50/100/200/500/custom + customKB showWhen + format jpeg/png + maxDim 0/1200/800/600/400/240).
+- **ZERO new i18n keys** (inline L10n + existing imgc.how/result chips/tool.images errors) — parity 1546=1546.
+- **Smoke 49/49 GREEN** (`scripts/smoke-resize-image-kb.ts`): target math, clamps, 40MP, ladder shape (240→192→154→123→120), tiny single-step, searchQuality edges (MAX/None/floor/no-reprobe), ladder contract (hopeless-step skip + honest miss).
+- **QA (agent-browser)**: EN landing/workspace/result; **byte-verified downloads** — 1.07MB noisy photo → 47,589B ≤ 50KB (1280×960, stddev 30.5 = real content, JPEG magic) + exam combo custom-20KB+maxDim-240 → 6,321B @ exactly 240×180; PNG signature passthrough (2.3KB untouched); honest miss (photo+PNG+10KB → amber "Target not reached" + smallest 16KB); HEIC fixture decode → jpg; corrupt file → HI error toast + filename; HI full run (Devanagari filename फ़ोटो-टेस्ट-resized.jpg); mobile 375px overflowX=0; 90 requests sab localhost; zero console errors.
+- **Shared a11y fix**: result-view rename button 32px → `size-11 md:size-8` (44px touch target mobile pe, har tool ke result screen pe).
+- Registry: 97 total / **57 enabled** / 40 pending. tsc clean, eslint clean, dev.log clean.
+- Live: 56 → **57** | Next queue: edit-pdf (Phase 8, big), phir annotate-pdf
 
 ### P4.6 — Set viewer preferences ✅ 56th TOOL
 - **PRD §8.5** "Viewer preferences: Initial page layout, zoom, window title show, hide toolbars, fullscreen" — no ready files thi, scratch se bana (P4.5 assemble pattern).

@@ -3067,3 +3067,38 @@ Stage Summary:
 - Tool state: 56 live / 97 total | i18n 1546=1546 | tsc + eslint + dev.log clean.
 - Next per priority queue: resize-image-kb (P2, exam/govt forms — under
   100/200KB), then edit-pdf (Phase 8, big — 6 sub-phases).
+
+---
+Task ID: P4.7
+Agent: main orchestrator (Z.ai Code)
+Task: Wire the next queue tool: resize-image-kb (PRD §7.10 — "Photo + signature under 100/200 KB for exam and government forms"). Note: the incoming stale summary asked for rasterize-pdf + make-pdf-fillable wiring, but CONTEXT-MEMORY.md confirmed P4.2 already shipped both (50th/51st tools, enabled:true verified in registry.ts + configs.ts) — the session continued with the REAL next queue item instead.
+
+Work Log:
+- Read CONTEXT-MEMORY.md (56 live / 97 total, P4.6 done) + verified rasterize-pdf & make-pdf-fillable enabled:true + present in configs.ts.
+- Studied architecture: config-types.ts (OptionField/ShowWhen), convert-image/worker.ts (HEIC/WebP decode recipe), compress-pdf-to-size (target ladder + honest targetHit chip already shared in result-view), heic-decode.ts, DropZone image sniffing, registry/configs wiring points, merge-overlay-i18n.ts precedent.
+- Built tools/resize-image-kb/ from scratch:
+  - engine.ts PURE — resolveTargetBytes (presets 20/50/100/200/500KB + custom clamp 10–5000KB, fallback 100KB), capDimensions (maxDim cap never-upscale + 40MP aspect-preserving floor), dimLadder (original → ×0.8 steps → exact 120px long-side floor landing; tiny images single step), searchQuality (monotone binary search over quality ∈ [0.30, 0.92], ≤8 probes, no-reprobe guarantee).
+  - worker.ts — magic-byte sniff (JPEG/PNG/WEBP/GIF/BMP/HEIC + MIME fallback), decode (native createImageBitmap with imageOrientation:"from-image"; HEIC via libheif WASM), JPEG ladder = per-dimension-step quality binary search with per-canvas blob cache; PNG ladder = dimension steps only (no quality knob); canvas-commit guard on EVERY encode (inline committedJpeg/committedPng — importing compress-common would drag pdf-lib into the worker bundle); same-format already-under-budget passthrough (original bytes untouched); honest miss = smallest attempt + targetHit:false; names deduped -resized.jpg/png; progress detail {page, pages}.
+  - config.ts — target/customKB (showWhen) / format jpeg|png / maxDim 0/1200/800/600/400/240; 5 features + 3 FAQ inline L10n; chainToolIds images-to-pdf/convert-to-pdf/jpg-to-pdf; howKeys imgc.how1-3.
+- scripts/smoke-resize-image-kb.ts (bun, pure engine): 49/49 GREEN — target math + clamps (min/max/NaN/unknown preset), capDimensions (no upscale, aspect, 40MP floor, maxDim-before-40MP), ladder shapes (240→192→154→123→120 exact-floor landing, tiny single-step, strictly shrinking ≥1px), searchQuality edges (ceiling single probe, null when impossible, floor-only, band accuracy, no re-probes), ladder contract (hopeless-step skip, fit-two-down, honest miss with legibility floor).
+- Wiring: registry.ts resize-image-kb def enabled:true; configs.ts import + TOOL_CONFIGS entry. ZERO new i18n keys (1546=1546 parity re-verified; imgc.how1-3 / result.underTarget / result.targetMissed / tool.images.* errors all pre-exist).
+- QA via agent-browser (hash route #/tool/resize-image-kb):
+  - EN landing (breadcrumb Image tools →, H1, dropzone, How it works, FAQ accordion, What you get) → workspace (options panel, run CTA).
+  - 1.07MB noisy photo (PIL fixture public/qa/rikb-photo.jpg) + 50KB target → "Under your target size" green chip, 1.0 MB → 46 KB (96% smaller); DOWNLOAD byte-verified: 47,589 B ≤ 51,200, JPEG magic ffd8ffe0, 1280×960 (ladder ×0.64 step), grayscale stddev 30.53 (real content — canvas-commit guard held), center pixel = fixture's purple ellipse.
+  - Exam combo: custom 20KB + maxDim 240px → 6,321 B @ exactly 240×180, real content.
+  - PNG signature passthrough: 2,324 B in = 2.3 KB out untouched (same format + already under).
+  - Honest miss: photo + custom 10KB + PNG → amber "Target not reached — this is the smallest this file gets on-device", smallest 16KB attempt shipped.
+  - HEIC fixture (public/qa/rikb-heic.heic) → decoded via libheif → qa-heic-resized.jpg, green chip.
+  - Corrupt bytes with lying MIME: passed DropZone sniff (file.type fast-path — expected), WORKER magic re-check caught it → HI destructive toast "fake.jpg डिकोड नहीं हो सकी…" (errorDecode + filename), zero console errors.
+  - HI full run: options/workflow/result in Devanagari, output filename फ़ोटो-टेस्ट-resized.jpg preserved.
+  - Mobile 375×812: overflowX=0; touch-target audit found shared result-view rename button at 32px → FIXED size-11 md:size-8 (44px on mobile, all tools benefit) → re-audit clean.
+  - 90 resource entries, zero external requests; console errors [] throughout.
+- Final: bunx tsc --noEmit clean; bun run lint clean; dev.log clean HTTP 200.
+- Updated CONTEXT-MEMORY.md (57 live / 40 pending, Image Tools 5/6, P4.7 session log, 2 new technical insights) + this worklog entry.
+
+Stage Summary:
+- 57th TOOL live: resize-image-kb — PRD §7.10 complete (target sizes with custom clamp, JPEG quality binary-search ladder + ×0.8 dimension fallback to 120px floor, PNG transparency path, multi-input up to 10 files, HEIC/GIF/BMP input support, honest amber miss chip, byte-verified outputs).
+- Pinned insights: (1) importing a small helper from a shared module can transitively drag heavy deps (pdf-lib) into a worker bundle — inline tiny guards, keep only PURE logic shared; (2) synthetic File with a lying MIME passes the DropZone fast-path — the worker's magic-byte re-check is the real defense (test it, don't trust the sniff); (3) Hindi workspace clear-all button text is "सब हटाएँ" (not सभी).
+- Shared a11y fix: result-view rename touch target 32px → 44px on mobile (every tool's result screen).
+- Tool state: 57 live / 97 total / 40 pending | i18n 1546=1546 | smoke 49/49 | tsc + eslint + dev.log clean.
+- Next per priority queue: edit-pdf (Phase 8, big — 6 sub-phases), then annotate-pdf.
