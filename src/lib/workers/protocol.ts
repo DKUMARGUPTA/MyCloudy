@@ -37,6 +37,10 @@ export interface RunDetail {
   targetHit?: boolean;
   /** Form fields added to the output (make-pdf-fillable). */
   fields?: number;
+  /** Editor objects drawn into the output (edit-pdf). */
+  objects?: number;
+  /** Embedded image assets in the output (edit-pdf). */
+  images?: number;
 }
 
 export interface ToolOutput {

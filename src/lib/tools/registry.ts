@@ -508,6 +508,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: PenLine,
     popularity: 90,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Edit PDF", hi: "पीडीएफ़ एडिट करें" },
     description: {
       en: "Word-style editor: text, images, shapes, whiteout and annotations.",

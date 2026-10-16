@@ -99,6 +99,9 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   // Viewer tools (PRD §6.5) never process anything: no run CTA, no options
   // aside, no processing/result phases — the workspace surface IS the tool.
   const viewerOnly = config.viewerOnly === true;
+  // Full-width surfaces (Edit PDF editor) keep the run pipeline but own
+  // their whole layout — no options aside / sheet, CTA stays.
+  const fullWidth = config.fullWidthSurface === true;
   // No-file tools (Generate Password family) render their surface directly
   // on the landing in place of the DropZone — nothing is ever uploaded.
   const noFile = config.noFile === true;
@@ -668,7 +671,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           <div
             className={cn(
               "mt-4 grid grid-cols-1 gap-6",
-              !surfaceOnly && "lg:grid-cols-[minmax(0,1fr)_320px]"
+              !surfaceOnly && !fullWidth && "lg:grid-cols-[minmax(0,1fr)_320px]"
             )}
           >
             {/* Main column: the surface owns file presentation when one is
@@ -710,7 +713,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                 Height budget: sticky header (top-20) + sticky CTA bar at the
                 bottom — so the panel never slides under the CTA bar.
                 Viewer tools have no options panel — full-width surface. */}
-            {!surfaceOnly ? (
+            {!surfaceOnly && !fullWidth ? (
             <aside className="hidden lg:block">
               <div className="sticky top-20 mb-20 flex max-h-[calc(100vh-11.5rem)] flex-col gap-5 overflow-y-auto scrollbar-thin rounded-card border border-border bg-card p-5">
                 <div>
@@ -792,6 +795,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                 size="touch"
                 className="rounded-btn lg:hidden"
                 onClick={() => setOptionsOpen(true)}
+                hidden={fullWidth}
               >
                 {t("tool.optionsButton")}
               </Button>
@@ -809,7 +813,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           </div>
           ) : null}
 
-          {!surfaceOnly ? (
+          {!surfaceOnly && !fullWidth ? (
           <BottomSheet
             open={optionsOpen}
             onOpenChange={setOptionsOpen}

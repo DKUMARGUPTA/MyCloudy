@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P4.7 ke baad — Resize image to KB (exam/govt forms photo+signature) shipped — **57 tools live**.
+> **Updated:** P8.1 ke baad — Edit PDF (flagship editor v1: shell + objects + export) shipped — **58 tools live**.
 
 ---
 
@@ -12,18 +12,18 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **57** ✅ |
-| Pending (Coming Soon) | **40** ⏳ |
-| Phase | 3/4 (tools one-by-one) IN PROGRESS |
+| **Ready to use (LIVE)** | **58** ✅ |
+| Pending (Coming Soon) | **39** ⏳ |
+| Phase | 3/4 (tools one-by-one) + Phase 8 editor IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1546 = 1546 keys parity) |
+| i18n | English + हिंदी (1634 = 1634 keys parity) |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 57 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 58 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (12/12) — CATEGORY COMPLETE
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -39,7 +39,8 @@
 - ✅ Extract images (`extract-images`) — embedded PNG/JPG, dedupe, min-size filter, ZIP/PNG/JPG
 - ✅ Copy from PDF (`copy-from-pdf`) — P4.3: click-to-select paragraphs (columns/tables split, headings+bullets), clipboard copy Text/Markdown/CSV, run exports .txt/.md with auto-OCR (P4.4: image-scan OCR bhi fixed — niche pdfjs-common insight dekho)
 
-### ✏️ Edit (9/11)
+### ✏️ Edit (10/11)
+- ✅ **Edit PDF (`edit-pdf`) — P8.1: FLAGSHIP EDITOR v1 live!** Text (4 fonts + Devanagari, B/I/U, align, colors, bg), images (upload + aspect resize), shapes (rect/ellipse/line/arrow + fill/stroke/dash), freehand draw, whiteout, signature pad, select/move/resize, z-order + lock/hide, properties + layers panels, context menu, coalesced undo/redo, full keyboard, zoom, export worker (rotation-compensated text, embedded fonts, DCTDecode image passthrough)
 - ✅ Fill out PDF forms (`fill-out-pdf`) — AcroForm scan, auto-fill profile (name/email/phone/address), Hindi Devanagari support, flatten switch
 - ✅ Make PDF fillable (`make-pdf-fillable`) — P4.2: auto-detect (underlines/boxes/checkbox squares) + manual drag-draw + rename/type-edit + AcroForm export
 - ✅ Add watermark (`add-watermark`) — text/logo, opacity, tiling
@@ -97,16 +98,16 @@
 
 ---
 
-## ⏳ 40 PENDING TOOLS (Kaam baki hai)
+## ⏳ 39 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Edit PDF** (`edit-pdf`) — Word-style editor (Phase 8 mein 6 sub-phases, bada hai!)
-2. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky
+1. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky (editor core reuse)
+2. **Edit PDF sub-phase 8.3** — existing text edit (whiteout+replace, font matching)
 3. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
 4. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -198,6 +199,9 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - **Agent-browser upload flaky:** CDP setFileInputFiles wale Files DropZone clear hone ke baad UNREADABLE ho jate hain — recipe: public/ se fetch karke synthetic `DragEvent('drop')` + DataTransfer bhejo. **Label matcher DONO languages ke liye rakho** — `l.textContent.includes('फ़ाइलें यहाँ') || l.toLowerCase().includes('drop files here')` — warna HI UI pe drop silently fail.
 - **agent-browser click flaky** re-rendered React buttons pe — `eval .click()` + delayed reads use karo; toasts ke liye MutationObserver lagao
 - **⚠️ pdf.js `convertToViewportPoint` returns ARRAY `[x, y]`, object NAHI (v4.10.38)!** `.x`/`.y` access = undefined = NaN geometry (P4.3 mein copy-from-pdf ke paragraphs isliye merge nahi ho rahe the). FIX: `viewport.transform` matrix `[a,b,c,d,e,f]` khud apply karo: `x' = a*x + c*y + e; y' = b*x + d*y + f`. Fully typed, no runtime shape guessing.
+- **⚠️ HMR DUAL-INSTANCE TRAP (P8.1): mid-QA edits se asset-store ka DUAL module instance ban sakta hai — surface NAYE instance mein setRunOrder karta hai, STALE config ke collectRunAssets PURANE (khaali) se padhta hai. Symptom: blob mein assetOrder sahi par run mein assets:0. FIX: full `reload` (production mein single instance — dev-only ghost). Mid-QA store→worker pairing edit ke baad hamesha fresh reload se re-verify karo.**
+- **⚠️ agent-browser synthetic PointerEvents (P8.1): pointerdown + pointerup SAME TICK mein dispatch karne se gesture state stale rehti hai (move handler ka closure purana dekhta hai). RECIPE: down → 150ms wait → move(s) → up. Real users ko ye problem nahi (React events ke beech re-render flush hota hai).**
+- **⚠️ pdf-lib output byte-audit (P8.1): show-text ops HEX strings mein likhe jaate hain (`<45646974...> Tj`) + content streams Flate-compressed hain — raw string search kaam NAHI karta. RECIPE: node:zlib inflateSync(stream.contents) karke hex compare karo (`Buffer.from("text").toString("hex")`), image dict entries (/Subtype /Image, /DCTDecode) stream-dict plain hone se RAW bytes mein milte hain.**
 - **✅ RESOLVED (P4.4): WORKER-SIDE pdf.js IMAGE-PDF BLANK RENDER:** P4.3 mein discover hua tha — image-based PDFs (JPEG scans) worker mein render karne pe BLANK milta tha (ocr-pdf conf 0, pdf-to-jpg blank JPGs). **Root cause: pdf.js ka `DOMCanvasFactory._createCanvas` image pages pe `document.createElement("canvas")` call karta hai (pdf.min.mjs @174658 + CachedCanvases render path)** — purana worker shim sirf `{baseURI}` tha, `createElement` missing → pdf.js image draw silently skip → blank canvas. **Fix: `tools/pdfjs-common/worker-lib.ts`** — `workerDocumentShim()` (createElement → OffscreenCanvas + documentElement stub) + har `getDocument` mein `ownerDocument: workerDocumentShim()`. **P4.4 mein SAARE 10 pdf.js-using workers migrated**: rasterize, compare (pehle se), ocr-pdf, copy-from-pdf, pdf-to-images, compress-pdf-to-size, redact-pdf, pdf-to-txt, search-pdf, extract-images. **QA verified:** ocr-pdf scan → conf 95 + searchable text correct; pdf-to-jpg scan → 1240×1754 non-blank; rasterize scan → JPEG-embedded; copy-from-pdf scan → OCR .txt verbatim; compress-to-size raster ladder error-free + non-blank (logical proof: blank JPEGs tiny hote, structural jeet gaya = raster content real tha). Text-PDF passthrough regression bhi PASS. **Naya rule: koi bhi tool worker mein pdf.js use kare → `loadPdfjsInWorker` + `workerDocumentShim()` from `../pdfjs-common/worker-lib` + `ownerDocument` param — inline loader KABHI mat likho.**
 - **⚠️ pdf-lib `drawImage` SILENTLY IGNORES `w`/`h` — sirf `width`/`height` accept karta hai (P4.4 bug):** imagegrid worker `page.drawImage(img, {...box})` spread kar raha tha jahan box = {x,y,w,h} — pdf-lib w/h ko IGNORE karta hai aur image ko NATIVE PIXEL SIZE pe draw karta hai (1697px SVG raster = 1697pt = 2.3 A4 pages, page ke bahar clip!). Chhote test images pe visually theek dikhta tha (300px photo = 300pt = page ke andar) isliye pakda nahi gaya. FIX: `{x: box.x, y: box.y, width: box.w, height: box.h}`. **RULE: pdf-lib draw calls mein kabhi spread mat karo — explicit width/height likho.** (rasterize/compress-to-size already sahi the — sirf imagegrid affected)
 - **SVG in workers IMPOSSIBLE without WASM (P4.4):** Chrome/Firefox `createImageBitmap` SVG blobs reject karta hai ("The source image could not be decoded") — direct verify kiya. SOLUTION: **main-thread raster** — Image element + canvas drawImage (SVG vector ko DRAWN SIZE pe raster karta hai, crisp) + `collectAssets` bridge (add-watermark logo-store pattern): surface card preview ke dauraan rasterize → store (Map keyed name:size:mtime) → config ka collectAssets run-time pe File[] deta hai → worker k-th SVG file ↔ k-th asset pairing. Natural dims side-car `svg-dims.json` manifest (LAST asset) — "fit" pages graphic ke apne 96-DPI size pe, upscaled raster pe NAHI. Pending gate: useSyncExternalStore + pending counter → CTA blocked (igrid.svgRasterizing).
@@ -210,6 +214,16 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 ---
 
 ## 📝 Session Log (naya kaam yahan append karo)
+
+### P8.1 — Edit PDF flagship editor v1 ✅ 58th TOOL (sub-phases 8.1+8.2+8.5)
+- **PRD §8.2.1** "Word-style editor" ka v1: shell + objects + export (scratch se — koi ready file nahi thi).
+- `tools/edit-pdf/`: model.ts PURE (EditorObject union × 8 kinds, PageView transforms ×4 rotations, factories, normaliseDraw, resizeRect aspect, z-order, snapshot history, greedy wrapText hard-break ke saath, wire sanitizer) + asset-store.ts (JPG/PNG decode-probe passthrough, WEBP/HEIC→PNG re-encode, ≤4096px, setRunOrder↔collectRunAssets pairing) + worker.ts (pdf-lib export: rotation-compensated text via degrees(/Rotate) + bilinear corner interpolation, fonts stamp-common + italic variants, DCTDecode image passthrough, open arrowheads) + surface.tsx (pointer machinery, inline textarea editing, sign pad, properties/layers/context-menu, coalescing undo/redo 800ms, keyboard, 500-page guard) + editor-parts.tsx (presentational chrome).
+- **NEW ToolConfig flag `fullWidthSurface`** — options aside skip karo par run CTA rakho (viewerOnly run maar deta hai; ye nahi). ToolShell mein 4-line additive change.
+- i18n 88 keys ×2 (1634=1634). Smoke **48/48 GREEN** (`scripts/smoke-edit-pdf.ts` — REAL worker module bun self-shim + fetch shim for deva TTF).
+- **4 bugs QA ne pakde & fix kiye:** (1) wrapText hard-break unconditional-accept; (2) move double-count (disp.x + (pos−grab) → pos−grab); (3) setRunOrder commit mein missing — assets worker tak pahunchte hi nahi the (end-to-end byte-verify ne pakda: images:0 despite objects); (4) corrupt image ab add-time pe hi honest toast.
+- QA: EN+HI, text hex-verified exact position pe, green fill output mein, 2000×1500 JPG DCTDecode embedded, sign pad, whiteout/arrow ops, undo/redo, layers hide/show, keyboard (t/Delete/Ctrl+Z), context menu, passthrough, corrupt-image toast, mobile 375px overflowX=0 stacked layout, console clean, ZERO external requests.
+- Registry: 97 total / **58 enabled** / 39 pending. tsc clean, eslint clean, dev.log clean.
+- Live: 57 → **58** | Next queue: annotate-pdf (editor core reuse), ya edit-pdf 8.3 (existing text edit)
 
 ### P4.7 — Resize image to KB ✅ 57th TOOL
 - **PRD §7.10** "Photo + signature under 100/200 KB for exam and government forms" — scratch se bana (P4.5/P4.6 pattern: engine PURE + worker + config).

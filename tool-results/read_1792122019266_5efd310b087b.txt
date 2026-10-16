@@ -1,0 +1,832 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+     4→import {
+     5→  CheckSquare,
+     6→  Loader2,
+     7→  MousePointer2,
+     8→  RotateCw,
+     9→  SquareDashed,
+    10→  Trash2,
+    11→  TriangleAlert,
+    12→  Type,
+    13→} from "lucide-react";
+    14→
+    15→import { Button } from "@/components/ui/button";
+    16→import {
+    17→  Select,
+    18→  SelectContent,
+    19→  SelectItem,
+    20→  SelectTrigger,
+    21→  SelectValue,
+    22→} from "@/components/ui/select";
+    23→import { Input } from "@/components/ui/input";
+    24→import { Label } from "@/components/ui/label";
+    25→import { useI18n } from "@/components/providers/locale-provider";
+    26→import { useToast } from "@/hooks/use-toast";
+    27→import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
+    28→import {
+    29→  getPdfPageCount,
+    30→  getPdfPagePixelSize,
+    31→  renderPdfThumbnail,
+    32→} from "@/lib/pdf/thumbnails";
+    33→import { cn } from "@/lib/utils";
+    34→import {
+    35→  PreviewFileHeader,
+    36→  PreviewPageStrip,
+    37→  PreviewZoomControl,
+    38→} from "../stamp-common/preview-parts";
+    39→import {
+    40→  type FieldKind,
+    41→  type FieldSpec,
+    42→  type PageView,
+    43→  displayRectToPdf,
+    44→  displaySize,
+    45→  pdfRectToDisplay,
+    46→} from "./engine";
+    47→import { MAX_DETECT_PAGES, detectFields } from "./detect";
+    48→
+    49→/**
+    50→ * Make PDF fillable live surface (PRD §8.2 "Make fillable"): auto-detect
+    51→ * underlines/boxes on load (green suggestion boxes), then edit them —
+    52→ * toggle keep/skip, rename, switch type, drag to move, corner-resize — or
+    53→ * draw brand-new text boxes and checkboxes anywhere on the page.
+    54→ *
+    55→ * The whole field list lives in the shell options under "f:<fileId>" as
+    56→ * one JSON blob { specs, pageViews } (the redact epoch-key pattern:
+    57→ * swapping the file can never leak another document's fields), and the
+    58→ * worker reads it through the "fkey" pointer option.
+    59→ */
+    60→
+    61→const PREVIEW_MAX_DIM = 560;
+    62→const ZOOM_STEPS = [1, 1.5, 2] as const;
+    63→const KEY_PREFIX = "f:";
+    64→const FKEY_ID = "fkey";
+    65→/** Minimum drag (fraction of the page) that becomes a new field. */
+    66→const MIN_DRAW = 0.02;
+    67→
+    68→type DrawMode = "text" | "checkbox";
+    69→type Mode = "select" | DrawMode;
+    70→
+    71→interface Base {
+    72→  file: File;
+    73→  pageIndex: number;
+    74→  bitmap: ImageBitmap;
+    75→  dispW: number;
+    76→  dispH: number;
+    77→}
+    78→
+    79→interface FieldsBlob {
+    80→  specs: FieldSpec[];
+    81→  pageViews: PageView[];
+    82→}
+    83→
+    84→type BoxDrag =
+    85→  | { mode: "move"; id: string; orig: FieldSpec; grabFx: number; grabFy: number }
+    86→  | { mode: "resize"; id: string; orig: FieldSpec };
+    87→
+    88→let manualSeq = 0;
+    89→function nextManualId(): string {
+    90→  manualSeq += 1;
+    91→  return `m${Date.now().toString(36)}${manualSeq.toString(36)}`;
+    92→}
+    93→
+    94→function clampN(n: number, lo: number, hi: number): number {
+    95→  return Math.min(Math.max(n, lo), hi);
+    96→}
+    97→
+    98→function roundPt(n: number): number {
+    99→  return Math.round(n * 10) / 10;
+   100→}
+   101→
+   102→export function MakeFillableSurface(
+   103→  props: ToolSurfaceProps
+   104→): React.JSX.Element | null {
+   105→  const { files, values, onChange, setRunBlocked } = props;
+   106→  const { t } = useI18n();
+   107→  const { toast } = useToast();
+   108→  const file = files.length > 0 ? files[0].file : null;
+   109→  const fileId = files.length > 0 ? files[0].id : "";
+   110→
+   111→  // --- Fields blob (option "f:<fileId>") -------------------------------
+   112→  const fieldsKey = `${KEY_PREFIX}${fileId}`;
+   113→  const blob = useMemo<FieldsBlob>(() => {
+   114→    try {
+   115→      const parsed = JSON.parse(
+   116→        String(values[fieldsKey] ?? "{}")
+   117→      ) as Partial<FieldsBlob>;
+   118→      return {
+   119→        specs: Array.isArray(parsed.specs) ? (parsed.specs as FieldSpec[]) : [],
+   120→        pageViews: Array.isArray(parsed.pageViews)
+   121→          ? (parsed.pageViews as PageView[])
+   122→          : [],
+   123→      };
+   124→    } catch {
+   125→      return { specs: [], pageViews: [] };
+   126→    }
+   127→  }, [values, fieldsKey]);
+   128→  const specs = blob.specs;
+   129→  const pageViews = blob.pageViews;
+   130→
+   131→  const commit = useCallback(
+   132→    (next: FieldSpec[], views?: PageView[]): void => {
+   133→      onChange(
+   134→        fieldsKey,
+   135→        JSON.stringify({
+   136→          specs: next,
+   137→          pageViews: views ?? pageViews,
+   138→        })
+   139→      );
+   140→    },
+   141→    [onChange, fieldsKey, pageViews]
+   142→  );
+   143→
+   144→  // Point the worker at this document's blob.
+   145→  useEffect(() => {
+   146→    if (fileId !== "") onChange(FKEY_ID, fileId);
+   147→  }, [fileId, onChange]);
+   148→
+   149→  const enabledCount = useMemo(
+   150→    () => specs.filter((s) => s.enabled).length,
+   151→    [specs]
+   152→  );
+   153→  const touchedPages = useMemo(
+   154→    () => new Set(specs.filter((s) => s.enabled).map((s) => s.page)),
+   155→    [specs]
+   156→  );
+   157→
+   158→  // --- Editor state -----------------------------------------------------
+   159→  const [pageCount, setPageCount] = useState(0);
+   160→  const [selectedPage, setSelectedPage] = useState(0);
+   161→  const [pageError, setPageError] = useState<"password" | "corrupt" | null>(null);
+   162→  const [base, setBase] = useState<Base | null>(null);
+   163→  const [failed, setFailed] = useState(false);
+   164→  const [zoom, setZoom] = useState<number>(1);
+   165→  const [mode, setMode] = useState<Mode>("select");
+   166→  const [selectedId, setSelectedId] = useState<string | null>(null);
+   167→  const [drawing, setDrawing] = useState<{
+   168→    x0: number;
+   169→    y0: number;
+   170→    x1: number;
+   171→    y1: number;
+   172→  } | null>(null);
+   173→  const [boxDrag, setBoxDrag] = useState<BoxDrag | null>(null);
+   174→  const [detectState, setDetectState] = useState<
+   175→    "idle" | "detecting" | "ready" | "error"
+   176→  >("idle");
+   177→  const [detectProgress, setDetectProgress] = useState({ page: 0, pages: 0 });
+   178→  const [existingCount, setExistingCount] = useState(0);
+   179→  const detectToken = useRef(0);
+   180→  const overlayRef = useRef<HTMLDivElement | null>(null);
+   181→
+   182→  // --- Auto-detect on file load ----------------------------------------
+   183→  const runDetect = useCallback(
+   184→    (f: File): void => {
+   185→      const token = detectToken.current + 1;
+   186→      detectToken.current = token;
+   187→      setDetectState("detecting");
+   188→      setDetectProgress({ page: 0, pages: 0 });
+   189→      void detectFields(f, (p) => {
+   190→        if (detectToken.current === token) setDetectProgress(p);
+   191→      })
+   192→        .then((result) => {
+   193→          if (detectToken.current !== token) return;
+   194→          setDetectState("ready");
+   195→          setExistingCount(result.existingCount);
+   196→          commit(result.specs, result.pageViews);
+   197→          if (result.specs.length === 0) {
+   198→            toast({
+   199→              title: t("makeFillable.nothingFound"),
+   200→              description: t("makeFillable.nothingFoundHint"),
+   201→            });
+   202→          }
+   203→        })
+   204→        .catch((error: unknown) => {
+   205→          if (detectToken.current !== token) return;
+   206→          setDetectState("error");
+   207→          const message = String((error as Error)?.message ?? "");
+   208→          if (/password/i.test(message)) {
+   209→            setPageError("password");
+   210→          } else {
+   211→            toast({
+   212→              title: t("makeFillable.errorDetect"),
+   213→              variant: "destructive",
+   214→            });
+   215→          }
+   216→        });
+   217→    },
+   218→    [commit, t, toast]
+   219→  );
+   220→
+   221→  useEffect(() => {
+   222→    if (!file) return;
+   223→    let cancelled = false;
+   224→    void (async () => {
+   225→      setPageError(null);
+   226→      setSelectedId(null);
+   227→      setMode("select");
+   228→      const count = await getPdfPageCount(file);
+   229→      if (cancelled) return;
+   230→      setPageCount(count);
+   231→      setSelectedPage((p) => Math.min(p, Math.max(0, count - 1)));
+   232→    })().catch((error: unknown) => {
+   233→      if (cancelled) return;
+   234→      const cause = (error as { cause?: unknown })?.cause;
+   235→      const name =
+   236→        (cause as { name?: string } | undefined)?.name ??
+   237→        (error as { name?: string } | undefined)?.name ??
+   238→        "";
+   239→      const message = String((error as Error)?.message ?? "");
+   240→      setPageError(
+   241→        name === "PasswordException" || /password/i.test(message)
+   242→          ? "password"
+   243→          : "corrupt"
+   244→      );
+   245→      setPageCount(0);
+   246→    });
+   247→    // Start detection one microtask later — runDetect flips state
+   248→    // synchronously and the effect body must stay render-safe.
+   249→    queueMicrotask(() => runDetect(file));
+   250→    return () => {
+   251→      cancelled = true;
+   252→      detectToken.current += 1;
+   253→    };
+   254→  }, [file]);
+   255→
+   256→  // --- Page preview ------------------------------------------------------
+   257→  useEffect(() => {
+   258→    if (!file || pageCount === 0) return;
+   259→    let cancelled = false;
+   260→    void (async () => {
+   261→      const [thumb, pixel] = await Promise.all([
+   262→        renderPdfThumbnail(file, {
+   263→          pageIndex: selectedPage,
+   264→          maxDim: Math.round(PREVIEW_MAX_DIM * zoom),
+   265→        }),
+   266→        getPdfPagePixelSize(file, 1, selectedPage),
+   267→      ]);
+   268→      if (cancelled) return;
+   269→      const bitmap = await createImageBitmap(thumb.blob);
+   270→      if (cancelled) return;
+   271→      setFailed(false);
+   272→      setBase({
+   273→        file,
+   274→        pageIndex: selectedPage,
+   275→        bitmap,
+   276→        dispW: pixel.width,
+   277→        dispH: pixel.height,
+   278→      });
+   279→    })().catch(() => {
+   280→      if (!cancelled) setFailed(true);
+   281→    });
+   282→    return () => {
+   283→      cancelled = true;
+   284→    };
+   285→  }, [file, pageCount, selectedPage, zoom]);
+   286→
+   287→  const currentView = pageViews[selectedPage] ?? null;
+   288→
+   289→  // --- Run gating --------------------------------------------------------
+   290→  useEffect(() => {
+   291→    setRunBlocked(enabledCount === 0 ? "makeFillable.blockedNoFields" : null);
+   292→  }, [enabledCount, setRunBlocked]);
+   293→
+   294→  // --- Field actions -----------------------------------------------------
+   295→  const updateSpec = useCallback(
+   296→    (id: string, patch: Partial<FieldSpec>): void => {
+   297→      commit(specs.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+   298→    },
+   299→    [commit, specs]
+   300→  );
+   301→
+   302→  const toggleSpec = useCallback(
+   303→    (id: string): void => {
+   304→      commit(
+   305→        specs.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s))
+   306→      );
+   307→    },
+   308→    [commit, specs]
+   309→  );
+   310→
+   311→  const removeSpec = useCallback(
+   312→    (id: string): void => {
+   313→      commit(specs.filter((s) => s.id !== id));
+   314→      if (selectedId === id) setSelectedId(null);
+   315→    },
+   316→    [commit, selectedId, specs]
+   317→  );
+   318→
+   319→  const pageSpecs = useMemo(
+   320→    () => specs.filter((s) => s.page === selectedPage),
+   321→    [specs, selectedPage]
+   322→  );
+   323→  const selected = useMemo(
+   324→    () => specs.find((s) => s.id === selectedId) ?? null,
+   325→    [specs, selectedId]
+   326→  );
+   327→
+   328→  // --- Overlay pointer machinery -----------------------------------------
+   329→  const fractionPos = (
+   330→    event: React.PointerEvent<Element>
+   331→  ): { fx: number; fy: number } => {
+   332→    const overlay = overlayRef.current;
+   333→    if (!overlay) return { fx: 0, fy: 0 };
+   334→    const box = overlay.getBoundingClientRect();
+   335→    return {
+   336→      fx: clampN((event.clientX - box.left) / box.width, 0, 1),
+   337→      fy: clampN((event.clientY - box.top) / box.height, 0, 1),
+   338→    };
+   339→  };
+   340→
+   341→  const handleOverlayPointerDown = (
+   342→    event: React.PointerEvent<HTMLDivElement>
+   343→  ): void => {
+   344→    if (!base || event.button !== 0) return;
+   345→    if (mode === "select") {
+   346→      setSelectedId(null);
+   347→      return;
+   348→    }
+   349→    const overlay = overlayRef.current;
+   350→    if (!overlay) return;
+   351→    const { fx, fy } = fractionPos(event);
+   352→    try {
+   353→      overlay.setPointerCapture(event.pointerId);
+   354→    } catch {
+   355→      // Synthetic pointers — overlay handlers still cover the gesture.
+   356→    }
+   357→    setSelectedId(null);
+   358→    setDrawing({ x0: fx, y0: fy, x1: fx, y1: fy });
+   359→    event.preventDefault();
+   360→  };
+   361→
+   362→  const beginBoxDrag =
+   363→    (dragMode: "move" | "resize", spec: FieldSpec) =>
+   364→    (event: React.PointerEvent<HTMLDivElement>): void => {
+   365→      if (!base || event.button !== 0 || mode !== "select") return;
+   366→      event.stopPropagation();
+   367→      const overlay = overlayRef.current;
+   368→      if (!overlay) return;
+   369→      try {
+   370→        overlay.setPointerCapture(event.pointerId);
+   371→      } catch {
+   372→        // See above.
+   373→      }
+   374→      const { fx, fy } = fractionPos(event);
+   375→      setSelectedId(spec.id);
+   376→      setDrawing(null);
+   377→      if (dragMode === "move") {
+   378→        setBoxDrag({
+   379→          mode: dragMode,
+   380→          id: spec.id,
+   381→          orig: spec,
+   382→          grabFx: fx,
+   383→          grabFy: fy,
+   384→        });
+   385→      } else {
+   386→        setBoxDrag({ mode: dragMode, id: spec.id, orig: spec } satisfies BoxDrag);
+   387→      }
+   388→      event.preventDefault();
+   389→    };
+   390→
+   391→  const handleOverlayPointerMove = (
+   392→    event: React.PointerEvent<HTMLDivElement>
+   393→  ): void => {
+   394→    const { fx, fy } = fractionPos(event);
+   395→    if (drawing) {
+   396→      setDrawing({ ...drawing, x1: fx, y1: fy });
+   397→      return;
+   398→    }
+   399→    if (!boxDrag || !currentView) return;
+   400→    const { orig, mode: dragMode } = boxDrag;
+   401→    const disp = pdfRectToDisplay(orig, currentView);
+   402→    if (dragMode === "move") {
+   403→      const dx = (fx - boxDrag.grabFx) * base!.dispW;
+   404→      const dy = (fy - boxDrag.grabFy) * base!.dispH;
+   405→      const next = {
+   406→        x: clampN(disp.x + dx, 0, base!.dispW - disp.w),
+   407→        y: clampN(disp.y + dy, 0, base!.dispH - disp.h),
+   408→        w: disp.w,
+   409→        h: disp.h,
+   410→      };
+   411→      const pdf = displayRectToPdf(next, currentView);
+   412→      updateSpec(orig.id, {
+   413→        x: roundPt(pdf.x),
+   414→        y: roundPt(pdf.y),
+   415→      });
+   416→    } else {
+   417→      const x1 = fx * base!.dispW;
+   418→      const y1 = fy * base!.dispH;
+   419→      const next = {
+   420→        x: disp.x,
+   421→        y: disp.y,
+   422→        w: Math.max(12, Math.min(x1 - disp.x, base!.dispW - disp.x)),
+   423→        h: Math.max(12, Math.min(y1 - disp.y, base!.dispH - disp.y)),
+   424→      };
+   425→      const pdf = displayRectToPdf(next, currentView);
+   426→      updateSpec(orig.id, {
+   427→        w: roundPt(pdf.w),
+   428→        h: roundPt(pdf.h),
+   429→      });
+   430→    }
+   431→  };
+   432→
+   433→  const handleOverlayPointerUp = (): void => {
+   434→    if (drawing) {
+   435→      const x0 = Math.min(drawing.x0, drawing.x1);
+   436→      const x1 = Math.max(drawing.x0, drawing.x1);
+   437→      const y0 = Math.min(drawing.y0, drawing.y1);
+   438→      const y1 = Math.max(drawing.y0, drawing.y1);
+   439→      setDrawing(null);
+   440→      if (
+   441→        x1 - x0 >= MIN_DRAW &&
+   442→        y1 - y0 >= MIN_DRAW &&
+   443→        base &&
+   444→        currentView
+   445→      ) {
+   446→        const kind: FieldKind = mode === "checkbox" ? "checkbox" : "text";
+   447→        const pdf = displayRectToPdf(
+   448→          { x: x0 * base.dispW, y: y0 * base.dispH, w: (x1 - x0) * base.dispW, h: (y1 - y0) * base.dispH },
+   449→          currentView
+   450→        );
+   451→        const id = nextManualId();
+   452→        const manual: FieldSpec = {
+   453→          id,
+   454→          page: selectedPage,
+   455→          x: roundPt(pdf.x),
+   456→          y: roundPt(pdf.y),
+   457→          w: roundPt(pdf.w),
+   458→          h: roundPt(pdf.h),
+   459→          kind,
+   460→          name: `${kind === "checkbox" ? t("makeFillable.checkbox") : t("makeFillable.textField")} ${specs.filter((s) => s.kind === kind).length + 1}`,
+   461→          enabled: true,
+   462→        };
+   463→        commit([...specs, manual]);
+   464→        setSelectedId(id);
+   465→        setMode("select");
+   466→      }
+   467→      return;
+   468→    }
+   469→    setBoxDrag(null);
+   470→  };
+   471→
+   472→  // --- Render helpers -----------------------------------------------------
+   473→  const specToStyle = (spec: FieldSpec): React.CSSProperties => {
+   474→    if (!base || !currentView) return { display: "none" };
+   475→    const disp = pdfRectToDisplay(spec, currentView);
+   476→    return {
+   477→      left: `${(disp.x / base.dispW) * 100}%`,
+   478→      top: `${(disp.y / base.dispH) * 100}%`,
+   479→      width: `${(disp.w / base.dispW) * 100}%`,
+   480→      height: `${(disp.h / base.dispH) * 100}%`,
+   481→    };
+   482→  };
+   483→
+   484→  const isDetecting = detectState === "detecting";
+   485→
+   486→  const drawingStyle: React.CSSProperties | null = drawing
+   487→    ? {
+   488→        left: `${Math.min(drawing.x0, drawing.x1) * 100}%`,
+   489→        top: `${Math.min(drawing.y0, drawing.y1) * 100}%`,
+   490→        width: `${Math.abs(drawing.x1 - drawing.x0) * 100}%`,
+   491→        height: `${Math.abs(drawing.y1 - drawing.y0) * 100}%`,
+   492→      }
+   493→    : null;
+   494→
+   495→  // --- Guards -------------------------------------------------------------
+   496→  if (!file) return null;
+   497→
+   498→  if (pageError === "password") {
+   499→    return (
+   500→      <div className="flex flex-col items-center gap-3 rounded-card border border-border bg-card p-8 text-center">
+   501→        <TriangleAlert className="size-8 text-amber-500" aria-hidden="true" />
+   502→        <p className="text-sm font-medium text-foreground">
+   503→          {t("makeFillable.passwordProtected")}
+   504→        </p>
+   505→        <p className="max-w-md text-xs text-muted-foreground">
+   506→          {t("makeFillable.passwordHint")}
+   507→        </p>
+   508→      </div>
+   509→    );
+   510→  }
+   511→
+   512→  return (
+   513→    <div className="flex flex-col gap-4">
+   514→      <PreviewFileHeader
+   515→        file={file}
+   516→        pageCount={pageCount}
+   517→        onRemove={() => undefined}
+   518→      />
+   519→
+   520→      {existingCount > 0 ? (
+   521→        <div className="flex items-start gap-2.5 rounded-card border border-amber-300/60 bg-amber-50 p-3 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
+   522→          <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+   523→          <p className="text-xs leading-relaxed">
+   524→            {t("makeFillable.existingFields", { count: existingCount })}
+   525→          </p>
+   526→        </div>
+   527→      ) : null}
+   528→
+   529→      {isDetecting ? (
+   530→        <div className="flex items-center gap-2.5 rounded-card border border-border bg-card p-3">
+   531→          <Loader2
+   532→            className="size-4 shrink-0 animate-spin text-primary"
+   533→            aria-hidden="true"
+   534→          />
+   535→          <p className="text-xs text-muted-foreground">
+   536→            {detectProgress.pages > 0
+   537→              ? t("makeFillable.detectingProgress", {
+   538→                  page: detectProgress.page,
+   539→                  pages: detectProgress.pages,
+   540→                })
+   541→              : t("makeFillable.detecting")}
+   542→          </p>
+   543→        </div>
+   544→      ) : (
+   545→        <div className="flex flex-wrap items-center gap-2">
+   546→          <Button
+   547→            type="button"
+   548→            variant={mode === "select" ? "default" : "outline"}
+   549→            size="sm"
+   550→            className="h-9"
+   551→            onClick={() => setMode("select")}
+   552→            aria-pressed={mode === "select"}
+   553→          >
+   554→            <MousePointer2 className="size-4" aria-hidden="true" />
+   555→            {t("makeFillable.modeSelect")}
+   556→          </Button>
+   557→          <Button
+   558→            type="button"
+   559→            variant={mode === "text" ? "default" : "outline"}
+   560→            size="sm"
+   561→            className="h-9"
+   562→            onClick={() => setMode("text")}
+   563→            aria-pressed={mode === "text"}
+   564→          >
+   565→            <Type className="size-4" aria-hidden="true" />
+   566→            {t("makeFillable.modeText")}
+   567→          </Button>
+   568→          <Button
+   569→            type="button"
+   570→            variant={mode === "checkbox" ? "default" : "outline"}
+   571→            size="sm"
+   572→            className="h-9"
+   573→            onClick={() => setMode("checkbox")}
+   574→            aria-pressed={mode === "checkbox"}
+   575→          >
+   576→            <CheckSquare className="size-4" aria-hidden="true" />
+   577→            {t("makeFillable.modeCheckbox")}
+   578→          </Button>
+   579→          <Button
+   580→            type="button"
+   581→            variant="outline"
+   582→            size="sm"
+   583→            className="h-9"
+   584→            onClick={() => {
+   585→              setSelectedId(null);
+   586→              runDetect(file);
+   587→            }}
+   588→            disabled={isDetecting}
+   589→          >
+   590→            {isDetecting ? (
+   591→              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   592→            ) : (
+   593→              <RotateCw className="size-4" aria-hidden="true" />
+   594→            )}
+   595→            {t("makeFillable.detectAgain")}
+   596→          </Button>
+   597→          <span className="ml-auto text-xs font-medium text-muted-foreground">
+   598→            {t("makeFillable.summary", {
+   599→              count: enabledCount,
+   600→              total: specs.length,
+   601→              pages: touchedPages.size,
+   602→            })}
+   603→          </span>
+   604→        </div>
+   605→      )}
+   606→
+   607→      {pageCount > 1 ? (
+   608→        <PreviewPageStrip
+   609→          file={file}
+   610→          pageCount={pageCount}
+   611→          selected={selectedPage}
+   612→          onSelect={setSelectedPage}
+   613→          markedSet={touchedPages}
+   614→        />
+   615→      ) : null}
+   616→
+   617→      <div className="flex items-center justify-between gap-2">
+   618→        <p className="min-w-0 truncate text-xs text-muted-foreground">
+   619→          {t("makeFillable.pageOf", {
+   620→            page: selectedPage + 1,
+   621→            pages: pageCount,
+   622→          })}
+   623→          {mode !== "select"
+   624→            ? ` · ${t("makeFillable.drawHint")}`
+   625→            : ` · ${t("makeFillable.editHint")}`}
+   626→        </p>
+   627→        <PreviewZoomControl steps={ZOOM_STEPS} value={zoom} onChange={setZoom} />
+   628→      </div>
+   629→
+   630→      {base && !failed ? (
+   631→        <div className="relative mx-auto w-fit max-w-full overflow-hidden rounded-card border border-border bg-card shadow-sm">
+   632→          <canvas
+   633→            className="block max-w-full"
+   634→            style={{
+   635→              width: `${Math.min(base.dispW, PREVIEW_MAX_DIM * zoom)}px`,
+   636→              height: "auto",
+   637→            }}
+   638→            ref={(canvas) => {
+   639→              if (!canvas) return;
+   640→              const ctx = canvas.getContext("2d");
+   641→              if (!ctx) return;
+   642→              canvas.width = base.bitmap.width;
+   643→              canvas.height = base.bitmap.height;
+   644→              ctx.drawImage(base.bitmap, 0, 0);
+   645→            }}
+   646→            aria-label={t("makeFillable.previewLabel")}
+   647→          />
+   648→          <div
+   649→            ref={overlayRef}
+   650→            className={cn(
+   651→              "absolute inset-0 touch-none select-none",
+   652→              mode === "select" ? "cursor-default" : "cursor-crosshair"
+   653→            )}
+   654→            onPointerDown={handleOverlayPointerDown}
+   655→            onPointerMove={handleOverlayPointerMove}
+   656→            onPointerUp={handleOverlayPointerUp}
+   657→            onPointerCancel={handleOverlayPointerUp}
+   658→            role="application"
+   659→            aria-label={t("makeFillable.overlayLabel")}
+   660→          >
+   661→            {pageSpecs.map((spec) => {
+   662→              const isSelected = spec.id === selectedId;
+   663→              return (
+   664→                <div
+   665→                  key={spec.id}
+   666→                  className={cn(
+   667→                    "group absolute",
+   668→                    spec.enabled
+   669→                      ? "border-2 border-primary/70 bg-primary/10"
+   670→                      : "border-2 border-dashed border-muted-foreground/50 bg-transparent",
+   671→                    isSelected && "border-primary ring-2 ring-primary/30",
+   672→                    mode === "select" && "cursor-move"
+   673→                  )}
+   674→                  style={specToStyle(spec)}
+   675→                  onPointerDown={beginBoxDrag("move", spec)}
+   676→                  onClick={(e) => {
+   677→                    e.stopPropagation();
+   678→                    if (mode === "select") setSelectedId(spec.id);
+   679→                  }}
+   680→                >
+   681→                  <span
+   682→                    className={cn(
+   683→                      "absolute -top-5 left-0 max-w-full truncate rounded-sm px-1 py-px text-[10px] font-medium leading-none",
+   684→                      spec.enabled
+   685→                        ? "bg-primary text-primary-foreground"
+   686→                        : "bg-muted text-muted-foreground"
+   687→                    )}
+   688→                  >
+   689→                    {spec.name}
+   690→                    {spec.kind === "checkbox" ? " ☐" : ""}
+   691→                  </span>
+   692→                  <button
+   693→                    type="button"
+   694→                    className="absolute -right-2.5 -top-2.5 z-20 flex size-5 items-center justify-center rounded-full bg-destructive text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 focus:opacity-100"
+   695→                    onPointerDown={(e) => e.stopPropagation()}
+   696→                    onClick={(e) => {
+   697→                      e.stopPropagation();
+   698→                      removeSpec(spec.id);
+   699→                    }}
+   700→                    aria-label={t("makeFillable.deleteField")}
+   701→                  >
+   702→                    <Trash2 className="size-3" aria-hidden="true" />
+   703→                  </button>
+   704→                  <button
+   705→                    type="button"
+   706→                    className="absolute -left-2.5 -top-2.5 z-20 flex size-5 items-center justify-center rounded-full bg-card text-foreground opacity-0 shadow-md ring-1 ring-border transition-opacity group-hover:opacity-100 focus:opacity-100"
+   707→                    onPointerDown={(e) => e.stopPropagation()}
+   708→                    onClick={(e) => {
+   709→                      e.stopPropagation();
+   710→                      toggleSpec(spec.id);
+   711→                    }}
+   712→                    aria-label={spec.enabled ? t("makeFillable.skipField") : t("makeFillable.keepField")}
+   713→                  >
+   714→                    {spec.enabled ? (
+   715→                      <SquareDashed className="size-3" aria-hidden="true" />
+   716→                    ) : (
+   717→                      <CheckSquare className="size-3" aria-hidden="true" />
+   718→                    )}
+   719→                  </button>
+   720→                  {isSelected && mode === "select" ? (
+   721→                    <span
+   722→                      className="absolute -bottom-1 -right-1 size-3 cursor-nwse-resize rounded-full border-2 border-primary bg-background"
+   723→                      onPointerDown={beginBoxDrag("resize", spec)}
+   724→                      aria-hidden="true"
+   725→                    />
+   726→                  ) : null}
+   727→                </div>
+   728→              );
+   729→            })}
+   730→            {drawingStyle ? (
+   731→              <div
+   732→                className="pointer-events-none absolute border-2 border-dashed border-primary bg-primary/10"
+   733→                style={drawingStyle}
+   734→              />
+   735→            ) : null}
+   736→          </div>
+   737→        </div>
+   738→      ) : (
+   739→        <div className="flex h-64 items-center justify-center rounded-card border border-border bg-card">
+   740→          {failed ? (
+   741→            <p className="text-sm text-muted-foreground">
+   742→              {t("makeFillable.previewFailed")}
+   743→            </p>
+   744→          ) : (
+   745→            <Loader2
+   746→              className="size-6 animate-spin text-muted-foreground"
+   747→              aria-hidden="true"
+   748→            />
+   749→          )}
+   750→        </div>
+   751→      )}
+   752→
+   753→      {selected ? (
+   754→        <div className="rounded-card border border-border bg-card p-4">
+   755→          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+   756→            {t("makeFillable.properties")}
+   757→          </p>
+   758→          <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+   759→            <div className="grid gap-1.5">
+   760→              <Label
+   761→                htmlFor="mf-name"
+   762→                className="text-xs text-muted-foreground"
+   763→              >
+   764→                {t("makeFillable.fieldName")}
+   765→              </Label>
+   766→              <Input
+   767→                id="mf-name"
+   768→                className="h-9"
+   769→                value={selected.name}
+   770→                onChange={(e) => updateSpec(selected.id, { name: e.target.value })}
+   771→                maxLength={60}
+   772→              />
+   773→            </div>
+   774→            <div className="grid gap-1.5">
+   775→              <Label
+   776→                htmlFor="mf-kind"
+   777→                className="text-xs text-muted-foreground"
+   778→              >
+   779→                {t("makeFillable.fieldType")}
+   780→              </Label>
+   781→              <Select
+   782→                value={selected.kind}
+   783→                onValueChange={(v) =>
+   784→                  updateSpec(selected.id, { kind: v as FieldKind })
+   785→                }
+   786→              >
+   787→                <SelectTrigger id="mf-kind" className="h-9 w-full sm:w-44">
+   788→                  <SelectValue />
+   789→                </SelectTrigger>
+   790→                <SelectContent>
+   791→                  <SelectItem value="text">
+   792→                    {t("makeFillable.kindText")}
+   793→                  </SelectItem>
+   794→                  <SelectItem value="multiline">
+   795→                    {t("makeFillable.kindMultiline")}
+   796→                  </SelectItem>
+   797→                  <SelectItem value="checkbox">
+   798→                    {t("makeFillable.kindCheckbox")}
+   799→                  </SelectItem>
+   800→                </SelectContent>
+   801→              </Select>
+   802→            </div>
+   803→          </div>
+   804→          <div className="mt-3 flex flex-wrap gap-2">
+   805→            <Button
+   806→              type="button"
+   807→              variant="outline"
+   808→              size="sm"
+   809→              className="h-8"
+   810→              onClick={() => toggleSpec(selected.id)}
+   811→            >
+   812→              {selected.enabled
+   813→                ? t("makeFillable.skipField")
+   814→                : t("makeFillable.keepField")}
+   815→            </Button>
+   816→            <Button
+   817→              type="button"
+   818→              variant="destructive"
+   819→              size="sm"
+   820→              className="h-8"
+   821→              onClick={() => removeSpec(selected.id)}
+   822→            >
+   823→              <Trash2 className="size-3.5" aria-hidden="true" />
+   824→              {t("makeFillable.deleteField")}
+   825→            </Button>
+   826→          </div>
+   827→        </div>
+   828→      ) : null}
+   829→    </div>
+   830→  );
+   831→}
+   832→

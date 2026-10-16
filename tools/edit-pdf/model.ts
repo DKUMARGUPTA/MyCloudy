@@ -1,0 +1,813 @@
+/**
+ * Edit PDF — PURE object model (PRD §8.2.1 flagship editor, sub-phases
+ * 8.1 shell + 8.2 objects + 8.5 export).
+ *
+ * Everything here is framework-free and bun-testable:
+ *  - the EditorObject union (text / image / shapes / freehand / whiteout)
+ *  - the PDF-user-space ↔ display-space transforms for all four /Rotate
+ *    values (mirroring pdf.js PageViewport — the make-pdf-fillable recipe,
+ *    copied here so the SURFACE never imports pdf-lib transitively)
+ *  - object factories with sane defaults + clamping/sanitising for the
+ *    worker (never trust the wire blob)
+ *  - z-order operations, hit-testing, bbox math, freehand normalisation
+ *  - the coalescing history helper (snapshot stack semantics)
+ *
+ * Coordinate convention (same as make-pdf-fillable): every object rect is
+ * in PDF USER-SPACE points, y measured from the BOTTOM (pdf-lib
+ * convention). `page` is 0-based. Display rects (y from top) are derived
+ * per page through the PageView (crop box + /Rotate).
+ */
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type EditorFontId =
+  | "helvetica"
+  | "times"
+  | "courier"
+  | "devanagari";
+
+export type ObjKind =
+  | "text"
+  | "image"
+  | "rect"
+  | "ellipse"
+  | "line"
+  | "arrow"
+  | "draw"
+  | "whiteout";
+
+export type TextAlign = "left" | "center" | "right";
+
+/** Base rect every object shares (user-space pt, y from bottom). */
+export interface ObjBase {
+  id: string;
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  opacity: number;
+  locked: boolean;
+  hidden: boolean;
+}
+
+export interface TextObj extends ObjBase {
+  kind: "text";
+  text: string;
+  font: EditorFontId;
+  size: number;
+  color: string;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  align: TextAlign;
+  /** Background fill behind the text (null = transparent). */
+  bg: string | null;
+}
+
+export interface ImageObj extends ObjBase {
+  kind: "image";
+  /** Key into the run-time asset store / run manifest. */
+  assetKey: string;
+}
+
+export interface ShapeObj extends ObjBase {
+  kind: "rect" | "ellipse" | "line" | "arrow";
+  fill: string | null;
+  stroke: string | null;
+  strokeW: number;
+  dash: boolean;
+  /** line/arrow only: endpoints as fractions of the bbox. false = the
+   * diagonal that reads top-left → bottom-right in DISPLAY space. */
+  flip: boolean;
+}
+
+export interface DrawObj extends ObjBase {
+  kind: "draw";
+  /** Freehand points as [fx, fy] fractions of the bbox (0..1). */
+  pts: number[][];
+  stroke: string;
+  strokeW: number;
+}
+
+export interface WhiteoutObj extends ObjBase {
+  kind: "whiteout";
+  fill: string;
+}
+
+export type EditorObject =
+  | TextObj
+  | ImageObj
+  | ShapeObj
+  | DrawObj
+  | WhiteoutObj;
+
+export interface ObjRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+// ---------------------------------------------------------------------------
+// PageView + display transforms (pdf.js-mirrored, /Rotate-aware)
+// ---------------------------------------------------------------------------
+
+export interface PageView {
+  /** pdf.js page.view: [x0, y0, x1, y1] of the CROP box, user space. */
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  /** /Rotate 0 | 90 | 180 | 270 (normalized). */
+  rotate: number;
+}
+
+/** Display (visible) page size in points, /Rotate applied. */
+export function displaySize(view: PageView): { w: number; h: number } {
+  const uw = view.x1 - view.x0;
+  const uh = view.y1 - view.y0;
+  return view.rotate === 90 || view.rotate === 270
+    ? { w: uh, h: uw }
+    : { w: uw, h: uh };
+}
+
+/** User-space point → display point (y down, origin top-left). */
+export function pdfToDisplayPoint(
+  px: number,
+  py: number,
+  view: PageView
+): { x: number; y: number } {
+  switch (view.rotate) {
+    case 90:
+      return { x: py - view.y0, y: px - view.x0 };
+    case 180:
+      return { x: view.x1 - px, y: py - view.y0 };
+    case 270:
+      return { x: view.y1 - py, y: view.x1 - px };
+    default:
+      return { x: px - view.x0, y: view.y1 - py };
+  }
+}
+
+/** Display point → user-space point (inverse of pdfToDisplayPoint). */
+export function displayToPdfPoint(
+  dx: number,
+  dy: number,
+  view: PageView
+): { x: number; y: number } {
+  switch (view.rotate) {
+    case 90:
+      return { x: dy + view.x0, y: dx + view.y0 };
+    case 180:
+      return { x: view.x1 - dx, y: view.y0 + dy };
+    case 270:
+      return { x: view.x1 - dy, y: view.y1 - dx };
+    default:
+      return { x: dx + view.x0, y: view.y1 - dy };
+  }
+}
+
+/** PDF rect (y from bottom) → display rect (y from top), /Rotate-aware. */
+export function pdfRectToDisplay(rect: ObjRect, view: PageView): ObjRect {
+  const corners = [
+    pdfToDisplayPoint(rect.x, rect.y, view),
+    pdfToDisplayPoint(rect.x + rect.w, rect.y + rect.h, view),
+  ];
+  const xs = corners.map((c) => c.x);
+  const ys = corners.map((c) => c.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+}
+
+/** Display rect (y from top) → PDF rect (y from bottom), /Rotate-aware. */
+export function displayRectToPdf(rect: ObjRect, view: PageView): ObjRect {
+  const corners = [
+    displayToPdfPoint(rect.x, rect.y, view),
+    displayToPdfPoint(rect.x + rect.w, rect.y + rect.h, view),
+  ];
+  const xs = corners.map((c) => c.x);
+  const ys = corners.map((c) => c.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+}
+
+// ---------------------------------------------------------------------------
+// Constants + clamps
+// ---------------------------------------------------------------------------
+
+/** Text inset inside the box (pt) — the textarea padding mirrors this. */
+export const TEXT_PAD = 3;
+/** CSS line-height multiple — the surface CSS and the worker agree on it. */
+export const LINE_HEIGHT = 1.32;
+/** Anything under this (pt) never becomes an object from a drag. */
+export const MIN_OBJ_PT = 6;
+/** Freehand strokes under this many samples are discarded. */
+export const MIN_DRAW_POINTS = 3;
+
+export const FONT_OPTIONS: { id: EditorFontId; css: string }[] = [
+  { id: "helvetica", css: "Arial, Helvetica, sans-serif" },
+  { id: "times", css: "'Times New Roman', Times, serif" },
+  { id: "courier", css: "'Courier New', Courier, monospace" },
+  {
+    id: "devanagari",
+    css: "'Noto Sans Devanagari', Arial, sans-serif",
+  },
+];
+
+export function clampN(n: number, lo: number, hi: number): number {
+  return Math.min(Math.max(n, lo), hi);
+}
+
+export function roundPt(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+/** #rgb / #rrggbb → pdf-lib rgb() components. White for garbage. */
+export function hexToRgb(hex: string): {
+  r: number;
+  g: number;
+  b: number;
+} {
+  const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(hex.trim());
+  if (!m) return { r: 1, g: 1, b: 1 };
+  let h = m[1];
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  const num = Number.parseInt(h, 16);
+  return {
+    r: ((num >> 16) & 255) / 255,
+    g: ((num >> 8) & 255) / 255,
+    b: (num & 255) / 255,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Factories
+// ---------------------------------------------------------------------------
+
+let objSeq = 0;
+/** Fresh object id (timestamp+seq — unique across the session). */
+export function nextObjId(prefix = "o"): string {
+  objSeq += 1;
+  return `${prefix}${Date.now().toString(36)}${objSeq.toString(36)}`;
+}
+
+export const DEFAULT_TEXT_COLOR = "#111827";
+export const DEFAULT_STROKE_COLOR = "#dc2626";
+export const DEFAULT_WHITEOUT_COLOR = "#ffffff";
+
+export function makeText(
+  page: number,
+  rect: ObjRect,
+  overrides: Partial<TextObj> = {}
+): TextObj {
+  return {
+    id: nextObjId("t"),
+    page,
+    x: roundPt(rect.x),
+    y: roundPt(rect.y),
+    w: roundPt(rect.w),
+    h: roundPt(rect.h),
+    opacity: 1,
+    locked: false,
+    hidden: false,
+    kind: "text",
+    text: "",
+    font: "helvetica",
+    size: 12,
+    color: DEFAULT_TEXT_COLOR,
+    bold: false,
+    italic: false,
+    underline: false,
+    align: "left",
+    bg: null,
+    ...overrides,
+  };
+}
+
+export function makeImage(
+  page: number,
+  rect: ObjRect,
+  assetKey: string
+): ImageObj {
+  return {
+    id: nextObjId("i"),
+    page,
+    x: roundPt(rect.x),
+    y: roundPt(rect.y),
+    w: roundPt(rect.w),
+    h: roundPt(rect.h),
+    opacity: 1,
+    locked: false,
+    hidden: false,
+    kind: "image",
+    assetKey,
+  };
+}
+
+export function makeShape(
+  page: number,
+  rect: ObjRect,
+  kind: "rect" | "ellipse" | "line" | "arrow"
+): ShapeObj {
+  return {
+    id: nextObjId("s"),
+    page,
+    x: roundPt(rect.x),
+    y: roundPt(rect.y),
+    w: roundPt(rect.w),
+    h: roundPt(rect.h),
+    opacity: 1,
+    locked: false,
+    hidden: false,
+    kind,
+    fill: null,
+    stroke: DEFAULT_STROKE_COLOR,
+    strokeW: 2,
+    dash: false,
+    flip: false,
+  };
+}
+
+export function makeDraw(
+  page: number,
+  rect: ObjRect,
+  pts: number[][]
+): DrawObj {
+  return {
+    id: nextObjId("d"),
+    page,
+    x: roundPt(rect.x),
+    y: roundPt(rect.y),
+    w: roundPt(rect.w),
+    h: roundPt(rect.h),
+    opacity: 1,
+    locked: false,
+    hidden: false,
+    kind: "draw",
+    pts,
+    stroke: DEFAULT_STROKE_COLOR,
+    strokeW: 2.5,
+  };
+}
+
+export function makeWhiteout(page: number, rect: ObjRect): WhiteoutObj {
+  return {
+    id: nextObjId("w"),
+    page,
+    x: roundPt(rect.x),
+    y: roundPt(rect.y),
+    w: roundPt(rect.w),
+    h: roundPt(rect.h),
+    opacity: 1,
+    locked: false,
+    hidden: false,
+    kind: "whiteout",
+    fill: DEFAULT_WHITEOUT_COLOR,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Freehand helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts raw display-space sample points (pt) into a bbox + fractional
+ * point list. Points outside the page are NOT clamped (the caller clamps
+ * the gesture to the overlay).
+ */
+export function normaliseDraw(
+  pts: { x: number; y: number }[]
+): { rect: ObjRect; fracs: number[][] } | null {
+  if (pts.length < MIN_DRAW_POINTS) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of pts) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  const w = maxX - minX;
+  const h = maxY - minY;
+  // Degenerate (a dot / a straight horizontal or vertical line) — keep a
+  // minimal bbox so the stroke still renders with its width.
+  const bw = Math.max(w, 2);
+  const bh = Math.max(h, 2);
+  const fracs = pts.map((p) => [
+    Number(((p.x - minX) / bw).toFixed(4)),
+    Number(((p.y - minY) / bh).toFixed(4)),
+  ]);
+  return {
+    rect: { x: minX, y: minY, w: bw, h: bh },
+    fracs,
+  };
+}
+
+/** Display-space endpoints of a line/arrow object (flip-aware). */
+export function lineEndpoints(
+  disp: ObjRect,
+  flip: boolean
+): { x1: number; y1: number; x2: number; y2: number } {
+  return flip
+    ? { x1: disp.x, y1: disp.y + disp.h, x2: disp.x + disp.w, y2: disp.y }
+    : { x1: disp.x, y1: disp.y, x2: disp.x + disp.w, y2: disp.y + disp.h };
+}
+
+// ---------------------------------------------------------------------------
+// Hit-testing + z-order (display-space, axis-aligned)
+// ---------------------------------------------------------------------------
+
+export type HitEdge = "nw" | "ne" | "sw" | "se";
+
+export function hitRect(disp: ObjRect, px: number, py: number): boolean {
+  return (
+    px >= disp.x &&
+    px <= disp.x + disp.w &&
+    py >= disp.y &&
+    py <= disp.y + disp.h
+  );
+}
+
+/** Corner handle the point is over (within `tol` pt), if any. */
+export function hitHandle(
+  disp: ObjRect,
+  px: number,
+  py: number,
+  tol: number
+): HitEdge | null {
+  const corners: { edge: HitEdge; cx: number; cy: number }[] = [
+    { edge: "nw", cx: disp.x, cy: disp.y },
+    { edge: "ne", cx: disp.x + disp.w, cy: disp.y },
+    { edge: "sw", cx: disp.x, cy: disp.y + disp.h },
+    { edge: "se", cx: disp.x + disp.w, cy: disp.y + disp.h },
+  ];
+  for (const c of corners) {
+    if (Math.abs(px - c.cx) <= tol && Math.abs(py - c.cy) <= tol) return c.edge;
+  }
+  return null;
+}
+
+/** Topmost (last in array) object at the display point. */
+export function pickObject(
+  objects: EditorObject[],
+  view: PageView,
+  px: number,
+  py: number
+): EditorObject | null {
+  for (let i = objects.length - 1; i >= 0; i -= 1) {
+    const obj = objects[i];
+    if (obj.hidden) continue;
+    if (!hitRect(pdfRectToDisplay(obj, view), px, py)) continue;
+    return obj;
+  }
+  return null;
+}
+
+/** Resize a rect from one corner, keeping w/h ≥ min. Returns display rect. */
+export function resizeRect(
+  orig: ObjRect,
+  edge: HitEdge,
+  x2: number,
+  y2: number,
+  min: number,
+  keepAspect: boolean,
+  aspect: number
+): ObjRect {
+  let { x, y, w, h } = orig;
+  if (edge === "se") {
+    w = Math.max(min, x2 - x);
+    h = Math.max(min, y2 - y);
+    if (keepAspect) {
+      w = Math.max(min, Math.min(w, h * aspect));
+      h = w / aspect;
+    }
+  } else if (edge === "ne") {
+    const ny = Math.min(y + h - min, y2);
+    w = Math.max(min, x2 - x);
+    h = Math.max(min, y + h - ny);
+    y = ny;
+    if (keepAspect) {
+      w = Math.max(min, Math.min(w, h * aspect));
+      h = w / aspect;
+      y = orig.y + orig.h - h;
+    }
+  } else if (edge === "sw") {
+    const nx = Math.min(x + w - min, x2);
+    w = Math.max(min, x + w - nx);
+    x = nx;
+    h = Math.max(min, y2 - y);
+    if (keepAspect) {
+      h = Math.max(min, Math.min(h, w / aspect));
+      w = h * aspect;
+      x = orig.x + orig.w - w;
+    }
+  } else {
+    const nx = Math.min(x + w - min, x2);
+    const ny = Math.min(y + h - min, y2);
+    w = Math.max(min, x + w - nx);
+    h = Math.max(min, y + h - ny);
+    x = nx;
+    y = ny;
+    if (keepAspect) {
+      w = Math.max(min, Math.min(w, h * aspect));
+      h = w / aspect;
+      x = orig.x + orig.w - w;
+      y = orig.y + orig.h - h;
+    }
+  }
+  return { x, y, w, h };
+}
+
+// ---------------------------------------------------------------------------
+// Z-order operations (array order == z order, last = front)
+// ---------------------------------------------------------------------------
+
+export function bringToFront(
+  objects: EditorObject[],
+  id: string
+): EditorObject[] {
+  const obj = objects.find((o) => o.id === id);
+  if (!obj) return objects;
+  return [...objects.filter((o) => o.id !== id), obj];
+}
+
+export function sendToBack(
+  objects: EditorObject[],
+  id: string
+): EditorObject[] {
+  const obj = objects.find((o) => o.id === id);
+  if (!obj) return objects;
+  return [obj, ...objects.filter((o) => o.id !== id)];
+}
+
+export function raiseOne(objects: EditorObject[], id: string): EditorObject[] {
+  const idx = objects.findIndex((o) => o.id === id);
+  if (idx < 0 || idx === objects.length - 1) return objects;
+  const next = [...objects];
+  const tmp = next[idx];
+  next[idx] = next[idx + 1];
+  next[idx + 1] = tmp;
+  return next;
+}
+
+export function lowerOne(objects: EditorObject[], id: string): EditorObject[] {
+  const idx = objects.findIndex((o) => o.id === id);
+  if (idx <= 0) return objects;
+  const next = [...objects];
+  const tmp = next[idx];
+  next[idx] = next[idx - 1];
+  next[idx - 1] = tmp;
+  return next;
+}
+
+export function duplicateObject(
+  objects: EditorObject[],
+  id: string
+): { objects: EditorObject[]; copy: EditorObject | null } {
+  const idx = objects.findIndex((o) => o.id === id);
+  if (idx < 0) return { objects, copy: null };
+  const src = objects[idx];
+  const copy: EditorObject = {
+    ...src,
+    id: nextObjId("c"),
+    x: roundPt(src.x + 12),
+    y: roundPt(Math.max(0, src.y - 12)),
+  };
+  const next = [...objects];
+  next.splice(idx + 1, 0, copy);
+  return { objects: next, copy };
+}
+
+// ---------------------------------------------------------------------------
+// History (snapshot stack — simple, unlimited, JSON)
+// ---------------------------------------------------------------------------
+
+export const HISTORY_LIMIT = 120;
+
+export function pushSnapshot(
+  past: string[],
+  snapshot: string,
+  future: string[]
+): { past: string[]; future: string[] } {
+  const nextPast = [...past, snapshot];
+  if (nextPast.length > HISTORY_LIMIT) nextPast.shift();
+  return { past: nextPast, future: [] };
+}
+
+/** Undo: pops past into future, returns the restored snapshot. */
+export function undoStep(
+  past: string[],
+  future: string[],
+  current: string
+): { past: string[]; future: string[]; snapshot: string | null } {
+  if (past.length === 0) return { past, future, snapshot: null };
+  const nextPast = [...past];
+  const snapshot = nextPast.pop() as string;
+  return { past: nextPast, future: [current, ...future], snapshot };
+}
+
+/** Redo: pops future into past, returns the restored snapshot. */
+export function redoStep(
+  past: string[],
+  future: string[],
+  current: string
+): { past: string[]; future: string[]; snapshot: string | null } {
+  if (future.length === 0) return { past, future, snapshot: null };
+  const [snapshot, ...rest] = future;
+  return { past: [...past, current], future: rest, snapshot };
+}
+
+// ---------------------------------------------------------------------------
+// Wire-format sanitising (worker side — never trust the blob)
+// ---------------------------------------------------------------------------
+
+function num(v: unknown, dflt: number): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : dflt;
+}
+
+function str(v: unknown, dflt: string): string {
+  return typeof v === "string" ? v : dflt;
+}
+
+function bool(v: unknown, dflt: boolean): boolean {
+  return typeof v === "boolean" ? v : dflt;
+}
+
+function color(v: unknown, dflt: string): string {
+  return typeof v === "string" && /^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(v)
+    ? v
+    : dflt;
+}
+
+function optColor(v: unknown): string | null {
+  if (v === null) return null;
+  return color(v, "#000000");
+}
+
+const FONTS: EditorFontId[] = ["helvetica", "times", "courier", "devanagari"];
+const KINDS: ObjKind[] = [
+  "text",
+  "image",
+  "rect",
+  "ellipse",
+  "line",
+  "arrow",
+  "draw",
+  "whiteout",
+];
+
+/** Parses + clamps one raw object from the wire blob. null = drop it. */
+export function sanitizeObject(
+  raw: unknown,
+  pageCount: number,
+  knownAssets: ReadonlySet<string>
+): EditorObject | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const o = raw as Record<string, unknown>;
+  const kind = KINDS.includes(o.kind as ObjKind) ? (o.kind as ObjKind) : null;
+  if (kind === null) return null;
+  const page = Math.min(
+    Math.max(0, Math.trunc(num(o.page, 0))),
+    Math.max(0, pageCount - 1)
+  );
+  const base = {
+    id: str(o.id, nextObjId("x")),
+    page,
+    x: num(o.x, 72),
+    y: num(o.y, 72),
+    w: Math.max(MIN_OBJ_PT, num(o.w, 120)),
+    h: Math.max(MIN_OBJ_PT, num(o.h, 24)),
+    opacity: clampN(num(o.opacity, 1), 0.05, 1),
+    locked: bool(o.locked, false),
+    hidden: bool(o.hidden, false),
+  };
+  switch (kind) {
+    case "text":
+      return {
+        ...base,
+        kind,
+        text: str(o.text, ""),
+        font: FONTS.includes(o.font as EditorFontId)
+          ? (o.font as EditorFontId)
+          : "helvetica",
+        size: clampN(num(o.size, 12), 4, 200),
+        color: color(o.color, "#111827"),
+        bold: bool(o.bold, false),
+        italic: bool(o.italic, false),
+        underline: bool(o.underline, false),
+        align: o.align === "center" || o.align === "right" ? o.align : "left",
+        bg: optColor(o.bg),
+      };
+    case "image": {
+      const key = str(o.assetKey, "");
+      if (!knownAssets.has(key)) return null;
+      return { ...base, kind, assetKey: key };
+    }
+    case "rect":
+    case "ellipse":
+    case "line":
+    case "arrow":
+      return {
+        ...base,
+        kind,
+        fill: optColor(o.fill),
+        stroke: optColor(o.stroke),
+        strokeW: clampN(num(o.strokeW, 2), 0.25, 40),
+        dash: bool(o.dash, false),
+        flip: bool(o.flip, false),
+      };
+    case "draw": {
+      const rawPts = Array.isArray(o.pts) ? o.pts : [];
+      const pts = rawPts
+        .filter(
+          (p): p is number[] =>
+            Array.isArray(p) &&
+            p.length === 2 &&
+            typeof p[0] === "number" &&
+            typeof p[1] === "number"
+        )
+        .map((p) => [clampN(p[0], 0, 1), clampN(p[1], 0, 1)]);
+      if (pts.length < 2) return null;
+      return {
+        ...base,
+        kind,
+        pts,
+        stroke: color(o.stroke, "#dc2626"),
+        strokeW: clampN(num(o.strokeW, 2.5), 0.25, 40),
+      };
+    }
+    case "whiteout":
+      return { ...base, kind, fill: color(o.fill, "#ffffff") };
+  }
+}
+
+/** Parses the full objects array from the wire blob. */
+export function sanitizeObjects(
+  raw: unknown,
+  pageCount: number,
+  knownAssets: ReadonlySet<string>
+): EditorObject[] {
+  if (!Array.isArray(raw)) return [];
+  const out: EditorObject[] = [];
+  for (const item of raw) {
+    const obj = sanitizeObject(item, pageCount, knownAssets);
+    if (obj !== null && !obj.hidden) out.push(obj);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Text wrapping (shared by the worker; the surface relies on CSS)
+// ---------------------------------------------------------------------------
+
+/** Greedy word-wrap that hard-breaks overlong words. */
+export function wrapText(
+  text: string,
+  maxWidth: number,
+  measure: (s: string) => number
+): string[] {
+  const lines: string[] = [];
+  for (const para of text.split("\n")) {
+    if (para.length === 0) {
+      lines.push("");
+      continue;
+    }
+    let current = "";
+    for (const word of para.split(/ +/)) {
+      const candidate = current.length === 0 ? word : `${current} ${word}`;
+      if (measure(candidate) <= maxWidth) {
+        current = candidate;
+        continue;
+      }
+      if (current.length > 0) {
+        lines.push(current);
+        current = "";
+      }
+      if (measure(word) <= maxWidth) {
+        current = word;
+      } else {
+        // Hard-break the overlong word by characters (a single character
+        // wider than maxWidth is still emitted — best effort).
+        let chunk = "";
+        for (const ch of word) {
+          if (measure(chunk + ch) > maxWidth && chunk.length > 0) {
+            lines.push(chunk);
+            chunk = ch;
+          } else {
+            chunk += ch;
+          }
+        }
+        current = chunk;
+      }
+    }
+    lines.push(current);
+  }
+  return lines;
+}

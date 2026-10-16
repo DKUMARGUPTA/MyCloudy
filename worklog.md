@@ -3102,3 +3102,51 @@ Stage Summary:
 - Shared a11y fix: result-view rename touch target 32px → 44px on mobile (every tool's result screen).
 - Tool state: 57 live / 97 total / 40 pending | i18n 1546=1546 | smoke 49/49 | tsc + eslint + dev.log clean.
 - Next per priority queue: edit-pdf (Phase 8, big — 6 sub-phases), then annotate-pdf.
+
+---
+Task ID: P8.1+P8.2+P8.5
+Agent: Z.ai Code (main orchestrator, continuing user's approved tool queue)
+Task: Edit PDF — the flagship Word-style editor (PRD §8.2.1), first three sub-phases: 8.1 shell + 8.2 objects + 8.5 export. 58th tool.
+
+Work Log:
+- Read CONTEXT-MEMORY.md (57 live / 97 total; next queue = edit-pdf Phase 8 "bada hai, 6 sub-phases"). No ready files existed — built from scratch on the make-fillable/pdfjs/stamp-common patterns.
+- Architecture: config-driven surface + pure model + export worker (P4.5/P4.6 recipe):
+  - `tools/edit-pdf/model.ts` PURE (~810 lines) — EditorObject union (text/image/rect/ellipse/line/arrow/draw/whiteout), PageView + display↔pdf transforms for all 4 /Rotate values (copied from make-fillable — surface must NOT import pdf-lib transitively), factories, normaliseDraw (freehand bbox+fractions), hit-test + resizeRect (aspect lock), z-order ops, snapshot history, greedy wrapText with hard-break, full wire-blob sanitizer (never trust the blob).
+  - `tools/edit-pdf/asset-store.ts` — in-memory image/signature store (logo-store pattern, multi-entry): JPG/PNG passthrough AFTER decode probe (corrupt files fail at add time with honest toast), WEBP/HEIC/GIF/BMP decode→PNG re-encode (libheif fallback), ≤4096px normalisation, useSyncExternalStore snapshot, setRunOrder↔collectRunAssets pairing for collectAssets.
+  - `tools/edit-pdf/worker.ts` — pdf-lib export: objects drawn per page in z-order; TEXT via wrapText + widthOfTextAtSize + ascent baseline math + rotate compensation (degrees(/Rotate) so words read upright on rotated pages), underline strokes, bg rects; shapes via drawRectangle/drawEllipse/drawLine (+2-stroke open arrowhead); freehand as point-mapped drawLine segments; whiteout rects; images pre-embedded once per asset (JPG embedJpg passthrough / PNG embedPng); fonts = stamp-common loadStampFonts (Devanagari fetch w/ blob-origin recovery) + local italic variants (TimesRomanItalic etc.); per-rot point mapping via bilinear corner interpolation (objPointToPdf).
+  - `tools/edit-pdf/config.ts` — minFiles 1, fullWidthSurface (NEW ToolConfig flag), no schema options (state rides "e:<fileId>" epoch-key blob + collectAssets), 5 features + 3 FAQ, howKeys, chain view/compress/lock.
+  - `tools/edit-pdf/surface.tsx` (~1280 lines) — editor orchestration: page strip + zoomable page render + object overlay; toolbar (select/text/image/rect/ellipse/line/arrow/draw/whiteout/sign); pointer machinery (drag-create, move [pos−grab exact], 4-corner resize [Shift aspect for images], freehand strokes); inline textarea editing (auto-select, empty-on-blur removal, font/size/color/bold/italic/underline/align/bg CSS mirrored to worker math); signature pad dialog (dpr canvas, alpha-trimmed PNG); properties panel (kind-specific fields + opacity + layer + lock/dup/del); layers panel (reverse z list, hide/lock/delete per row); right-click context menu; keyboard (V/T/R/O/L/A/D/W tools, Delete, arrows nudge [Shift ×10], Ctrl+Z/Y/D, +/- zoom, Esc); coalescing undo/redo (800ms group window); 500-page honest truncation notice.
+  - `tools/edit-pdf/editor-parts.tsx` — presentational chrome (toolbar, canvas header, ColorField/ActionRow, TextFields/ShapeFields, LayersPanel, SignPadDialog [unmounts on close = state reset], ObjView [percentage-positioned object renderer with selection handles + live stroke svg]).
+- ToolShell extension: `fullWidthSurface?: boolean` config flag — skips options aside/mobile sheet while KEEPING the run CTA (viewerOnly kills the run; this doesn't). 4-line change, additive.
+- i18n: tools/edit-pdf/i18n.json (88 keys ×2) + scripts/merge-edit-pdf-i18n.ts — parity OK, 1634=1634.
+- Wiring: registry enabled:true + configs.ts + surfaces.tsx (EditSurface).
+- Smoke scripts/smoke-edit-pdf.ts: 48/48 GREEN — model (roundtrips ×4 rotations, draw normalise, wrap greedy+hard-break+empty, z-order ×6, history undo/redo/limit, resizeRect aspect, sanitizer drops hidden/garbage/missing-asset + page clamp) + REAL worker module (bun self-shim + fetch shim serving public/fonts TTF): full battery (text bold/underline, Devanagari center+bg, times italic, rect, ellipse, line flip, arrow, freehand, whiteout, PNG asset pairing, hidden dropped → objects:10/pages:3/images:1), output structurally verified (3 pages, zlib-inflated content Tj ops, hex text match, Type0 font for Devanagari subset, /Image XObject), passthrough objects:0, corrupt → tool.errorCorrupt.
+- BUGS FOUND & FIXED during smoke+QA:
+  1. wrapText hard-break was broken — `|| current.length === 0` accepted overlong words unconditionally (smoke caught it; now pushes current, THEN hard-breaks).
+  2. Move double-count: `disp.x + (pos.x - grabDx)` → `pos.x - grabDx` (QA measured 129px instead of 40px).
+  3. setRunOrder missing in commit — assets never reached the worker (QA end-to-end caught: detail.images 0 despite objects). Added to commit; image then embedded (2000×1500 DCTDecode verified in output bytes).
+  4. Asset decode probe — corrupt JPG/PNG now fails at ADD time (honest toast) instead of silently at export.
+- QA (agent-browser, EN + HI):
+  - Landing EN: features/how/FAQ/CTA ✓; switch to HI ✓.
+  - Drop public/edit-fixture.pdf (3-page, Name box) → editor: canvas + 10-tool toolbar + undo/redo + properties + layers ✓.
+  - Text tool + click → textarea focused; typed content → object + layers label ✓; hex-verified in exported PDF at exact position (Tm 253, 577.68).
+  - Box drag-create ✓ (objs 1→2); move exact 40px (after fix); corner-handle resize ✓; undo (44.06%→34.99% w) + redo (→44.06%) ✓.
+  - Properties: fill #16a34a → drawn `0.086 0.639 0.290 rg ... B` in output ✓.
+  - Layers: hide (opacity 0.4) / show (1) ✓; layers label "Box"/"Approved by QA team".
+  - Sign pad: squiggle → Done → trimmed image object ✓; Image upload: real JPG (rikb-photo.jpg) → 2000×1500 asset → embedded DCTDecode in output ✓; corrupt PNG → honest destructive toast ✓.
+  - Whiteout + arrow drawn in output (1 1 1 rg f; line + 2 head strokes) ✓.
+  - Keyboard: t → text create; Delete → removed; Ctrl+Z → restored ✓. Context menu: 5 items, Duplicate → 1→2 objects ✓.
+  - Passthrough run: 0 objects = original 3 pages preserved.
+  - Result view: download button (byte-verified PDF), naming final-edited.pdf, summary chips.
+  - HI UI: चुनें/टेक्स्ट/व्हाइटआउट toolbar, गुण properties, इस पेज के ऑब्जेक्ट layers, पेज 1/3, Devanagari filename मोबाइल-टेस्ट.pdf + डाउनलोड button.
+  - Mobile 375×812: overflowX=0, page 341px (max-w-full), toolbar scrolls, properties+layers stack below canvas ✓.
+  - Console: ZERO errors; resource audit: ZERO external requests (privacy §2.2 held).
+- Final: bunx tsc clean; bun run lint clean; smoke 48/48; dev.log clean (HTTP 200).
+- Updated CONTEXT-MEMORY.md (58 live / 39 pending, P8.1 session log, insights) + this worklog entry.
+
+Stage Summary:
+- 58th TOOL live: edit-pdf (flagship editor v1) — add text (Helvetica/Times/Courier/Devanagari + bold/italic/underline/align/colors/bg), images (upload, aspect resize), shapes (rect/ellipse/line/arrow + fill/stroke/dash), freehand draw, whiteout, signatures (draw pad), select/move/resize, z-order, lock/hide, properties + layers panels, context menu, undo/redo (coalesced), full keyboard, zoom, 500-page guard, export via pdf-lib worker with rotation-compensated text + embedded fonts.
+- Pinned insights: (1) agent-browser synthetic PointerEvents need a render between pointerdown and pointerup (150ms) — same-tick dispatch reads stale gesture state; (2) HMR can create DUAL module instances (surface writes asset-store A, stale config reads B) — a full reload unifies; always re-verify store→worker pairing after mid-QA edits; (3) pdf-lib writes show-text as HEX strings + Flate-compresses content streams — byte-level QA must inflate (node:zlib) and compare hex; (4) edit .tsx/.ts confusion: Edit tool needs the exact path.
+- Deferred (Phase 8 remaining): 8.3 existing-text editing (whiteout+replace, font matching), 8.4 form fields in editor, 8.6 mobile simplified toolbar + snap guides + multi-select + object rotation, autosave drafts, Find&Replace, annotate-pdf (next tool reuses editor core).
+- Tool state: 58 live / 97 total / 39 pending | i18n 1634=1634 | smoke 48/48 | tsc + eslint + dev.log clean.
+- Next per priority queue: annotate-pdf (highlights/notes/sticky — reuses the editor core), or edit-pdf sub-phase 8.3 (existing text edit).

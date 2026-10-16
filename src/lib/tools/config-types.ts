@@ -133,6 +133,13 @@ export interface ToolConfig {
    */
   landingSurface?: boolean;
   /**
+   * Full-width workspace surfaces (e.g. the Edit PDF editor): skip the
+   * options aside / mobile options sheet — the surface owns its entire
+   * layout (toolbar, panels, properties) — while KEEPING the run CTA
+   * and the processing/result phases (unlike viewerOnly).
+   */
+  fullWidthSurface?: boolean;
+  /**
    * Landing "How it works" step keys (exactly 3, i18n). Defaults:
    * viewer tools → view.how1-3, everything else → tool.how1-3. No-file
    * tools usually need their own steps (there is no file to select).

@@ -56,6 +56,7 @@ import { config as rasterizePdf } from "../../../tools/rasterize-pdf/config";
 import { config as makePdfFillable } from "../../../tools/make-pdf-fillable/config";
 import { config as setPdfViewerPreferences } from "../../../tools/set-pdf-viewer-preferences/config";
 import { config as resizeImageKb } from "../../../tools/resize-image-kb/config";
+import { config as editPdf } from "../../../tools/edit-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -122,6 +123,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [makePdfFillable.toolId]: makePdfFillable,
   [setPdfViewerPreferences.toolId]: setPdfViewerPreferences,
   [resizeImageKb.toolId]: resizeImageKb,
+  [editPdf.toolId]: editPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {
