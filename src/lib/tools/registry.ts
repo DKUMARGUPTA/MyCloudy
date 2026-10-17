@@ -701,12 +701,16 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: FilePlus,
     popularity: 28,
     accepts: "any",
+    enabled: true,
     name: { en: "Create PDF", hi: "पीडीएफ़ बनाएँ" },
     description: {
-      en: "Blank pages or templates: letter, notes, planner, invoice, resume.",
-      hi: "ख़ाली पेज या टेम्पलेट: पत्र, नोट्स, इनवॉइस, रिज़्यूमे।",
+      en: "Ready-made paper: blank, ruled, grid, dot grid, Cornell notes, weekly planner.",
+      hi: "तैयार काग़ज़: ख़ाली, रूल्ड, ग्रिड, डॉट ग्रिड, कॉर्नेल नोट्स, साप्ताहिक प्लानर।",
     },
-    tags: { en: ["new pdf", "blank", "template"], hi: ["नई", "बनाएँ", "blank"] },
+    tags: {
+      en: ["new pdf", "blank", "template", "lined paper", "graph paper", "planner"],
+      hi: ["नई", "बनाएँ", "टेम्पलेट", "रूल्ड", "ग्रिड", "प्लानर"],
+    },
   }),
   def({
     id: "write-pdf",

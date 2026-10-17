@@ -12,6 +12,8 @@ import { Steps } from "@/components/doco/home/steps";
 import { Categories } from "@/components/doco/home/categories";
 import { Why } from "@/components/doco/home/why";
 import { Modes } from "@/components/doco/home/modes";
+import { PopularTools } from "@/components/doco/home/popular-tools";
+import { Faq } from "@/components/doco/home/faq";
 import { RecentFiles } from "@/components/doco/home/recent-files";
 import { ToolsView } from "@/components/doco/tools/tools-view";
 import { ToolView } from "@/components/doco/tool/tool-view";
@@ -54,11 +56,13 @@ export default function Home() {
         {route.view === "home" ? (
           <>
             <Hero />
+            <PopularTools />
             <Steps />
             <Categories />
             <Why />
             <RecentFiles />
             <Modes />
+            <Faq />
           </>
         ) : route.view === "tool" ? (
           <ToolView toolId={route.toolId ?? ""} />

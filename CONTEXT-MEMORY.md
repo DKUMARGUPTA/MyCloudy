@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P8.4 ke baad — Write PDF (word-processor, 60th tool) shipped — **60 tools live**.
+> **Updated:** Task-3 + SEO round ke baad — Create PDF (61st tool) + keyword-research SEO injection shipped — **61 tools live**.
 
 ---
 
@@ -12,18 +12,19 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **60** ✅ |
-| Pending (Coming Soon) | **37** ⏳ |
+| **Ready to use (LIVE)** | **61** ✅ |
+| Pending (Coming Soon) | **36** ⏳ |
 | Phase | 3/4 (tools one-by-one) + Phase 8 editor IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1775 = 1775 keys parity) |
+| i18n | English + हिंदी (1840 = 1840 keys parity) |
+| SEO (SEO round) | Title/description/keywords research se, JSON-LD (WebApplication + FAQPage), home Popular-Tools + FAQ sections, robots.txt + sitemap.xml |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 60 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 61 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (12/12) — CATEGORY COMPLETE
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -52,11 +53,12 @@
 - ✅ Overlay PDF (`overlay-pdf`) — base+stamp merge, page mapping, position/opacity
 - ✅ Change page size (`change-pdf-page-size`) — A3/A4/A5/Letter/custom mm, fit/fill/none
 
-### 📷 Create (4/10)
+### 📷 Create (5/10)
 - ✅ Scan to PDF (`scan-pdf`) — camera + edge detection + Magic/B&W filters + perspective correction
 - ✅ Images to PDF (`images-to-pdf`) — JPG/PNG/WEBP/HEIC/TIFF/SVG
 - ✅ Generate QR code (`generate-qr-code`) — link/text/WiFi/UPI/vCard/email/phone/WhatsApp, colors+logo, PNG/SVG/PDF
 - ✅ Write PDF (`write-pdf`) — P8.4: noFile word-processor — templates (blank/letter/हिंदी आवेदन/offer/report), uncontrolled contentEditable blocks (p/h1-h3/bullet/numbered/quote), B/I/U/colour via execCommand, tables + images + page breaks + dividers, page setup (4 sizes × portrait/landscape × 3 margins), header/footer with {date}/{page}/{pages}, page numbers, SAME pure layout engine for the live paginated preview (canvas metrics, metric-compatible faces) and the pdf-lib export worker (surface-driven run, progress → on-device download), Devanagari via embedded Noto (blockScript recipe), coalesced doc-wide undo/redo
+- ✅ Create PDF (`create-pdf`) — Task-3: noFile ready-made paper — 6 templates (blank / lined college-wide-narrow + red margin rule / grid 5-2.5mm / dot 5mm / Cornell cue+summary+header / weekly planner Mon-Sun + notes), 4 paper sizes × portrait/landscape × 3 margins, pages 1-50 (planner 1-12), PURE model planPages → worker paints (drawLine / filled drawEllipse dots / helv+Noto labels), same-plan scaled live preview (CSS mini-previews on the cards), localized output names (साप्ताहिक-प्लानर-a4.pdf), smoke 86/86
 
 ### 🔒 Security (6/8)
 - ✅ Protect PDF (`lock-pdf`) — AES-256 qpdf WASM
@@ -100,13 +102,14 @@
 
 ---
 
-## ⏳ 37 PENDING TOOLS (Kaam baki hai)
+## ⏳ 36 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
+1. **Edit PDF sub-phase 8.4** (form fields in editor) / **8.6 mobile polish** — write/create dono ho gaye
+2. Phase-3 ke bade tools: `word-to-pdf` (S), `create-resume`, `create-photo-collage`… (create category baaki: photo-collage, card, fillable-form, resume, passport-photo)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: write-pdf ✅)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: write-pdf ✅ — Task-3: create-pdf ✅)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -219,6 +222,26 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 ---
 
 ## 📝 Session Log (naya kaam yahan append karo)
+
+### SEO Round — Keyword research injection ✅ (user-provided research)
+- **User ne Semrush-style keyword research diya** (pdf converter 1.2M, jpg to pdf 450K, pdf to word 450K, pdf to jpg 301K, pdf editor 246K, free tool to edit pdf documents 3.6K, pdf tools 1.9K, pdf conversion tool 1.6K, pdf editing tools freeware...) — sab inject kiya:
+- **`src/app/layout.tsx` metadata:** title "Free PDF Tools — Converter, Editor, Merger & More | DocoPDF" (~61 chars), description (~155 chars, jpg to pdf + pdf to word/to jpg + no signup + on-device + हिंदी), 19 keywords research se, OG (locale en_US + alternate hi_IN) + Twitter card + canonical "/" + googleBot max-snippet/image-preview directives.
+- **JSON-LD (server-rendered, layout body mein 2 script tags):** WebApplication (UtilitiesApplication, free offer, 10-item featureList, inLanguage en+hi) + FAQPage (6 Q&A EN — home FAQ section ke saath SYNC MEIN rakhna, layout.tsx comment hai).
+- **Home naye sections:** `src/components/doco/home/popular-tools.tsx` — 8 keyword-anchored cards (JPG to PDF, PDF to JPG, Merge, Compress, Edit, Sign, PDF OCR, Create PDF) — name/desc/icon REGISTRY se aate hain (auto-sync, zero i18n keys) + category color chips; `src/components/doco/home/faq.tsx` — 6 SEO Q&A (free?, jpg→pdf?, pdf→word?, upload?, "without Adobe Acrobat"?, Hindi?) Radix Accordion se. Page order: Hero → **PopularTools** → Steps → Categories → Why → RecentFiles → Modes → **Faq**.
+- **hero.subtitle copy upgrade:** "Free PDF converter, editor, merger and more — everything runs right in your browser, no uploads, no signup." (hi: फ़्री पीडीएफ़ कन्वर्टर, एडिटर और मर्जर...).
+- **i18n:** `scripts/merge-home-seo-i18n.ts` (self-contained patch + ALLOW_UPDATE whitelist sirf hero.subtitle ke liye) — popular.* 2 + faq.* 14 = +16 keys ×2 + 1 update → **1840=1840**.
+- **QA (agent-browser):** title/subtitle live; Popular section 8 cards keyword anchors ke saath; FAQ accordion expand + answers; JSON-LD `["WebApplication","FAQPage"]` DOM mein, FAQPage 6 questions; Create PDF card → #/tool/create-pdf nav; HI full (लोकप्रिय पीडीएफ़ टूल्स / अक्सर पूछे जाने वाले सवाल / FAQ Hindi); mobile 375px overflowX=0 (popular 1-col, FAQ 56px buttons); console zero errors; network zero non-localhost. Screenshots: qa-seo-popular.png / qa-seo-faq.png / qa-createpdf-desktop.png.
+- **Note:** sitemap.xml + robots.txt pehle se sahi the (P0 se) — keyword priorities already set.
+- Live: 61 | i18n 1840=1840 | tsc + eslint + dev.log clean.
+
+### Task-3 — Create PDF ✅ 61st TOOL (ready-made paper & planner, PRD §7.3)
+- **PRD §7.3 "Create PDF"**: instant ready-made paper PDFs — koi document nahi, koi word-processor nahi. Task spec ke mutabik 6 templates: blank, lined (college 7.1mm / wide 8.7mm / narrow 6.35mm + optional red margin rule), grid (5mm / 2.5mm), dotted (5mm bullet-journal), Cornell (cue column ~2.5in + summary strip + optional header line), weekly planner (Mon-Sun localized labels + notes area, one week per page). Letter/offer/report write-pdf mein hain, invoice/resume alag Phase-3 tools — intentionally nahi banaye.
+- **Architecture (write-pdf recipe exactly):** `noFile: true` + surface-driven worker run — `tools/create-pdf/model.ts` PURE (CSpec wire format + sanitizeCSpec + planPages → lines/dots/rects/labels plain data, PDF pt bottom-origin; grid/dot centered-offset trick se partial cells dono taraf split hote hain jabki spacing EXACT rehti hai; planner geometry + C_DAY_NAMES/C_NOTES_LABEL inline L10n + cOutputName localized base names), `worker.ts` (pdf-lib painter: drawLine rules / filled drawEllipse dots — pdf-lib ka drawCircle nahi hai, drawEllipse xScale=yScale=r ka filled dot hai / drawText labels helv + embedded Noto sirf hi-planner ke liye via loadStampFonts; progress per page), `surface.tsx` (6 template cards CSS mini-previews ke saath — pure CSS gradients/konkord divs, koi image nahi; options fieldset; SAME plan ka scaled live preview 560px cap ke saath; CTA spawns real Worker; downloadBlob + success chip).
+- **Wiring:** registry `enabled: true` + description honest update ("Ready-made paper: blank, ruled, grid, dot grid, Cornell notes, weekly planner") + configs.ts + surfaces.tsx + i18n "create" section 49 keys ×2 (merge-create-pdf-i18n.ts) — 1824=1824 parity.
+- **Smoke 86/86 GREEN** (`scripts/smoke-create-pdf.ts`): Part 1 model 54 (sanitizer defaults/clamps incl. planner 12 cap, A4/Letter/legal geometry + landscape swap, blank zero-ops, lined spacing exact + first-rule position + red margin rule, grid exact 5mm/2.5mm both axes + centered partial cells, dotted row pitch + uniform counts, cornell cue min(180, 35%) + 144pt summary cap + header line, planner 8 labels + 7 separators + notes-boundary math + hi needNoto + सोमवार labels, output names incl. रूल्ड-पेज-landscape) + Part 2 REAL worker 32 (hi planner → साप्ताहिक-प्लानर-a4.pdf + Type0 Noto subset + hex Tj + line ops; lined letter landscape ×3 pages; dot grid filled-ellipse curve ops >3000; cornell ×2; blank ×4; corrupt/empty → tool.errorGeneric; garbage spec sanitized).
+- **QA (agent-browser):** EN landing (6 cards, template-specific options switch: cornell → 2 switches, grid → square size, planner → pages hint; how-it-works/FAQ/features/related) → CTA byte-verified (Worker subclass constructor tap → blob.arrayBuffer): lined-paper-a4.pdf %PDF- 1387B 1 page + success chip; Hindi full UI + planner preview सोमवार..रविवार on CreatePdfDeva FontFace + export byte-verified 4653B + app's own pdf.js read-back (visual labels correct; known documented i-matra extraction reorder limitation — stamp/write-pdf recipe v1); landscape select (Radix pointer-sequence recipe) → रूल्ड-पेज-a4-landscape.pdf; mobile 375×812 overflowX=0 EN+HI, cards 166px, CTA 44px; console errors 0; non-localhost requests 0.
+- **2 bugs pakde & fix kiye:** (1) **write-pdf preview LINES vertically mirrored the** — LLine y PDF bottom-origin hai (empirically verified: underline y1 = baseline−1.76) lekin preview `top: line.y1 * previewScale` kar raha tha (rects/pieces sahi (pageH−y) use karte hain) → underlines/hr/table borders preview mein neeche dikh rahe the. Fix: (pageH − y) flip dono orientations ke liye. Regression smoke-write-pdf 95/95. (2) mobile overflowX=201 — preview figure grid-item ka min-width:auto fixed-width preview se expand ho raha tha → `min-w-0` + 560px preview cap.
+- Live: **61 / 97** | i18n 1824=1824 | smoke 86/86 (+95/95 write-pdf regression) | tsc + eslint + dev.log clean.
 
 ### P8.4 — Write PDF ✅ 60th TOOL (word-processor, PRD §8)
 - **PRD §8 "Write PDF"**: "Rich text editor: headings, bold/italic/underline, lists, tables, images, page breaks, header/footer, fonts (Hindi), page numbers; templates (letter, application, offer, report); live page preview; export PDF" — scratch se, text-layout engine reuse karke.

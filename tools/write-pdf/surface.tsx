@@ -1027,14 +1027,17 @@ export function WriteSurface(props: ToolSurfaceProps): JSX.Element {
                       horizontal
                         ? {
                             left: Math.min(line.x1, line.x2) * previewScale,
-                            top: line.y1 * previewScale,
+                            // LLine y is PDF-space (bottom origin) — flip for CSS top
+                            top: (pageH - line.y1) * previewScale,
                             width: Math.abs(line.x2 - line.x1) * previewScale,
                             height: Math.max(1, line.w * previewScale),
                             backgroundColor: line.color,
                           }
                         : {
                             left: line.x1 * previewScale,
-                            top: Math.min(line.y1, line.y2) * previewScale,
+                            top:
+                              (pageH - Math.max(line.y1, line.y2)) *
+                              previewScale,
                             width: Math.max(1, line.w * previewScale),
                             height: Math.abs(line.y2 - line.y1) * previewScale,
                             backgroundColor: line.color,

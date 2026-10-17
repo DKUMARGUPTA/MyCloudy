@@ -32,6 +32,7 @@ import { MakeFillableSurface } from "../../../tools/make-pdf-fillable/surface";
 import { EditSurface } from "../../../tools/edit-pdf/surface";
 import { AnnotateSurface } from "../../../tools/annotate-pdf/surface";
 import { WriteSurface } from "../../../tools/write-pdf/surface";
+import { CreateSurface } from "../../../tools/create-pdf/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -111,6 +112,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "edit-pdf": EditSurface,
   "annotate-pdf": AnnotateSurface,
   "write-pdf": WriteSurface,
+  "create-pdf": CreateSurface,
 };
 
 export function getToolSurface(
