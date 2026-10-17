@@ -58,6 +58,7 @@ import { config as setPdfViewerPreferences } from "../../../tools/set-pdf-viewer
 import { config as resizeImageKb } from "../../../tools/resize-image-kb/config";
 import { config as editPdf } from "../../../tools/edit-pdf/config";
 import { config as annotatePdf } from "../../../tools/annotate-pdf/config";
+import { config as writePdf } from "../../../tools/write-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -126,6 +127,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [resizeImageKb.toolId]: resizeImageKb,
   [editPdf.toolId]: editPdf,
   [annotatePdf.toolId]: annotatePdf,
+  [writePdf.toolId]: writePdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

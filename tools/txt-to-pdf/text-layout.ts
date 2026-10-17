@@ -66,8 +66,8 @@ export type ScriptFont = "std" | "noto";
 
 /** One renderable style of text. */
 export interface FontSpec {
-  /** sans = Helvetica / Noto, mono = Courier (code). */
-  family: "sans" | "mono";
+  /** sans = Helvetica / Noto, serif = Times, mono = Courier (code). */
+  family: "sans" | "serif" | "mono";
   bold: boolean;
   italic: boolean;
 }
@@ -184,6 +184,8 @@ export interface WrapRun {
   color?: string;
   /** Superscript-ish (link markers): 72% size, raised baseline. */
   sup?: boolean;
+  /** Word-processor underline (write-pdf rides this through the wrapper). */
+  underline?: boolean;
 }
 
 export interface WrapOptions {
@@ -289,7 +291,8 @@ function mergeLineRuns(tokens: Token[]): WrapRun[] {
       last.spec.bold === token.run.spec.bold &&
       last.spec.italic === token.run.spec.italic &&
       last.color === token.run.color &&
-      last.sup === token.run.sup
+      last.sup === token.run.sup &&
+      last.underline === token.run.underline
     ) {
       last.text += token.text;
     } else {

@@ -716,6 +716,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Pencil,
     popularity: 26,
     accepts: "any",
+    enabled: true,
     name: { en: "Write PDF", hi: "लिखकर पीडीएफ़ बनाएँ" },
     description: {
       en: "Word-processor style writing with Hindi fonts, tables and images.",

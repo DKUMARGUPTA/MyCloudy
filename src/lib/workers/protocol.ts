@@ -45,6 +45,8 @@ export interface RunDetail {
   annotations?: number;
   /** Sticky notes among the annotations (annotate-pdf). */
   notes?: number;
+  /** Words of text written into the output (write-pdf). */
+  words?: number;
 }
 
 export interface ToolOutput {

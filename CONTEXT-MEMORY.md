@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P8.3 ke baad — Edit PDF existing-text editing (click-to-retype + font matching) + Find & Replace shipped — **59 tools live**.
+> **Updated:** P8.4 ke baad — Write PDF (word-processor, 60th tool) shipped — **60 tools live**.
 
 ---
 
@@ -12,18 +12,18 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **59** ✅ |
-| Pending (Coming Soon) | **38** ⏳ |
+| **Ready to use (LIVE)** | **60** ✅ |
+| Pending (Coming Soon) | **37** ⏳ |
 | Phase | 3/4 (tools one-by-one) + Phase 8 editor IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1661 = 1661 keys parity) |
+| i18n | English + हिंदी (1775 = 1775 keys parity) |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 58 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 60 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (12/12) — CATEGORY COMPLETE
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -52,10 +52,11 @@
 - ✅ Overlay PDF (`overlay-pdf`) — base+stamp merge, page mapping, position/opacity
 - ✅ Change page size (`change-pdf-page-size`) — A3/A4/A5/Letter/custom mm, fit/fill/none
 
-### 📷 Create (3/10)
+### 📷 Create (4/10)
 - ✅ Scan to PDF (`scan-pdf`) — camera + edge detection + Magic/B&W filters + perspective correction
 - ✅ Images to PDF (`images-to-pdf`) — JPG/PNG/WEBP/HEIC/TIFF/SVG
 - ✅ Generate QR code (`generate-qr-code`) — link/text/WiFi/UPI/vCard/email/phone/WhatsApp, colors+logo, PNG/SVG/PDF
+- ✅ Write PDF (`write-pdf`) — P8.4: noFile word-processor — templates (blank/letter/हिंदी आवेदन/offer/report), uncontrolled contentEditable blocks (p/h1-h3/bullet/numbered/quote), B/I/U/colour via execCommand, tables + images + page breaks + dividers, page setup (4 sizes × portrait/landscape × 3 margins), header/footer with {date}/{page}/{pages}, page numbers, SAME pure layout engine for the live paginated preview (canvas metrics, metric-compatible faces) and the pdf-lib export worker (surface-driven run, progress → on-device download), Devanagari via embedded Noto (blockScript recipe), coalesced doc-wide undo/redo
 
 ### 🔒 Security (6/8)
 - ✅ Protect PDF (`lock-pdf`) — AES-256 qpdf WASM
@@ -99,14 +100,13 @@
 
 ---
 
-## ⏳ 38 PENDING TOOLS (Kaam baki hai)
+## ⏳ 37 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
-2. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
+1. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: write-pdf ✅)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -203,6 +203,10 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - **⚠️ pdf.js font metadata (P8.3): getDocument({fontExtraProperties: true}) karne pe BHI standard-14 fonts (Helvetica/Times/Courier non-embedded) commonObjs mein AA hi nahi aate (kuch load ho hi nahi) → real name sirf EMBEDDED fonts ka milta hai (`page.commonObjs.get(fontName).name` — subset prefix jaise "ABCDEF+ArialMT" ke saath). Standard-font PDFs ke liye `textContent.styles[fontName].fontFamily` ("sans-serif"/"serif"/"monospace") hi family drive karta hai — "closest" messaging ke saath honest. textLayer recipe: `tools/edit-pdf/text-layer.ts` (piecesFromPage viewport-matrix pattern + fontMetaFor defensive lookup).**
 - **⚠️ Radix toast DOM selector (P8.3 QA): ye app sonner NAHI radix Toast use karta — toast DOM `ol.fixed > li` mein milta hai (`[data-sonner-toast]` hamesha null!). TOAST_LIMIT=1 + REMOVE_DELAY=1e6 → naya toast purane ko replace karta hai, kabhi auto-dismiss nahi hota — stale toast ke liye selector hi galat maan lo.**
 - **⚠️ pdf-lib output byte-audit (P8.1): show-text ops HEX strings mein likhe jaate hain (`<45646974...> Tj`) + content streams Flate-compressed hain — raw string search kaam NAHI karta. RECIPE: node:zlib inflateSync(stream.contents) karke hex compare karo (`Buffer.from("text").toString("hex")`), image dict entries (/Subtype /Image, /DCTDecode) stream-dict plain hone se RAW bytes mein milte hain.**
+- **⚠️ pdf-lib `getPage(index)` ZERO-BASED hai (P8.4 smoke lesson):** PDFDocument.getPage(0) = FIRST page. 1-based soch ke index likha to assertIs "index must be at least 0 and at most N-1" throw hota hai. Page ka content bhi ALWAYS array-of-streams hai (pdf-lib har draw call ka stream append karta hai) — inflate karke CONCATENATE karo, single stream assume mat karo. Type0 font /Subtype pe milta hai (/Type /Font dono simple+composite ke liye hai).
+- **⚠️ useSyncExternalStore getSnapshot MUST return a cached reference (P8.4 client-side crash):** har call pe `[...store.values()]` naya array deta hai → React infinite-loop detect karke poora app crash ("Application error: a client-side exception"). FIX: module-level `snapshot` variable jo notify() pe rebuild hota hai (edit-pdf ka pattern tha — trimmed copy mein gir gaya). Naya store likhoge to snapshot caching kabhi mat bhoolein.
+- **⚠️ document.execCommand + styleWithCSS (P8.4):** bold/italic/underline styleWithCSS=true ke saath `<span style="font-weight: bold">` jaise inline-style spans dete hain — B/I/U tags NAHI. DOM→runs parser ko inline styles (fontWeight ≥600/bold, fontStyle italic, textDecoration underline) + span color dono padhne padte hain, warna formatting model mein gum ho jaati hai (editor mein dikhta hai, PDF mein nahi jaata).
+- **⚠️ Radix DropdownMenu + agent-browser (P8.4):** plain `.click()` menu ITEMS pe kaam NAHI karta — recipe: item pe `focus()` + Enter keydown, YA pointerdown → 150ms → pointerup sequence. Select (combobox) triggers wahi pointer-sequence maangte hain. QA scripts mein menus ke saath hamesha yeh sequence use karo.
 - **✅ RESOLVED (P4.4): WORKER-SIDE pdf.js IMAGE-PDF BLANK RENDER:** P4.3 mein discover hua tha — image-based PDFs (JPEG scans) worker mein render karne pe BLANK milta tha (ocr-pdf conf 0, pdf-to-jpg blank JPGs). **Root cause: pdf.js ka `DOMCanvasFactory._createCanvas` image pages pe `document.createElement("canvas")` call karta hai (pdf.min.mjs @174658 + CachedCanvases render path)** — purana worker shim sirf `{baseURI}` tha, `createElement` missing → pdf.js image draw silently skip → blank canvas. **Fix: `tools/pdfjs-common/worker-lib.ts`** — `workerDocumentShim()` (createElement → OffscreenCanvas + documentElement stub) + har `getDocument` mein `ownerDocument: workerDocumentShim()`. **P4.4 mein SAARE 10 pdf.js-using workers migrated**: rasterize, compare (pehle se), ocr-pdf, copy-from-pdf, pdf-to-images, compress-pdf-to-size, redact-pdf, pdf-to-txt, search-pdf, extract-images. **QA verified:** ocr-pdf scan → conf 95 + searchable text correct; pdf-to-jpg scan → 1240×1754 non-blank; rasterize scan → JPEG-embedded; copy-from-pdf scan → OCR .txt verbatim; compress-to-size raster ladder error-free + non-blank (logical proof: blank JPEGs tiny hote, structural jeet gaya = raster content real tha). Text-PDF passthrough regression bhi PASS. **Naya rule: koi bhi tool worker mein pdf.js use kare → `loadPdfjsInWorker` + `workerDocumentShim()` from `../pdfjs-common/worker-lib` + `ownerDocument` param — inline loader KABHI mat likho.**
 - **⚠️ pdf-lib `drawImage` SILENTLY IGNORES `w`/`h` — sirf `width`/`height` accept karta hai (P4.4 bug):** imagegrid worker `page.drawImage(img, {...box})` spread kar raha tha jahan box = {x,y,w,h} — pdf-lib w/h ko IGNORE karta hai aur image ko NATIVE PIXEL SIZE pe draw karta hai (1697px SVG raster = 1697pt = 2.3 A4 pages, page ke bahar clip!). Chhote test images pe visually theek dikhta tha (300px photo = 300pt = page ke andar) isliye pakda nahi gaya. FIX: `{x: box.x, y: box.y, width: box.w, height: box.h}`. **RULE: pdf-lib draw calls mein kabhi spread mat karo — explicit width/height likho.** (rasterize/compress-to-size already sahi the — sirf imagegrid affected)
 - **SVG in workers IMPOSSIBLE without WASM (P4.4):** Chrome/Firefox `createImageBitmap` SVG blobs reject karta hai ("The source image could not be decoded") — direct verify kiya. SOLUTION: **main-thread raster** — Image element + canvas drawImage (SVG vector ko DRAWN SIZE pe raster karta hai, crisp) + `collectAssets` bridge (add-watermark logo-store pattern): surface card preview ke dauraan rasterize → store (Map keyed name:size:mtime) → config ka collectAssets run-time pe File[] deta hai → worker k-th SVG file ↔ k-th asset pairing. Natural dims side-car `svg-dims.json` manifest (LAST asset) — "fit" pages graphic ke apne 96-DPI size pe, upscaled raster pe NAHI. Pending gate: useSyncExternalStore + pending counter → CTA blocked (igrid.svgRasterizing).
@@ -215,6 +219,18 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 ---
 
 ## 📝 Session Log (naya kaam yahan append karo)
+
+### P8.4 — Write PDF ✅ 60th TOOL (word-processor, PRD §8)
+- **PRD §8 "Write PDF"**: "Rich text editor: headings, bold/italic/underline, lists, tables, images, page breaks, header/footer, fonts (Hindi), page numbers; templates (letter, application, offer, report); live page preview; export PDF" — scratch se, text-layout engine reuse karke.
+- **Architecture (noFile + surface-driven worker run):** `noFile: true` (qr-code pattern) — surface landing pe render hota hai (template picker), aur khud apna export Worker spawn karta hai (shared protocol: options.doc JSON + files[] images) — progress → downloadBlob + success chip. Zero ToolShell changes.
+- `tools/write-pdf/model.ts` PURE (~1120 lines): WDoc wire format (title/setup/blocks: p/h1-h3/bullet/numbered/quote/table/image/hr/pagebreak), sanitizeWDoc clamps, layoutDoc — PageFlow/planLineGroup/wrapRuns/positionRuns REUSE from txt-to-pdf/text-layout (sirf WrapRun pe `underline?: boolean` additive flag + mergeLineRuns comparison + FontSpec `serif` add hua), keep-with-next headings, table rows atomic (top border sirf first-row/fresh-page pe — duplicates nahi), quote bars per page-fragment, image content-height clamp, header/footer/{page}/{pages}/{date} substitution + page numbers, LPiece/LLine/LRect/LImage output (worker paints, preview DOM-render karta hai).
+- `worker.ts`: helv/times/courier ×4 variants + noto (blockScript recipe) — preview Helvetica/Arial, Times New Roman, Courier New browser faces metric-compatible hain isliye WYSIWYG ~exact; images magic-sniff embedJpg/embedPng + fallback swap.
+- `templates.ts`: blank + Letter (serif EN) + आवेदन (classic Hindi format) + Offer + Report (table + pagebreak + quote) — inline L10n content.
+- `surface.tsx` + `parts.tsx`: uncontrolled contentEditable (innerHTML sirf [version] bump pe re-sync — typing kabhi clobber nahi hoti), runsToHtml/parseEditableRuns DOM↔model, execCommand styleWithCSS B/I/U/foreColor + selectionchange queryCommandState toolbar, block rail (move/duplicate/delete + Enter→new block, Backspace-empty→delete+focus neighbour), table editor (+row/+col/−row/−col/header switch), image blocks (asset-store pattern, scale/align/replace), page setup panel, coalesced doc-wide undo/redo (800ms, 100 snapshots, ref-reads render se BAHAR — React Compiler refs rule), live paginated preview (SAME layoutDoc + canvas measureText, DocoWriteDeva FontFace /fonts TTF se, debounce 160ms, scale = container/pageW).
+- **Wiring:** registry enabled:true + configs.ts + surfaces.tsx + i18n 89 keys ×2 (`write` section, merge-write-pdf-i18n.ts) — 1775=1775.
+- **Smoke 95/95 GREEN** (`scripts/smoke-write-pdf.ts`): sanitizer clamps/drops, script detect, word count, asset order, naming, pagination (hard-split char preservation, no blank pages), lists (•, 1..3 consecutive), quote bar geometry, hr, underline stroke, keep-with-next, table (borders 4H+9V, header bg, split, all rows), images (aspect/clamp/centred/missing skip), hf substitution + baselines, landscape+narrow, templates shape + REAL worker e2e (self+fetch shim): battery output reload — pages/A4/Tj hex/image XObject/Type0/footers + honest errors (empty/corrupt/missing-asset) + process.exit(0) success pe (fontkit handles bun ko zinda rakhte the!)
+- **QA (agent-browser):** EN landing (5 template cards + how + FAQ) → Report pick (18 blocks, table, page break) → type + bold (execCommand) → undo/redo → add-block menu (Radix pointer-sequence recipe) → bullet + table +row → page setup (header {date}, footer {page}/{pages}, page numbers center) → preview (2 pages, 44 pieces, 34 lines, hf + bare numbers rendered) → EXPORT BYTE-VERIFIED (Worker subclass tap → blob.arrayBuffer → app's pdf.js): "Quarterly Report.pdf", 2 pages, table text (+31.7%), image paintImageXObject page-2, typed text present; Hindi full flow: आवेदन template + typed "कृपया इसे मंज़ूर करें।" + "आवेदन.pdf" 1 page 9,113 dark px (real Devanagari rendering); mobile 375×812 overflowX=0 (edit + preview, toolbar wraps, paper 343px); console errors 0; resources sab localhost.
+- **3 QA bugs pakde & fix kiye:** (1) trimmed asset-store ne cached snapshot chhod diya tha → useSyncExternalStore infinite loop + client-side exception → snapshot variable wapas; (2) execCommand('bold') styleWithCSS `<span style="font-weight: bold">` deta hai — parser sirf B/STRONG padhta tha → inline style (fontWeight/fontStyle/textDecoration) parse add; (3) formatState selectionchange pe new object → render-loop guard (values-diff check).
 
 ### P8.3 — Edit PDF: existing text edit + Find & Replace ✅ (edit-pdf upgrade)
 - **PRD §8.2 "Edit existing text"** ("Text layer (pdf.js) detect karke click par text block edit mode; original text area whiteout + naya text same position par, font match; line-by-line, no reflow; UI me font mil gaya / nahi mila") + **"Find & Replace"** (same font rules) — dono scratch se, editor core reuse karke.
