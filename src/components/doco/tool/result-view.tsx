@@ -71,6 +71,7 @@ export function ResultView({
         pages?: number;
         confidence?: number;
         targetHit?: boolean;
+        annotations?: number;
       }
     | null;
   chainFromName?: string;
@@ -194,6 +195,11 @@ export function ResultView({
         {runSummary?.targetHit === false ? (
           <p className="rounded-chip bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
             {t("result.targetMissed")}
+          </p>
+        ) : null}
+        {runSummary?.annotations ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.annotationCount", { n: runSummary.annotations })}
           </p>
         ) : null}
         <p className="text-sm text-muted-foreground">

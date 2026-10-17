@@ -57,6 +57,7 @@ import { config as makePdfFillable } from "../../../tools/make-pdf-fillable/conf
 import { config as setPdfViewerPreferences } from "../../../tools/set-pdf-viewer-preferences/config";
 import { config as resizeImageKb } from "../../../tools/resize-image-kb/config";
 import { config as editPdf } from "../../../tools/edit-pdf/config";
+import { config as annotatePdf } from "../../../tools/annotate-pdf/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -124,6 +125,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [setPdfViewerPreferences.toolId]: setPdfViewerPreferences,
   [resizeImageKb.toolId]: resizeImageKb,
   [editPdf.toolId]: editPdf,
+  [annotatePdf.toolId]: annotatePdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

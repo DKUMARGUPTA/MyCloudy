@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P8.1 ke baad — Edit PDF (flagship editor v1: shell + objects + export) shipped — **58 tools live**.
+> **Updated:** P8.2 ke baad — Annotate PDF (highlights/underline/strikeout/sticky notes — REAL PDF annotations) shipped — **59 tools live**.
 
 ---
 
@@ -12,12 +12,12 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **58** ✅ |
-| Pending (Coming Soon) | **39** ⏳ |
+| **Ready to use (LIVE)** | **59** ✅ |
+| Pending (Coming Soon) | **38** ⏳ |
 | Phase | 3/4 (tools one-by-one) + Phase 8 editor IN PROGRESS |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1634 = 1634 keys parity) |
+| i18n | English + हिंदी (1661 = 1661 keys parity) |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
@@ -39,10 +39,11 @@
 - ✅ Extract images (`extract-images`) — embedded PNG/JPG, dedupe, min-size filter, ZIP/PNG/JPG
 - ✅ Copy from PDF (`copy-from-pdf`) — P4.3: click-to-select paragraphs (columns/tables split, headings+bullets), clipboard copy Text/Markdown/CSV, run exports .txt/.md with auto-OCR (P4.4: image-scan OCR bhi fixed — niche pdfjs-common insight dekho)
 
-### ✏️ Edit (10/11)
+### ✏️ Edit (11/11) — CATEGORY COMPLETE
 - ✅ **Edit PDF (`edit-pdf`) — P8.1: FLAGSHIP EDITOR v1 live!** Text (4 fonts + Devanagari, B/I/U, align, colors, bg), images (upload + aspect resize), shapes (rect/ellipse/line/arrow + fill/stroke/dash), freehand draw, whiteout, signature pad, select/move/resize, z-order + lock/hide, properties + layers panels, context menu, coalesced undo/redo, full keyboard, zoom, export worker (rotation-compensated text, embedded fonts, DCTDecode image passthrough)
 - ✅ Fill out PDF forms (`fill-out-pdf`) — AcroForm scan, auto-fill profile (name/email/phone/address), Hindi Devanagari support, flatten switch
 - ✅ Make PDF fillable (`make-pdf-fillable`) — P4.2: auto-detect (underlines/boxes/checkbox squares) + manual drag-draw + rename/type-edit + AcroForm export
+- ✅ Annotate PDF (`annotate-pdf`) — P8.2: drag-to-highlight WORD-SNAPS to pdf.js text runs (per-line quads), underline/strikeout follow text lines, sticky notes (Devanagari-safe /Contents), scanned-page /Square fallback, comments rail; **REAL PDF annotations** (/Highlight /Underline /StrikeOut /Text + /QuadPoints Acrobat order) — Chrome/Acrobat mein editable
 - ✅ Add watermark (`add-watermark`) — text/logo, opacity, tiling
 - ✅ Add page numbers (`add-page-numbers`) — 8 formats, Roman/Hindi digits, 9-grid
 - ✅ Header & footer (`add-header-footer`) — {page} {date} {filename} variables
@@ -98,16 +99,15 @@
 
 ---
 
-## ⏳ 39 PENDING TOOLS (Kaam baki hai)
+## ⏳ 38 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Annotate PDF** (`annotate-pdf`) — highlights, notes, sticky (editor core reuse)
-2. **Edit PDF sub-phase 8.3** — existing text edit (whiteout+replace, font matching)
-3. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
-4. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
+1. **Edit PDF sub-phase 8.3** — existing text edit (whiteout+replace, font matching)
+2. **Write PDF** (`write-pdf`) — word-processor style + Hindi fonts
+3. **Create PDF** (`create-pdf`) — blank/templates (letter, notes, planner, invoice, resume)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -214,6 +214,15 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 ---
 
 ## 📝 Session Log (naya kaam yahan append karo)
+
+### P8.2 — Annotate PDF ✅ 59th TOOL (Edit category 11/11 COMPLETE)
+- **PRD §8.2** "Highlight / Underline / Strike" (real PDF annotations!) + "Sticky note / Comment" — scratch se bana, edit-pdf core patterns reuse karke (epoch-key blob, page strip, history, keyboard).
+- `tools/annotate-pdf/` — **model.ts** PURE (Quad Acrobat BL/BR/TR/TL order, mirrored PageView transforms ×4 rotations, piecesFromItems harvest (viewport matrix direct — P4.3 insight), piecesInDrag word-snapping (vertical ≥50% of the smaller band + horizontal: contained | ≥30% w | starts/ends inside — drag mid-word poora word lights up), groupRuns baseline-bucket + gap merge, buildMarkupFromDrag + scanned fallback square, makeNote, sanitizer (quads ≤64, annos ≤2000, page clamp, empty-note drop), history helpers) + **worker.ts** (pdf-lib REAL annotations: /Highlight +/QuadPoints +/IC +/CA, /Underline & /StrikeOut +/C full-strength, /Square fallback (/BS W 0 + /Border [0 0 0] + /IC + /CA), /Text sticky (/Name /Comment, 22×22 /Rect, /Open false); /Contents PDFHexString.fromText — Devanagari-safe; page.getCropBox() clamping) + **surface.tsx** (ek hi pdf.js doc session bhar khula — views + per-page text pieces cache; "a:<fileId>" blob {annos, pageViews}; toolbar 5 tools + 5 swatches + custom + opacity slider; markup bands % positioned (highlight fill / underline bottom line / strikeout mid line); note markers draggable (size-11 md:size-9, drag-vs-click suppression ref); NoteBubble textarea (stopPropagation onPointerDown!); comments rail page-grouped (max-h-96 scroll); setRunBlocked notReady + noAnnos; V/H/U/S/N shortcuts + Delete + Ctrl+Z/Y + +/- zoom; 500-page guard) + **parts.tsx** presentational chrome.
+- **Wiring:** registry enabled:true (59 live / 38 pending) + configs.ts + surfaces.tsx + protocol RunDetail.annotations/notes + result-view chip (result.annotationCount) + i18n ann.* 52 keys ×2 + scripts/merge-annotate-pdf-i18n.ts (full-add + result-patch precedent) — **1661=1661**.
+- **2 REAL BUGS QA se pakde:** (1) ⚠️ **ICU-lite plural SUBSET SIRF `=1 {..} other {..}` HAI** — teen-branch (=0/=1/other) keys RAW render hoti hain! Sabhi plural keys 2-branch hi likho. (2) worker `context.register()` ko plain object diya to save() pe "sizeInBytes is not a function" — **register(obj(dict)) hamesha, obj() khud nested dicts handle karta hai**.
+- **Smoke 87/87 GREEN** (`scripts/smoke-annotate-pdf.ts`): model battery (harvest, drag rules, word-merge, rot0/rot90 quad math exact, fallback rect, sanitizer, history) + REAL worker (highlight 2 quads + underline + strikeout + square + Hindi note → pdf-lib RELOAD + parse-level asserts: subtypes, QuadPoints 16 numbers, /CA 0.45, /BS W 0, /IC channels, /M date, Hindi decodeText round trip, rect centre, page-99 clamp, corrupt → tool.errorCorrupt).
+- **QA (agent-browser):** EN landing/workspace/flows (highlight band top exactly 12.93% = line-1 geometry; underline bottom-of-band, strikeout mid-band — teeno kinds verified), rail excerpts verbatim, undo/redo/rail-delete, sticky note bubble + Devanagari text, **output verified IN-BROWSER via app ka khud ka pdf.js** (`import('/pdfjs/pdf.min.mjs')` → getAnnotations(): subtypes + quads + contents + opacity + color sab correct; pdf.js 4.x NOTE: `contentsObj.str` hai, `contents` NAHI, quadPoints array-of-numbers) + Worker subclass constructor tap (addEventListener('message') — onmessage intercept kiye bina); HI full UI + HI export + "1 टिप्पणी जुड़ी" chip; touch-pointer flow; mobile 375px overflowX=0 (page/toolbar/canvas); zero page errors; zero non-local requests; tsc/eslint clean; dev.log clean (sirf 200s + JSON-edit Fast Refresh advisories).
+- Live: 58 → **59** | Next queue: edit-pdf 8.3 (existing text edit), phir write-pdf
 
 ### P8.1 — Edit PDF flagship editor v1 ✅ 58th TOOL (sub-phases 8.1+8.2+8.5)
 - **PRD §8.2.1** "Word-style editor" ka v1: shell + objects + export (scratch se — koi ready file nahi thi).

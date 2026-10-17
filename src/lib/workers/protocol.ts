@@ -41,6 +41,10 @@ export interface RunDetail {
   objects?: number;
   /** Embedded image assets in the output (edit-pdf). */
   images?: number;
+  /** Real PDF annotations written (annotate-pdf). */
+  annotations?: number;
+  /** Sticky notes among the annotations (annotate-pdf). */
+  notes?: number;
 }
 
 export interface ToolOutput {

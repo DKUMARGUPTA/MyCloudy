@@ -527,6 +527,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: MessageSquare,
     popularity: 25,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Annotate PDF", hi: "टिप्पणी करें" },
     description: {
       en: "Highlights, underlines, sticky notes and comments that stick.",
