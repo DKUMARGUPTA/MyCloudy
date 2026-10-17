@@ -37,40 +37,57 @@ import {
   CanvasHeader,
   EditorContextMenu,
   EditorToolbar,
+  FindReplaceDialog,
   LayersPanel,
   ObjView,
   PropertiesPanel,
   SignPadDialog,
+  TextPieceButtons,
   type ContextMenuState,
+  type FrMatchView,
   type ToolId,
 } from "./editor-parts";
+import { harvestPageText, scanPagesText } from "./text-layer";
 import {
   HISTORY_LIMIT,
   LINE_HEIGHT,
   MIN_OBJ_PT,
   TEXT_PAD,
   bringToFront,
+  buildReplaceLineObjects,
+  buildReplacePieceObjects,
   clampN,
   displayRectToPdf,
   displaySize,
   duplicateObject,
+  groupPiecesIntoLines,
+  luminance,
   lowerOne,
   makeDraw,
   makeImage,
   makeShape,
   makeText,
   makeWhiteout,
+  medianRgb,
   normaliseDraw,
   pdfRectToDisplay,
+  pickInkFromPixels,
+  pieceRect,
+  planLineReplacements,
   raiseOne,
   redoStep,
+  rgbToHex,
   roundPt,
   sendToBack,
+  substituteOccurrences,
   undoStep,
   type EditorObject,
+  type HarvestPiece,
   type HitEdge,
+  type LineMatch,
   type ObjRect,
   type PageView,
+  type PieceLine,
 } from "./model";
 
 /**
@@ -90,6 +107,14 @@ const KEY_PREFIX = "e:";
 const EKEY_ID = "ekey";
 /** Minimum drag (fraction of the page) that becomes a new object. */
 const MIN_DRAW = 0.02;
+
+/** Proper-noun font labels for the matched/closest toasts. */
+const FONT_LABEL: Record<string, string> = {
+  helvetica: "Helvetica",
+  times: "Times",
+  courier: "Courier",
+  devanagari: "Noto Sans Devanagari",
+};
 
 interface EditorBlob {
   objects: EditorObject[];
@@ -182,6 +207,118 @@ function orderFromObjects(objects: EditorObject[]): string[] {
     if (o.kind === "image" && !seen.includes(o.assetKey)) seen.push(o.assetKey);
   }
   return seen;
+}
+
+// ---------------------------------------------------------------------------
+// Existing-text colour sampling (P8.3) — from the rendered page bitmap
+// ---------------------------------------------------------------------------
+
+const DEFAULT_BG = "#ffffff";
+const DEFAULT_INK = "#111827";
+
+function scratchContext(
+  bitmap: ImageBitmap
+): CanvasRenderingContext2D | null {
+  // OffscreenCanvas on the main thread everywhere modern; DOM fallback.
+  try {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.drawImage(bitmap, 0, 0);
+      return ctx as unknown as CanvasRenderingContext2D;
+    }
+  } catch {
+    /* fall through to the DOM canvas */
+  }
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.drawImage(bitmap, 0, 0);
+      return ctx;
+    }
+  } catch {
+    /* give up honestly */
+  }
+  return null;
+}
+
+/**
+ * Samples the cover (page background) and ink (text) colours for a piece
+ * from the rendered page bitmap. Background: the median of thin strips
+ * just above/below the piece (works on tinted forms). Ink: the darkest
+ * pixel cluster on light pages, the brightest on dark ones — with an
+ * honest fallback when the contrast is too weak to trust.
+ */
+function samplePieceColors(
+  bitmap: ImageBitmap,
+  dispW: number,
+  dispH: number,
+  piece: HarvestPiece
+): { bg: string; ink: string } {
+  try {
+    const sx = bitmap.width / Math.max(1, dispW);
+    const sy = bitmap.height / Math.max(1, dispH);
+    const rect = pieceRect(piece);
+    const ctx = scratchContext(bitmap);
+    if (!ctx) return { bg: DEFAULT_BG, ink: DEFAULT_INK };
+
+    const x0 = Math.max(0, Math.floor((rect.x - 2) * sx));
+    const x1 = Math.min(
+      bitmap.width,
+      Math.ceil((rect.x + rect.w + 2) * sx)
+    );
+    const band = Math.max(2, Math.round(3 * sy));
+    const topY = Math.max(0, Math.floor((rect.y - 3.5) * sy));
+    const botY = Math.min(
+      bitmap.height,
+      Math.ceil((rect.y + rect.h + 3.5) * sy)
+    );
+
+    const bgPx: number[] = [];
+    const stripW = Math.max(1, x1 - x0);
+    if (topY + band <= bitmap.height && stripW > 0) {
+      bgPx.push(
+        ...ctx.getImageData(x0, topY, stripW, band).data
+      );
+    }
+    if (botY - band >= 0 && stripW > 0) {
+      bgPx.push(
+        ...ctx.getImageData(x0, botY - band, stripW, band).data
+      );
+    }
+    const bg =
+      bgPx.length > 0
+        ? medianRgb(bgPx)
+        : { r: 255, g: 255, b: 255 };
+    const bgLum = luminance(bg.r, bg.g, bg.b);
+
+    const ix0 = Math.max(0, Math.floor(rect.x * sx));
+    const ix1 = Math.min(bitmap.width, Math.ceil((rect.x + rect.w) * sx));
+    const iy0 = Math.max(0, Math.floor(rect.y * sy));
+    const iy1 = Math.min(bitmap.height, Math.ceil((rect.y + rect.h) * sy));
+    let ink: { r: number; g: number; b: number } | null = null;
+    if (ix1 > ix0 && iy1 > iy0) {
+      ink = pickInkFromPixels(
+        Array.from(ctx.getImageData(ix0, iy0, ix1 - ix0, iy1 - iy0).data),
+        bgLum
+      );
+    }
+    if (ink === null) {
+      ink =
+        bgLum > 0.5
+          ? { r: 17, g: 24, b: 39 }
+          : { r: 248, g: 250, b: 252 };
+    }
+    return {
+      bg: rgbToHex(bg.r, bg.g, bg.b),
+      ink: rgbToHex(ink.r, ink.g, ink.b),
+    };
+  } catch {
+    return { bg: DEFAULT_BG, ink: DEFAULT_INK };
+  }
 }
 
 export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
@@ -584,6 +721,219 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     setSelectedId(null);
   }, []);
 
+  // --- Existing-text editing (P8.3) ------------------------------------------
+  // Per-page piece cache + harvest on demand (the annotate-pdf pattern).
+  const pieceCacheRef = useRef<Map<number, HarvestPiece[]>>(new Map());
+  const harvestToken = useRef(0);
+  const [pieces, setPieces] = useState<HarvestPiece[]>([]);
+  const [piecesState, setPiecesState] = useState<
+    "idle" | "loading" | "empty" | "ready"
+  >("idle");
+
+  useEffect(() => {
+    if (tool !== "edittext" || !file || !viewsReady) {
+      setPiecesState("idle");
+      setPieces([]);
+      return;
+    }
+    const cached = pieceCacheRef.current.get(selectedPage);
+    if (cached) {
+      setPieces(cached);
+      setPiecesState(cached.length === 0 ? "empty" : "ready");
+      return;
+    }
+    const token = harvestToken.current + 1;
+    harvestToken.current = token;
+    setPiecesState("loading");
+    setPieces([]);
+    void (async () => {
+      try {
+        const harvested = await harvestPageText(file, selectedPage);
+        if (harvestToken.current !== token) return;
+        pieceCacheRef.current.set(selectedPage, harvested);
+        setPieces(harvested);
+        setPiecesState(harvested.length === 0 ? "empty" : "ready");
+      } catch {
+        if (harvestToken.current !== token) return;
+        setPieces([]);
+        setPiecesState("empty");
+      }
+    })();
+  }, [tool, file, selectedPage, viewsReady]);
+
+  const pickPiece = useCallback(
+    (piece: HarvestPiece): void => {
+      if (!base || !pageDisp || !currentView) return;
+      const samples = samplePieceColors(
+        base.bitmap,
+        base.dispW,
+        base.dispH,
+        piece
+      );
+      const { cover, text } = buildReplacePieceObjects(
+        selectedPage,
+        currentView,
+        piece,
+        samples.bg,
+        samples.ink
+      );
+      applyObjects([...objectsRef.current, cover, text], `replace:${text.id}`);
+      setSelectedId(text.id);
+      setEditingId(text.id);
+      setTool("select");
+      // PRD §8.2: "UI me clear message — font mil gaya / nahi mila".
+      const fontLabel = FONT_LABEL[piece.font.font];
+      toast({
+        title: piece.font.exact
+          ? t("editPdf.fontMatched", { font: fontLabel })
+          : t("editPdf.fontClosest", {
+              font: fontLabel,
+              original: piece.font.original || t("editPdf.fontUnknown"),
+            }),
+      });
+    },
+    [applyObjects, base, currentView, pageDisp, selectedPage, t, toast]
+  );
+
+  // --- Find & replace (P8.3, same font rules) ---------------------------------
+  const [frOpen, setFrOpen] = useState(false);
+  const [frQuery, setFrQuery] = useState("");
+  const [frReplacement, setFrReplacement] = useState("");
+  const [frCase, setFrCase] = useState(false);
+  const [frScan, setFrScan] = useState<{ page: number; pages: number } | null>(
+    null
+  );
+  const [frDone, setFrDone] = useState<ReadonlySet<string>>(new Set());
+  /** Bulk pieces per page + flattened lines, computed once per file. */
+  const frPiecesRef = useRef<HarvestPiece[][] | null>(null);
+  const frLinesRef = useRef<PieceLine[] | null>(null);
+  const [frVersion, setFrVersion] = useState(0);
+
+  const openFindReplace = useCallback((): void => {
+    setFrOpen(true);
+    if (frPiecesRef.current === null && file) {
+      setFrScan({ page: 0, pages: 0 });
+      void (async () => {
+        try {
+          const all = await scanPagesText(
+            file,
+            Math.max(1, pageCount || EDITOR_MAX_PAGES),
+            (p) => setFrScan({ page: p.page, pages: p.pages })
+          );
+          frPiecesRef.current = all;
+          const lines: PieceLine[] = [];
+          for (let p = 0; p < all.length; p += 1) {
+            for (const line of groupPiecesIntoLines(p, all[p])) {
+              lines.push(line);
+            }
+          }
+          frLinesRef.current = lines;
+        } catch {
+          frPiecesRef.current = [];
+          frLinesRef.current = [];
+        } finally {
+          setFrScan(null);
+          setFrVersion((v) => v + 1);
+        }
+      })();
+    }
+  }, [file, pageCount]);
+
+  const frMatches = useMemo<FrMatchView[]>(() => {
+    void frVersion; // recomputes once the scan lands
+    const lines = frLinesRef.current;
+    if (!lines || frQuery.length === 0) return [];
+    const PAD = 24;
+    const out: FrMatchView[] = [];
+    for (const m of planLineReplacements(lines, frQuery, frCase)) {
+      const text = lines[m.line].text;
+      const key = `${m.page}:${m.line}:${m.start}`;
+      out.push({
+        key,
+        page: m.page,
+        before:
+          (m.start > PAD ? "…" : "") + text.slice(Math.max(0, m.start - PAD), m.start),
+        hit: text.slice(m.start, m.end),
+        after:
+          text.slice(m.end, m.end + PAD) +
+          (m.end + PAD < text.length ? "…" : ""),
+        done: frDone.has(key),
+      });
+    }
+    return out;
+  }, [frVersion, frQuery, frCase, frDone]);
+
+  const applyLineReplacements = useCallback(
+    (firstOnly: boolean): void => {
+      const lines = frLinesRef.current;
+      const all = frPiecesRef.current;
+      if (!lines || !all) return;
+      const matches = planLineReplacements(lines, frQuery, frCase);
+      // Group the not-yet-done matches per line — one retype per line
+      // substitutes ALL of that line's occurrences.
+      const byLine = new Map<number, LineMatch[]>();
+      for (const m of matches) {
+        const key = `${m.page}:${m.line}:${m.start}`;
+        if (frDone.has(key)) continue;
+        const bucket = byLine.get(m.line);
+        if (bucket) bucket.push(m);
+        else byLine.set(m.line, [m]);
+      }
+      const chosen = firstOnly
+        ? byLine.size > 0
+          ? [[...byLine.entries()][0]]
+          : []
+        : [...byLine.entries()];
+      if (chosen.length === 0) return;
+
+      const added: EditorObject[] = [];
+      const newDone = new Set(frDone);
+      let replacedLines = 0;
+      for (const [lineIdx, ms] of chosen) {
+        const line = lines[lineIdx];
+        const pagePieces = all[line.page] ?? [];
+        const view = pageViews[line.page];
+        if (!view) continue;
+        const newText = substituteOccurrences(
+          line.text,
+          ms.map((m) => ({ start: m.start, end: m.end })),
+          frReplacement
+        );
+        const { cover, text } = buildReplaceLineObjects(
+          line.page,
+          view,
+          line,
+          pagePieces,
+          newText,
+          DEFAULT_BG,
+          DEFAULT_INK
+        );
+        added.push(cover, text);
+        for (const m of ms) newDone.add(`${m.page}:${m.line}:${m.start}`);
+        replacedLines += 1;
+      }
+      if (added.length === 0) return;
+      applyObjects(
+        [...objectsRef.current, ...added],
+        firstOnly ? `fr:${chosen[0][0]}` : "fr:all"
+      );
+      setFrDone(newDone);
+      toast({
+        title: t("editPdf.frReplacedCount", { n: replacedLines }),
+      });
+    },
+    [applyObjects, frCase, frDone, frQuery, frReplacement, pageViews, t, toast]
+  );
+
+  // Per-file caches reset when the document changes.
+  useEffect(() => {
+    pieceCacheRef.current.clear();
+    frPiecesRef.current = null;
+    frLinesRef.current = null;
+    setFrDone(new Set());
+    setFrVersion((v) => v + 1);
+  }, [fileId]);
+
   // --- Pointer machinery ------------------------------------------------------
   const displayPos = (
     event: React.PointerEvent<Element>
@@ -609,6 +959,9 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       setEditingId(null);
       return;
     }
+    // Clicks land on the piece buttons (pointer-events-auto); anything
+    // that slips through onto the overlay does nothing.
+    if (tool === "edittext") return;
     if (tool === "draw") {
       try {
         overlayRef.current?.setPointerCapture(event.pointerId);
@@ -916,6 +1269,9 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         case "t":
           setTool("text");
           break;
+        case "e":
+          setTool("edittext");
+          break;
         case "r":
           setTool("rect");
           break;
@@ -1012,9 +1368,11 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       ? "editPdf.hintSelect"
       : tool === "text"
         ? "editPdf.hintText"
-        : tool === "draw"
-          ? "editPdf.hintDraw"
-          : "editPdf.hintShape";
+        : tool === "edittext"
+          ? "editPdf.hintEditText"
+          : tool === "draw"
+            ? "editPdf.hintDraw"
+            : "editPdf.hintShape";
 
   return (
     <div className="flex flex-col gap-3">
@@ -1052,6 +1410,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
             zoom={zoom}
             onZoom={setZoom}
             markedCount={pageObjects.length}
+            onFindReplace={openFindReplace}
           />
 
           {pageCount > 1 ? (
@@ -1086,7 +1445,14 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
               <div
                 ref={overlayRef}
                 className="absolute inset-0 touch-none"
-                style={{ cursor: tool === "select" ? "default" : "crosshair" }}
+                style={{
+                  cursor:
+                    tool === "select"
+                      ? "default"
+                      : tool === "edittext"
+                        ? "text"
+                        : "crosshair",
+                }}
                 onPointerDown={handleOverlayPointerDown}
                 onPointerMove={handleOverlayPointerMove}
                 onPointerUp={handleOverlayPointerUp}
@@ -1114,6 +1480,16 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
                     onContextMenu={handleContextMenu(obj)}
                   />
                 ))}
+
+                {/* P8.3: click-to-edit existing text pieces. */}
+                {tool === "edittext" && piecesState === "ready" ? (
+                  <TextPieceButtons
+                    pieces={pieces}
+                    dispW={pageDisp.w}
+                    dispH={pageDisp.h}
+                    onPick={pickPiece}
+                  />
+                ) : null}
 
                 {/* Live text editor — exact geometry of the text object. */}
                 {editing && editing.kind === "text" ? (() => {
@@ -1198,8 +1574,27 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
           )}
 
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {t(toolHintKey)}
+            {tool === "edittext" && piecesState === "loading"
+              ? t("editPdf.pieceLoading")
+              : t(toolHintKey)}
           </p>
+
+          {tool === "edittext" && piecesState === "empty" ? (
+            <div className="flex items-start gap-2.5 rounded-card border border-amber-300/60 bg-amber-50 p-3 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
+              <TriangleAlert
+                className="mt-0.5 size-4 shrink-0"
+                aria-hidden="true"
+              />
+              <div>
+                <p className="text-xs font-semibold">
+                  {t("editPdf.noTextTitle")}
+                </p>
+                <p className="mt-0.5 text-xs leading-relaxed">
+                  {t("editPdf.noTextHint")}
+                </p>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {/* Right rail: properties + layers */}
@@ -1255,6 +1650,32 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         <SignPadDialog
           onClose={() => setSignOpen(false)}
           onDone={onSignature}
+        />
+      ) : null}
+
+      {frOpen ? (
+        <FindReplaceDialog
+          query={frQuery}
+          onQuery={setFrQuery}
+          replacement={frReplacement}
+          onReplacement={setFrReplacement}
+          matchCase={frCase}
+          onMatchCase={setFrCase}
+          scanning={frScan !== null}
+          scanPage={frScan?.page ?? 0}
+          scanPages={frScan?.pages ?? 0}
+          matches={frMatches}
+          hasQuery={frQuery.length > 0}
+          onReplaceOne={() => applyLineReplacements(true)}
+          onReplaceAll={() => applyLineReplacements(false)}
+          onJump={(index) => {
+            const match = frMatches[index];
+            if (match) {
+              setSelectedPage(match.page);
+              setFrOpen(false);
+            }
+          }}
+          onClose={() => setFrOpen(false)}
         />
       ) : null}
 

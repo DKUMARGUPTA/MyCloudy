@@ -8,6 +8,7 @@ import {
   Baseline,
   Bold,
   Brush,
+  Check,
   Copy,
   Eraser,
   Image as ImageIcon,
@@ -20,11 +21,14 @@ import {
   PenLine,
   Plus,
   Redo2,
+  Replace,
   Square,
+  TextCursorInput,
   Trash2,
   Type,
   Underline,
   Undo2,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -44,7 +48,9 @@ import { cn } from "@/lib/utils";
 import {
   FONT_OPTIONS,
   pdfRectToDisplay,
+  pieceRect,
   type EditorObject,
+  type HarvestPiece,
   type ObjRect,
   type PageView,
   type ShapeObj,
@@ -64,6 +70,7 @@ import {
 export type ToolId =
   | "select"
   | "text"
+  | "edittext"
   | "image"
   | "rect"
   | "ellipse"
@@ -76,6 +83,7 @@ export type ToolId =
 const TOOL_BUTTONS: { id: ToolId; icon: typeof Type; key: string }[] = [
   { id: "select", icon: MousePointer2, key: "editPdf.toolSelect" },
   { id: "text", icon: Type, key: "editPdf.toolText" },
+  { id: "edittext", icon: TextCursorInput, key: "editPdf.toolEditText" },
   { id: "image", icon: ImageIcon, key: "editPdf.toolImage" },
   { id: "rect", icon: Square, key: "editPdf.toolRect" },
   { id: "ellipse", icon: Minus, key: "editPdf.toolEllipse" },
@@ -138,6 +146,7 @@ export function CanvasHeader({
   zoom,
   onZoom,
   markedCount,
+  onFindReplace,
 }: {
   page: number;
   pages: number;
@@ -148,6 +157,7 @@ export function CanvasHeader({
   zoom: number;
   onZoom: (next: number) => void;
   markedCount: number;
+  onFindReplace: () => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   return (
@@ -175,6 +185,18 @@ export function CanvasHeader({
         title={t("editPdf.redo")}
       >
         <Redo2 className="size-4" aria-hidden="true" />
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-9 shrink-0 rounded-btn px-2.5"
+        onClick={onFindReplace}
+        aria-label={t("editPdf.frTitle")}
+        title={t("editPdf.frTitle")}
+      >
+        <Replace className="size-4" aria-hidden="true" />
+        <span className="hidden md:inline">{t("editPdf.frTitle")}</span>
       </Button>
       <p className="ml-1 text-xs font-medium text-muted-foreground">
         {t("editPdf.pageOf", {
@@ -931,6 +953,281 @@ export function SignPadDialog({
               {t("editPdf.signDone")}
             </Button>
           </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Existing-text pieces overlay (P8.3 — click-to-edit)
+// ---------------------------------------------------------------------------
+
+/**
+ * Hover-able buttons over every harvested text piece. The wrapper is
+ * pointer-events-none so gestures pass through to the overlay beneath;
+ * only the buttons catch clicks. Vertical hit bands are padded to a
+ * comfortable minimum (a raw 12pt line is ~16px on screen — too thin), so
+ * the band is CENTRED on the piece to stay honest about which line you
+ * hit. Keyboard users tab through pieces in reading order.
+ */
+export function TextPieceButtons({
+  pieces,
+  dispW,
+  dispH,
+  onPick,
+}: {
+  pieces: HarvestPiece[];
+  dispW: number;
+  dispH: number;
+  onPick: (piece: HarvestPiece) => void;
+}): React.JSX.Element | null {
+  const { t } = useI18n();
+  if (pieces.length === 0) return null;
+  return (
+    <div className="pointer-events-none absolute inset-0 z-30" role="presentation">
+      {pieces.map((p) => {
+        const rect = pieceRect(p);
+        const centerY = rect.y + rect.h / 2;
+        // Comfortable minimum band (display pt) centred on the piece.
+        const bandH = Math.max(rect.h, 22);
+        const top = Math.max(0, centerY - bandH / 2);
+        const label = `${t("editPdf.pieceLabel")}: ${p.str.slice(0, 60)}`;
+        return (
+          <button
+            key={p.index}
+            type="button"
+            className="pointer-events-auto absolute rounded-sm bg-transparent outline-none transition-colors hover:bg-primary/10 hover:outline-2 hover:outline-primary focus-visible:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
+            style={{
+              left: `${(rect.x / dispW) * 100}%`,
+              top: `${(top / dispH) * 100}%`,
+              width: `${(rect.w / dispW) * 100}%`,
+              height: `${(bandH / dispH) * 100}%`,
+              outlineOffset: "-1px",
+            }}
+            onClick={() => onPick(p)}
+            aria-label={label}
+            title={label}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Find & replace dialog (P8.3 — same font rules as click-to-edit)
+// ---------------------------------------------------------------------------
+
+export interface FrMatchView {
+  key: string;
+  page: number;
+  /** Excerpt split around the occurrence: [before, hit, after]. */
+  before: string;
+  hit: string;
+  after: string;
+  done: boolean;
+}
+
+export function FindReplaceDialog({
+  query,
+  onQuery,
+  replacement,
+  onReplacement,
+  matchCase,
+  onMatchCase,
+  scanning,
+  scanPage,
+  scanPages,
+  matches,
+  hasQuery,
+  onReplaceOne,
+  onReplaceAll,
+  onJump,
+  onClose,
+}: {
+  query: string;
+  onQuery: (next: string) => void;
+  replacement: string;
+  onReplacement: (next: string) => void;
+  matchCase: boolean;
+  onMatchCase: (next: boolean) => void;
+  scanning: boolean;
+  scanPage: number;
+  scanPages: number;
+  matches: FrMatchView[];
+  hasQuery: boolean;
+  onReplaceOne: () => void;
+  onReplaceAll: () => void;
+  onJump: (index: number) => void;
+  onClose: () => void;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  const queryRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    queryRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t("editPdf.frTitle")}
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-card border border-border bg-card p-4 shadow-xl">
+        <div className="flex items-center gap-2">
+          <Replace className="size-4 text-primary" aria-hidden="true" />
+          <h3 className="text-sm font-semibold text-foreground">
+            {t("editPdf.frTitle")}
+          </h3>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="ml-auto size-8 rounded-btn"
+            onClick={onClose}
+            aria-label={t("editPdf.frClose")}
+          >
+            <X className="size-4" aria-hidden="true" />
+          </Button>
+        </div>
+
+        <div className="mt-3 flex flex-col gap-2.5">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="ed-fr-find" className="text-xs font-medium text-muted-foreground">
+              {t("editPdf.frFind")}
+            </Label>
+            <Input
+              id="ed-fr-find"
+              ref={queryRef}
+              value={query}
+              onChange={(event) => onQuery(event.target.value)}
+              placeholder={t("editPdf.frFindPlaceholder")}
+              className="h-9 rounded-btn"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="ed-fr-repl" className="text-xs font-medium text-muted-foreground">
+              {t("editPdf.frReplace")}
+            </Label>
+            <Input
+              id="ed-fr-repl"
+              value={replacement}
+              onChange={(event) => onReplacement(event.target.value)}
+              placeholder={t("editPdf.frReplacePlaceholder")}
+              className="h-9 rounded-btn"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="ed-fr-case" className="text-xs font-medium text-muted-foreground">
+              {t("editPdf.frMatchCase")}
+            </Label>
+            <Switch
+              id="ed-fr-case"
+              checked={matchCase}
+              onCheckedChange={onMatchCase}
+            />
+          </div>
+        </div>
+
+        <div className="mt-3 min-h-24 flex-1 overflow-hidden rounded-btn border border-border bg-background">
+          {scanning ? (
+            <div className="flex h-24 flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+              <span className="animate-pulse">{t("editPdf.frScan")}</span>
+              <span className="tabular-nums">
+                {scanPage} / {scanPages}
+              </span>
+            </div>
+          ) : !hasQuery ? (
+            <p className="p-3 text-xs text-muted-foreground">
+              {t("editPdf.frHint")}
+            </p>
+          ) : matches.length === 0 ? (
+            <p className="p-3 text-xs text-muted-foreground">
+              {t("editPdf.frNoMatches")}
+            </p>
+          ) : (
+            <ul className="flex max-h-96 flex-col gap-1 overflow-y-auto p-1.5 scrollbar-thin">
+              {matches.map((m, i) => (
+                <li key={m.key}>
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-btn border px-2 py-1.5 text-left text-xs outline-none transition-colors hover:bg-accent focus-visible:bg-accent",
+                      m.done
+                        ? "border-transparent text-muted-foreground"
+                        : "border-transparent text-foreground"
+                    )}
+                    onClick={() => onJump(i)}
+                    aria-label={`${t("editPdf.frPage", { page: m.page + 1 })}: ${m.hit}`}
+                  >
+                    <span className="shrink-0 rounded-chip bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary tabular-nums">
+                      {t("editPdf.frPage", { page: m.page + 1 })}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="text-muted-foreground">{m.before}</span>
+                      <mark className="rounded-sm bg-amber-200/80 px-0.5 text-foreground dark:bg-amber-500/40">
+                        {m.hit}
+                      </mark>
+                      <span className="text-muted-foreground">{m.after}</span>
+                    </span>
+                    {m.done ? (
+                      <Check
+                        className="size-3.5 shrink-0 text-emerald-600"
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {hasQuery && !scanning && matches.length > 0 ? (
+          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+            {t("editPdf.frMatchesCount", { n: matches.length })}
+            {" · "}
+            {t("editPdf.frNote")}
+          </p>
+        ) : null}
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 rounded-btn"
+            disabled={scanning || matches.length === 0}
+            onClick={onReplaceOne}
+          >
+            {t("editPdf.frReplaceOne")}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            className="h-9 rounded-btn"
+            disabled={scanning || matches.length === 0}
+            onClick={onReplaceAll}
+          >
+            {t("editPdf.frReplaceAll")}
+          </Button>
         </div>
       </div>
     </div>

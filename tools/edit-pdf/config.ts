@@ -27,6 +27,10 @@ export const config: ToolConfig = {
   collectAssets: () => collectRunAssets(),
   features: [
     {
+      en: "Edit text already on the page — click any line to retype it with a matched font (Hindi too), or find & replace across the document",
+      hi: "पेज पर पहले से लिखा टेक्स्ट सुधारें — किसी भी लाइन पर क्लिक करके मिलते फ़ॉन्ट से नए सिरे से लिखें (हिंदी भी), या पूरे दस्तावेज़ में खोजें और बदलें",
+    },
+    {
       en: "Add text anywhere — with fonts for Hindi (Devanagari), size, color, bold and alignment",
       hi: "कहीं भी टेक्स्ट जोड़ें — हिंदी (देवनागरी) फ़ॉन्ट, साइज़, रंग, बोल्ड और अलाइनमेंट के साथ",
     },
@@ -39,12 +43,8 @@ export const config: ToolConfig = {
       hi: "व्हाइटआउट कुछ भी छिपा देता है — पुरानी चीज़ ढककर ऊपर लिखें",
     },
     {
-      en: "Sign with your finger — draw a signature and drop it on the page",
-      hi: "उँगली से साइन करें — हस्ताक्षर बनाकर पेज पर रखें",
-    },
-    {
-      en: "Full undo/redo, keyboard shortcuts and an objects list — 100% on-device",
-      hi: "पूरा अनडू/रीडू, कीबोर्ड शॉर्टकट और ऑब्जेक्ट सूची — 100% ऑन-डिवाइस",
+      en: "Sign with your finger — draw a signature and drop it on the page; full undo/redo, 100% on-device",
+      hi: "उँगली से साइन करें — हस्ताक्षर बनाकर पेज पर रखें; पूरा अनडू/रीडू, 100% ऑन-डिवाइस",
     },
   ],
   faq: [
@@ -54,8 +54,8 @@ export const config: ToolConfig = {
         hi: "क्या PDF में पहले से लिखा टेक्स्ट बदल सकता हूँ?",
       },
       a: {
-        en: "Use Whiteout to cover the old text, then click the Text tool and type the new words in the same spot — pick a matching font and size. Direct rewriting of embedded text arrives in a coming update.",
-        hi: "पुराने टेक्स्ट को व्हाइटआउट से ढकें, फिर टेक्स्ट टूल से उसी जगह नए शब्द लिखें — मिलता फ़ॉन्ट और साइज़ चुनें। मौजूदा टेक्स्ट की सीधी एडिटिंग अगले अपडेट में आ रही है।",
+        en: "Yes — pick the Edit existing text tool and click any line on the page. The original words are covered with a box matching the page background and retyped in the same spot with the closest matching font. Editing works line by line (paragraphs don't reflow), and scanned pages need OCR first.",
+        hi: "हाँ — 'मौजूदा टेक्स्ट सुधारें' टूल चुनकर पेज की किसी भी लाइन पर क्लिक करें। पुराने शब्द पेज के बैकग्राउंड से मिलते रंग के डिब्बे से ढक जाते हैं और उसी जगह सबसे मिलते-जुलते फ़ॉन्ट से नए सिरे से लिखे जाते हैं। एडिटिंग लाइन-दर-लाइन होती है (पैराग्राफ़ रीफ़्लो नहीं), और स्कैन पेजों के लिए पहले OCR चलाएँ।",
       },
     },
     {

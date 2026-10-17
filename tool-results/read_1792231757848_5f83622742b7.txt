@@ -1,0 +1,1291 @@
+     1→"use client";
+     2→
+     3→import {
+     4→  useCallback,
+     5→  useEffect,
+     6→  useLayoutEffect,
+     7→  useMemo,
+     8→  useRef,
+     9→  useState,
+    10→  useSyncExternalStore,
+    11→} from "react";
+    12→import { Loader2, TriangleAlert } from "lucide-react";
+    13→
+    14→import { loadPdfjs } from "@/lib/pdf/pdfjs";
+    15→import type { PDFDocumentProxy } from "pdfjs-dist";
+    16→import {
+    17→  getPdfPageCount,
+    18→  getPdfPagePixelSize,
+    19→  renderPdfThumbnail,
+    20→} from "@/lib/pdf/thumbnails";
+    21→import { useToast } from "@/hooks/use-toast";
+    22→import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
+    23→import { useI18n } from "@/components/providers/locale-provider";
+    24→import {
+    25→  PreviewFileHeader,
+    26→  PreviewPageStrip,
+    27→} from "../stamp-common/preview-parts";
+    28→import {
+    29→  addImageFile,
+    30→  addPngBlob,
+    31→  clearAssets,
+    32→  getAssetsSnapshot,
+    33→  setRunOrder,
+    34→  subscribeAssets,
+    35→} from "./asset-store";
+    36→import {
+    37→  CanvasHeader,
+    38→  EditorContextMenu,
+    39→  EditorToolbar,
+    40→  LayersPanel,
+    41→  ObjView,
+    42→  PropertiesPanel,
+    43→  SignPadDialog,
+    44→  type ContextMenuState,
+    45→  type ToolId,
+    46→} from "./editor-parts";
+    47→import {
+    48→  HISTORY_LIMIT,
+    49→  LINE_HEIGHT,
+    50→  MIN_OBJ_PT,
+    51→  TEXT_PAD,
+    52→  bringToFront,
+    53→  clampN,
+    54→  displayRectToPdf,
+    55→  displaySize,
+    56→  duplicateObject,
+    57→  lowerOne,
+    58→  makeDraw,
+    59→  makeImage,
+    60→  makeShape,
+    61→  makeText,
+    62→  makeWhiteout,
+    63→  normaliseDraw,
+    64→  pdfRectToDisplay,
+    65→  raiseOne,
+    66→  redoStep,
+    67→  roundPt,
+    68→  sendToBack,
+    69→  undoStep,
+    70→  type EditorObject,
+    71→  type HitEdge,
+    72→  type ObjRect,
+    73→  type PageView,
+    74→} from "./model";
+    75→
+    76→/**
+    77→ * Edit PDF live surface (PRD §8.2.1 flagship editor).
+    78→ *
+    79→ * Layout: toolbar + canvas column (page strip, page render with the
+    80→ * object overlay) + right rail (properties, layers) — the right rail
+    81→ * stacks below the canvas on mobile. Every edit lands in the options
+    82→ * blob under "e:<fileId>" (the redact epoch-key pattern) as
+    83→ * { objects, pageViews, assetOrder }; the export worker bakes the final
+    84→ * PDF from that blob plus the assets riding the run message.
+    85→ */
+    86→
+    87→const PREVIEW_MAX_DIM = 640;
+    88→const EDITOR_MAX_PAGES = 500;
+    89→const KEY_PREFIX = "e:";
+    90→const EKEY_ID = "ekey";
+    91→/** Minimum drag (fraction of the page) that becomes a new object. */
+    92→const MIN_DRAW = 0.02;
+    93→
+    94→interface EditorBlob {
+    95→  objects: EditorObject[];
+    96→  pageViews: PageView[];
+    97→  assetOrder: string[];
+    98→}
+    99→
+   100→type CreateKind = "text" | "rect" | "ellipse" | "line" | "arrow" | "whiteout";
+   101→
+   102→type Gesture =
+   103→  | {
+   104→      type: "create";
+   105→      kind: CreateKind;
+   106→      x0: number;
+   107→      y0: number;
+   108→      x1: number;
+   109→      y1: number;
+   110→    }
+   111→  | {
+   112→      type: "move";
+   113→      id: string;
+   114→      grabDx: number;
+   115→      grabDy: number;
+   116→      orig: ObjRect;
+   117→    }
+   118→  | {
+   119→      type: "resize";
+   120→      id: string;
+   121→      edge: HitEdge;
+   122→      orig: ObjRect;
+   123→      keepAspect: boolean;
+   124→      aspect: number;
+   125→    }
+   126→  | { type: "stroke"; pts: { x: number; y: number }[] };
+   127→
+   128→/** Collects per-page crop-box + rotation views (pdf.js, main thread). */
+   129→async function collectPageViews(
+   130→  file: File,
+   131→  maxPages: number
+   132→): Promise<PageView[]> {
+   133→  const pdfjs = await loadPdfjs();
+   134→  const data = new Uint8Array(await file.arrayBuffer());
+   135→  const doc: PDFDocumentProxy = await pdfjs.getDocument({
+   136→    data,
+   137→    cMapUrl: "/pdfjs/cmaps/",
+   138→    cMapPacked: true,
+   139→    standardFontDataUrl: "/pdfjs/standard_fonts/",
+   140→  }).promise;
+   141→  const count = Math.min(doc.numPages, maxPages);
+   142→  const views: PageView[] = [];
+   143→  for (let p = 1; p <= count; p += 1) {
+   144→    const page = await doc.getPage(p);
+   145→    const raw = (page as unknown as { view: number[] }).view ?? [0, 0, 612, 792];
+   146→    const rotateRaw = (page as unknown as { rotate: number }).rotate ?? 0;
+   147→    const r = ((rotateRaw % 360) + 360) % 360;
+   148→    views.push({
+   149→      x0: raw[0],
+   150→      y0: raw[1],
+   151→      x1: raw[2],
+   152→      y1: raw[3],
+   153→      rotate: r === 90 || r === 180 || r === 270 ? r : 0,
+   154→    });
+   155→  }
+   156→  return views;
+   157→}
+   158→
+   159→function parseBlob(raw: unknown): EditorBlob {
+   160→  try {
+   161→    const parsed = JSON.parse(String(raw ?? "{}")) as Partial<EditorBlob>;
+   162→    return {
+   163→      objects: Array.isArray(parsed.objects)
+   164→        ? (parsed.objects as EditorObject[])
+   165→        : [],
+   166→      pageViews: Array.isArray(parsed.pageViews)
+   167→        ? (parsed.pageViews as PageView[])
+   168→        : [],
+   169→      assetOrder: Array.isArray(parsed.assetOrder)
+   170→        ? parsed.assetOrder.filter((k): k is string => typeof k === "string")
+   171→        : [],
+   172→    };
+   173→  } catch {
+   174→    return { objects: [], pageViews: [], assetOrder: [] };
+   175→  }
+   176→}
+   177→
+   178→/** Asset keys referenced by visible objects, first-seen order. */
+   179→function orderFromObjects(objects: EditorObject[]): string[] {
+   180→  const seen: string[] = [];
+   181→  for (const o of objects) {
+   182→    if (o.kind === "image" && !seen.includes(o.assetKey)) seen.push(o.assetKey);
+   183→  }
+   184→  return seen;
+   185→}
+   186→
+   187→export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
+   188→  const { files, values, onChange, setRunBlocked } = props;
+   189→  const { t } = useI18n();
+   190→  const { toast } = useToast();
+   191→  const file = files.length > 0 ? files[0].file : null;
+   192→  const fileId = files.length > 0 ? files[0].id : "";
+   193→
+   194→  const assets = useSyncExternalStore(subscribeAssets, getAssetsSnapshot);
+   195→  const assetUrls = useMemo(
+   196→    () => new Map(assets.map((a) => [a.key, a.url] as const)),
+   197→    [assets]
+   198→  );
+   199→
+   200→  // --- Options blob ("e:<fileId>") --------------------------------------
+   201→  const blobKey = `${KEY_PREFIX}${fileId}`;
+   202→  const blob = useMemo<EditorBlob>(
+   203→    () => parseBlob(values[blobKey]),
+   204→    [values, blobKey]
+   205→  );
+   206→  const objects = blob.objects;
+   207→  const pageViews = blob.pageViews;
+   208→
+   209→  // Live object mirror — written ONLY inside event handlers/effects (never
+   210→  // during render), so successive mutations in one tick always see the
+   211→  // latest array even before React flushes the blob back down.
+   212→  const objectsRef = useRef<EditorObject[]>([]);
+   213→
+   214→  const commit = useCallback(
+   215→    (nextObjects: EditorObject[], views?: PageView[]): void => {
+   216→      const nextViews = views ?? pageViews;
+   217→      const order = orderFromObjects(nextObjects);
+   218→      // Keep the asset store's run order in sync so config.collectAssets
+   219→      // returns the exact File[] the blob's assetOrder describes.
+   220→      setRunOrder(order);
+   221→      onChange(
+   222→        blobKey,
+   223→        JSON.stringify({
+   224→          objects: nextObjects,
+   225→          pageViews: nextViews,
+   226→          assetOrder: order,
+   227→        })
+   228→      );
+   229→    },
+   230→    [blobKey, onChange, pageViews]
+   231→  );
+   232→
+   233→  // Point the worker at this document's blob.
+   234→  useEffect(() => {
+   235→    if (fileId !== "") onChange(EKEY_ID, fileId);
+   236→  }, [fileId, onChange]);
+   237→
+   238→  // --- History (undo/redo snapshot stack) --------------------------------
+   239→  // Stacks live in a ref (mutated from handlers only); their LENGTHS are
+   240→  // mirrored into state so canUndo/canRedo stay render-safe.
+   241→  const histRef = useRef<{
+   242→    past: string[];
+   243→    future: string[];
+   244→    lastKey: string;
+   245→    lastAt: number;
+   246→  }>({ past: [], future: [], lastKey: "", lastAt: 0 });
+   247→  const [histLens, setHistLens] = useState({ past: 0, future: 0 });
+   248→  const syncLens = useCallback((): void => {
+   249→    setHistLens({
+   250→      past: histRef.current.past.length,
+   251→      future: histRef.current.future.length,
+   252→    });
+   253→  }, []);
+   254→
+   255→  const applyObjects = useCallback(
+   256→    (next: EditorObject[], groupKey: string, history = true): void => {
+   257→      if (history) {
+   258→        const h = histRef.current;
+   259→        const now = Date.now();
+   260→        if (h.lastKey === groupKey && now - h.lastAt < 800) {
+   261→          h.lastAt = now;
+   262→        } else {
+   263→          h.past = [
+   264→            ...h.past,
+   265→            JSON.stringify(objectsRef.current),
+   266→          ].slice(-HISTORY_LIMIT);
+   267→          h.future = [];
+   268→          h.lastKey = groupKey;
+   269→          h.lastAt = now;
+   270→        }
+   271→        syncLens();
+   272→      }
+   273→      objectsRef.current = next;
+   274→      commit(next);
+   275→    },
+   276→    [commit, syncLens]
+   277→  );
+   278→
+   279→  const undo = useCallback((): void => {
+   280→    const current = JSON.stringify(objectsRef.current);
+   281→    const step = undoStep(histRef.current.past, histRef.current.future, current);
+   282→    if (step.snapshot === null) return;
+   283→    histRef.current.past = step.past;
+   284→    histRef.current.future = step.future;
+   285→    histRef.current.lastKey = "";
+   286→    histRef.current.lastAt = 0;
+   287→    const restored = JSON.parse(step.snapshot) as EditorObject[];
+   288→    objectsRef.current = restored;
+   289→    commit(restored);
+   290→    syncLens();
+   291→  }, [commit, syncLens]);
+   292→
+   293→  const redo = useCallback((): void => {
+   294→    const current = JSON.stringify(objectsRef.current);
+   295→    const step = redoStep(histRef.current.past, histRef.current.future, current);
+   296→    if (step.snapshot === null) return;
+   297→    histRef.current.past = step.past;
+   298→    histRef.current.future = step.future;
+   299→    histRef.current.lastKey = "";
+   300→    histRef.current.lastAt = 0;
+   301→    const restored = JSON.parse(step.snapshot) as EditorObject[];
+   302→    objectsRef.current = restored;
+   303→    commit(restored);
+   304→    syncLens();
+   305→  }, [commit, syncLens]);
+   306→
+   307→  const canUndo = histLens.past > 0;
+   308→  const canRedo = histLens.future > 0;
+   309→
+   310→  // --- Document state -----------------------------------------------------
+   311→  const [pageCount, setPageCount] = useState(0);
+   312→  const [selectedPage, setSelectedPage] = useState(0);
+   313→  const [pageError, setPageError] = useState<"password" | "corrupt" | null>(null);
+   314→  const [viewsReady, setViewsReady] = useState(false);
+   315→  const [truncated, setTruncated] = useState(false);
+   316→  const [base, setBase] = useState<{
+   317→    bitmap: ImageBitmap;
+   318→    dispW: number;
+   319→    dispH: number;
+   320→  } | null>(null);
+   321→  const [failed, setFailed] = useState(false);
+   322→  const [zoom, setZoom] = useState(1);
+   323→  const viewToken = useRef(0);
+   324→
+   325→  // Load: page count + per-page views.
+   326→  useEffect(() => {
+   327→    if (!file) return;
+   328→    let cancelled = false;
+   329→    const token = viewToken.current + 1;
+   330→    viewToken.current = token;
+   331→    void (async () => {
+   332→      setViewsReady(false);
+   333→      setPageError(null);
+   334→      setSelectedPage(0);
+   335→      setTruncated(false);
+   336→      const count = await getPdfPageCount(file);
+   337→      if (cancelled || viewToken.current !== token) return;
+   338→      setPageCount(count);
+   339→      setTruncated(count > EDITOR_MAX_PAGES);
+   340→      const views = await collectPageViews(file, EDITOR_MAX_PAGES);
+   341→      if (cancelled || viewToken.current !== token) return;
+   342→      objectsRef.current = [];
+   343→      histRef.current = { past: [], future: [], lastKey: "", lastAt: 0 };
+   344→      syncLens();
+   345→      commit([], views);
+   346→      setViewsReady(true);
+   347→    })().catch((error: unknown) => {
+   348→      if (cancelled) return;
+   349→      const cause = (error as { cause?: unknown })?.cause;
+   350→      const name =
+   351→        (cause as { name?: string } | undefined)?.name ??
+   352→        (error as { name?: string } | undefined)?.name ??
+   353→        "";
+   354→      const message = String((error as Error)?.message ?? "");
+   355→      setPageError(
+   356→        name === "PasswordException" || /password/i.test(message)
+   357→          ? "password"
+   358→          : "corrupt"
+   359→      );
+   360→      setPageCount(0);
+   361→    });
+   362→    return () => {
+   363→      cancelled = true;
+   364→      viewToken.current += 1;
+   365→    };
+   366→    // commit is stable via pageViews identity per file session
+   367→  }, [file]);
+   368→
+   369→  // Assets belong to this document session only.
+   370→  useEffect(() => {
+   371→    return () => {
+   372→      clearAssets();
+   373→    };
+   374→  }, []);
+   375→
+   376→  // --- Page preview render -------------------------------------------------
+   377→  useEffect(() => {
+   378→    if (!file || pageCount === 0) return;
+   379→    let cancelled = false;
+   380→    void (async () => {
+   381→      const [thumb, pixel] = await Promise.all([
+   382→        renderPdfThumbnail(file, {
+   383→          pageIndex: selectedPage,
+   384→          maxDim: Math.min(2800, Math.round(PREVIEW_MAX_DIM * zoom * 2)),
+   385→        }),
+   386→        getPdfPagePixelSize(file, 1, selectedPage),
+   387→      ]);
+   388→      if (cancelled) return;
+   389→      const bitmap = await createImageBitmap(thumb.blob);
+   390→      if (cancelled) return;
+   391→      setFailed(false);
+   392→      setBase({ bitmap, dispW: pixel.width, dispH: pixel.height });
+   393→    })().catch(() => {
+   394→      if (!cancelled) setFailed(true);
+   395→    });
+   396→    return () => {
+   397→      cancelled = true;
+   398→    };
+   399→  }, [file, pageCount, selectedPage, zoom]);
+   400→
+   401→  // Actual rendered page width (CSS px) — the object overlay scales by it.
+   402→  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+   403→  const [renderScale, setRenderScale] = useState(1);
+   404→  useLayoutEffect(() => {
+   405→    const canvas = canvasRef.current;
+   406→    if (!canvas || !base) return;
+   407→    const measure = (): void => {
+   408→      const w = canvas.getBoundingClientRect().width;
+   409→      if (w > 0) setRenderScale(w / base.dispW);
+   410→    };
+   411→    measure();
+   412→    const observer = new ResizeObserver(measure);
+   413→    observer.observe(canvas);
+   414→    return () => observer.disconnect();
+   415→  }, [base]);
+   416→
+   417→  const currentView = pageViews[selectedPage] ?? null;
+   418→  const pageDisp = currentView ? displaySize(currentView) : null;
+   419→
+   420→  // --- Selection + tools ----------------------------------------------------
+   421→  const [tool, setTool] = useState<ToolId>("select");
+   422→  const [selectedId, setSelectedId] = useState<string | null>(null);
+   423→  const [editingId, setEditingId] = useState<string | null>(null);
+   424→  const [gesture, setGesture] = useState<Gesture | null>(null);
+   425→  const [signOpen, setSignOpen] = useState(false);
+   426→  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+   427→  const overlayRef = useRef<HTMLDivElement | null>(null);
+   428→  const imageInputRef = useRef<HTMLInputElement | null>(null);
+   429→  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
+   430→
+   431→  const pageObjects = useMemo(
+   432→    () => objects.filter((o) => o.page === selectedPage),
+   433→    [objects, selectedPage]
+   434→  );
+   435→  const selected = useMemo(
+   436→    () => objects.find((o) => o.id === selectedId) ?? null,
+   437→    [objects, selectedId]
+   438→  );
+   439→  const editing = useMemo(
+   440→    () => (editingId !== null ? objects.find((o) => o.id === editingId) ?? null : null),
+   441→    [objects, editingId]
+   442→  );
+   443→  const touchedPages = useMemo(
+   444→    () => new Set(objects.map((o) => o.page)),
+   445→    [objects]
+   446→  );
+   447→
+   448→  const runGated = !viewsReady || pageError !== null;
+   449→  useEffect(() => {
+   450→    setRunBlocked(runGated ? "editPdf.notReady" : null);
+   451→  }, [runGated, setRunBlocked]);
+   452→
+   453→  // --- Object actions ------------------------------------------------------
+   454→  const patchObject = useCallback(
+   455→    (id: string, patch: Partial<EditorObject>, history = true): void => {
+   456→      applyObjects(
+   457→        objectsRef.current.map((o) => (o.id === id ? ({ ...o, ...patch } as EditorObject) : o)),
+   458→        `patch:${id}`,
+   459→        history
+   460→      );
+   461→    },
+   462→    [applyObjects]
+   463→  );
+   464→
+   465→  const removeObject = useCallback(
+   466→    (id: string): void => {
+   467→      applyObjects(
+   468→        objectsRef.current.filter((o) => o.id !== id),
+   469→        `remove:${id}`
+   470→      );
+   471→      if (selectedId === id) setSelectedId(null);
+   472→      if (editingId === id) setEditingId(null);
+   473→    },
+   474→    [applyObjects, selectedId, editingId]
+   475→  );
+   476→
+   477→  const duplicateSel = useCallback((): void => {
+   478→    if (!selectedId) return;
+   479→    const result = duplicateObject(objectsRef.current, selectedId);
+   480→    if (result.copy) {
+   481→      applyObjects(result.objects, `dup:${selectedId}`);
+   482→      setSelectedId(result.copy.id);
+   483→    }
+   484→  }, [applyObjects, selectedId]);
+   485→
+   486→  // --- Text editing ---------------------------------------------------------
+   487→  const startEditText = useCallback((id: string): void => {
+   488→    setSelectedId(id);
+   489→    setEditingId(id);
+   490→    setTool("select");
+   491→  }, []);
+   492→
+   493→  useEffect(() => {
+   494→    if (editingId !== null && textAreaRef.current) {
+   495→      textAreaRef.current.focus();
+   496→      textAreaRef.current.select();
+   497→    }
+   498→  }, [editingId]);
+   499→
+   500→  const endEdit = useCallback((): void => {
+   501→    const obj = objectsRef.current.find((o) => o.id === editingId);
+   502→    if (obj && obj.kind === "text" && obj.text.trim().length === 0) {
+   503→      // An empty text box never survives blur.
+   504→      applyObjects(
+   505→        objectsRef.current.filter((o) => o.id !== editingId),
+   506→        `remove:${editingId}`
+   507→      );
+   508→    }
+   509→    setEditingId(null);
+   510→  }, [applyObjects, editingId]);
+   511→
+   512→  // --- Image + signature insertion ------------------------------------------
+   513→  const insertImageAsset = useCallback(
+   514→    (key: string, naturalW: number, naturalH: number): void => {
+   515→      if (!pageDisp || !currentView) return;
+   516→      const page = pageDisp;
+   517→      const aspect = naturalH / Math.max(1, naturalW);
+   518→      const w = Math.min(page.w * 0.4, 240);
+   519→      const h = w * aspect;
+   520→      const disp = {
+   521→        x: (page.w - w) / 2,
+   522→        y: Math.min(page.h * 0.5, (page.h - h) / 2),
+   523→        w,
+   524→        h,
+   525→      };
+   526→      const pdf = displayRectToPdf(disp, currentView);
+   527→      const obj = makeImage(selectedPage, pdf, key);
+   528→      applyObjects([...objectsRef.current, obj], `add:${obj.id}`);
+   529→      setSelectedId(obj.id);
+   530→      setTool("select");
+   531→    },
+   532→    [applyObjects, currentView, pageDisp, selectedPage]
+   533→  );
+   534→
+   535→  const onImageFiles = useCallback(
+   536→    (list: FileList | null): void => {
+   537→      if (!list || list.length === 0) return;
+   538→      void (async () => {
+   539→        try {
+   540→          for (const f of Array.from(list)) {
+   541→            const asset = await addImageFile(f);
+   542→            insertImageAsset(asset.key, asset.w, asset.h);
+   543→          }
+   544→        } catch {
+   545→          toast({
+   546→            title: t("editPdf.errorImageTitle"),
+   547→            description: t("editPdf.errorImageDesc"),
+   548→            variant: "destructive",
+   549→          });
+   550→        }
+   551→      })();
+   552→    },
+   553→    [insertImageAsset, t, toast]
+   554→  );
+   555→
+   556→  const onSignature = useCallback(
+   557→    (png: Blob): void => {
+   558→      setSignOpen(false);
+   559→      void (async () => {
+   560→        try {
+   561→          const asset = await addPngBlob(png, "signature");
+   562→          insertImageAsset(asset.key, asset.w, asset.h);
+   563→        } catch {
+   564→          toast({
+   565→            title: t("editPdf.errorImageTitle"),
+   566→            variant: "destructive",
+   567→          });
+   568→        }
+   569→      })();
+   570→    },
+   571→    [insertImageAsset, t, toast]
+   572→  );
+   573→
+   574→  const onTool = useCallback((next: ToolId): void => {
+   575→    if (next === "image") {
+   576→      imageInputRef.current?.click();
+   577→      return;
+   578→    }
+   579→    if (next === "sign") {
+   580→      setSignOpen(true);
+   581→      return;
+   582→    }
+   583→    setTool(next);
+   584→    setSelectedId(null);
+   585→  }, []);
+   586→
+   587→  // --- Pointer machinery ------------------------------------------------------
+   588→  const displayPos = (
+   589→    event: React.PointerEvent<Element>
+   590→  ): { x: number; y: number } => {
+   591→    const overlay = overlayRef.current;
+   592→    if (!overlay || !pageDisp) return { x: 0, y: 0 };
+   593→    const box = overlay.getBoundingClientRect();
+   594→    const scale = pageDisp.w / Math.max(1, box.width);
+   595→    return {
+   596→      x: clampN((event.clientX - box.left) * scale, 0, pageDisp.w),
+   597→      y: clampN((event.clientY - box.top) * scale, 0, pageDisp.h),
+   598→    };
+   599→  };
+   600→
+   601→  const handleOverlayPointerDown = (
+   602→    event: React.PointerEvent<HTMLDivElement>
+   603→  ): void => {
+   604→    if (!base || !currentView || event.button !== 0) return;
+   605→    if (menu) setMenu(null);
+   606→    const pos = displayPos(event);
+   607→    if (tool === "select") {
+   608→      setSelectedId(null);
+   609→      setEditingId(null);
+   610→      return;
+   611→    }
+   612→    if (tool === "draw") {
+   613→      try {
+   614→        overlayRef.current?.setPointerCapture(event.pointerId);
+   615→      } catch {
+   616→        /* synthetic pointers */
+   617→      }
+   618→      setSelectedId(null);
+   619→      setGesture({ type: "stroke", pts: [pos] });
+   620→      event.preventDefault();
+   621→      return;
+   622→    }
+   623→    // Create tools: text (click or drag), shapes + whiteout (drag).
+   624→    try {
+   625→      overlayRef.current?.setPointerCapture(event.pointerId);
+   626→    } catch {
+   627→      /* synthetic pointers */
+   628→    }
+   629→    setSelectedId(null);
+   630→    setGesture({
+   631→      type: "create",
+   632→      kind: tool as CreateKind,
+   633→      x0: pos.x,
+   634→      y0: pos.y,
+   635→      x1: pos.x,
+   636→      y1: pos.y,
+   637→    });
+   638→    event.preventDefault();
+   639→  };
+   640→
+   641→  const handleOverlayPointerMove = (
+   642→    event: React.PointerEvent<HTMLDivElement>
+   643→  ): void => {
+   644→    if (!gesture || !pageDisp || !currentView) return;
+   645→    const pos = displayPos(event);
+   646→    if (gesture.type === "stroke") {
+   647→      const last = gesture.pts[gesture.pts.length - 1];
+   648→      if (Math.hypot(pos.x - last.x, pos.y - last.y) > 1.5) {
+   649→        setGesture({ ...gesture, pts: [...gesture.pts, pos] });
+   650→      }
+   651→      return;
+   652→    }
+   653→    if (gesture.type === "create") {
+   654→      setGesture({ ...gesture, x1: pos.x, y1: pos.y });
+   655→      return;
+   656→    }
+   657→    if (gesture.type === "move") {
+   658→      const obj = objectsRef.current.find((o) => o.id === gesture.id);
+   659→      if (!obj) {
+   660→        setGesture(null);
+   661→        return;
+   662→      }
+   663→      const disp = pdfRectToDisplay(obj, currentView);
+   664→      // grabDx/grabDy are the pointer's offset FROM the object origin at
+   665→      // gesture start — pos - grab IS the new origin (no extra disp add).
+   666→      const next = {
+   667→        x: clampN(pos.x - gesture.grabDx, 0, pageDisp.w - disp.w),
+   668→        y: clampN(pos.y - gesture.grabDy, 0, pageDisp.h - disp.h),
+   669→        w: disp.w,
+   670→        h: disp.h,
+   671→      };
+   672→      const pdf = displayRectToPdf(next, currentView);
+   673→      patchObject(gesture.id, {
+   674→        x: roundPt(pdf.x),
+   675→        y: roundPt(pdf.y),
+   676→      });
+   677→      return;
+   678→    }
+   679→    // resize
+   680→    const orig = gesture.orig;
+   681→    const min = MIN_OBJ_PT;
+   682→    let { x, y, w, h } = orig;
+   683→    if (gesture.edge === "se") {
+   684→      w = Math.max(min, pos.x - x);
+   685→      h = Math.max(min, pos.y - y);
+   686→    } else if (gesture.edge === "ne") {
+   687→      const ny = Math.min(y + h - min, pos.y);
+   688→      w = Math.max(min, pos.x - x);
+   689→      h = Math.max(min, y + h - ny);
+   690→      y = ny;
+   691→    } else if (gesture.edge === "sw") {
+   692→      const nx = Math.min(x + w - min, pos.x);
+   693→      w = Math.max(min, x + w - nx);
+   694→      x = nx;
+   695→      h = Math.max(min, pos.y - y);
+   696→    } else {
+   697→      const nx = Math.min(x + w - min, pos.x);
+   698→      const ny = Math.min(y + h - min, pos.y);
+   699→      w = Math.max(min, x + w - nx);
+   700→      h = Math.max(min, y + h - ny);
+   701→      x = nx;
+   702→      y = ny;
+   703→    }
+   704→    if (gesture.keepAspect) {
+   705→      w = Math.max(min, Math.min(w, h * gesture.aspect));
+   706→      h = w / gesture.aspect;
+   707→      if (gesture.edge === "ne") y = orig.y + orig.h - h;
+   708→      if (gesture.edge === "sw") x = orig.x + orig.w - w;
+   709→      if (gesture.edge === "nw") {
+   710→        x = orig.x + orig.w - w;
+   711→        y = orig.y + orig.h - h;
+   712→      }
+   713→    }
+   714→    const pdf = displayRectToPdf({ x, y, w, h }, currentView);
+   715→    patchObject(gesture.id, {
+   716→      x: roundPt(pdf.x),
+   717→      y: roundPt(pdf.y),
+   718→      w: roundPt(pdf.w),
+   719→      h: roundPt(pdf.h),
+   720→    });
+   721→  };
+   722→
+   723→  const handleOverlayPointerUp = (): void => {
+   724→    if (!gesture || !currentView || !pageDisp) {
+   725→      setGesture(null);
+   726→      return;
+   727→    }
+   728→    if (gesture.type === "stroke") {
+   729→      const norm = normaliseDraw(gesture.pts);
+   730→      setGesture(null);
+   731→      if (norm) {
+   732→        const pdf = displayRectToPdf(norm.rect, currentView);
+   733→        const obj = makeDraw(selectedPage, pdf, norm.fracs);
+   734→        applyObjects([...objectsRef.current, obj], `add:${obj.id}`);
+   735→        setSelectedId(obj.id);
+   736→        setTool("select");
+   737→      }
+   738→      return;
+   739→    }
+   740→    if (gesture.type === "create") {
+   741→      const x0 = Math.min(gesture.x0, gesture.x1);
+   742→      const x1 = Math.max(gesture.x0, gesture.x1);
+   743→      const y0 = Math.min(gesture.y0, gesture.y1);
+   744→      const y1 = Math.max(gesture.y0, gesture.y1);
+   745→      setGesture(null);
+   746→      const dragged =
+   747→        (x1 - x0) / pageDisp.w >= MIN_DRAW || (y1 - y0) / pageDisp.h >= MIN_DRAW;
+   748→      let disp: ObjRect;
+   749→      if (dragged) {
+   750→        disp = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+   751→      } else if (gesture.kind === "text") {
+   752→        // Click = default-size text box at the click point.
+   753→        disp = { x: gesture.x0, y: gesture.y0, w: 160, h: Math.max(18, 16 * LINE_HEIGHT + 2 * TEXT_PAD) };
+   754→      } else {
+   755→        return;
+   756→      }
+   757→      const pdf = displayRectToPdf(disp, currentView);
+   758→      let obj: EditorObject;
+   759→      switch (gesture.kind) {
+   760→        case "text":
+   761→          obj = makeText(selectedPage, pdf);
+   762→          break;
+   763→        case "line":
+   764→        case "arrow": {
+   765→          obj = makeShape(selectedPage, pdf, gesture.kind);
+   766→          if (obj.kind === "line" || obj.kind === "arrow") {
+   767→            obj.flip =
+   768→              (gesture.x1 - gesture.x0) * (gesture.y1 - gesture.y0) < 0;
+   769→          }
+   770→          break;
+   771→        }
+   772→        case "rect":
+   773→        case "ellipse":
+   774→          obj = makeShape(selectedPage, pdf, gesture.kind);
+   775→          break;
+   776→        default:
+   777→          obj = makeWhiteout(selectedPage, pdf);
+   778→          break;
+   779→      }
+   780→      applyObjects([...objectsRef.current, obj], `add:${obj.id}`);
+   781→      setSelectedId(obj.id);
+   782→      if (obj.kind === "text") {
+   783→        setEditingId(obj.id);
+   784→      }
+   785→      setTool("select");
+   786→      return;
+   787→    }
+   788→    setGesture(null);
+   789→  };
+   790→
+   791→  const handleObjectPointerDown = (obj: EditorObject) => (
+   792→    event: React.PointerEvent<HTMLDivElement>
+   793→  ): void => {
+   794→    if (!base || !currentView || event.button !== 0 || tool !== "select") return;
+   795→    event.stopPropagation();
+   796→    setSelectedId(obj.id);
+   797→    if (obj.locked || editingId === obj.id) return;
+   798→    const handleEl = (event.target as HTMLElement).closest("[data-handle]");
+   799→    if (handleEl) {
+   800→      const edge = handleEl.getAttribute("data-handle") as HitEdge;
+   801→      try {
+   802→        overlayRef.current?.setPointerCapture(event.pointerId);
+   803→      } catch {
+   804→        /* synthetic pointers */
+   805→      }
+   806→      const orig = pdfRectToDisplay(obj, currentView);
+   807→      const keepAspect = event.shiftKey && obj.kind === "image";
+   808→      setGesture({
+   809→        type: "resize",
+   810→        id: obj.id,
+   811→        edge,
+   812→        orig,
+   813→        keepAspect,
+   814→        aspect: orig.w / Math.max(1, orig.h),
+   815→      });
+   816→      event.preventDefault();
+   817→      return;
+   818→    }
+   819→    try {
+   820→      overlayRef.current?.setPointerCapture(event.pointerId);
+   821→    } catch {
+   822→      /* synthetic pointers */
+   823→    }
+   824→    const pos = displayPos(event);
+   825→    const disp = pdfRectToDisplay(obj, currentView);
+   826→    setGesture({
+   827→      type: "move",
+   828→      id: obj.id,
+   829→      grabDx: pos.x - disp.x,
+   830→      grabDy: pos.y - disp.y,
+   831→      orig: disp,
+   832→    });
+   833→    event.preventDefault();
+   834→  };
+   835→
+   836→  const handleContextMenu = (obj: EditorObject) => (
+   837→    event: React.MouseEvent<HTMLDivElement>
+   838→  ): void => {
+   839→    event.preventDefault();
+   840→    event.stopPropagation();
+   841→    setSelectedId(obj.id);
+   842→    setMenu({ x: event.clientX, y: event.clientY, objId: obj.id });
+   843→  };
+   844→
+   845→  // --- Keyboard shortcuts -----------------------------------------------------
+   846→  useEffect(() => {
+   847→    const onKey = (event: KeyboardEvent): void => {
+   848→      if (signOpen) return;
+   849→      const target = event.target as HTMLElement | null;
+   850→      const tag = target?.tagName ?? "";
+   851→      const inField = tag === "TEXTAREA" || tag === "INPUT";
+   852→      if (editingId !== null && inField) {
+   853→        if (event.key === "Escape") {
+   854→          event.preventDefault();
+   855→          (target as HTMLTextAreaElement).blur();
+   856→        }
+   857→        return;
+   858→      }
+   859→      if (inField) return;
+   860→      const mod = event.ctrlKey || event.metaKey;
+   861→      const key = event.key.toLowerCase();
+   862→      if (mod && key === "z") {
+   863→        event.preventDefault();
+   864→        if (event.shiftKey) redo();
+   865→        else undo();
+   866→        return;
+   867→      }
+   868→      if (mod && key === "y") {
+   869→        event.preventDefault();
+   870→        redo();
+   871→        return;
+   872→      }
+   873→      if (mod && key === "d") {
+   874→        event.preventDefault();
+   875→        duplicateSel();
+   876→        return;
+   877→      }
+   878→      if (mod) return;
+   879→      if (event.key === "Delete" || event.key === "Backspace") {
+   880→        if (selectedId !== null) {
+   881→          event.preventDefault();
+   882→          removeObject(selectedId);
+   883→        }
+   884→        return;
+   885→      }
+   886→      if (event.key === "Escape") {
+   887→        setSelectedId(null);
+   888→        setMenu(null);
+   889→        return;
+   890→      }
+   891→      if (event.key.startsWith("Arrow") && selectedId !== null && currentView) {
+   892→        event.preventDefault();
+   893→        const step = event.shiftKey ? 10 : 1;
+   894→        const obj = objectsRef.current.find((o) => o.id === selectedId);
+   895→        if (!obj) return;
+   896→        const disp = pdfRectToDisplay(obj, currentView);
+   897→        const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+   898→        const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+   899→        const next = {
+   900→          x: clampN(disp.x + dx, 0, (pageDisp?.w ?? disp.w + disp.x) - disp.w),
+   901→          y: clampN(disp.y + dy, 0, (pageDisp?.h ?? disp.h + disp.y) - disp.h),
+   902→          w: disp.w,
+   903→          h: disp.h,
+   904→        };
+   905→        const pdf = displayRectToPdf(next, currentView);
+   906→        patchObject(selectedId, {
+   907→          x: roundPt(pdf.x),
+   908→          y: roundPt(pdf.y),
+   909→        });
+   910→        return;
+   911→      }
+   912→      switch (key) {
+   913→        case "v":
+   914→          setTool("select");
+   915→          break;
+   916→        case "t":
+   917→          setTool("text");
+   918→          break;
+   919→        case "r":
+   920→          setTool("rect");
+   921→          break;
+   922→        case "o":
+   923→          setTool("ellipse");
+   924→          break;
+   925→        case "l":
+   926→          setTool("line");
+   927→          break;
+   928→        case "a":
+   929→          setTool("arrow");
+   930→          break;
+   931→        case "d":
+   932→          setTool("draw");
+   933→          break;
+   934→        case "w":
+   935→          setTool("whiteout");
+   936→          break;
+   937→        case "+":
+   938→        case "=":
+   939→          setZoom((z) => Math.min(3, Math.round((z + 0.25) * 100) / 100));
+   940→          break;
+   941→        case "-":
+   942→          setZoom((z) => Math.max(0.75, Math.round((z - 0.25) * 100) / 100));
+   943→          break;
+   944→      }
+   945→    };
+   946→    window.addEventListener("keydown", onKey);
+   947→    return () => window.removeEventListener("keydown", onKey);
+   948→  }, [
+   949→    currentView,
+   950→    duplicateSel,
+   951→    editingId,
+   952→    pageDisp,
+   953→    patchObject,
+   954→    redo,
+   955→    removeObject,
+   956→    selectedId,
+   957→    signOpen,
+   958→    undo,
+   959→  ]);
+   960→
+   961→  // --- Guards -----------------------------------------------------------------
+   962→  if (!file) return null;
+   963→
+   964→  if (pageError === "password") {
+   965→    return (
+   966→      <div className="flex flex-col items-center gap-3 rounded-card border border-border bg-card p-8 text-center">
+   967→        <TriangleAlert className="size-8 text-amber-500" aria-hidden="true" />
+   968→        <p className="text-sm font-medium text-foreground">
+   969→          {t("editPdf.passwordProtected")}
+   970→        </p>
+   971→        <p className="max-w-md text-xs text-muted-foreground">
+   972→          {t("editPdf.passwordHint")}
+   973→        </p>
+   974→      </div>
+   975→    );
+   976→  }
+   977→
+   978→  if (pageError === "corrupt") {
+   979→    return (
+   980→      <div className="flex flex-col items-center gap-3 rounded-card border border-border bg-card p-8 text-center">
+   981→        <TriangleAlert className="size-8 text-amber-500" aria-hidden="true" />
+   982→        <p className="text-sm font-medium text-foreground">
+   983→          {t("editPdf.corruptTitle")}
+   984→        </p>
+   985→        <p className="max-w-md text-xs text-muted-foreground">
+   986→          {t("editPdf.corruptHint")}
+   987→        </p>
+   988→      </div>
+   989→    );
+   990→  }
+   991→
+   992→  const createPreview = gesture?.type === "create"
+   993→    ? {
+   994→        left: `${(Math.min(gesture.x0, gesture.x1) / (pageDisp?.w ?? 1)) * 100}%`,
+   995→        top: `${(Math.min(gesture.y0, gesture.y1) / (pageDisp?.h ?? 1)) * 100}%`,
+   996→        width: `${(Math.abs(gesture.x1 - gesture.x0) / (pageDisp?.w ?? 1)) * 100}%`,
+   997→        height: `${(Math.abs(gesture.y1 - gesture.y0) / (pageDisp?.h ?? 1)) * 100}%`,
+   998→      }
+   999→    : null;
+  1000→
+  1001→  const strokePreview = gesture?.type === "stroke" && pageDisp
+  1002→    ? {
+  1003→        left: 0,
+  1004→        top: 0,
+  1005→        width: "100%",
+  1006→        height: "100%",
+  1007→      }
+  1008→    : null;
+  1009→
+  1010→  const toolHintKey =
+  1011→    tool === "select"
+  1012→      ? "editPdf.hintSelect"
+  1013→      : tool === "text"
+  1014→        ? "editPdf.hintText"
+  1015→        : tool === "draw"
+  1016→          ? "editPdf.hintDraw"
+  1017→          : "editPdf.hintShape";
+  1018→
+  1019→  return (
+  1020→    <div className="flex flex-col gap-3">
+  1021→      <PreviewFileHeader
+  1022→        file={file}
+  1023→        pageCount={pageCount}
+  1024→        onRemove={() => undefined}
+  1025→      />
+  1026→
+  1027→      {truncated ? (
+  1028→        <div className="flex items-start gap-2.5 rounded-card border border-amber-300/60 bg-amber-50 p-3 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
+  1029→          <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+  1030→          <p className="text-xs leading-relaxed">
+  1031→            {t("editPdf.truncated", { pages: EDITOR_MAX_PAGES })}
+  1032→          </p>
+  1033→        </div>
+  1034→      ) : null}
+  1035→
+  1036→      <EditorToolbar
+  1037→        tool={tool}
+  1038→        onTool={onTool}
+  1039→        objectCount={objects.length}
+  1040→      />
+  1041→
+  1042→      <div className="flex flex-col gap-3 lg:flex-row">
+  1043→        {/* Canvas column */}
+  1044→        <div className="flex min-w-0 flex-1 flex-col gap-3">
+  1045→          <CanvasHeader
+  1046→            page={selectedPage}
+  1047→            pages={pageCount}
+  1048→            canUndo={canUndo}
+  1049→            canRedo={canRedo}
+  1050→            onUndo={undo}
+  1051→            onRedo={redo}
+  1052→            zoom={zoom}
+  1053→            onZoom={setZoom}
+  1054→            markedCount={pageObjects.length}
+  1055→          />
+  1056→
+  1057→          {pageCount > 1 ? (
+  1058→            <PreviewPageStrip
+  1059→              file={file}
+  1060→              pageCount={pageCount}
+  1061→              selected={selectedPage}
+  1062→              onSelect={setSelectedPage}
+  1063→              markedSet={touchedPages}
+  1064→            />
+  1065→          ) : null}
+  1066→
+  1067→          {base && !failed && pageDisp && currentView ? (
+  1068→            <div className="relative mx-auto w-fit max-w-full overflow-hidden rounded-card border border-border bg-card shadow-sm">
+  1069→              <canvas
+  1070→                className="block max-w-full"
+  1071→                style={{
+  1072→                  width: `${pageDisp.w * zoom}px`,
+  1073→                }}
+  1074→                aria-label={t("editPdf.canvasLabel")}
+  1075→                ref={(canvas) => {
+  1076→                  (canvasRef as { current: HTMLCanvasElement | null }).current =
+  1077→                    canvas;
+  1078→                  if (!canvas) return;
+  1079→                  const ctx = canvas.getContext("2d");
+  1080→                  if (!ctx) return;
+  1081→                  canvas.width = base.bitmap.width;
+  1082→                  canvas.height = base.bitmap.height;
+  1083→                  ctx.drawImage(base.bitmap, 0, 0);
+  1084→                }}
+  1085→              />
+  1086→              <div
+  1087→                ref={overlayRef}
+  1088→                className="absolute inset-0 touch-none"
+  1089→                style={{ cursor: tool === "select" ? "default" : "crosshair" }}
+  1090→                onPointerDown={handleOverlayPointerDown}
+  1091→                onPointerMove={handleOverlayPointerMove}
+  1092→                onPointerUp={handleOverlayPointerUp}
+  1093→                onPointerLeave={handleOverlayPointerUp}
+  1094→                onContextMenu={(event) => event.preventDefault()}
+  1095→                role="presentation"
+  1096→              >
+  1097→                {pageObjects.map((obj) => (
+  1098→                  <ObjView
+  1099→                    key={obj.id}
+  1100→                    obj={obj}
+  1101→                    view={currentView}
+  1102→                    dispW={pageDisp.w}
+  1103→                    dispH={pageDisp.h}
+  1104→                    scale={renderScale}
+  1105→                    selected={selectedId === obj.id}
+  1106→                    editing={editingId === obj.id}
+  1107→                    imageUrl={
+  1108→                      obj.kind === "image"
+  1109→                        ? assetUrls.get(obj.assetKey) ?? null
+  1110→                        : null
+  1111→                    }
+  1112→                    onCreateDrag={handleObjectPointerDown(obj)}
+  1113→                    onStartEdit={() => startEditText(obj.id)}
+  1114→                    onContextMenu={handleContextMenu(obj)}
+  1115→                  />
+  1116→                ))}
+  1117→
+  1118→                {/* Live text editor — exact geometry of the text object. */}
+  1119→                {editing && editing.kind === "text" ? (() => {
+  1120→                  const disp = pdfRectToDisplay(editing, currentView);
+  1121→                  return (
+  1122→                  <textarea
+  1123→                    ref={textAreaRef}
+  1124→                    value={editing.text}
+  1125→                    onChange={(event) =>
+  1126→                      patchObject(editing.id, { text: event.target.value }, true)
+  1127→                    }
+  1128→                    onBlur={endEdit}
+  1129→                    spellCheck={false}
+  1130→                    aria-label={t("editPdf.textEditorLabel")}
+  1131→                    className="absolute z-20 resize-none overflow-visible rounded-sm bg-white/85 outline-2 outline-primary backdrop-blur-[1px]"
+  1132→                    style={{
+  1133→                      left: `${(disp.x / pageDisp.w) * 100}%`,
+  1134→                      top: `${(disp.y / pageDisp.h) * 100}%`,
+  1135→                      width: `${(disp.w / pageDisp.w) * 100}%`,
+  1136→                      minHeight: `${disp.h * renderScale}px`,
+  1137→                      fontFamily: cssFontOf(editing.font),
+  1138→                      fontSize: `${editing.size * renderScale}px`,
+  1139→                      lineHeight: LINE_HEIGHT,
+  1140→                      color: editing.color,
+  1141→                      fontWeight: editing.bold ? 700 : 400,
+  1142→                      fontStyle: editing.italic ? "italic" : "normal",
+  1143→                      textDecoration: editing.underline ? "underline" : "none",
+  1144→                      textAlign: editing.align,
+  1145→                      padding: `${TEXT_PAD * renderScale}px`,
+  1146→                    }}
+  1147→                  />
+  1148→                  );
+  1149→                })() : null}
+  1150→
+  1151→                {createPreview ? (
+  1152→                  <div
+  1153→                    className="pointer-events-none absolute border-2 border-primary bg-primary/10"
+  1154→                    style={createPreview}
+  1155→                    aria-hidden="true"
+  1156→                  />
+  1157→                ) : null}
+  1158→
+  1159→                {strokePreview && gesture?.type === "stroke" && pageDisp ? (
+  1160→                  <svg
+  1161→                    className="pointer-events-none absolute inset-0"
+  1162→                    width="100%"
+  1163→                    height="100%"
+  1164→                    viewBox={`0 0 ${pageDisp.w} ${pageDisp.h}`}
+  1165→                    preserveAspectRatio="none"
+  1166→                    aria-hidden="true"
+  1167→                  >
+  1168→                    <polyline
+  1169→                      points={gesture.pts
+  1170→                        .map((p) => `${p.x},${p.y}`)
+  1171→                        .join(" ")}
+  1172→                      fill="none"
+  1173→                      stroke="#dc2626"
+  1174→                      strokeWidth={2.5}
+  1175→                      strokeLinecap="round"
+  1176→                      strokeLinejoin="round"
+  1177→                    />
+  1178→                  </svg>
+  1179→                ) : null}
+  1180→              </div>
+  1181→            </div>
+  1182→          ) : (
+  1183→            <div className="flex h-64 items-center justify-center rounded-card border border-border bg-card">
+  1184→              {failed ? (
+  1185→                <p className="text-xs text-muted-foreground">
+  1186→                  {t("editPdf.renderError")}
+  1187→                </p>
+  1188→              ) : (
+  1189→                <>
+  1190→                  <Loader2
+  1191→                    className="size-5 animate-spin text-primary"
+  1192→                    aria-hidden="true"
+  1193→                  />
+  1194→                  <span className="sr-only">{t("editPdf.loading")}</span>
+  1195→                </>
+  1196→              )}
+  1197→            </div>
+  1198→          )}
+  1199→
+  1200→          <p className="text-xs leading-relaxed text-muted-foreground">
+  1201→            {t(toolHintKey)}
+  1202→          </p>
+  1203→        </div>
+  1204→
+  1205→        {/* Right rail: properties + layers */}
+  1206→        <div className="flex w-full shrink-0 flex-col gap-3 lg:w-80">
+  1207→          <PropertiesPanel
+  1208→            object={selected}
+  1209→            onPatch={(patch) => {
+  1210→              if (selected) patchObject(selected.id, patch);
+  1211→            }}
+  1212→            onRaise={() => {
+  1213→              if (selectedId)
+  1214→                applyObjects(raiseOne(objectsRef.current, selectedId), `z:${selectedId}`);
+  1215→            }}
+  1216→            onLower={() => {
+  1217→              if (selectedId)
+  1218→                applyObjects(lowerOne(objectsRef.current, selectedId), `z:${selectedId}`);
+  1219→            }}
+  1220→            onDuplicate={duplicateSel}
+  1221→            onDelete={() => {
+  1222→              if (selectedId) removeObject(selectedId);
+  1223→            }}
+  1224→            onToggleLock={() => {
+  1225→              if (selected)
+  1226→                patchObject(selected.id, { locked: !selected.locked });
+  1227→            }}
+  1228→          />
+  1229→          <LayersPanel
+  1230→            objects={pageObjects}
+  1231→            selectedId={selectedId}
+  1232→            onSelect={setSelectedId}
+  1233→            onPatch={patchObject}
+  1234→            onRemove={removeObject}
+  1235→          />
+  1236→        </div>
+  1237→      </div>
+  1238→
+  1239→      {/* Hidden image input */}
+  1240→      <input
+  1241→        ref={imageInputRef}
+  1242→        type="file"
+  1243→        accept="image/*"
+  1244→        multiple
+  1245→        className="hidden"
+  1246→        onChange={(event) => {
+  1247→          onImageFiles(event.target.files);
+  1248→          event.target.value = "";
+  1249→        }}
+  1250→        aria-hidden="true"
+  1251→        tabIndex={-1}
+  1252→      />
+  1253→
+  1254→      {signOpen ? (
+  1255→        <SignPadDialog
+  1256→          onClose={() => setSignOpen(false)}
+  1257→          onDone={onSignature}
+  1258→        />
+  1259→      ) : null}
+  1260→
+  1261→      {menu && selected ? (
+  1262→        <EditorContextMenu
+  1263→          state={menu}
+  1264→          locked={selected.locked}
+  1265→          onDuplicate={duplicateSel}
+  1266→          onBringFront={() =>
+  1267→            applyObjects(bringToFront(objectsRef.current, menu.objId), `z:${menu.objId}`)
+  1268→          }
+  1269→          onSendBack={() =>
+  1270→            applyObjects(sendToBack(objectsRef.current, menu.objId), `z:${menu.objId}`)
+  1271→          }
+  1272→          onToggleLock={() =>
+  1273→            patchObject(menu.objId, {
+  1274→              locked: !objectsRef.current.find((o) => o.id === menu.objId)?.locked,
+  1275→            })
+  1276→          }
+  1277→          onDelete={() => removeObject(menu.objId)}
+  1278→          onClose={() => setMenu(null)}
+  1279→        />
+  1280→      ) : null}
+  1281→    </div>
+  1282→  );
+  1283→}
+  1284→
+  1285→function cssFontOf(font: string): string {
+  1286→  if (font === "times") return "'Times New Roman', Times, serif";
+  1287→  if (font === "courier") return "'Courier New', Courier, monospace";
+  1288→  if (font === "devanagari") return "'Noto Sans Devanagari', Arial, sans-serif";
+  1289→  return "Arial, Helvetica, sans-serif";
+  1290→}
+  1291→

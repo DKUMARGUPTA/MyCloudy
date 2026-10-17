@@ -1,0 +1,702 @@
+    76→    76→/**
+    77→    77→ * Edit PDF live surface (PRD §8.2.1 flagship editor).
+    78→    78→ *
+    79→    79→ * Layout: toolbar + canvas column (page strip, page render with the
+    80→    80→ * object overlay) + right rail (properties, layers) — the right rail
+    81→    81→ * stacks below the canvas on mobile. Every edit lands in the options
+    82→    82→ * blob under "e:<fileId>" (the redact epoch-key pattern) as
+    83→    83→ * { objects, pageViews, assetOrder }; the export worker bakes the final
+    84→    84→ * PDF from that blob plus the assets riding the run message.
+    85→    85→ */
+    86→    86→
+    87→    87→const PREVIEW_MAX_DIM = 640;
+    88→    88→const EDITOR_MAX_PAGES = 500;
+    89→    89→const KEY_PREFIX = "e:";
+    90→    90→const EKEY_ID = "ekey";
+    91→    91→/** Minimum drag (fraction of the page) that becomes a new object. */
+    92→    92→const MIN_DRAW = 0.02;
+    93→    93→
+    94→    94→interface EditorBlob {
+    95→    95→  objects: EditorObject[];
+    96→    96→  pageViews: PageView[];
+    97→    97→  assetOrder: string[];
+    98→    98→}
+    99→    99→
+   100→   100→type CreateKind = "text" | "rect" | "ellipse" | "line" | "arrow" | "whiteout";
+   101→   101→
+   102→   102→type Gesture =
+   103→   103→  | {
+   104→   104→      type: "create";
+   105→   105→      kind: CreateKind;
+   106→   106→      x0: number;
+   107→   107→      y0: number;
+   108→   108→      x1: number;
+   109→   109→      y1: number;
+   110→   110→    }
+   111→   111→  | {
+   112→   112→      type: "move";
+   113→   113→      id: string;
+   114→   114→      grabDx: number;
+   115→   115→      grabDy: number;
+   116→   116→      orig: ObjRect;
+   117→   117→    }
+   118→   118→  | {
+   119→   119→      type: "resize";
+   120→   120→      id: string;
+   121→   121→      edge: HitEdge;
+   122→   122→      orig: ObjRect;
+   123→   123→      keepAspect: boolean;
+   124→   124→      aspect: number;
+   125→   125→    }
+   126→   126→  | { type: "stroke"; pts: { x: number; y: number }[] };
+   127→   127→
+   128→   128→/** Collects per-page crop-box + rotation views (pdf.js, main thread). */
+   129→   129→async function collectPageViews(
+   130→   130→  file: File,
+   131→   131→  maxPages: number
+   132→   132→): Promise<PageView[]> {
+   133→   133→  const pdfjs = await loadPdfjs();
+   134→   134→  const data = new Uint8Array(await file.arrayBuffer());
+   135→   135→  const doc: PDFDocumentProxy = await pdfjs.getDocument({
+   136→   136→    data,
+   137→   137→    cMapUrl: "/pdfjs/cmaps/",
+   138→   138→    cMapPacked: true,
+   139→   139→    standardFontDataUrl: "/pdfjs/standard_fonts/",
+   140→   140→  }).promise;
+   141→   141→  const count = Math.min(doc.numPages, maxPages);
+   142→   142→  const views: PageView[] = [];
+   143→   143→  for (let p = 1; p <= count; p += 1) {
+   144→   144→    const page = await doc.getPage(p);
+   145→   145→    const raw = (page as unknown as { view: number[] }).view ?? [0, 0, 612, 792];
+   146→   146→    const rotateRaw = (page as unknown as { rotate: number }).rotate ?? 0;
+   147→   147→    const r = ((rotateRaw % 360) + 360) % 360;
+   148→   148→    views.push({
+   149→   149→      x0: raw[0],
+   150→   150→      y0: raw[1],
+   151→   151→      x1: raw[2],
+   152→   152→      y1: raw[3],
+   153→   153→      rotate: r === 90 || r === 180 || r === 270 ? r : 0,
+   154→   154→    });
+   155→   155→  }
+   156→   156→  return views;
+   157→   157→}
+   158→   158→
+   159→   159→function parseBlob(raw: unknown): EditorBlob {
+   160→   160→  try {
+   161→   161→    const parsed = JSON.parse(String(raw ?? "{}")) as Partial<EditorBlob>;
+   162→   162→    return {
+   163→   163→      objects: Array.isArray(parsed.objects)
+   164→   164→        ? (parsed.objects as EditorObject[])
+   165→   165→        : [],
+   166→   166→      pageViews: Array.isArray(parsed.pageViews)
+   167→   167→        ? (parsed.pageViews as PageView[])
+   168→   168→        : [],
+   169→   169→      assetOrder: Array.isArray(parsed.assetOrder)
+   170→   170→        ? parsed.assetOrder.filter((k): k is string => typeof k === "string")
+   171→   171→        : [],
+   172→   172→    };
+   173→   173→  } catch {
+   174→   174→    return { objects: [], pageViews: [], assetOrder: [] };
+   175→   175→  }
+   176→   176→}
+   177→   177→
+   178→   178→/** Asset keys referenced by visible objects, first-seen order. */
+   179→   179→function orderFromObjects(objects: EditorObject[]): string[] {
+   180→   180→  const seen: string[] = [];
+   181→   181→  for (const o of objects) {
+   182→   182→    if (o.kind === "image" && !seen.includes(o.assetKey)) seen.push(o.assetKey);
+   183→   183→  }
+   184→   184→  return seen;
+   185→   185→}
+   186→   186→
+   187→   187→export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
+   188→   188→  const { files, values, onChange, setRunBlocked } = props;
+   189→   189→  const { t } = useI18n();
+   190→   190→  const { toast } = useToast();
+   191→   191→  const file = files.length > 0 ? files[0].file : null;
+   192→   192→  const fileId = files.length > 0 ? files[0].id : "";
+   193→   193→
+   194→   194→  const assets = useSyncExternalStore(subscribeAssets, getAssetsSnapshot);
+   195→   195→  const assetUrls = useMemo(
+   196→   196→    () => new Map(assets.map((a) => [a.key, a.url] as const)),
+   197→   197→    [assets]
+   198→   198→  );
+   199→   199→
+   200→   200→  // --- Options blob ("e:<fileId>") --------------------------------------
+   201→   201→  const blobKey = `${KEY_PREFIX}${fileId}`;
+   202→   202→  const blob = useMemo<EditorBlob>(
+   203→   203→    () => parseBlob(values[blobKey]),
+   204→   204→    [values, blobKey]
+   205→   205→  );
+   206→   206→  const objects = blob.objects;
+   207→   207→  const pageViews = blob.pageViews;
+   208→   208→
+   209→   209→  // Live object mirror — written ONLY inside event handlers/effects (never
+   210→   210→  // during render), so successive mutations in one tick always see the
+   211→   211→  // latest array even before React flushes the blob back down.
+   212→   212→  const objectsRef = useRef<EditorObject[]>([]);
+   213→   213→
+   214→   214→  const commit = useCallback(
+   215→   215→    (nextObjects: EditorObject[], views?: PageView[]): void => {
+   216→   216→      const nextViews = views ?? pageViews;
+   217→   217→      const order = orderFromObjects(nextObjects);
+   218→   218→      // Keep the asset store's run order in sync so config.collectAssets
+   219→   219→      // returns the exact File[] the blob's assetOrder describes.
+   220→   220→      setRunOrder(order);
+   221→   221→      onChange(
+   222→   222→        blobKey,
+   223→   223→        JSON.stringify({
+   224→   224→          objects: nextObjects,
+   225→   225→          pageViews: nextViews,
+   226→   226→          assetOrder: order,
+   227→   227→        })
+   228→   228→      );
+   229→   229→    },
+   230→   230→    [blobKey, onChange, pageViews]
+   231→   231→  );
+   232→   232→
+   233→   233→  // Point the worker at this document's blob.
+   234→   234→  useEffect(() => {
+   235→   235→    if (fileId !== "") onChange(EKEY_ID, fileId);
+   236→   236→  }, [fileId, onChange]);
+   237→   237→
+   238→   238→  // --- History (undo/redo snapshot stack) --------------------------------
+   239→   239→  // Stacks live in a ref (mutated from handlers only); their LENGTHS are
+   240→   240→  // mirrored into state so canUndo/canRedo stay render-safe.
+   241→   241→  const histRef = useRef<{
+   242→   242→    past: string[];
+   243→   243→    future: string[];
+   244→   244→    lastKey: string;
+   245→   245→    lastAt: number;
+   246→   246→  }>({ past: [], future: [], lastKey: "", lastAt: 0 });
+   247→   247→  const [histLens, setHistLens] = useState({ past: 0, future: 0 });
+   248→   248→  const syncLens = useCallback((): void => {
+   249→   249→    setHistLens({
+   250→   250→      past: histRef.current.past.length,
+   251→   251→      future: histRef.current.future.length,
+   252→   252→    });
+   253→   253→  }, []);
+   254→   254→
+   255→   255→  const applyObjects = useCallback(
+   256→   256→    (next: EditorObject[], groupKey: string, history = true): void => {
+   257→   257→      if (history) {
+   258→   258→        const h = histRef.current;
+   259→   259→        const now = Date.now();
+   260→   260→        if (h.lastKey === groupKey && now - h.lastAt < 800) {
+   261→   261→          h.lastAt = now;
+   262→   262→        } else {
+   263→   263→          h.past = [
+   264→   264→            ...h.past,
+   265→   265→            JSON.stringify(objectsRef.current),
+   266→   266→          ].slice(-HISTORY_LIMIT);
+   267→   267→          h.future = [];
+   268→   268→          h.lastKey = groupKey;
+   269→   269→          h.lastAt = now;
+   270→   270→        }
+   271→   271→        syncLens();
+   272→   272→      }
+   273→   273→      objectsRef.current = next;
+   274→   274→      commit(next);
+   275→   275→    },
+   276→   276→    [commit, syncLens]
+   277→   277→  );
+   278→   278→
+   279→   279→  const undo = useCallback((): void => {
+   280→   280→    const current = JSON.stringify(objectsRef.current);
+   281→   281→    const step = undoStep(histRef.current.past, histRef.current.future, current);
+   282→   282→    if (step.snapshot === null) return;
+   283→   283→    histRef.current.past = step.past;
+   284→   284→    histRef.current.future = step.future;
+   285→   285→    histRef.current.lastKey = "";
+   286→   286→    histRef.current.lastAt = 0;
+   287→   287→    const restored = JSON.parse(step.snapshot) as EditorObject[];
+   288→   288→    objectsRef.current = restored;
+   289→   289→    commit(restored);
+   290→   290→    syncLens();
+   291→   291→  }, [commit, syncLens]);
+   292→   292→
+   293→   293→  const redo = useCallback((): void => {
+   294→   294→    const current = JSON.stringify(objectsRef.current);
+   295→   295→    const step = redoStep(histRef.current.past, histRef.current.future, current);
+   296→   296→    if (step.snapshot === null) return;
+   297→   297→    histRef.current.past = step.past;
+   298→   298→    histRef.current.future = step.future;
+   299→   299→    histRef.current.lastKey = "";
+   300→   300→    histRef.current.lastAt = 0;
+   301→   301→    const restored = JSON.parse(step.snapshot) as EditorObject[];
+   302→   302→    objectsRef.current = restored;
+   303→   303→    commit(restored);
+   304→   304→    syncLens();
+   305→   305→  }, [commit, syncLens]);
+   306→   306→
+   307→   307→  const canUndo = histLens.past > 0;
+   308→   308→  const canRedo = histLens.future > 0;
+   309→   309→
+   310→   310→  // --- Document state -----------------------------------------------------
+   311→   311→  const [pageCount, setPageCount] = useState(0);
+   312→   312→  const [selectedPage, setSelectedPage] = useState(0);
+   313→   313→  const [pageError, setPageError] = useState<"password" | "corrupt" | null>(null);
+   314→   314→  const [viewsReady, setViewsReady] = useState(false);
+   315→   315→  const [truncated, setTruncated] = useState(false);
+   316→   316→  const [base, setBase] = useState<{
+   317→   317→    bitmap: ImageBitmap;
+   318→   318→    dispW: number;
+   319→   319→    dispH: number;
+   320→   320→  } | null>(null);
+   321→   321→  const [failed, setFailed] = useState(false);
+   322→   322→  const [zoom, setZoom] = useState(1);
+   323→   323→  const viewToken = useRef(0);
+   324→   324→
+   325→   325→  // Load: page count + per-page views.
+   326→   326→  useEffect(() => {
+   327→   327→    if (!file) return;
+   328→   328→    let cancelled = false;
+   329→   329→    const token = viewToken.current + 1;
+   330→   330→    viewToken.current = token;
+   331→   331→    void (async () => {
+   332→   332→      setViewsReady(false);
+   333→   333→      setPageError(null);
+   334→   334→      setSelectedPage(0);
+   335→   335→      setTruncated(false);
+   336→   336→      const count = await getPdfPageCount(file);
+   337→   337→      if (cancelled || viewToken.current !== token) return;
+   338→   338→      setPageCount(count);
+   339→   339→      setTruncated(count > EDITOR_MAX_PAGES);
+   340→   340→      const views = await collectPageViews(file, EDITOR_MAX_PAGES);
+   341→   341→      if (cancelled || viewToken.current !== token) return;
+   342→   342→      objectsRef.current = [];
+   343→   343→      histRef.current = { past: [], future: [], lastKey: "", lastAt: 0 };
+   344→   344→      syncLens();
+   345→   345→      commit([], views);
+   346→   346→      setViewsReady(true);
+   347→   347→    })().catch((error: unknown) => {
+   348→   348→      if (cancelled) return;
+   349→   349→      const cause = (error as { cause?: unknown })?.cause;
+   350→   350→      const name =
+   351→   351→        (cause as { name?: string } | undefined)?.name ??
+   352→   352→        (error as { name?: string } | undefined)?.name ??
+   353→   353→        "";
+   354→   354→      const message = String((error as Error)?.message ?? "");
+   355→   355→      setPageError(
+   356→   356→        name === "PasswordException" || /password/i.test(message)
+   357→   357→          ? "password"
+   358→   358→          : "corrupt"
+   359→   359→      );
+   360→   360→      setPageCount(0);
+   361→   361→    });
+   362→   362→    return () => {
+   363→   363→      cancelled = true;
+   364→   364→      viewToken.current += 1;
+   365→   365→    };
+   366→   366→    // commit is stable via pageViews identity per file session
+   367→   367→  }, [file]);
+   368→   368→
+   369→   369→  // Assets belong to this document session only.
+   370→   370→  useEffect(() => {
+   371→   371→    return () => {
+   372→   372→      clearAssets();
+   373→   373→    };
+   374→   374→  }, []);
+   375→   375→
+   376→   376→  // --- Page preview render -------------------------------------------------
+   377→   377→  useEffect(() => {
+   378→   378→    if (!file || pageCount === 0) return;
+   379→   379→    let cancelled = false;
+   380→   380→    void (async () => {
+   381→   381→      const [thumb, pixel] = await Promise.all([
+   382→   382→        renderPdfThumbnail(file, {
+   383→   383→          pageIndex: selectedPage,
+   384→   384→          maxDim: Math.min(2800, Math.round(PREVIEW_MAX_DIM * zoom * 2)),
+   385→   385→        }),
+   386→   386→        getPdfPagePixelSize(file, 1, selectedPage),
+   387→   387→      ]);
+   388→   388→      if (cancelled) return;
+   389→   389→      const bitmap = await createImageBitmap(thumb.blob);
+   390→   390→      if (cancelled) return;
+   391→   391→      setFailed(false);
+   392→   392→      setBase({ bitmap, dispW: pixel.width, dispH: pixel.height });
+   393→   393→    })().catch(() => {
+   394→   394→      if (!cancelled) setFailed(true);
+   395→   395→    });
+   396→   396→    return () => {
+   397→   397→      cancelled = true;
+   398→   398→    };
+   399→   399→  }, [file, pageCount, selectedPage, zoom]);
+   400→   400→
+   401→   401→  // Actual rendered page width (CSS px) — the object overlay scales by it.
+   402→   402→  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+   403→   403→  const [renderScale, setRenderScale] = useState(1);
+   404→   404→  useLayoutEffect(() => {
+   405→   405→    const canvas = canvasRef.current;
+   406→   406→    if (!canvas || !base) return;
+   407→   407→    const measure = (): void => {
+   408→   408→      const w = canvas.getBoundingClientRect().width;
+   409→   409→      if (w > 0) setRenderScale(w / base.dispW);
+   410→   410→    };
+   411→   411→    measure();
+   412→   412→    const observer = new ResizeObserver(measure);
+   413→   413→    observer.observe(canvas);
+   414→   414→    return () => observer.disconnect();
+   415→   415→  }, [base]);
+   416→   416→
+   417→   417→  const currentView = pageViews[selectedPage] ?? null;
+   418→   418→  const pageDisp = currentView ? displaySize(currentView) : null;
+   419→   419→
+   420→   420→  // --- Selection + tools ----------------------------------------------------
+   421→   421→  const [tool, setTool] = useState<ToolId>("select");
+   422→   422→  const [selectedId, setSelectedId] = useState<string | null>(null);
+   423→   423→  const [editingId, setEditingId] = useState<string | null>(null);
+   424→   424→  const [gesture, setGesture] = useState<Gesture | null>(null);
+   425→   425→  const [signOpen, setSignOpen] = useState(false);
+   426→   426→  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+   427→   427→  const overlayRef = useRef<HTMLDivElement | null>(null);
+   428→   428→  const imageInputRef = useRef<HTMLInputElement | null>(null);
+   429→   429→  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
+   430→   430→
+   431→   431→  const pageObjects = useMemo(
+   432→   432→    () => objects.filter((o) => o.page === selectedPage),
+   433→   433→    [objects, selectedPage]
+   434→   434→  );
+   435→   435→  const selected = useMemo(
+   436→   436→    () => objects.find((o) => o.id === selectedId) ?? null,
+   437→   437→    [objects, selectedId]
+   438→   438→  );
+   439→   439→  const editing = useMemo(
+   440→   440→    () => (editingId !== null ? objects.find((o) => o.id === editingId) ?? null : null),
+   441→   441→    [objects, editingId]
+   442→   442→  );
+   443→   443→  const touchedPages = useMemo(
+   444→   444→    () => new Set(objects.map((o) => o.page)),
+   445→   445→    [objects]
+   446→   446→  );
+   447→   447→
+   448→   448→  const runGated = !viewsReady || pageError !== null;
+   449→   449→  useEffect(() => {
+   450→   450→    setRunBlocked(runGated ? "editPdf.notReady" : null);
+   451→   451→  }, [runGated, setRunBlocked]);
+   452→   452→
+   453→   453→  // --- Object actions ------------------------------------------------------
+   454→   454→  const patchObject = useCallback(
+   455→   455→    (id: string, patch: Partial<EditorObject>, history = true): void => {
+   456→   456→      applyObjects(
+   457→   457→        objectsRef.current.map((o) => (o.id === id ? ({ ...o, ...patch } as EditorObject) : o)),
+   458→   458→        `patch:${id}`,
+   459→   459→        history
+   460→   460→      );
+   461→   461→    },
+   462→   462→    [applyObjects]
+   463→   463→  );
+   464→   464→
+   465→   465→  const removeObject = useCallback(
+   466→   466→    (id: string): void => {
+   467→   467→      applyObjects(
+   468→   468→        objectsRef.current.filter((o) => o.id !== id),
+   469→   469→        `remove:${id}`
+   470→   470→      );
+   471→   471→      if (selectedId === id) setSelectedId(null);
+   472→   472→      if (editingId === id) setEditingId(null);
+   473→   473→    },
+   474→   474→    [applyObjects, selectedId, editingId]
+   475→   475→  );
+   476→   476→
+   477→   477→  const duplicateSel = useCallback((): void => {
+   478→   478→    if (!selectedId) return;
+   479→   479→    const result = duplicateObject(objectsRef.current, selectedId);
+   480→   480→    if (result.copy) {
+   481→   481→      applyObjects(result.objects, `dup:${selectedId}`);
+   482→   482→      setSelectedId(result.copy.id);
+   483→   483→    }
+   484→   484→  }, [applyObjects, selectedId]);
+   485→   485→
+   486→   486→  // --- Text editing ---------------------------------------------------------
+   487→   487→  const startEditText = useCallback((id: string): void => {
+   488→   488→    setSelectedId(id);
+   489→   489→    setEditingId(id);
+   490→   490→    setTool("select");
+   491→   491→  }, []);
+   492→   492→
+   493→   493→  useEffect(() => {
+   494→   494→    if (editingId !== null && textAreaRef.current) {
+   495→   495→      textAreaRef.current.focus();
+   496→   496→      textAreaRef.current.select();
+   497→   497→    }
+   498→   498→  }, [editingId]);
+   499→   499→
+   500→   500→  const endEdit = useCallback((): void => {
+   501→   501→    const obj = objectsRef.current.find((o) => o.id === editingId);
+   502→   502→    if (obj && obj.kind === "text" && obj.text.trim().length === 0) {
+   503→   503→      // An empty text box never survives blur.
+   504→   504→      applyObjects(
+   505→   505→        objectsRef.current.filter((o) => o.id !== editingId),
+   506→   506→        `remove:${editingId}`
+   507→   507→      );
+   508→   508→    }
+   509→   509→    setEditingId(null);
+   510→   510→  }, [applyObjects, editingId]);
+   511→   511→
+   512→   512→  // --- Image + signature insertion ------------------------------------------
+   513→   513→  const insertImageAsset = useCallback(
+   514→   514→    (key: string, naturalW: number, naturalH: number): void => {
+   515→   515→      if (!pageDisp || !currentView) return;
+   516→   516→      const page = pageDisp;
+   517→   517→      const aspect = naturalH / Math.max(1, naturalW);
+   518→   518→      const w = Math.min(page.w * 0.4, 240);
+   519→   519→      const h = w * aspect;
+   520→   520→      const disp = {
+   521→   521→        x: (page.w - w) / 2,
+   522→   522→        y: Math.min(page.h * 0.5, (page.h - h) / 2),
+   523→   523→        w,
+   524→   524→        h,
+   525→   525→      };
+   526→   526→      const pdf = displayRectToPdf(disp, currentView);
+   527→   527→      const obj = makeImage(selectedPage, pdf, key);
+   528→   528→      applyObjects([...objectsRef.current, obj], `add:${obj.id}`);
+   529→   529→      setSelectedId(obj.id);
+   530→   530→      setTool("select");
+   531→   531→    },
+   532→   532→    [applyObjects, currentView, pageDisp, selectedPage]
+   533→   533→  );
+   534→   534→
+   535→   535→  const onImageFiles = useCallback(
+   536→   536→    (list: FileList | null): void => {
+   537→   537→      if (!list || list.length === 0) return;
+   538→   538→      void (async () => {
+   539→   539→        try {
+   540→   540→          for (const f of Array.from(list)) {
+   541→   541→            const asset = await addImageFile(f);
+   542→   542→            insertImageAsset(asset.key, asset.w, asset.h);
+   543→   543→          }
+   544→   544→        } catch {
+   545→   545→          toast({
+   546→   546→            title: t("editPdf.errorImageTitle"),
+   547→   547→            description: t("editPdf.errorImageDesc"),
+   548→   548→            variant: "destructive",
+   549→   549→          });
+   550→   550→        }
+   551→   551→      })();
+   552→   552→    },
+   553→   553→    [insertImageAsset, t, toast]
+   554→   554→  );
+   555→   555→
+   556→   556→  const onSignature = useCallback(
+   557→   557→    (png: Blob): void => {
+   558→   558→      setSignOpen(false);
+   559→   559→      void (async () => {
+   560→   560→        try {
+   561→   561→          const asset = await addPngBlob(png, "signature");
+   562→   562→          insertImageAsset(asset.key, asset.w, asset.h);
+   563→   563→        } catch {
+   564→   564→          toast({
+   565→   565→            title: t("editPdf.errorImageTitle"),
+   566→   566→            variant: "destructive",
+   567→   567→          });
+   568→   568→        }
+   569→   569→      })();
+   570→   570→    },
+   571→   571→    [insertImageAsset, t, toast]
+   572→   572→  );
+   573→   573→
+   574→   574→  const onTool = useCallback((next: ToolId): void => {
+   575→   575→    if (next === "image") {
+   576→   576→      imageInputRef.current?.click();
+   577→   577→      return;
+   578→   578→    }
+   579→   579→    if (next === "sign") {
+   580→   580→      setSignOpen(true);
+   581→   581→      return;
+   582→   582→    }
+   583→   583→    setTool(next);
+   584→   584→    setSelectedId(null);
+   585→   585→  }, []);
+   586→   586→
+   587→   587→  // --- Pointer machinery ------------------------------------------------------
+   588→   588→  const displayPos = (
+   589→   589→    event: React.PointerEvent<Element>
+   590→   590→  ): { x: number; y: number } => {
+   591→   591→    const overlay = overlayRef.current;
+   592→   592→    if (!overlay || !pageDisp) return { x: 0, y: 0 };
+   593→   593→    const box = overlay.getBoundingClientRect();
+   594→   594→    const scale = pageDisp.w / Math.max(1, box.width);
+   595→   595→    return {
+   596→   596→      x: clampN((event.clientX - box.left) * scale, 0, pageDisp.w),
+   597→   597→      y: clampN((event.clientY - box.top) * scale, 0, pageDisp.h),
+   598→   598→    };
+   599→   599→  };
+   600→   600→
+   601→   601→  const handleOverlayPointerDown = (
+   602→   602→    event: React.PointerEvent<HTMLDivElement>
+   603→   603→  ): void => {
+   604→   604→    if (!base || !currentView || event.button !== 0) return;
+   605→   605→    if (menu) setMenu(null);
+   606→   606→    const pos = displayPos(event);
+   607→   607→    if (tool === "select") {
+   608→   608→      setSelectedId(null);
+   609→   609→      setEditingId(null);
+   610→   610→      return;
+   611→   611→    }
+   612→   612→    if (tool === "draw") {
+   613→   613→      try {
+   614→   614→        overlayRef.current?.setPointerCapture(event.pointerId);
+   615→   615→      } catch {
+   616→   616→        /* synthetic pointers */
+   617→   617→      }
+   618→   618→      setSelectedId(null);
+   619→   619→      setGesture({ type: "stroke", pts: [pos] });
+   620→   620→      event.preventDefault();
+   621→   621→      return;
+   622→   622→    }
+   623→   623→    // Create tools: text (click or drag), shapes + whiteout (drag).
+   624→   624→    try {
+   625→   625→      overlayRef.current?.setPointerCapture(event.pointerId);
+   626→   626→    } catch {
+   627→   627→      /* synthetic pointers */
+   628→   628→    }
+   629→   629→    setSelectedId(null);
+   630→   630→    setGesture({
+   631→   631→      type: "create",
+   632→   632→      kind: tool as CreateKind,
+   633→   633→      x0: pos.x,
+   634→   634→      y0: pos.y,
+   635→   635→      x1: pos.x,
+   636→   636→      y1: pos.y,
+   637→   637→    });
+   638→   638→    event.preventDefault();
+   639→   639→  };
+   640→   640→
+   641→   641→  const handleOverlayPointerMove = (
+   642→   642→    event: React.PointerEvent<HTMLDivElement>
+   643→   643→  ): void => {
+   644→   644→    if (!gesture || !pageDisp || !currentView) return;
+   645→   645→    const pos = displayPos(event);
+   646→   646→    if (gesture.type === "stroke") {
+   647→   647→      const last = gesture.pts[gesture.pts.length - 1];
+   648→   648→      if (Math.hypot(pos.x - last.x, pos.y - last.y) > 1.5) {
+   649→   649→        setGesture({ ...gesture, pts: [...gesture.pts, pos] });
+   650→   650→      }
+   651→   651→      return;
+   652→   652→    }
+   653→   653→    if (gesture.type === "create") {
+   654→   654→      setGesture({ ...gesture, x1: pos.x, y1: pos.y });
+   655→   655→      return;
+   656→   656→    }
+   657→   657→    if (gesture.type === "move") {
+   658→   658→      const obj = objectsRef.current.find((o) => o.id === gesture.id);
+   659→   659→      if (!obj) {
+   660→   660→        setGesture(null);
+   661→   661→        return;
+   662→   662→      }
+   663→   663→      const disp = pdfRectToDisplay(obj, currentView);
+   664→   664→      // grabDx/grabDy are the pointer's offset FROM the object origin at
+   665→   665→      // gesture start — pos - grab IS the new origin (no extra disp add).
+   666→   666→      const next = {
+   667→   667→        x: clampN(pos.x - gesture.grabDx, 0, pageDisp.w - disp.w),
+   668→   668→        y: clampN(pos.y - gesture.grabDy, 0, pageDisp.h - disp.h),
+   669→   669→        w: disp.w,
+   670→   670→        h: disp.h,
+   671→   671→      };
+   672→   672→      const pdf = displayRectToPdf(next, currentView);
+   673→   673→      patchObject(gesture.id, {
+   674→   674→        x: roundPt(pdf.x),
+   675→   675→        y: roundPt(pdf.y),
+   676→   676→      });
+   677→   677→      return;
+   678→   678→    }
+   679→   679→    // resize
+   680→   680→    const orig = gesture.orig;
+   681→   681→    const min = MIN_OBJ_PT;
+   682→   682→    let { x, y, w, h } = orig;
+   683→   683→    if (gesture.edge === "se") {
+   684→   684→      w = Math.max(min, pos.x - x);
+   685→   685→      h = Math.max(min, pos.y - y);
+   686→   686→    } else if (gesture.edge === "ne") {
+   687→   687→      const ny = Math.min(y + h - min, pos.y);
+   688→   688→      w = Math.max(min, pos.x - x);
+   689→   689→      h = Math.max(min, y + h - ny);
+   690→   690→      y = ny;
+   691→   691→    } else if (gesture.edge === "sw") {
+   692→   692→      const nx = Math.min(x + w - min, pos.x);
+   693→   693→      w = Math.max(min, x + w - nx);
+   694→   694→      x = nx;
+   695→   695→      h = Math.max(min, pos.y - y);
+   696→   696→    } else {
+   697→   697→      const nx = Math.min(x + w - min, pos.x);
+   698→   698→      const ny = Math.min(y + h - min, pos.y);
+   699→   699→      w = Math.max(min, x + w - nx);
+   700→   700→      h = Math.max(min, y + h - ny);
+   701→   701→      x = nx;
+   702→   702→      y = ny;
+   703→   703→    }
+   704→   704→    if (gesture.keepAspect) {
+   705→   705→      w = Math.max(min, Math.min(w, h * gesture.aspect));
+   706→   706→      h = w / gesture.aspect;
+   707→   707→      if (gesture.edge === "ne") y = orig.y + orig.h - h;
+   708→   708→      if (gesture.edge === "sw") x = orig.x + orig.w - w;
+   709→   709→      if (gesture.edge === "nw") {
+   710→   710→        x = orig.x + orig.w - w;
+   711→   711→        y = orig.y + orig.h - h;
+   712→   712→      }
+   713→   713→    }
+   714→   714→    const pdf = displayRectToPdf({ x, y, w, h }, currentView);
+   715→   715→    patchObject(gesture.id, {
+   716→   716→      x: roundPt(pdf.x),
+   717→   717→      y: roundPt(pdf.y),
+   718→   718→      w: roundPt(pdf.w),
+   719→   719→      h: roundPt(pdf.h),
+   720→   720→    });
+   721→   721→  };
+   722→   722→
+   723→   723→  const handleOverlayPointerUp = (): void => {
+   724→   724→    if (!gesture || !currentView || !pageDisp) {
+   725→   725→      setGesture(null);
+   726→   726→      return;
+   727→   727→    }
+   728→   728→    if (gesture.type === "stroke") {
+   729→   729→      const norm = normaliseDraw(gesture.pts);
+   730→   730→      setGesture(null);
+   731→   731→      if (norm) {
+   732→   732→        const pdf = displayRectToPdf(norm.rect, currentView);
+   733→   733→        const obj = makeDraw(selectedPage, pdf, norm.fracs);
+   734→   734→        applyObjects([...objectsRef.current, obj], `add:${obj.id}`);
+   735→   735→        setSelectedId(obj.id);
+   736→   736→        setTool("select");
+   737→   737→      }
+   738→   738→      return;
+   739→   739→    }
+   740→   740→    if (gesture.type === "create") {
+   741→   741→      const x0 = Math.min(gesture.x0, gesture.x1);
+   742→   742→      const x1 = Math.max(gesture.x0, gesture.x1);
+   743→   743→      const y0 = Math.min(gesture.y0, gesture.y1);
+   744→   744→      const y1 = Math.max(gesture.y0, gesture.y1);
+   745→   745→      setGesture(null);
+   746→   746→      const dragged =
+   747→   747→        (x1 - x0) / pageDisp.w >= MIN_DRAW || (y1 - y0) / pageDisp.h >= MIN_DRAW;
+   748→   748→      let disp: ObjRect;
+   749→   749→      if (dragged) {
+   750→   750→        disp = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+   751→   751→      } else if (gesture.kind === "text") {
+   752→   752→        // Click = default-size text box at the click point.
+   753→   753→        disp = { x: gesture.x0, y: gesture.y0, w: 160, h: Math.max(18, 16 * LINE_HEIGHT + 2 * TEXT_PAD) };
+   754→   754→      } else {
+   755→   755→        return;
+   756→   756→      }
+   757→   757→      const pdf = displayRectToPdf(disp, currentView);
+   758→   758→      let obj: EditorObject;
+   759→   759→      switch (gesture.kind) {
+   760→   760→        case "text":
+   761→   761→          obj = makeText(selectedPage, pdf);
+   762→   762→          break;
+   763→   763→        case "line":
+   764→   764→        case "arrow": {
+   765→   765→          obj = makeShape(selectedPage, pdf, gesture.kind);
+   766→   766→          if (obj.kind === "line" || obj.kind === "arrow") {
+   767→   767→            obj.flip =
+   768→   768→              (gesture.x1 - gesture.x0) * (gesture.y1 - gesture.y0) < 0;
+   769→   769→          }
+   770→   770→          break;
+   771→   771→        }
+   772→   772→        case "rect":
+   773→   773→        case "ellipse":
+   774→   774→          obj = makeShape(selectedPage, pdf, gesture.kind);
+   775→   775→          break;
+
+[showing lines 76-775 of 1291; use offset=776 with limit to continue reading]

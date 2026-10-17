@@ -764,10 +764,486 @@ export function sanitizeObjects(
 }
 
 // ---------------------------------------------------------------------------
-// Text wrapping (shared by the worker; the surface relies on CSS)
+// Existing-text editing (P8.3 — whiteout + replace, font matching)
 // ---------------------------------------------------------------------------
 
-/** Greedy word-wrap that hard-breaks overlong words. */
+/**
+ * A harvested text piece in DISPLAY space (y down, pt) — one horizontal
+ * pdf.js text run with its resolved font match attached.
+ */
+export interface HarvestPiece {
+  index: number;
+  x: number;
+  xEnd: number;
+  baseline: number;
+  h: number;
+  str: string;
+  font: FontMatch;
+}
+
+/** How an original PDF font maps onto the editor's embedded fonts. */
+export interface FontMatch {
+  font: EditorFontId;
+  bold: boolean;
+  italic: boolean;
+  /** true when the original font IS one of our embedded fonts (metrics-safe). */
+  exact: boolean;
+  /** Human-readable original name ("" when pdf.js exposed none). */
+  original: string;
+}
+
+/** Fonts whose glyphs we embed — exact replacement is possible for these. */
+const EXACT_NAMES = new Set([
+  "helvetica",
+  "helveticabold",
+  "helveticaoblique",
+  "helveticaboldoblique",
+  "times",
+  "timesroman",
+  "timesbold",
+  "timesitalic",
+  "timesbolditalic",
+  "courier",
+  "courierbold",
+  "courieroblique",
+  "courierboldoblique",
+  "notosansdevanagari",
+]);
+
+/** Name → editor family table (subset prefixes already stripped). */
+const FAMILY_BY_NAME: Record<string, EditorFontId> = {
+  // sans
+  helvetica: "helvetica",
+  helveticabold: "helvetica",
+  helveticaoblique: "helvetica",
+  helveticaboldoblique: "helvetica",
+  arial: "helvetica",
+  arialmt: "helvetica",
+  arialboldmt: "helvetica",
+  arialunicode: "helvetica",
+  liberationsans: "helvetica",
+  notosans: "helvetica",
+  verdana: "helvetica",
+  tahoma: "helvetica",
+  segoeui: "helvetica",
+  calibri: "helvetica",
+  carlito: "helvetica",
+  dejavusans: "helvetica",
+  opensans: "helvetica",
+  // serif
+  times: "times",
+  timesroman: "times",
+  timesbold: "times",
+  timesitalic: "times",
+  timesbolditalic: "times",
+  timesnewroman: "times",
+  timesnewromanpsmt: "times",
+  timesnewromanpsboldmt: "times",
+  timesnewromanpsitalicmt: "times",
+  liberationserif: "times",
+  notoserif: "times",
+  georgia: "times",
+  garamond: "times",
+  bookmanoldstyle: "times",
+  cambria: "times",
+  caladea: "times",
+  dejavuserif: "times",
+  // mono
+  courier: "courier",
+  courierbold: "courier",
+  courieroblique: "courier",
+  courierboldoblique: "courier",
+  couriernew: "courier",
+  couriernewpsmt: "courier",
+  couriernewpsboldmt: "courier",
+  liberationmono: "courier",
+  notosansmono: "courier",
+  notoserifmono: "courier",
+  dejavusansmono: "courier",
+  consolas: "courier",
+  menlo: "courier",
+  monaco: "courier",
+  courierstd: "courier",
+  // devanagari
+  notosansdevanagari: "devanagari",
+  mangal: "devanagari",
+  kokila: "devanagari",
+  devanagarimt: "devanagari",
+  udyog: "devanagari",
+};
+
+export interface FontMatchHints {
+  /** pdf.js font.bold / .black (font flags), when available. */
+  bold?: boolean;
+  /** pdf.js font.italic, when available. */
+  italic?: boolean;
+  /** pdf.js font.isMonospace, when available. */
+  mono?: boolean;
+  /** pdf.js font.isSerifFont, when available. */
+  serif?: boolean;
+  /** textContent.styles fontFamily: "serif" | "monospace" | "sans-serif". */
+  cssFamily?: string;
+  /** The run's text carries Devanagari characters. */
+  hasDeva?: boolean;
+}
+
+function normaliseFontName(raw: string): string {
+  // Strip a subset prefix ("ABCDEF+ArialMT") and punctuation, lowercase.
+  const plus = raw.indexOf("+");
+  const base = plus >= 0 ? raw.slice(plus + 1) : raw;
+  return base.replace(/[\s_-]+/g, "").toLowerCase();
+}
+
+/**
+ * Maps an original PDF font onto the editor's embedded fonts (PRD §8.2:
+ * "font match — standard fonts, embedded font agar subset allow kare, warna
+ * closest font suggest"). Exact only for the standard-14 families (and the
+ * Devanagari font we embed verbatim); everything else maps to the closest
+ * family by name table, class flags or CSS fallback family.
+ */
+export function matchFont(
+  rawName: string,
+  hints: FontMatchHints
+): FontMatch {
+  const norm = normaliseFontName(rawName);
+  const bold =
+    hints.bold === true ||
+    (hints.bold !== false && /bold|black|heavy|semibold|demibold/i.test(rawName));
+  const italic =
+    hints.italic === true ||
+    (hints.italic !== false && /italic|oblique/i.test(rawName));
+
+  // Devanagari text needs the Devanagari pipeline regardless of the name.
+  if (hints.hasDeva === true) {
+    return {
+      font: "devanagari",
+      bold,
+      italic,
+      exact: norm === "notosansdevanagari",
+      original: rawName,
+    };
+  }
+
+  let font: EditorFontId | null = null;
+  if (norm !== "" && FAMILY_BY_NAME[norm] !== undefined) {
+    font = FAMILY_BY_NAME[norm];
+  } else if (hints.mono === true || hints.cssFamily === "monospace") {
+    font = "courier";
+  } else if (hints.serif === true || hints.cssFamily === "serif") {
+    font = "times";
+  } else if (norm.includes("devanagari")) {
+    font = "devanagari";
+  } else if (
+    norm.includes("mono") ||
+    norm.includes("courier") ||
+    norm.includes("consolas") ||
+    norm.includes("menlo")
+  ) {
+    font = "courier";
+  } else if (
+    norm.includes("serif") ||
+    norm.includes("roman") ||
+    norm.includes("times") ||
+    norm.includes("georgia") ||
+    norm.includes("garamond")
+  ) {
+    font = "times";
+  } else if (
+    norm.includes("sans") ||
+    norm.includes("helvetica") ||
+    norm.includes("arial") ||
+    norm.includes("verdana") ||
+    norm.includes("tahoma") ||
+    norm.includes("segoe")
+  ) {
+    font = "helvetica";
+  } else if (font === null) {
+    font = "helvetica";
+  }
+
+  return {
+    font,
+    bold,
+    italic,
+    exact: EXACT_NAMES.has(norm),
+    original: rawName,
+  };
+}
+
+/** Vertical metrics used to expand a piece into a comfortable cover rect. */
+export const PIECE_ASCENT = 0.85;
+export const PIECE_DESCENT = 0.25;
+export const PIECE_PAD = 1.5;
+
+/**
+ * The DISPLAY rect a piece's cover/text objects occupy: the glyph band
+ * (ascent above the baseline, descent below) plus a small pad, widened by
+ * 1pt on each side so ascenders/descenders never peek out.
+ */
+export function pieceRect(piece: {
+  x: number;
+  xEnd: number;
+  baseline: number;
+  h: number;
+}): ObjRect {
+  const top = piece.baseline - PIECE_ASCENT * piece.h - PIECE_PAD;
+  const bottom = piece.baseline + PIECE_DESCENT * piece.h + PIECE_PAD;
+  return {
+    x: piece.x - 1,
+    y: top,
+    w: Math.max(8, piece.xEnd - piece.x + 2),
+    h: Math.max(10, bottom - top),
+  };
+}
+
+/**
+ * Builds the whiteout + retype pair for one harvested piece (PRD §8.2
+ * "original text area whiteout + naya text same position par"). Both
+ * objects share the piece rect; the cover is inserted BEFORE the text so
+ * array z-order draws it first. One history group per call is the caller's
+ * responsibility.
+ */
+export function buildReplacePieceObjects(
+  page: number,
+  view: PageView,
+  piece: HarvestPiece,
+  bgHex: string,
+  inkHex: string
+): { cover: WhiteoutObj; text: TextObj } {
+  const disp = pieceRect(piece);
+  const pdf = displayRectToPdf(disp, view);
+  const cover = makeWhiteout(page, pdf);
+  cover.fill = bgHex;
+  const text = makeText(page, pdf, {
+    text: piece.str,
+    font: piece.font.font,
+    size: clampN(piece.h, 4, 200),
+    color: inkHex,
+    bold: piece.font.bold,
+    italic: piece.font.italic,
+    align: "left",
+  });
+  return { cover, text };
+}
+
+// ---------------------------------------------------------------------------
+// Line grouping + find-and-replace planning (PRD §8.2 "Find & Replace")
+// ---------------------------------------------------------------------------
+
+/** A visual text line: adjacent same-baseline pieces merged with spaces. */
+export interface PieceLine {
+  page: number;
+  /** Indices into the page's piece array (x order). */
+  pieces: number[];
+  text: string;
+  x: number;
+  xEnd: number;
+  baseline: number;
+  h: number;
+}
+
+/**
+ * Groups a page's pieces into visual lines: baseline bucket (Δ ≤ 0.45 ×
+ * the larger em) + horizontal gap ≤ 1.2 × em joins as a space, pieces sorted
+ * by x. The same-baseline rule keeps columns separate (P4.3 insight).
+ */
+export function groupPiecesIntoLines(
+  page: number,
+  pieces: HarvestPiece[]
+): PieceLine[] {
+  const sorted = [...pieces].sort((a, b) => a.x - b.x);
+  const lines: PieceLine[] = [];
+  for (const p of sorted) {
+    const line = lines.find((l) => {
+      if (Math.abs(l.baseline - p.baseline) > 0.45 * Math.max(l.h, p.h)) {
+        return false;
+      }
+      // Gap between the line's right edge and this piece (x-sorted so ≥ 0).
+      return p.x - l.xEnd <= 1.2 * Math.max(l.h, p.h);
+    });
+    if (line) {
+      line.pieces.push(p.index);
+      line.xEnd = Math.max(line.xEnd, p.xEnd);
+      line.text = `${line.text} ${p.str}`;
+      line.h = Math.max(line.h, p.h);
+    } else {
+      lines.push({
+        page,
+        pieces: [p.index],
+        text: p.str,
+        x: p.x,
+        xEnd: p.xEnd,
+        baseline: p.baseline,
+        h: p.h,
+      });
+    }
+  }
+  return lines;
+}
+
+export interface LineMatch {
+  page: number;
+  /** Index into that page's PieceLine array. */
+  line: number;
+  /** Character range of the occurrence inside line.text. */
+  start: number;
+  end: number;
+}
+
+/** Literal (non-regex) occurrences of the query across all lines. */
+export function planLineReplacements(
+  lines: PieceLine[],
+  query: string,
+  matchCase: boolean
+): LineMatch[] {
+  const out: LineMatch[] = [];
+  const needle = matchCase ? query : query.toLowerCase();
+  if (needle.length === 0) return out;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const hay = matchCase ? line.text : line.text.toLowerCase();
+    let from = 0;
+    for (;;) {
+      const at = hay.indexOf(needle, from);
+      if (at < 0) break;
+      out.push({ page: line.page, line: i, start: at, end: at + needle.length });
+      from = at + needle.length;
+    }
+  }
+  return out;
+}
+
+/**
+ * Builds the whiteout + retype pair for one VISUAL LINE (find & replace):
+ * the cover spans the union of the line's piece rects, the retype uses the
+ * dominant piece's font match and the substituted text. One history group
+ * per call is the caller's responsibility.
+ */
+export function buildReplaceLineObjects(
+  page: number,
+  view: PageView,
+  line: PieceLine,
+  pagePieces: HarvestPiece[],
+  newText: string,
+  bgHex: string,
+  inkHex: string
+): { cover: WhiteoutObj; text: TextObj } {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const idx of line.pieces) {
+    const p = pagePieces[idx];
+    if (!p) continue;
+    const r = pieceRect(p);
+    x0 = Math.min(x0, r.x);
+    y0 = Math.min(y0, r.y);
+    x1 = Math.max(x1, r.x + r.w);
+    y1 = Math.max(y1, r.y + r.h);
+  }
+  if (!Number.isFinite(x0) || !Number.isFinite(y0)) {
+    x0 = line.x;
+    y0 = line.baseline - line.h;
+    x1 = line.xEnd;
+    y1 = line.baseline;
+  }
+  const disp = { x: x0, y: y0, w: Math.max(8, x1 - x0), h: Math.max(10, y1 - y0) };
+  const pdf = displayRectToPdf(disp, view);
+  const cover = makeWhiteout(page, pdf);
+  cover.fill = bgHex;
+  // Dominant piece = largest em (ties: first in x order).
+  let dom = pagePieces[line.pieces[0]] ?? null;
+  for (const idx of line.pieces) {
+    const p = pagePieces[idx];
+    if (p && dom !== null && p.h > dom.h) dom = p;
+    else if (p && dom === null) dom = p;
+  }
+  const text = makeText(page, pdf, {
+    text: newText,
+    font: dom !== null ? dom.font.font : "helvetica",
+    size: clampN(dom !== null ? dom.h : 12, 4, 200),
+    color: inkHex,
+    bold: dom !== null ? dom.font.bold : false,
+    italic: dom !== null ? dom.font.italic : false,
+    align: "left",
+  });
+  return { cover, text };
+}
+
+/**
+ * Line text with the given occurrence ranges substituted (literal
+ * semantics — split/join so regex metacharacters in the query are safe).
+ */
+export function substituteOccurrences(
+  text: string,
+  ranges: { start: number; end: number }[],
+  replacement: string
+): string {
+  if (ranges.length === 0) return text;
+  const sorted = [...ranges].sort((a, b) => a.start - b.start);
+  let out = "";
+  let cursor = 0;
+  for (const r of sorted) {
+    if (r.start < cursor) continue; // overlap guard
+    out += text.slice(cursor, r.start) + replacement;
+    cursor = r.end;
+  }
+  return out + text.slice(cursor);
+}
+
+// ---------------------------------------------------------------------------
+// Ink/background colour picking from rendered pixels (P8.3)
+// ---------------------------------------------------------------------------
+
+export function rgbToHex(r: number, g: number, b: number): string {
+  const h = (v: number): string =>
+    Math.round(clampN(v, 0, 255)).toString(16).padStart(2, "0");
+  return `#${h(r)}${h(g)}${h(b)}`;
+}
+
+export function luminance(r: number, g: number, b: number): number {
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+/** Median of an RGBA pixel run (ignores alpha — pages render opaque). */
+export function medianRgb(pixels: number[]): { r: number; g: number; b: number } {
+  if (pixels.length === 0) return { r: 255, g: 255, b: 255 };
+  const by = (ch: 0 | 1 | 2): number => {
+    const vals = pixels.filter((_, i) => i % 4 === ch).sort((a, b) => a - b);
+    return vals[Math.floor(vals.length / 2)] ?? 255;
+  };
+  return { r: by(0), g: by(1), b: by(2) };
+}
+
+/**
+ * Picks the text ink colour from the pixels under a piece: the darkest
+ * cluster on a light background, the brightest on a dark one. Returns null
+ * when the contrast is too weak to trust (caller falls back to a default).
+ */
+export function pickInkFromPixels(
+  pixels: number[],
+  bgLum: number
+): { r: number; g: number; b: number } | null {
+  if (pixels.length < 16) return null;
+  const lums = pixels
+    .filter((_, i) => i % 4 === 3 && pixels[i] > 40)
+    .length;
+  if (lums < 4) return null;
+  const entries: { lum: number; r: number; g: number; b: number }[] = [];
+  for (let i = 0; i + 3 < pixels.length; i += 4) {
+    const { r, g, b } = { r: pixels[i], g: pixels[i + 1], b: pixels[i + 2] };
+    entries.push({ lum: luminance(r, g, b), r, g, b });
+  }
+  entries.sort((a, b) => a.lum - b.lum);
+  const dark = entries[Math.floor(entries.length * 0.12)];
+  const bright = entries[Math.floor(entries.length * 0.88)];
+  const pick = bgLum > 0.5 ? dark : bright;
+  const contrast = Math.abs(pick.lum - bgLum);
+  if (contrast < 0.16) return null;
+  return { r: pick.r, g: pick.g, b: pick.b };
+}
+
+/** Greedy word-wrap that hard-breaks overlong words (surface CSS + worker). */
 export function wrapText(
   text: string,
   maxWidth: number,
