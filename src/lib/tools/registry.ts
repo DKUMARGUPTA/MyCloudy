@@ -811,10 +811,11 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Gift,
     popularity: 12,
     accepts: "image",
+    enabled: true,
     name: { en: "Create card", hi: "कार्ड बनाएँ" },
     description: {
-      en: "Greetings and invitations with Hindi festival templates, mail merge.",
-      hi: "शुभकामना और निमंत्रण कार्ड, हिंदी त्योहार टेम्पलेट।",
+      en: "Greeting and invitation cards with Hindi festival templates, folded print layout and CSV mail merge.",
+      hi: "शुभकामना और निमंत्रण कार्ड — हिंदी त्योहार टेम्पलेट, फ़ोल्ड प्रिंट लेआउट और CSV मेल मर्ज के साथ।",
     },
     tags: {
       en: ["greeting", "invitation", "postcard"],

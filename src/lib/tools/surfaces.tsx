@@ -34,6 +34,7 @@ import { AnnotateSurface } from "../../../tools/annotate-pdf/surface";
 import { WriteSurface } from "../../../tools/write-pdf/surface";
 import { CreateSurface } from "../../../tools/create-pdf/surface";
 import { CollageSurface } from "../../../tools/create-photo-collage/surface";
+import { CardSurface } from "../../../tools/create-card/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -115,6 +116,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "write-pdf": WriteSurface,
   "create-pdf": CreateSurface,
   "create-photo-collage": CollageSurface,
+  "create-card": CardSurface,
 };
 
 export function getToolSurface(

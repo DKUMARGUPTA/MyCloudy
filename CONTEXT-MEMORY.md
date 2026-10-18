@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P3-COLLAGE ke baad — create-photo-collage (62nd tool) live — 62 tools, Phase 3 continue.
+> **Updated:** P3-CARD ke baad — create-card (63rd tool) live — 63 tools, Phase 3 continue.
 
 ---
 
@@ -12,19 +12,19 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **62** ✅ |
-| Pending (Coming Soon) | **35** ⏳ |
+| **Ready to use (LIVE)** | **63** ✅ |
+| Pending (Coming Soon) | **34** ⏳ |
 | Phase | 3/4 (tools one-by-one) + Phase 8 editor: **COMPLETE (6/6)** ✅ |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1973 = 1973 flat-leaf keys parity) |
+| i18n | English + हिंदी (2058 = 2058 flat-leaf keys parity) |
 | SEO (SEO round) | Title/description/keywords research se, JSON-LD (WebApplication + FAQPage), home Popular-Tools + FAQ sections, robots.txt + sitemap.xml |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 62 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 63 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (12/12) — CATEGORY COMPLETE
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -60,6 +60,7 @@
 - ✅ Write PDF (`write-pdf`) — P8.4: noFile word-processor — templates (blank/letter/हिंदी आवेदन/offer/report), uncontrolled contentEditable blocks (p/h1-h3/bullet/numbered/quote), B/I/U/colour via execCommand, tables + images + page breaks + dividers, page setup (4 sizes × portrait/landscape × 3 margins), header/footer with {date}/{page}/{pages}, page numbers, SAME pure layout engine for the live paginated preview (canvas metrics, metric-compatible faces) and the pdf-lib export worker (surface-driven run, progress → on-device download), Devanagari via embedded Noto (blockScript recipe), coalesced doc-wide undo/redo
 - ✅ Create PDF (`create-pdf`) — Task-3: noFile ready-made paper — 6 templates (blank / lined college-wide-narrow + red margin rule / grid 5-2.5mm / dot 5mm / Cornell cue+summary+header / weekly planner Mon-Sun + notes), 4 paper sizes × portrait/landscape × 3 margins, pages 1-50 (planner 1-12), PURE model planPages → worker paints (drawLine / filled drawEllipse dots / helv+Noto labels), same-plan scaled live preview (CSS mini-previews on the cards), localized output names (साप्ताहिक-प्लानर-a4.pdf), smoke 86/86
 - ✅ Create photo collage (`create-photo-collage`) — P3-COLLAGE: WYSIWYG collage builder — 10 tiling layouts (duo/stacked/trios/quad/six/nine/mosaic/filmstrip, visual picker), A4/Letter/square/4×6 × portrait/landscape, white/soft/dark/custom backgrounds, corners+gap+margin presets, cover/contain fit, polaroid frames + per-photo captions (file-stem defaults), page title, rotate/reorder/sort/remove, multi-page spillover + page nav, same render.ts paints preview + worker + quick downloads, PDF (JPEG 0.92 per page) + JPG/PNG page-1 export, smoke 153/153
+- ✅ Create card (`create-card`) — P3-CARD: WYSIWYG greeting/invitation card maker — 8 templates (7 AI-designed self-hosted festival/occasion backgrounds + blank custom colour), A6/A5/4×6 flat + A4 half-fold print layout (outside back-left/front-right, inside left/right + honest test-print FAQ), EN/HI texts (headline shrink-to-fit + honest overflow badges), optional front-cover photo (HEIC/TIFF aware), RFC-4180 CSV mail merge ({{column}}, ≤200 rows, ≤2 MB, unknown-column validation), fold sheet + merge row switchers, PDF (JPEG 0.92 @ 2px/pt) + JPG/PNG page-1 quick downloads, localized names; landingSurface pattern (state survives remounts via the serialized "card" option); worker best-effort Devanagari FontFace; smoke 215/215 (zero-mistake math battery)
 
 ### 🔒 Security (6/8)
 - ✅ Protect PDF (`lock-pdf`) — AES-256 qpdf WASM
@@ -103,14 +104,14 @@
 
 ---
 
-## ⏳ 35 PENDING TOOLS (Kaam baki hai)
+## ⏳ 34 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Phase-3 create tools** (next!): `create-card` (Hindi festival templates), `create-fillable-pdf-form`, `create-resume` (8 templates), `passport-photo` (India sizes)
+1. **Phase-3 create tools** (next!): `create-fillable-pdf-form`, `create-resume` (8 templates), `passport-photo` (India sizes) — jab `create-invoice` aaye: user ka apna invoice-PDF code lena hai (user instruction), DocoPDF conventions mein adapt karna hai
 2. **P6 static pages** (Privacy, Terms, Contact, About + API routes) → **P7 PWA** (manifest, service worker, offline)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: edit-pdf FORM FIELDS ✅ — Task-3: create-pdf ✅ — P8.6: mobile polish ✅ PHASE-8 COMPLETE — **P3-COLLAGE: create-photo-collage ✅**)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: edit-pdf FORM FIELDS ✅ — Task-3: create-pdf ✅ — P8.6: mobile polish ✅ PHASE-8 COMPLETE — **P3-COLLAGE: create-photo-collage ✅ — P3-CARD: create-card ✅**)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -232,6 +233,14 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - **BUG 2: stale-locale output name** — locale serialized option ke andar ride karta hai (last-edit-time snapshot); edits ke BAAD language switch = purane locale ka filename (Hindi UI → "photo-collage.pdf"). FIX: localeSeen ref + microtask re-sync on locale change.
 - Smoke **153/153** (model battery + REAL worker sharp-shim e2e: PDF magic/pages/dims/JPEG XObjects, jpg FFD8, png 8950, honest errors). QA: EN golden path (4 fixtures drop → layout switch dataURL-proof → spillover 2 pages + nav → title/bg pixel-proof → polaroid caption → rotate/remove → run byte-verified 144,006 B %PDF→%%EOF 2×A4 → JPG quick FFD8 65,715 B → empty-gate) + Hindi (10+ labels + फ़ोटो-कोलाज.pdf export) + mobile 375×812 (overflowX=0, CTA 44px, picker 0-clipped, mobile run byte-verified) + VLM screenshot verification + zero console errors + 219 requests sab localhost. Artifacts: public/qa/qa-collage-{desktop,mobile}.png + qa-collage-output.pdf.
 - Live: **62** | i18n 1973=1973 | smoke 153/153 | tsc + eslint + dev.log clean | **Next: create-card → create-fillable-pdf-form → create-resume → passport-photo, phir P6+P7**
+
+### P3-CARD — Create card ✅ 63rd TOOL
+- **PRD "Card" (v1 honest scope)**: greeting/invitation templates (7 AI-designed + blank), A6/A5/4×6 flat + **A4 half-fold print layout**, EN/HI texts, optional front-cover photo, **RFC-4180 CSV mail merge** ({{column}}, ≤200 rows, ≤2 MB), PDF + JPG/PNG page-1 export (envelope addressing/QR/voucher-codes = future).
+- **Assets**: 7 backgrounds image-generation skill se (864×1152, text-safe centers, VLM-verified no-text) → `public/card-templates/*.jpg` JPEG q85 (~796 KB total). Worker same-origin fetch + **gradient fallback** (missing image kabhi export kill nahi karti — smoke-tested).
+- `tools/create-card/`: model.ts PURE (exact mm→pt + fold panel EXACT halves + computeSheets + 8 templates + CSV RFC-4180 parser + mergeText/validatePlaceholders + wrapText/fitHeadline/layoutMessage with injected measurer + parseCardOption clamps) + render.ts (ONE drawCardSheet — flat/fold-outside/fold-inside panel flows, shrink-to-fit headline, honest ellipsis + overflow metrics, gradient fallback, polaroid photo slot) + worker.ts (photo decode collage recipe + best-effort worker-side Devanagari FontFace) + surface.tsx (**landingSurface pattern** — photos optional, surface hi landing product hai; state landing↔workspace remount ke bich serialized "card" option se survive karti hai) + config + i18n 86 keys ×2 → **2058=2058**. Wiring: registry enabled + TOOL_SURFACES + **TOOL_CONFIGS** (teeno zaroori!).
+- **⚠️ BUG FIX (production React)**: "Cannot update a component (ToolShell) while rendering a different component (CardSurface)" — pehla draft syncOption (shell onChange) setState UPDATER ke andar call karta tha. FIX: single `commit()` path (stateRef mirror + setState + syncOption sab updaters se BAHAR). **Rule: cross-component onChange kabhi bhi setState updater ke andar nahi.**
+- Smoke **215/215** (zero-mistake battery: exact geometry, fold halves, CSV parser edge cases, wrap/shrink-to-fit fake-measurer proofs, REAL worker e2e with fetch-shim loading actual template JPEGs, merge row→sheet pairing, photo pixel-drift, gradient fallback, blank colour exact, honest errors). QA: landing render + template switch repaint + fold chips/panel-tags + CSV paste (3 recipients, row switcher, per-row outside repaint) + photo drop (change-event recipe) + **export byte-verified 2× (%PDF-/%%EOF, cards.pdf 6 pages)** + Hindi (zero raw keys) + mobile 375×812 (overflowX=0, 0 sub-44px buttons) + VLM clean + zero console errors. Artifacts: public/qa/qa-card-{landing,desktop,mobile,hindi}.png.
+- Live: **63** | i18n 2058=2058 | smoke 215/215 | tsc + eslint + dev.log clean | **Next: create-fillable-pdf-form → create-resume → passport-photo, phir P6+P7. create-invoice queue aaye to USER KA APNA invoice code lena hai (adapt karke).**
 
 ### P8.6 — Editor MOBILE POLISH ✅ (Phase-8 COMPLETE 6/6)
 - **PRD §8.2 Mobile mode + P8.1-deferred items sab shipped:** simplified bottom toolbar (Select/Text/Draw/Sign/Image/More), More-sheet (baaki tools + undo/redo/duplicate/delete + zoom), pinch-zoom + two-finger pan, properties BottomSheet mobile pe, ≥44px handles (pointer-coarse scaling), long-press context menu (500ms/8pt slop), snap guides (page edges/centers + dusre objects, 1px primary lines), marquee + shift multi-select (group move/order/duplicate/delete), object ROTATION (−180..180°, Shift=15° steps; ellipse/freehand/fields honestly excluded), autosave drafts (IndexedDB, 24h TTL, Resume/Discard banner, image-assets honesty).
