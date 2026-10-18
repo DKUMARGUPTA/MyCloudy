@@ -795,10 +795,11 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: LayoutTemplate,
     popularity: 12,
     accepts: "image",
+    enabled: true,
     name: { en: "Create photo collage", hi: "फ़ोटो कोलाज बनाएँ" },
     description: {
-      en: "Grids, polaroids and passport sheets with text and stickers.",
-      hi: "ग्रिड, पोलरॉइड और पासपोर्ट शीट, टेक्स्ट-स्टिकर के साथ।",
+      en: "Grid, mosaic and polaroid collages with captions and a page title — export PDF, JPG or PNG.",
+      hi: "ग्रिड, मोज़ेक और पोलरॉइड कोलाज, कैप्शन और पेज शीर्षक के साथ — PDF, JPG या PNG एक्सपोर्ट।",
     },
     tags: { en: ["collage", "grid photos"], hi: ["कोलाज", "collage"] },
   }),

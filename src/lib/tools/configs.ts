@@ -60,6 +60,7 @@ import { config as editPdf } from "../../../tools/edit-pdf/config";
 import { config as annotatePdf } from "../../../tools/annotate-pdf/config";
 import { config as writePdf } from "../../../tools/write-pdf/config";
 import { config as createPdf } from "../../../tools/create-pdf/config";
+import { config as createPhotoCollage } from "../../../tools/create-photo-collage/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -130,6 +131,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [annotatePdf.toolId]: annotatePdf,
   [writePdf.toolId]: writePdf,
   [createPdf.toolId]: createPdf,
+  [createPhotoCollage.toolId]: createPhotoCollage,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {
