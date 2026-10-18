@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P3-INVOICE ke baad — create-invoice (64th tool, user ka apna invoice generator) live — 64 tools, Phase 3 continue.
+> **Updated:** P3-FORM + INVOICE-LOGO-FIX ke baad — create-fillable-pdf-form (65th tool, visual form builder) live + create-invoice ke logo/signature ka REAL await-fix — 65 tools, Phase 3 continue.
 
 ---
 
@@ -12,19 +12,19 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **64** ✅ |
-| Pending (Coming Soon) | **33** ⏳ |
+| **Ready to use (LIVE)** | **65** ✅ |
+| Pending (Coming Soon) | **32** ⏳ |
 | Phase | 3/4 (tools one-by-one) + Phase 8 editor: **COMPLETE (6/6)** ✅ |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (2305 = 2305 flat-leaf keys parity) |
+| i18n | English + हिंदी (2405 = 2405 flat-leaf keys parity) |
 | SEO (SEO round) | Title/description/keywords research se, JSON-LD (WebApplication + FAQPage), home Popular-Tools + FAQ sections, robots.txt + sitemap.xml |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 64 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 65 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (12/12) — CATEGORY COMPLETE
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -62,7 +62,9 @@
 - ✅ Create photo collage (`create-photo-collage`) — P3-COLLAGE: WYSIWYG collage builder — 10 tiling layouts (duo/stacked/trios/quad/six/nine/mosaic/filmstrip, visual picker), A4/Letter/square/4×6 × portrait/landscape, white/soft/dark/custom backgrounds, corners+gap+margin presets, cover/contain fit, polaroid frames + per-photo captions (file-stem defaults), page title, rotate/reorder/sort/remove, multi-page spillover + page nav, same render.ts paints preview + worker + quick downloads, PDF (JPEG 0.92 per page) + JPG/PNG page-1 export, smoke 153/153
 - ✅ Create card (`create-card`) — P3-CARD: WYSIWYG greeting/invitation card maker — 8 templates (7 AI-designed self-hosted festival/occasion backgrounds + blank custom colour), A6/A5/4×6 flat + A4 half-fold print layout (outside back-left/front-right, inside left/right + honest test-print FAQ), EN/HI texts (headline shrink-to-fit + honest overflow badges), optional front-cover photo (HEIC/TIFF aware), RFC-4180 CSV mail merge ({{column}}, ≤200 rows, ≤2 MB, unknown-column validation), fold sheet + merge row switchers, PDF (JPEG 0.92 @ 2px/pt) + JPG/PNG page-1 quick downloads, localized names; landingSurface pattern (state survives remounts via the serialized "card" option); worker best-effort Devanagari FontFace; smoke 215/215 (zero-mistake math battery)
 
-- ✅ Create invoice (`create-invoice`) — P3-INVOICE: **user ka apna standalone invoice-generator (upload/invoice-generator.zip) properly integrated** — 39 templates (GST tax invoice / bill of supply / export / credit+debit note / challan / receipts se hotel-medical tak), paise-integer GST engine (CGST+SGST vs IGST state se, pro-rata discount last-item remainder ke saath, round-off, INR Crore/Lakh + USD Billion words), GSTIN mod-36 checksum + 5 warnings (no-format/HSN/rate/state-mismatch/₹50,000 e-way), Apr–Mar FY numbering with per-type memory, UPI QR (PDF me VECTOR rects), logo+signature (HEIC-aware, 300px PNG), block drag + ▲▼ reorder, accent colour, PAID stamp, saved invoices + profile (standalone dp_inv/dp_inv_saved keys carry over), ₹/$/€/£; PDF = TRUE VECTOR (pdf-lib + self-hosted Noto — ₹/हिंदी/Latin sab ek font me; CDN html2pdf hata diya, Mode D intact); labels PRE-RESOLVED t() se jaate hain worker me (PDF == UI language); smoke 70+ hand-computed vectors (math + parser + real PDF renders incl. 7-page pagination)
+- ✅ Create invoice (`create-invoice`) — P3-INVOICE: **user ka apna standalone invoice-generator (upload/invoice-generator.zip) properly integrated** — 39 templates (GST tax invoice / bill of supply / export / credit+debit note / challan / receipts se hotel-medical tak), paise-integer GST engine (CGST+SGST vs IGST state se, pro-rata discount last-item remainder ke saath, round-off, INR Crore/Lakh + USD Billion words), GSTIN mod-36 checksum + 5 warnings (no-format/HSN/rate/state-mismatch/₹50,000 e-way), Apr–Mar FY numbering with per-type memory, UPI QR (PDF me VECTOR rects), logo+signature (HEIC-aware, 300px PNG; **INVOICE-LOGO-FIX: embedPng ab AWAITED — pehle NaN cm matrix se logo/sig silently drop ho rahe the, ab Do-op smoke-guard ke saath verified**), block drag + ▲▼ reorder, accent colour, PAID stamp, saved invoices + profile (standalone dp_inv/dp_inv_saved keys carry over), ₹/$/€/£; PDF = TRUE VECTOR (pdf-lib + self-hosted Noto — ₹/हिंदी/Latin sab ek font me; CDN html2pdf hata diya, Mode D intact); labels PRE-RESOLVED t() se jaate hain worker me (PDF == UI language); smoke 70+ hand-computed vectors + logo/sig Do-op regression vector
+- ✅ Create PDF form (`create-fillable-pdf-form`) — P3-FORM: visual A4 form builder (793.7×1122.5 px canvas, 8px grid snap, drag + resize handles + arrow-key nudge, multi-page ≤10), 11 element kinds (heading/text/divider/box statics + text/multiline/number/date/checkbox/radio/dropdown fields), 5 i18n templates (Leave application / Event registration / Order form with 3 calc rules / Feedback / Blank), **simplified-notation calculations** (`grand = total + tax - discount`) compiled to ISO 32000-1 /AA /C JavaScript + /CO topological order, Adobe-documented AF* number/date format+keystroke actions, required flags + maxLength, **Test-fill mode** (same calc engine live: 3×49.5→148.50, grand 175.23), drafts + ≤30 named forms (dp_form_*), full EN+हिंदी incl. PDF labels (Noto); WinAnsi-safe field-side strings (honest warnings); smoke 156/156 (compiler error classes + cycles + topo, emitted-JS sandbox-executed AND extracted-from-PDF-executed, exact widget /Rect, parse coercion, Hindi build); `kind:"text"` collision fix → structural `"name" in el` discriminator; mobile grid min-w-0 fix (overflowX 0, scale 0.451); 100% on-device
+
 ### 🔒 Security (6/8)
 - ✅ Protect PDF (`lock-pdf`) — AES-256 qpdf WASM
 - ✅ Unlock PDF (`unlock-pdf`)
@@ -105,14 +107,14 @@
 
 ---
 
-## ⏳ 34 PENDING TOOLS (Kaam baki hai)
+## ⏳ 32 PENDING TOOLS (Kaam baki hai)
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Phase-3 create tools** (next!): `create-fillable-pdf-form`, `create-resume` (8 templates), `passport-photo` (India sizes) — jab `create-invoice` aaye: user ka apna invoice-PDF code lena hai (user instruction), DocoPDF conventions mein adapt karna hai
+1. **Phase-3 create tools** (next!): `create-resume` (8 templates), `passport-photo` (India sizes) — jab `create-invoice` aaye: user ka apna invoice-PDF code lena hai (user instruction), DocoPDF conventions mein adapt karna hai
 2. **P6 static pages** (Privacy, Terms, Contact, About + API routes) → **P7 PWA** (manifest, service worker, offline)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: edit-pdf FORM FIELDS ✅ — Task-3: create-pdf ✅ — P8.6: mobile polish ✅ PHASE-8 COMPLETE — **P3-COLLAGE: create-photo-collage ✅ — P3-CARD: create-card ✅ — P3-INVOICE: create-invoice ✅ (user ka apna code, adapted)**)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: edit-pdf FORM FIELDS ✅ — Task-3: create-pdf ✅ — P8.6: mobile polish ✅ PHASE-8 COMPLETE — **P3-COLLAGE: create-photo-collage ✅ — P3-CARD: create-card ✅ — P3-INVOICE: create-invoice ✅ (user ka apna code, adapted) — P3-FORM: create-fillable-pdf-form ✅ + INVOICE-LOGO-FIX (embedPng await) ✅**)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -125,7 +127,6 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 `create-electronic-invoice` (Factur-X), `pdf-to-e-invoice`, `xml-invoice-to-pdf`, `validate-e-invoice`
 
 ### 🎨 Create (baaki) — Phase 3
-`create-fillable-pdf-form`,
 `create-resume` (8 templates), `passport-photo` (India sizes)
 
 ### 🔐 Security (baaki)
@@ -220,6 +221,9 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - **Worker bundle hygiene (P4.7):** shared helper se sirf ek chhota function chahiye to TRANSITIVE DEPS check karo — `compress-common/recompress.ts` se `committedJpegBlob` import karna pdf-lib + engine graph worker bundle mein kheench lata. 20-line guard inline karna better hai jab function chhota ho. Lekin PURE logic (engine.ts) hamesha shared rahe — wo test hota hai.
 - **KB-targeting ladder recipe (P4.7):** size-first, quality-second — har dim step pe quality binary search (monotone size(q)), hope-less steps sirf 1 probe se skip; canvas-commit guard HAR encode pe (blank JPEG budget mein "fit" ho ke silently jeet jata — corrupt output user ko milta); passthrough same-format already-under; floor miss = smallest + targetHit:false amber.
 - **Remount-detection-kicker:** effects jo `[files.length]` pe keyed hain mount pe fire hote hain
+- **⚠️ pdf-lib EMBEDS ARE ASYNC (P3-FORM round ka sabse bada catch):** `doc.embedPng/embedJpg` PROMISE return karte hain — bina await ke `img.width` undefined → NaN cm matrix → image SILENTLY drop (catch swallow kar leta hai). create-invoice ke logo/signature P3-INVOICE se is tarah toote hue the; INVOICE-LOGO-FIX ne await add karke theek kiya + smoke mein Do-op regression vector (XObject presence kaafi NAHI — real `Do` operator + "NaN" absence assert karo; XObject names HYPHEN carry karte hain: `/Image-123 Do` → regex `[\\w-]+`). RULE: har image-embed await + smoke Do-op assert.
+- **⚠️ MODEL KIND-NAME COLLISIONS (P3-FORM):** jab ek hi string ("text") StaticKind AUR FieldKind dono ho, kind-based discriminator GALAT route karta hai (text FIELDS static ban ke widgets skip!). FIX: structural tie-break — fields hamesha `name` property rakhte hain, statics kabhi nahi → `isFieldEl = "name" in el` + parseFormDoc mein `kind==="text" && "name" in eo` check. Naye multi-kind models mein discriminator property-design karo, kind-strings pe kabhi bharosa nahi.
+- **⚠️ Compressed object streams raw byte-search todte hain (P3-FORM):** `doc.save()` default object-streams use karta hai — /AcroForm, font dicts, /CO sab compressed ke andar → latin1 includes() JHOOTH bolta hai. PARSE-level assert karo (reload → getForm().getFields(), font descriptor walk, PDFArray/PDFRef object numbers). Content streams Flate alag se inflate hote hain (wahi kaam karta hai).
 - **Cancel path:** worker pool instant terminate + OPFS cleanup — 600 DPI 400-page run pe 6% pe catch verified
 
 ---

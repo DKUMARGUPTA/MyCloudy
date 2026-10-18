@@ -89,7 +89,7 @@ class Sheet {
   readonly font: PDFFont;
   readonly ac: ReturnType<typeof hexColor>;
   readonly labels: Record<string, string>;
-  private page: PDFPage;
+  page: PDFPage;
   /** y cursor — NEXT baseline top (PDF y grows up, we walk down). */
   y = PAGE_H - M;
 
@@ -207,7 +207,7 @@ interface RenderDeps {
   fmt: (p: number) => string;
 }
 
-function renderHeader(d: RenderDeps): void {
+async function renderHeader(d: RenderDeps): Promise<void> {
   const { sheet, run, c } = d;
   const s = run.s;
   const b = s.biz;
@@ -221,7 +221,10 @@ function renderHeader(d: RenderDeps): void {
     const bytes = dataUrlBytes(b.logo);
     if (bytes) {
       try {
-        const img = sheet.doc.embedPng(bytes);
+        // ⚠️ embedPng is ASYNC (pdf-lib) — the un-awaited version left
+        // `img.width` undefined → NaN geometry → logos silently skipped
+        // (caught below) in every PDF. Awaited here, the logo really draws.
+        const img = await sheet.doc.embedPng(bytes);
         const k = Math.min(
           LOGO_MAX_W / img.width,
           LOGO_MAX_H / img.height,
@@ -642,7 +645,7 @@ function renderLabelBlock(
   sheet.y = y;
 }
 
-function renderSignature(d: RenderDeps): void {
+async function renderSignature(d: RenderDeps): Promise<void> {
   const { sheet, run } = d;
   const s = run.s;
   sheet.ensure(27 + 36 + 21);
@@ -669,7 +672,8 @@ function renderSignature(d: RenderDeps): void {
     const bytes = dataUrlBytes(s.biz.sig);
     if (bytes) {
       try {
-        const img = sheet.doc.embedPng(bytes);
+        // Awaited — see the logo note in renderHeader (same pdf-lib trap).
+        const img = await sheet.doc.embedPng(bytes);
         const k = Math.min(
           SIG_MAX_W / img.width,
           SIG_MAX_H / img.height,
@@ -747,7 +751,7 @@ function renderStamp(d: RenderDeps): void {
 
 const SECTION_RENDERERS: Record<
   string,
-  (d: RenderDeps) => void
+  (d: RenderDeps) => void | Promise<void>
 > = {
   hd: renderHeader,
   bt: renderBillTo,
@@ -770,11 +774,11 @@ const SECTION_RENDERERS: Record<
  * embedded in `doc` (the worker loads the self-hosted Noto; tests read
  * it from disk).
  */
-export function drawInvoice(
+export async function drawInvoice(
   doc: PDFDocument,
   font: PDFFont,
   run: InvoiceRun
-): InvoiceCalc {
+): Promise<InvoiceCalc> {
   const c = calc(run.s);
   const sym = CURRENCY_SYMBOLS[run.s.cur];
   const loc = currencyLocale(run.s.cur);
@@ -786,7 +790,7 @@ export function drawInvoice(
     money: (p) => sym + "\u00a0" + formatMoney(p, run.s.cur, loc),
   };
   for (const key of run.ord) {
-    SECTION_RENDERERS[key]?.(deps);
+    await SECTION_RENDERERS[key]?.(deps);
   }
   renderStamp(deps);
   doc.setTitle(run.s.no || "Invoice");

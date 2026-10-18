@@ -169,7 +169,15 @@ export function calc(s: InvoiceState): InvoiceCalc {
 
   const L: InvoiceLine[] = s.items.map((i) => ({
     ...i,
+    // tb/rt/cg/sg/ig/t are zero-initialized here and filled per-line in
+    // the pro-rata loop below — the annotation type needs them present.
     amt: R((parseFloat(i.q) || 0) * P(i.r)),
+    tb: 0,
+    rt: 0,
+    cg: 0,
+    sg: 0,
+    ig: 0,
+    t: 0,
   }));
   const sub = L.reduce((a, l) => a + l.amt, 0);
   const dv = parseFloat(s.d) || 0;
@@ -177,7 +185,7 @@ export function calc(s: InvoiceState): InvoiceCalc {
     0,
     Math.min(
       sub,
-      s.dMode === "%" ? R((sub * Math.min(dv, 100)) / 100) : P(dv)
+      s.dMode === "%" ? R((sub * Math.min(dv, 100)) / 100) : P(String(dv))
     )
   );
   const intra = !s.biz.state || !s.pos || s.biz.state === s.pos;

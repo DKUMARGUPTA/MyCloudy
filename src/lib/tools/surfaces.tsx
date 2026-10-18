@@ -36,6 +36,7 @@ import { CreateSurface } from "../../../tools/create-pdf/surface";
 import { CollageSurface } from "../../../tools/create-photo-collage/surface";
 import { CardSurface } from "../../../tools/create-card/surface";
 import { InvoiceSurface } from "../../../tools/create-invoice/surface";
+import { FormSurface } from "../../../tools/create-fillable-pdf-form/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -119,6 +120,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "create-photo-collage": CollageSurface,
   "create-card": CardSurface,
   "create-invoice": InvoiceSurface,
+  "create-fillable-pdf-form": FormSurface,
 };
 
 export function getToolSurface(

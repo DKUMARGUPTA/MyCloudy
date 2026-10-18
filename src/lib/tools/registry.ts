@@ -830,6 +830,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: FormInput,
     popularity: 12,
     accepts: "any",
+    enabled: true,
     name: { en: "Create PDF form", hi: "नया फ़ॉर्म बनाएँ" },
     description: {
       en: "Visual form builder with fields, calculations and validation.",

@@ -82,10 +82,10 @@ import {
   upiPayload,
   warnings,
   words,
+  type BlockKey,
   type InvoiceState,
 } from "./model";
 import {
-  type BlockKey,
   CURRENCY_SYMBOLS,
   GST_STATES,
   INVOICE_CURRENCIES,
@@ -187,7 +187,7 @@ function fileToPngDataUrl(file: File): Promise<string | null> {
         // Safari photos arrive as HEIC — decode with the app's self-hosted
         // libheif WASM instead of giving up (create-card recipe).
         resolveHeicPreview(file, 300)
-          .then((prev) => resolve(prev?.dataUrl ?? null))
+          .then((prev) => resolve(prev?.url ?? null))
           .catch(() => resolve(null));
       };
       im.src = String(reader.result);
@@ -437,13 +437,14 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
       if (!key) return;
       let v: string | boolean = el.value;
       if (/gstin$/.test(key)) {
-        v = v.toUpperCase().replace(/\s/g, "");
-        el.value = v;
+        const gv = String(v).toUpperCase().replace(/\s/g, "");
+        v = gv;
+        el.value = gv;
         // auto-pick the state from the GSTIN prefix (standalone behaviour)
-        if (GST_STATES.some((s) => s.slice(0, 2) === v.slice(0, 2))) {
+        if (GST_STATES.some((st) => st.slice(0, 2) === gv.slice(0, 2))) {
           const sk = key.replace("gstin", "state");
-          setField(sk, v.slice(0, 2));
-          if (sk === "cli.state") setField("pos", v.slice(0, 2));
+          setField(sk, gv.slice(0, 2));
+          if (sk === "cli.state") setField("pos", gv.slice(0, 2));
         }
       }
       if (key === "cli.state") setField("pos", v);
@@ -464,8 +465,9 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
         if (!metaRef.current.tno)
           next.no = nextNo(ty, prev.date, lastNosRef.current);
         if (!metaRef.current.tterms)
-          next.terms = newDef.tm ? t(`invoice.${newDef.tm}`) : "";
-        if (!metaRef.current.tst) next.st = newDef.st || "";
+          next.terms = "tm" in newDef && newDef.tm ? t(`invoice.${newDef.tm}`) : "";
+        if (!metaRef.current.tst)
+          next.st = ("st" in newDef ? newDef.st : undefined) || "";
         return next;
       });
     },
@@ -691,10 +693,10 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
   const onSheetDragStart = useCallback(
     (e: ReactDragEvent<HTMLDivElement>) => {
       if (!dz) return;
-      const b = (e.target as HTMLElement).closest("[data-b]");
+      const b = (e.target as HTMLElement).closest<HTMLElement>("[data-b]");
       if (b) {
         dragKeyRef.current = b.dataset.b as BlockKey;
-        e.dataTransfer.setData("text/plain", b.dataset.b);
+        e.dataTransfer.setData("text/plain", b.dataset.b ?? "");
       }
     },
     [dz]
@@ -706,7 +708,7 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
       e.preventDefault();
       const dk = dragKeyRef.current;
       dragKeyRef.current = null;
-      const b = (e.target as HTMLElement).closest("[data-b]");
+      const b = (e.target as HTMLElement).closest<HTMLElement>("[data-b]");
       if (!dk || !b || b.dataset.b === dk) return;
       const r = b.getBoundingClientRect();
       setOrd((prev) => {

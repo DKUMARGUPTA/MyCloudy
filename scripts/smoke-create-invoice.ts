@@ -25,7 +25,8 @@
  */
 import "regenerator-runtime/runtime";
 import { readFileSync } from "node:fs";
-import { PDFDocument } from "pdf-lib";
+import { inflateSync } from "node:zlib";
+import { PDFArray, PDFDocument } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 
 import {
@@ -343,7 +344,7 @@ async function renderAndCheck(
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
   const font = await doc.embedFont(fontBytes, { subset: true });
-  drawInvoice(doc, font, run);
+  await drawInvoice(doc, font, run);
   const bytes = await doc.save();
   const reloaded = await PDFDocument.load(bytes);
   const pages = reloaded.getPageCount();
@@ -490,6 +491,54 @@ await renderAndCheck(
     /* np path renders without totals — reaching here is the check */
   }
 );
+
+/* Logo + signature REALLY draw (the embedPng await regression guard):
+   the un-awaited version embedded the XObjects but wrote a NaN cm
+   matrix — this vector inflates the page content stream and asserts a
+   real `Do` invocation with NO NaN anywhere in the operators. */
+{
+  const PX =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const doc = await PDFDocument.create();
+  doc.registerFontkit(fontkit);
+  const font = await doc.embedFont(fontBytes, { subset: true });
+  const run = {
+    s: baseState({
+      biz: { ...baseState().biz, logo: PX, sig: PX },
+      pos: "27",
+      items: [{ d: "item", h: "", q: "1", r: "100", g: "18" }],
+    }),
+    ord: BLOCK_KEYS.slice(),
+    ac: "#0b6b4d",
+    labels: { ...LABELS },
+  };
+  await drawInvoice(doc, font, run);
+  const bytes = await doc.save();
+  const raw = Buffer.from(bytes).toString("latin1");
+  const imageCount = (raw.match(/\/Subtype\s*\/Image/g) ?? []).length;
+  eq(imageCount >= 2, true, "logo + sig: image XObjects embedded (2)");
+  const page = doc.getPage(0);
+  const contents = page.node.Contents();
+  const streams: Uint8Array[] = [];
+  const push = (x: unknown): void => {
+    if (x && typeof x === "object" && "getContents" in (x as object)) {
+      streams.push((x as { getContents: () => Uint8Array }).getContents());
+    }
+  };
+  if (contents instanceof PDFArray) {
+    for (let i = 0; i < contents.size(); i += 1) push(contents.lookup(i));
+  } else {
+    push(contents);
+  }
+  const ops = streams.map((s) => inflateSync(s).toString("latin1")).join("\n");
+  eq(ops.includes(" Do") || ops.includes("Do\n") || ops.includes(" Q"), true, "logo + sig: XObject draw operators present");
+  eq(ops.includes("NaN"), false, "logo + sig: cm matrix is FINITE (no NaN — the await regression)");
+  eq(
+    (ops.match(/\/[\w-]+\s+Do\b/g) ?? []).length >= 2,
+    true,
+    "logo + sig: BOTH images invoked with Do (pdf-lib names carry a hyphen)"
+  );
+}
 
 console.log("");
 if (failures > 0) {

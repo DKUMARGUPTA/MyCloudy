@@ -36,17 +36,17 @@ async function run(request: WorkerRunRequest): Promise<void> {
   };
   try {
     const inv = parseInvoiceRun(String(request.options.inv ?? ""));
-    post({ type: "progress", runId, pct: 20, stage: "process" });
+    post({ type: "progress", runId, pct: 20, stage: "processing" });
 
     const doc = await PDFDocument.create();
     // needDevanagari = always: ₹ and Hindi can appear in any label,
     // and the body font IS the Devanagari face by design.
     const fonts = await loadStampFonts(doc, true);
     const font = fonts.fontFor("devanagari");
-    post({ type: "progress", runId, pct: 45, stage: "render" });
+    post({ type: "progress", runId, pct: 45, stage: "processing" });
 
-    drawInvoice(doc, font, inv);
-    post({ type: "progress", runId, pct: 85, stage: "write" });
+    await drawInvoice(doc, font, inv);
+    post({ type: "progress", runId, pct: 85, stage: "saving" });
 
     const bytes = await doc.save();
     post({

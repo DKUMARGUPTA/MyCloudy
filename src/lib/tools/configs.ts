@@ -63,6 +63,7 @@ import { config as createPdf } from "../../../tools/create-pdf/config";
 import { config as createPhotoCollage } from "../../../tools/create-photo-collage/config";
 import { config as createCard } from "../../../tools/create-card/config";
 import { config as createInvoice } from "../../../tools/create-invoice/config";
+import { config as createFillableForm } from "../../../tools/create-fillable-pdf-form/config";
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -136,6 +137,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [createPhotoCollage.toolId]: createPhotoCollage,
   [createCard.toolId]: createCard,
   [createInvoice.toolId]: createInvoice,
+  [createFillableForm.toolId]: createFillableForm,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {
