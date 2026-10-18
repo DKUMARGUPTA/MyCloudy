@@ -17,7 +17,7 @@
 | Phase | 3/4 (tools one-by-one) + Phase 8 editor: 8.1–8.5 DONE, sirf **8.6 mobile polish** bachi |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1862 = 1862 keys parity) |
+| i18n | English + हिंदी (1888 = 1888 flat-leaf keys parity) |
 | SEO (SEO round) | Title/description/keywords research se, JSON-LD (WebApplication + FAQPage), home Popular-Tools + FAQ sections, robots.txt + sitemap.xml |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
@@ -167,7 +167,7 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 | 5 | Sign PDF | ✅ DONE (P3.13) |
 | 6 | Static pages (Privacy, Terms, Contact, About...) + API routes | ⏳ Pending |
 | 7 | PWA (manifest, service worker, offline) + performance | ⏳ Pending |
-| 8 | Editor (6 sub-phases: shell, objects, text edit, forms, export, mobile) | ⏳ Pending |
+| 8 | Editor (6 sub-phases: shell, objects, text edit, forms, export, mobile) | 🔨 8.1–8.5 ✅, sirf **8.6 mobile polish** bachi |
 | 9 | Advanced tools (OCR, N-up, Overlay, Redact...) | 🔨 Partial |
 | 10 | Accounts + Pro (Razorpay, GST invoice, server limits) | ⏳ Pending |
 | 11 | services/worker Docker (LibreOffice, ClamAV) | ⏳ Docs only |
