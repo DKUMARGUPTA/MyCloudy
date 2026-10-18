@@ -881,13 +881,14 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Receipt,
     popularity: 32,
     accepts: "any",
+    enabled: true,
     name: { en: "Create invoice (GST ready)", hi: "GST इनवॉइस बनाएँ" },
     description: {
-      en: "CGST/SGST/IGST auto-split, amount in words, UPI QR, saved profile.",
-      hi: "CGST/SGST/IGST अपने आप, शब्दों में रक़म, UPI QR।",
+      en: "39 templates with CGST/SGST/IGST auto-split, amount in words, UPI QR and saved profile.",
+      hi: "39 टेम्पलेट — CGST/SGST/IGST अपने आप, शब्दों में रक़म, UPI QR और सेव प्रोफ़ाइल।",
     },
     tags: {
-      en: ["gst invoice", "bill", "tax invoice"],
+      en: ["gst invoice", "bill", "tax invoice", "invoice maker"],
       hi: ["बिल", "गस्ट", "invoice", "bill banaye"],
     },
   }),

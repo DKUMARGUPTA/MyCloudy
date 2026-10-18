@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P3-CARD ke baad — create-card (63rd tool) live — 63 tools, Phase 3 continue.
+> **Updated:** P3-INVOICE ke baad — create-invoice (64th tool, user ka apna invoice generator) live — 64 tools, Phase 3 continue.
 
 ---
 
@@ -12,19 +12,19 @@
 | Metric | Value |
 |---|---|
 | Total tools in registry | **97** |
-| **Ready to use (LIVE)** | **63** ✅ |
-| Pending (Coming Soon) | **34** ⏳ |
+| **Ready to use (LIVE)** | **64** ✅ |
+| Pending (Coming Soon) | **33** ⏳ |
 | Phase | 3/4 (tools one-by-one) + Phase 8 editor: **COMPLETE (6/6)** ✅ |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (2058 = 2058 flat-leaf keys parity) |
+| i18n | English + हिंदी (2305 = 2305 flat-leaf keys parity) |
 | SEO (SEO round) | Title/description/keywords research se, JSON-LD (WebApplication + FAQPage), home Popular-Tools + FAQ sections, robots.txt + sitemap.xml |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
 
 ---
 
-## ✅ 63 LIVE TOOLS (Ready to use — sab tested & QA-passed)
+## ✅ 64 LIVE TOOLS (Ready to use — sab tested & QA-passed)
 
 ### 🗂️ Organize (12/12) — CATEGORY COMPLETE
 - ✅ Merge PDF (`merge-pdf`) — 50 tak PDFs jodo, reorder, page ranges
@@ -62,6 +62,7 @@
 - ✅ Create photo collage (`create-photo-collage`) — P3-COLLAGE: WYSIWYG collage builder — 10 tiling layouts (duo/stacked/trios/quad/six/nine/mosaic/filmstrip, visual picker), A4/Letter/square/4×6 × portrait/landscape, white/soft/dark/custom backgrounds, corners+gap+margin presets, cover/contain fit, polaroid frames + per-photo captions (file-stem defaults), page title, rotate/reorder/sort/remove, multi-page spillover + page nav, same render.ts paints preview + worker + quick downloads, PDF (JPEG 0.92 per page) + JPG/PNG page-1 export, smoke 153/153
 - ✅ Create card (`create-card`) — P3-CARD: WYSIWYG greeting/invitation card maker — 8 templates (7 AI-designed self-hosted festival/occasion backgrounds + blank custom colour), A6/A5/4×6 flat + A4 half-fold print layout (outside back-left/front-right, inside left/right + honest test-print FAQ), EN/HI texts (headline shrink-to-fit + honest overflow badges), optional front-cover photo (HEIC/TIFF aware), RFC-4180 CSV mail merge ({{column}}, ≤200 rows, ≤2 MB, unknown-column validation), fold sheet + merge row switchers, PDF (JPEG 0.92 @ 2px/pt) + JPG/PNG page-1 quick downloads, localized names; landingSurface pattern (state survives remounts via the serialized "card" option); worker best-effort Devanagari FontFace; smoke 215/215 (zero-mistake math battery)
 
+- ✅ Create invoice (`create-invoice`) — P3-INVOICE: **user ka apna standalone invoice-generator (upload/invoice-generator.zip) properly integrated** — 39 templates (GST tax invoice / bill of supply / export / credit+debit note / challan / receipts se hotel-medical tak), paise-integer GST engine (CGST+SGST vs IGST state se, pro-rata discount last-item remainder ke saath, round-off, INR Crore/Lakh + USD Billion words), GSTIN mod-36 checksum + 5 warnings (no-format/HSN/rate/state-mismatch/₹50,000 e-way), Apr–Mar FY numbering with per-type memory, UPI QR (PDF me VECTOR rects), logo+signature (HEIC-aware, 300px PNG), block drag + ▲▼ reorder, accent colour, PAID stamp, saved invoices + profile (standalone dp_inv/dp_inv_saved keys carry over), ₹/$/€/£; PDF = TRUE VECTOR (pdf-lib + self-hosted Noto — ₹/हिंदी/Latin sab ek font me; CDN html2pdf hata diya, Mode D intact); labels PRE-RESOLVED t() se jaate hain worker me (PDF == UI language); smoke 70+ hand-computed vectors (math + parser + real PDF renders incl. 7-page pagination)
 ### 🔒 Security (6/8)
 - ✅ Protect PDF (`lock-pdf`) — AES-256 qpdf WASM
 - ✅ Unlock PDF (`unlock-pdf`)
@@ -111,7 +112,7 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 1. **Phase-3 create tools** (next!): `create-fillable-pdf-form`, `create-resume` (8 templates), `passport-photo` (India sizes) — jab `create-invoice` aaye: user ka apna invoice-PDF code lena hai (user instruction), DocoPDF conventions mein adapt karna hai
 2. **P6 static pages** (Privacy, Terms, Contact, About + API routes) → **P7 PWA** (manifest, service worker, offline)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: edit-pdf FORM FIELDS ✅ — Task-3: create-pdf ✅ — P8.6: mobile polish ✅ PHASE-8 COMPLETE — **P3-COLLAGE: create-photo-collage ✅ — P3-CARD: create-card ✅**)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: edit-pdf FORM FIELDS ✅ — Task-3: create-pdf ✅ — P8.6: mobile polish ✅ PHASE-8 COMPLETE — **P3-COLLAGE: create-photo-collage ✅ — P3-CARD: create-card ✅ — P3-INVOICE: create-invoice ✅ (user ka apna code, adapted)**)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -124,7 +125,7 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 `create-electronic-invoice` (Factur-X), `pdf-to-e-invoice`, `xml-invoice-to-pdf`, `validate-e-invoice`
 
 ### 🎨 Create (baaki) — Phase 3
-`create-card` (Hindi festival templates), `create-fillable-pdf-form`,
+`create-fillable-pdf-form`,
 `create-resume` (8 templates), `passport-photo` (India sizes)
 
 ### 🔐 Security (baaki)
@@ -232,13 +233,13 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 - **⚠️ BUG 1 (pinned insight): warm-cache preview repaint** — skeleton-then-decode pattern mein final draw `if (missing.length > 0)` ke ANDAR tha; cold pass ke BAAD har style edit (polaroid/layout/title/bg) sirf skeleton paint karta tha (frames + captions, photos NAHI) kyunki decode-list khaali thi. Export theek tha (single always-with-images draw) — sirf preview jhooth bolta tha. FIX: final draw guard se bahar. **Rule: skeleton-then-fill preview loop mein repaint hamesha "misses found" guard se BAHAR.**
 - **BUG 2: stale-locale output name** — locale serialized option ke andar ride karta hai (last-edit-time snapshot); edits ke BAAD language switch = purane locale ka filename (Hindi UI → "photo-collage.pdf"). FIX: localeSeen ref + microtask re-sync on locale change.
 - Smoke **153/153** (model battery + REAL worker sharp-shim e2e: PDF magic/pages/dims/JPEG XObjects, jpg FFD8, png 8950, honest errors). QA: EN golden path (4 fixtures drop → layout switch dataURL-proof → spillover 2 pages + nav → title/bg pixel-proof → polaroid caption → rotate/remove → run byte-verified 144,006 B %PDF→%%EOF 2×A4 → JPG quick FFD8 65,715 B → empty-gate) + Hindi (10+ labels + फ़ोटो-कोलाज.pdf export) + mobile 375×812 (overflowX=0, CTA 44px, picker 0-clipped, mobile run byte-verified) + VLM screenshot verification + zero console errors + 219 requests sab localhost. Artifacts: public/qa/qa-collage-{desktop,mobile}.png + qa-collage-output.pdf.
-- Live: **62** | i18n 1973=1973 | smoke 153/153 | tsc + eslint + dev.log clean | **Next: create-card → create-fillable-pdf-form → create-resume → passport-photo, phir P6+P7**
+- Live: **64** | i18n 2305=2305 | smoke: card 215/215 + invoice 70+ vectors | lint + dev.log clean | **Next: create-fillable-pdf-form → create-resume → passport-photo, phir P6+P7**
 
 ### P3-CARD — Create card ✅ 63rd TOOL
 - **PRD "Card" (v1 honest scope)**: greeting/invitation templates (7 AI-designed + blank), A6/A5/4×6 flat + **A4 half-fold print layout**, EN/HI texts, optional front-cover photo, **RFC-4180 CSV mail merge** ({{column}}, ≤200 rows, ≤2 MB), PDF + JPG/PNG page-1 export (envelope addressing/QR/voucher-codes = future).
 - **Assets**: 7 backgrounds image-generation skill se (864×1152, text-safe centers, VLM-verified no-text) → `public/card-templates/*.jpg` JPEG q85 (~796 KB total). Worker same-origin fetch + **gradient fallback** (missing image kabhi export kill nahi karti — smoke-tested).
 - `tools/create-card/`: model.ts PURE (exact mm→pt + fold panel EXACT halves + computeSheets + 8 templates + CSV RFC-4180 parser + mergeText/validatePlaceholders + wrapText/fitHeadline/layoutMessage with injected measurer + parseCardOption clamps) + render.ts (ONE drawCardSheet — flat/fold-outside/fold-inside panel flows, shrink-to-fit headline, honest ellipsis + overflow metrics, gradient fallback, polaroid photo slot) + worker.ts (photo decode collage recipe + best-effort worker-side Devanagari FontFace) + surface.tsx (**landingSurface pattern** — photos optional, surface hi landing product hai; state landing↔workspace remount ke bich serialized "card" option se survive karti hai) + config + i18n 86 keys ×2 → **2058=2058**. Wiring: registry enabled + TOOL_SURFACES + **TOOL_CONFIGS** (teeno zaroori!).
-- **⚠️ BUG FIX (production React)**: "Cannot update a component (ToolShell) while rendering a different component (CardSurface)" — pehla draft syncOption (shell onChange) setState UPDATER ke andar call karta tha. FIX: single `commit()` path (stateRef mirror + setState + syncOption sab updaters se BAHAR). **Rule: cross-component onChange kabhi bhi setState updater ke andar nahi.**
+- `tools/create-invoice/`: types.ts (39-type catalog `satisfies`-typed + 6 groups + GST state codes) + model.ts (EXACT paise math port — R toFixed(6) guard, pro-rata remainder, words, GSTIN checksum, bump/FY/nextNo, warnings, parseInvoiceRun coercion) + render.ts (vector sheet painter px→pt 1:1 — smoke drives the worker's EXACT code) + worker.ts (stamp-common Noto font + drawInvoice) + surface.tsx (landingSurface, state remount-safe via serialized "inv" option, QR payload-keyed no-sync-setState) + config + i18n 273 keys ×2 → **2305=2305** (merge script me types.ts→catalog CROSS-CHECK: 196 referenced keys)**. Smoke: `bun scripts/smoke-create-invoice.ts`. User ka standalone source: upload/invoice-generator.zip (rakhna hai).- **⚠️ BUG FIX (production React)**: "Cannot update a component (ToolShell) while rendering a different component (CardSurface)" — pehla draft syncOption (shell onChange) setState UPDATER ke andar call karta tha. FIX: single `commit()` path (stateRef mirror + setState + syncOption sab updaters se BAHAR). **Rule: cross-component onChange kabhi bhi setState updater ke andar nahi.**
 - Smoke **215/215** (zero-mistake battery: exact geometry, fold halves, CSV parser edge cases, wrap/shrink-to-fit fake-measurer proofs, REAL worker e2e with fetch-shim loading actual template JPEGs, merge row→sheet pairing, photo pixel-drift, gradient fallback, blank colour exact, honest errors). QA: landing render + template switch repaint + fold chips/panel-tags + CSV paste (3 recipients, row switcher, per-row outside repaint) + photo drop (change-event recipe) + **export byte-verified 2× (%PDF-/%%EOF, cards.pdf 6 pages)** + Hindi (zero raw keys) + mobile 375×812 (overflowX=0, 0 sub-44px buttons) + VLM clean + zero console errors. Artifacts: public/qa/qa-card-{landing,desktop,mobile,hindi}.png.
 - Live: **63** | i18n 2058=2058 | smoke 215/215 | tsc + eslint + dev.log clean | **Next: create-fillable-pdf-form → create-resume → passport-photo, phir P6+P7. create-invoice queue aaye to USER KA APNA invoice code lena hai (adapt karke).**
 
