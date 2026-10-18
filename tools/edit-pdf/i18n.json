@@ -72,7 +72,7 @@
       "signClear": "Clear",
       "signDone": "Add to page",
       "menuLabel": "Object menu",
-      "hintSelect": "Click an object to select it. Drag to move, drag a corner to resize, double-click text to edit it. Arrow keys nudge, Delete removes.",
+      "hintSelect": "Click an object to select it. Drag to move; drag a corner to resize; double-click text to edit it. Drag on empty space to select several objects, Shift-click to add or remove. Arrow keys nudge, Delete removes.",
       "hintText": "Click on the page to add a text box, or drag to draw one — then just type. Hindi typing works with the Devanagari font.",
       "hintEditText": "Click any text on the page — it is covered with the page background and retyped in the same spot with the matching font. One line at a time (paragraphs don't reflow). Scans need OCR first.",
       "pieceLoading": "Finding the text on this page…",
@@ -135,7 +135,17 @@
       "fieldRequired": "Required",
       "radioGroupHint": "Circles sharing this name work as one group.",
       "fieldHint": "Exports as a real fillable form field — fill it in any PDF reader. Give radio circles the same name to build one group.",
-      "hintField": "Click for a text field, or drag to draw one — then pick its type, name and default in Properties. Same-name radio circles become one group."
+      "hintField": "Click for a text field, or drag to draw one — then pick its type, name and default in Properties. Same-name radio circles become one group.",
+      "moreTools": "More tools",
+      "rotation": "Rotation (°)",
+      "multiTitle": "{n, plural, =1 {1 object selected} other {# objects selected}}",
+      "multiHint": "Group actions apply to every selected object. Tap a single object to edit its style.",
+      "draftFoundTitle": "Draft found",
+      "draftFoundHint": "Your edits from the last session on this file are saved on this device.",
+      "draftImagesNote": "Images from that session must be re-added.",
+      "draftResume": "Resume",
+      "draftDiscard": "Discard",
+      "draftRestored": "Draft restored"
     }
   },
   "hi": {
@@ -211,7 +221,7 @@
       "signClear": "मिटाएँ",
       "signDone": "पेज पर जोड़ें",
       "menuLabel": "ऑब्जेक्ट मेन्यू",
-      "hintSelect": "चुनने के लिए ऑब्जेक्ट पर क्लिक करें। खिसकाने के लिए ड्रैग, साइज़ के लिए कोना, टेक्स्ट एडिट के लिए डबल-क्लिक। तीर कुंजियाँ खिसकाती हैं, Delete हटाता है।",
+      "hintSelect": "ऑब्जेक्ट पर क्लिक करके चुनें। खिसकाने के लिए ड्रैग, साइज़ के लिए कोना, टेक्स्ट एडिट के लिए डबल-क्लिक। खाली जगह ड्रैग करके कई ऑब्जेक्ट चुनें, Shift-क्लिक से जोड़ें/हटाएँ। तीर कुंजियाँ खिसकाती हैं, Delete हटाता है।",
       "hintText": "टेक्स्ट बॉक्स के लिए पेज पर क्लिक करें या ड्रैग करके बनाएँ — फिर बस लिखें। हिंदी के लिए देवनागरी फ़ॉन्ट चुनें।",
       "hintEditText": "पेज पर किसी भी टेक्स्ट पर क्लिक करें — वह पेज के बैकग्राउंड से ढककर उसी जगह मिलते फ़ॉन्ट से नए सिरे से लिखा जाएगा। एक बार में एक लाइन (पैराग्राफ़ रीफ़्लो नहीं)। स्कैन के लिए पहले OCR चलाएँ।",
       "pieceLoading": "इस पेज का टेक्स्ट खोजा जा रहा है…",
@@ -274,7 +284,17 @@
       "fieldRequired": "अनिवार्य",
       "radioGroupHint": "इसी नाम के गोले मिलकर एक ग्रुप बनाते हैं।",
       "fieldHint": "असली भरने योग्य फ़ॉर्म फ़ील्ड बनता है — किसी भी PDF रीडर में भरें। रेडियो गोलों को एक ही नाम देकर ग्रुप बनाएँ।",
-      "hintField": "टेक्स्ट फ़ील्ड के लिए क्लिक करें, या ड्रैग करके बनाएँ — फिर गुण में प्रकार, नाम और डिफ़ॉल्ट चुनें। एक ही नाम के रेडियो गोले एक ग्रुप बनते हैं।"
+      "hintField": "टेक्स्ट फ़ील्ड के लिए क्लिक करें, या ड्रैग करके बनाएँ — फिर गुण में प्रकार, नाम और डिफ़ॉल्ट चुनें। एक ही नाम के रेडियो गोले एक ग्रुप बनते हैं।",
+      "moreTools": "और टूल",
+      "rotation": "घुमाव (°)",
+      "multiTitle": "{n, plural, =1 {1 ऑब्जेक्ट चुना गया} other {# ऑब्जेक्ट चुने गए}}",
+      "multiHint": "गुप क्रियाएँ सभी चुने ऑब्जेक्ट पर लागू होती हैं। स्टाइल बदलने के लिए एक ऑब्जेक्ट अकेले चुनें।",
+      "draftFoundTitle": "ड्राफ़्ट मिला",
+      "draftFoundHint": "इस फ़ाइल पर पिछले सेशन के बदलाव इस डिवाइस पर सेव हैं।",
+      "draftImagesNote": "उस सेशन की तस्वीरें दोबारा जोड़नी होंगी।",
+      "draftResume": "फिर खोलें",
+      "draftDiscard": "हटाएँ",
+      "draftRestored": "ड्राफ़्ट वापस लोड हुआ"
     }
   }
 }

@@ -1,0 +1,2002 @@
+     1→# DocoPDF — Shared Worklog (Handover Document)
+     2→
+     3→> Single source of truth for cross-agent continuity. Every agent MUST read this file fully before
+     4→> starting work, and MUST append a section after finishing a task (template at the bottom).
+     5→> The product PRD governs WHAT to build: `/home/z/my-project/upload/DocoPDF-PRD-v2.docx`
+     6→
+     7→## 1. Current project status (assessment)
+     8→
+     9→- **Phase: 3 IN PROGRESS (P3.10)** — FILL OUT PDF FORMS shipped.
+    10→  Baseline was healthy (merge golden path green, 0 console errors), so
+    11→  this round delivered the next PRD §8.2 item: **Fill out PDF forms**
+    12→  (id `fill-out-pdf`, edit, D, P1) — pdf-lib AcroForm scan (kinds,
+    13→  labels, flags, options, current values, widget rects with /Rotate-aware
+    14→  display mapping), live page preview with % -positioned highlight boxes
+    15→  that click-to-focus their field, a reading-order field form (natural
+    16→  Tab order; text/multiline/maxLength/checkbox/radio/dropdown/optionlist
+    17→  + a native date picker for date-ish fields), a localStorage auto-fill
+    18→  profile (name/email/phone/organization/address, label-exact Latin+
+    19→  Hindi matching), required/read-only/filled states, and a flatten-after-
+    20→  fill switch. Worker uses "f:<fileId>::<name>" epoch keys (answers can
+    21→  never leak into a replaced file), truncates to maxLength, pre-renders
+    22→  non-WinAnsi answers with the embedded Devanagari subset before
+    23→  save() would throw, and falls back to NeedAppearances. Live tools now:
+    24→  **20**, all 100% on-device. Next per the plan: View, Compress,
+    25→  Generate password, Scan to PDF, HEIC/WEBP — one per round.
+    26→- PRD fully parsed (v2.0, "detailed, all tools", dated 5 Oct 2026, Hindi/English mixed doc).
+    27→  Markdown extract for easy reading/grep:
+    28→  `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
+    29→  (regenerate with: `pandoc /home/z/my-project/upload/DocoPDF-PRD-v2.docx -t gfm --wrap=none -o /home/z/my-project/upload/DocoPDF-PRD-v2.md`)
+    30→- Environment verified: Next.js **16.1.3** (App Router, Turbopack) dev server running on **port 3000**
+    31→  (HTTP 200), `dev.log` clean (only 200s + expected 400s from API validation tests).
+    32→- Available stack (from package.json): TypeScript 5 (strict), Tailwind CSS 4 + full shadcn/ui set in
+    33→  `src/components/ui` (New York), Prisma 6 + SQLite (`db/custom.db`, client via `import { db } from '@/lib/db'`),
+    34→  next-intl, next-themes, zod, zustand, framer-motion, lucide-react, sonner, vaul, dnd-kit.
+    35→  **Phase 2 additions (exact pins):** `pdf-lib@1.17.1`, `pdfjs-dist@4.10.38`, `fflate@0.8.2`.
+    36→- PRD section map (line numbers in the .md extract): §1 Vision (18), §2 Architecture (68),
+    37→  §3 Design System (203), §4 Sitemap (255), §5 Global Elements (270), §6 Core Pages (314),
+    38→  §7 Tool Catalog (534), §8 Tool Specs (685), §9 Static Pages (1048), §10 Errors/Copy (1183),
+    39→  §11 Monetization (1201), §12 SEO/A11y/i18n/PWA (1222), §13 Analytics (1260), §14 NFR (1279),
+    40→  §15 Acceptance QA (1292), §16 Roadmap (1316), §17 Risks (1327).
+    41→
+    42→## 2. Sandbox deviations from the PRD (every agent MUST know these)
+    43→
+    44→| PRD says | Sandbox reality | How to handle |
+    45→|---|---|---|
+    46→| Monorepo: apps/web, services/worker, .github, docs (§2.6) | ONE Next.js app at `/home/z/my-project`; the user can only see the `/` route (`src/app/page.tsx`) | Mirror PRD layout as folders inside the app: `tools/<tool-id>/{config.ts,Panel.tsx,worker.ts}`, `lib/pdf/`, `lib/storage/`, `public/{pdfjs,wasm,tessdata,fonts}`. `services/worker` stays docs-only until its phase. |
+    47→| Turso (libSQL) + Drizzle (§2.1, §2.5) | No external DB reachable; Prisma + SQLite preinstalled | Use Prisma with a schema mirroring PRD §2.5 tables EXACTLY (names/columns). Metadata only — never PDF content or filenames. Mechanical swap to Drizzle/Turso at deploy. |
+    48→| Vercel + GitHub Actions CI | Not runnable here | Deliver CI config + deploy steps as files/README text only. NEVER run `bun run build` in this sandbox. |
+    49→| `/hi` path-based locales (§4) | Only `/` is user-visible | Locale switching = app state on `/` (i18n keys en/hi unchanged). Path-based `/hi` restored at Vercel deploy time. |
+    50→| Vitest unit tests (Phase 0/2) | This sandbox forbids writing test code | Document as deviation; rely on `bun run lint` + agent-browser QA. Manual test scripts from phase prompts still apply. |
+    51→| Self-hosted fonts (§3.2) | Need woff2 files locally | Phase 0: fetch Inter + Noto Sans Devanagari (+ JetBrains Mono) woff2 once, serve via `next/font/local` — no runtime CDN. |
+    52→
+    53→## 3. Current goals / completed modifications / verification results
+    54→
+    55→- Completed (P2.1): pinned deps (pdf-lib/pdfjs-dist/fflate) + pdf.js assets
+    56→  self-hosted in /public/pdfjs (lib+worker+cmaps+standard_fonts, 4.1MB);
+    57→  storage layer (idb.ts wrapper, opfs.ts with IDB-Blob fallback + storage
+    58→  estimate, recent-files.ts with 20/30-day cap + serialized write queue +
+    59→  removeRecentFilesByMeta); pdf layer (lazy self-hosted pdf.js loader via
+    60→  non-literal dynamic import + turbopackIgnore, thumbnail render queue max 2
+    61→  with OffscreenCanvas + DOM-canvas fallback, magic-byte %PDF- sniff);
+    62→  worker protocol (run/progress/result/error + parsePageSpec) + ToolWorkerPool
+    63→  (idle reuse per tool, hardware-concurrency cap 2-4, one-shot slot
+    64→  accounting, instant terminate on cancel + OPFS cleanup); config-driven
+    65→  tool system (config-types, configs aggregator, tools/rotate-pdf-pages
+    66→  config+worker); ToolShell 4 states with DropZone (magic bytes, 50MB
+    67→  mobile/200MB desktop, count limits, paste, low-storage warn), FileCard
+    68→  (thumbnail/pages/reorder/remove), OptionsPanel (select/number/text/switch/
+    69→  pages from schema), StageStepper, ProcessingView (real % + page x/y +
+    70→  cancel), ResultView (download/FSA save-picker/share/ZIP/rename w/ locked
+    71→  extension/size delta/what-next chain/feedback thumbs+reasons/remove from
+    72→  device/privacy line); #/tool/<id> hash routing + ToolCard/palette/mega-menu
+    73→  navigation to live tools; Hero Smart Drop Zone (type detect → suggestions,
+    74→  handoff to tool); home Recent files strip (thumbnails from IDB, Clear,
+    75→  hidden when empty); /api/feedback (zod, honeypot, in-memory rate limit
+    76→  10/min, Prisma insert, best-effort); i18n +~130 keys en/hi; tsconfig now
+    77→  excludes examples/skills/tests scaffold dirs.
+    78→- Verified via agent-browser: full golden path (home smart-drop upload →
+    79→  suggestion → #/tool/rotate-pdf-pages workspace with chain handoff → options
+    80→  (direction + pages "1-2") → run → result "Your file is ready!" + renamed
+    81→  "my rotated doc.pdf" + toast); direct landing state (dropzone/how/FAQ/
+    82→  features/related); 400-page PDF (346KB→338KB output, <1s); feedback click →
+    83→  POST /api/feedback 200 → SQLite row; disabled chain targets toast "coming
+    84→  soon" w/o navigation; Hindi full tool UI + Devanagari result; mobile 360px
+    85→  no h-scroll + bottom-sheet options + sticky CTA + tab bar hidden in tool
+    86→  view; recent strip (thumbnail blob from IDB, "Clear", honest reselect
+    87→  toast); remove-from-device → OPFS work dir [] + recent 0 + toast; StrictMode
+    88→  single-recent-entry regression test (1 upload = 1 entry); network filter =
+    89→  ZERO non-local requests across the whole session (privacy §2.2 rule);
+    90→  fresh-context page errors = 0; eslint src+tools clean; tsc --noEmit clean;
+    91→  dev.log clean. Cancel path code-verified (terminate+reject+cleanup) — the
+    92→  400-page file completes in <600ms so the browser can't catch mid-flight
+    93→  state; retest with a multi-MB scanned file when Merge ships.
+    94→- Fixed during QA: react-hooks/set-state-in-effect ×4 (thumbnail/objectURL
+    95→  effects now update inside promise callbacks; chain handoff consumed via
+    96→  lazy useState initializer + key-remount); react-hooks/refs (removed
+    97→  phaseRef); react-hooks/immutability (replaced recentIdsRef with
+    98→  removeRecentFilesByMeta label+size matching); StrictMode duplicate
+    99→  setFiles-updater side effects (moved out of updater — React double-invokes
+   100→  updaters); getSnapshot unstable empty array (EMPTY_ENTRIES const); recent
+   101→  add/remove race (serialized write queue); TDZ ordering (chainIn before
+   102→  use); hero browseAll {count} interpolation; tsc ClipboardEvent DOM vs
+   103→  React type; tsconfig scaffold-dir exclusions.
+   104→- Goal now: execute the phase plan below in strict order, one phase (or sub-phase) per round.
+   105→- Completed (P3.7): Page numbers + Header & footer tools on the new
+   106→  `tools/stamp-common/` shared architecture — ONE spec interface
+   107→  (resolve/targets/marks/runBlocked/chips) drives BOTH the live preview
+   108→  canvas (StampSurface, canvas-measured) and the pdf-lib workers
+   109→  (font-measured), so what you see is what you get. Includes the
+   110→  Devanagari embedding pipeline (public/fonts TTF + @pdf-lib/fontkit +
+   111→  regenerator-runtime, subset:true), 8 number formats (1 / Page 1 / 1 of N
+   112→  / Page 1 of N / i / I / a / A), start number, 9-grid + margin, full
+   113→  layout targeting (all/odd/even/skipFirst/range), Hindi digits; HF has 6
+   114→  slots (L/C/R × header/footer) with {page} {pages} {date} {filename}
+   115→  {title} variables (case-insensitive, unknown braces left visible), date
+   116→  shape dmy/mdy/ymd, non-ASCII text auto-upgrades to the embedded
+   117→  Devanagari font. Verified end-to-end by agent-browser + structural PDF
+   118→  checks (see the P3.7 entry at the bottom).
+   119→- Completed (P3.8): Crop PDF tool (tools/crop-pdf/: crop-options.ts pure
+   120→  module + crop-surface.tsx drag surface + panel.tsx + worker.ts + config),
+   121→  with the display→user-space geometry (pdf.js viewport transforms,
+   122→  /Rotate-aware) locked by scripts/smoke-crop.ts BEFORE the UI was built,
+   123→  and the shared preview chrome extracted to tools/stamp-common/
+   124→  preview-parts.tsx (PreviewFileHeader / PreviewPageStrip /
+   125→  PreviewZoomControl) now reused by stamp + crop surfaces. Verified
+   126→  end-to-end by agent-browser including a rotated-page PDF (see the P3.8
+   127→  entry at the bottom).
+   128→
+   129→## 4. Phase plan (user's chat phases → PRD mapping)
+   130→
+   131→| # | Scope | PRD |
+   132→|---|---|---|
+   133→| 0 | Scaffold: design tokens (exact §3.1 colors) light+dark, fonts self-hosted, i18n en/hi skeleton, base components (Button, Badge Private/Server/New/Pro, Card, Modal, BottomSheet, Toast, Progress, Tabs, EmptyState), Prisma schema (§2.5), CSP + security headers in next.config, README | §2, §3 |
+   134→| 1 | Global layout + discovery: typed tool registry with EVERY §7 tool, header (mega-menu, Ctrl+K fuzzy search, lang + theme switch), footer, cookie banner (analytics OFF), home (§6.1 smart drop zone), all-tools (§6.2), category pages, 404/500/offline, SEO (sitemap, hreflang) | §5, 6.1, 6.2, 7 |
+   135→| 2 | PDF core + ToolShell + storage: OPFS helpers + IndexedDB fallback, recent files (max 20, 30 days), pdf.js self-hosted thumbnails + render queue, worker pool (progress/result/error/cancel protocol), ToolShell 4 states (Landing→Workspace→Processing→Result), DropZone/FileCard/PageThumbnail/OptionsPanel/sticky bar/Stepper, result page (download/share/rename/size delta/chain/ZIP/remove), demo tool: rotate all pages 90° | §2.3, 2.4, 6.3, 6.4, 6.6 |
+   136→| 3 | First tools ONE AT A TIME (order): Merge, Split, Rotate/Rearrange/Remove/Extract (PageGrid family), Images to PDF, PDF→JPG/PNG, PDF→Text, Watermark, Page numbers + Header/footer, Crop, Doc info + Remove metadata, Fill out, View, Compress (device), Generate password, Scan to PDF, HEIC/WEBP converters | §8.1, 8.2 partial |
+   137→| 4 | qpdf WASM: Protect PDF + Unlock PDF (AES-256, permissions, strength meter, no cracking) | §8.3, §2.3 |
+   138→| 5 | Sign PDF (draw/type/upload, saved signatures, placement, flatten) | §8.3 |
+   139→| 6 | Static pages (About, Contact, Help, Security, Privacy, Terms, Cookies, Refund, DMCA, Grievance, Accessibility, Request-a-tool + votes, Install App — legal pages marked DRAFT) + API routes (contact, feedback, tool-requests + vote) with zod, rate limit, honeypot | §9, §2.5 |
+   140→| 7 | PWA (manifest, service worker caching pdf.js/wasm, install prompt, offline indicator, share target) + performance pass (§2.8 targets) | §12, §14 |
+   141→| 8 | Editor in 6 sub-phases: shell, objects, text edit, forms, export pipeline, mobile mode | §8.2.1 |
+   142→| 9 | Advanced client tools: OCR (Tesseract + Hindi traineddata), Compress-to-size, N-up, Halve, Overlay, Page size, Bookmarks, Extract images, Copy from PDF, Assemble, Flatten, Rasterize, Search PDFs, Redact, Compare, Fill/Make fillable, QR, Write PDF, MD/Txt→PDF | §8.1–8.5 |
+   143→| 10 | Accounts + Pro: email/password auth, sessions, account page, delete account, Razorpay + webhook (idempotent), GST invoice, pricing page, server-side limits | §9, §11, §2.5 |
+   144→| 11 | services/worker (Docker): LibreOffice conversions, strong compress, ClamAV, sandbox, TTL sweeper — Dockerfile + compose + notes | §2.7, 7.8, 7.9, 8.6 |
+   145→
+   146→## 5. Hard rules (from the user's master prompt + PRD — NEVER violate)
+   147→
+   148→- **Zero third-party CDNs** — fonts (Inter, Noto Sans Devanagari), icons, pdf.js, qpdf WASM,
+   149→  Tesseract traineddata all self-hosted from `/public`.
+   150→- **Device-only (mode D) tools: ZERO network requests with file data.** Heavy work in Web Workers,
+   151→  never block the main thread. Mode S tools are Phase 3 (chat phase 11) only — do not build early.
+   152→- **No AGPL/GPL libraries** (no Ghostscript, no MuPDF). Unclear license → flag "VERIFY", don't use.
+   153→- **pdf-lib cannot encrypt** — Protect/Unlock must use qpdf WASM.
+   154→- **Config-driven tools**: one registry + one shared ToolShell; never copy-paste per-tool pages.
+   155→- **All UI strings via i18n keys** (en + real Hindi in Devanagari, short). Error copy per PRD §10 table.
+   156→- **Accessibility**: keyboard operable, visible focus, aria labels, 44px targets,
+   157→  prefers-reduced-motion, dark mode via §3 tokens. Mobile-first — mentally test at 360px first.
+   158→- **No placeholder code / TODO / pseudo-code.** Every file complete and runnable.
+   159→- **Pin exact package versions.** Unsure about an API → mark "VERIFY:" with the doc page; never guess.
+   160→- **Security**: validate by magic bytes (not extension), size limits (50MB mobile / 200MB desktop
+   161→  default per §2.4), CSP-friendly (no inline eval), NEVER log file names or contents.
+   162→- PRD §3.1 explicitly sets primary `#2563EB` (blue) — blue is the PRD-specified brand color here.
+   163→  Category colors: Organize=Blue, Edit=Purple, Convert=Green, Security=Red, Optimize=Orange,
+   164→  Create=Teal, Invoices=Amber, View=Slate. Dark mode day one.
+   165→- Sandbox extras: only `/` is user-visible; use API routes (`src/app/api`) not server actions;
+   166→  never `bun run build`; check `dev.log` after coding; verify with agent-browser before reporting done.
+   167→
+   168→## 6. Unresolved issues / risks / next-phase priorities
+   169→
+   170→1. **NEXT: Phase 3 continues — View, then Compress (device), Generate
+   171→   password, Scan to PDF, HEIC/WEBP** — one per round (PRD §8.2/§8.4).
+   172→   **Engine insight for future form work (P3.10):** pdf-lib doc.save()
+   173→   regenerates dirty field appearances with WinAnsi Helvetica and THROWS
+   174→   for non-Latin values — the Devanagari pre-render + NeedAppearances
+   175→   fallback pattern lives in tools/fill-out-pdf/worker.ts; reuse it for
+   176→   anything that touches AcroForm values.
+   177→   Fill-tool follow-ups (deferred, noted): dropdown/optionlist values
+   178→   with non-WinAnsi OPTION strings fall back to NeedAppearances (values
+   179→   always stored; rendering is reader-side) — could embed Devanagari for
+   180→   Ch-field appearances later; no per-field font picker in the fill UI
+   181→   (by design).
+   182→2. ~~Cancel path not yet caught mid-flight~~ **DONE in P3.4**: caught at 6%
+   183→   on a 600 DPI × 400-page pdf-to-jpg run; Cancel → workspace + toast ✓.
+   184→3. qpdf WASM build source + exact version + license must be verified before Phase 4
+   185→   (VERIFY: npm `qpdf-wasm` availability; PRD §2.3 expects Apache-2.0 qpdf).
+   186→4. HEIC decoder WASM license flagged "verify" in PRD §2.3 — confirm before HEIC tools
+   187→   (browser-native HEIC decode works in Safari today; Chromium fails with the
+   188→   honest error copy — qa'd in P3.4).
+   189→5. Fabric.js vs Konva decision at editor phase (both MIT; PRD allows either).
+   190→6. Turso/Drizzle/Vercel deliverables = config + README text in this sandbox (no external services).
+   191→7. PRD §17.2 open questions (trademark, pricing, worker host) are business decisions — do not invent.
+   192→8. cron webDevReview re-armed 5 Oct as job **437196** with priority=1 (low) after
+   193→   job 437069 failed twice with "model glm-5.3 concurrency limit exceeded";
+   194→   low-priority scheduling + 15-min retry self-heals transient failures.
+   195→9. agent-browser lesson (P3.4): its `click` command is flaky on freshly
+   196→   re-rendered React buttons (hit-test lands pre-flush); use eval `.click()`
+   197→   + delayed reads for reliable automation. Toast capture needs a
+   198→   MutationObserver — toasts vanish before later evals.
+   199→
+   200→## Append template (copy for every new entry)
+   201→
+   202→```markdown
+   203→---
+   204→Task ID: P<phase>.<n>            (e.g. P0.1, P2.3)
+   205→Agent: <agent name>
+   206→Task: <what was asked / chosen focus>
+   207→
+   208→Work Log:
+   209→- <concrete step 1>
+   210→- <concrete step 2>
+   211→
+   212→Stage Summary:
+   213→- <key results / decisions / artifacts; update sections 1, 3 and 6 above if status changed>
+   214→```
+   215→
+   216→---
+   217→Task ID: 0
+   218→Agent: Z.ai Code (main orchestrator)
+   219→Task: Master-prompt intake — parse PRD, map sandbox constraints, create this handover doc, arm review loop. No product code (user instructed: reply READY, wait for Phase 0 prompt).
+   220→
+   221→Work Log:
+   222→- Extracted PRD: `pandoc upload/DocoPDF-PRD-v2.docx -t gfm --wrap=none -o upload/DocoPDF-PRD-v2.md`; read all 17 sections (1372 lines).
+   223→- Verified environment: Next.js 16.1.3 dev server on :3000 → HTTP 200; dev.log clean; shadcn/ui complete; Prisma 6 + SQLite present.
+   224→- Mapped PRD stack → sandbox deviations (section 2 above).
+   225→- Created this worklog and the 15-minute webDevReview cron (English description, fixed_rate 900s).
+   226→
+   227→Stage Summary:
+   228→- Status: PRE-PHASE-0. No app code yet; `/` still shows the default scaffold page.
+   229→- Next: Phase 0 scaffold (tokens, fonts, i18n skeleton, base components, Prisma schema §2.5, CSP, README) — driven by the user's next prompt, or by the review loop if the site is stable and no user prompt is pending.
+   230→
+   231→---
+   232→Task ID: P0.1
+   233→Agent: Z.ai Code (webDevReview cron round 1, job 437069)
+   234→Task: Scheduled review round — baseline QA passed (no bugs), so executed the next pending phase: PHASE 0 SCAFFOLD (PRD §2, §3) per the user's master-prompt phase plan.
+   235→
+   236→Work Log:
+   237→- Baseline QA via agent-browser: scaffold rendered, zero errors → proceeded to Phase 0.
+   238→- Downloaded + verified self-hosted fonts: src/fonts/InterVariable.woff2 (352 KB, official rsms build) and src/fonts/NotoSansDevanagari-Variable.woff2 (121 KB, GF devanagari subset); wired via next/font/local in layout.tsx (replaced next/font/google Geist — CDN rule).
+   239→- globals.css: full token rewrite — PRD §3.1 light/dark colors (primary #2563EB/#60A5FA, CTA #F97316/#FB923C, bg/surface, text, success, danger), 8 category color tokens, semantic radii (card 16px, btn 12px, chip 999px), font stack with Devanagari fallback, selection/scrollbar utilities, prefers-reduced-motion, scroll-padding for sticky header.
+   240→- i18n: src/i18n/{en,hi}.json catalogs (~90 keys each, real Hindi) + translate() with {param} interpolation; LocaleProvider with useSyncExternalStore (localStorage external store, hydration-safe); <html lang> synced.
+   241→- Base components: Badge variants private/server/new/pro/beta; Button variant cta + size touch (44px); Modal (Dialog wrapper); BottomSheet (vaul Drawer wrapper); EmptyState; ThemeToggle (cycle light→dark→system, next-themes, no flash); LanguageSwitch (EN|हिं segmented, toast on change); Logo/LogoMark + public/logo.svg (brand gradient mark).
+   242→- Landing page at /: AnnouncementBanner (dismissible, localStorage), sticky header w/ mobile sheet, Hero (trust badges, gradient title), Steps (3-step), Categories (9 PRD §7 categories, 94 planned tools, bottom sheet w/ Private/Server mode badges), Why (3 cards), Modes (Tabs: device vs server, PRD §2.2), Footer (trust line, category chips), Pro modal. Mobile-first, skip-to-content link, aria labels, focus rings.
+   243→- Data: src/data/catalog-summary.ts (all 9 categories + tool names + D/S modes from PRD §7).
+   244→- DB: prisma/schema.prisma rewritten to 13 models mirroring PRD §2.5 (users, sessions, anon_usage, usage_events, feedback, tool_requests, request_votes, contact_messages, blog_posts, subscriptions, payments, jobs, audit_log; @@map snake_case names); `bun run db:push` OK; db.ts logging reduced to error/warn (privacy rule).
+   245→- Security: next.config.ts — CSP (self-only, blob for workers/thumbnails, dev-only unsafe-eval), X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy (camera self for future Scan tool), HSTS; allowedDevOrigins for the sandbox preview proxy; REMOVED invalid `eslint` key (Next 16 dropped it — found via dev.log warning).
+   246→- Repo files: .env.example (DATABASE_URL + TURSO_* placeholders), README.md (stack, structure, Vercel+Turso deploy steps, phase status), services/worker/README.md (Phase-11 placeholder), .github/workflows/ci.yml (lint/typecheck/build; Vitest step deferred — sandbox forbids test code, documented), docs/PRD-v2.md (copy of extract).
+   247→- Fixed 3 lint errors (react-hooks/set-state-in-effect) by replacing setState-in-effect patterns with useSyncExternalStore (use-mounted hook, provider store, banner store).
+   248→- QA (agent-browser): renders; a11y tree correct; dark toggle applies .dark; Hindi → html lang=hi + Devanagari H1; category sheet 12 tools + badges; Pro modal; 360px no horizontal scroll; mobile menu works; console/page errors ZERO; CSP+headers verified via curl; lint clean; dev.log clean after config fix.
+   249→
+   250→Stage Summary:
+   251→- Phase 0 COMPLETE. `/` now shows the branded DocoPDF landing with full token system, dark mode, EN/हिं switching, and the PRD §7 catalog preview (94 tools / 9 categories).
+   252→- Screenshots: download/qa-p0-desktop-light.png, -dark.png, -hindi.png, -sheet.png, -modal.png, -mobile.png, -mobile-menu.png, -final-full.png.
+   253→- Deviations handled: Prisma/SQLite stands in for Turso/Drizzle (names match §2.5); locale = app state on / (only / visible in sandbox); Vitest deferred (no test code in sandbox); fonts fetched at build time from official sources (rsms.me + Google Fonts) and served self-hosted (no runtime CDN).
+   254→- Next: Phase 1 (registry + header search + all-tools + category pages + 404/500/offline + SEO) — user prompt or next review round when stable.
+   255→
+   256→---
+   257→Task ID: P1.1
+   258→Agent: Z.ai Code (webDevReview cron round 2, job 437069)
+   259→Task: Scheduled review round — baseline QA green (Phase 0 stable), so executed the next pending phase: PHASE 1 DISCOVERY LAYER (PRD §5, 6.1, 6.2, 7) per the master-prompt phase plan.
+   260→
+   261→Work Log:
+   262→- Baseline QA: page rendered clean (Hindi persisted from localStorage — locale store working as designed).
+   263→- Registry: src/lib/tools/registry.ts — 97 tools from PRD §7 (10 categories incl. "images" for §7.10 utilities, noted as small deviation from §4's 9 URLs); each tool: id/slug, category, mode D/S, phase P1-P3, lucide icon (ALL 70+ icon names verified to exist via bun script before use), name/description as {en,hi} locale maps, tags {en[],hi[]} incl. Hinglish transliterations, accepts input type, popularity 0-100, enabled:false (flips per phase plan), pro:false. Lookups: getTool, getCategory, toolsByCategory, popularTools, PHASE_LABELS, category chip/hover classes. DELETED src/data/catalog-summary.ts (single source of truth now the registry).
+   264→- i18n: catalogs expanded with nav/tabs/tools/request/palette/consent keys (~150 new strings each); tool names/descs live in registry locale maps (type-safe, documented decision).
+   265→- Search: src/lib/search/fuzzy.ts — self-written scorer: exact → word-boundary substring ("word" no longer matches inside "password"; "passw" prefix-matches) → word-level bigram dice with length-ratio guard 0.6-1.6 (typo-tolerant: "merg"→merge 0.86; blocks cross-length noise). Fields weighted name 3/tags 2/slug 1.6/desc 1/category 1; multi-term AND; threshold 0.35. Verified: password→11 (password tools first), word→17 (Word tools first, password noise gone), जोड़→1 exact, jodein→14 top merge, photo 100kb→1 exact.
+   266→- Routing: src/hooks/use-hash-route.ts — hash as external store (useSyncExternalStore), routes #/, #/tools, #/tools/<cat>, ?q=; plain #anchors scroll on home; navigateToHash() module helper (location.hash assignment — router.push does NOT fire hashchange, found in QA); ROUTES constants.
+   267→- Stores: favorites + last-used (localStorage, createLocalSnapshot raw-keyed cache in src/lib/storage/local-snapshot.ts — unstable getSnapshot caused an infinite render loop, found + fixed in QA); lastUsed written by future ToolShell via trackToolUse().
+   268→- Views: AllToolsView (large search w/ desktop autofocus via pointer:fine matchMedia, sticky chips incl. Favorites/Last-used, mode/input Select filters, Popular/A–Z toggle, ToolCard grid 1-4 cols, EmptyState + RequestToolModal), CategoryView (colored header, registry intro, private/server counts, related chips), ToolsView switcher.
+   269→- ToolCard (PRD §3.3): 48px category-tinted icon, name, 2-line desc, Private/Server badge, Soon chip + roadmap phase, favorite star (aria-pressed, toast), hover lift + colored border, focus ring.
+   270→- SearchPalette (Ctrl+K + "/"): CommandDialog; groups Favorites/Popular (empty query) or Results+See-all; shouldFilter=false (our fuzzy filters; cmdk's built-in filter hid See-all, found in QA); Enter opens tool (coming toast + category nav) or See-all → #/tools?q=.
+   271→- Header: mega-menu via NavigationMenu (5 category columns top-6 tools + More column + See all 97), All-tools nav link, Ctrl+K trigger button w/ kbd hint, mobile sheet w/ all 10 categories; Footer: privacy-settings reopens consent banner, category chips, see-all link; CookieBanner: Accept all / Reject non-essential / Customize (Switch, default OFF) persisted, re-openable; BottomTabBar (mobile md:hidden): Home/Tools/Search (Recent+Account deferred to their phases, noted).
+   272→- page.tsx: hash router wiring (home view / ToolsView), BottomTabBar + CookieBanner + SearchPalette + ProModal mounted.
+   273→- SEO: public/sitemap.xml (home + tools + categories w/ hreflang en/hi), robots.txt (allow all, disallow /api/, sitemap ref).
+   274→- QA fixes during the round: Settings2 missing from registry imports (ReferenceError); getCategory(object) misuse in 3 components (CATEGORIES maps directly now); useSyncExternalStore unstable snapshots → createLocalSnapshot; palette navigation via navigateToHash; cmdk shouldFilter; search precision rework; Sheet a11y warning (aria-describedby={undefined}).
+   275→- Final QA: lint clean; zero page errors; console clean; dev.log clean; screenshots qa-p1-*.png (home, all-tools, favorited, category, palette, palette-search, see-all, hindi-tools, mobile-tools, mobile-home, megamenu, final-home).
+   276→
+   277→Stage Summary:
+   278→- Phase 1 COMPLETE: full discovery layer driven by the 97-tool registry; bilingual search (typo + Hinglish + Devanagari); favorites; filters; request queue; consent; mobile tab bar; hash routing with back/forward support.
+   279→- Deviations: 10th "images" category for §7.10 (PRD §4 lists 9 category URLs); tool strings in registry locale maps (not JSON catalogs) for type safety; mega-menu shows top-6 per column (PRD says all tools — full list lives in All Tools view); tab bar has Home/Tools/Search only until Recent/Account exist; 404/500/offline pages skipped (sandbox single-route; noted for deploy); Smart Drop Zone deferred to Phase 2 (needs OPFS + ToolShell to be real).
+   280→- Next: PHASE 2 — ToolShell engine + OPFS + pdf.js + worker pool + demo rotate tool.
+   281→---
+   282→Task ID: P2.1
+   283→Agent: Z.ai Code (main session — user-directed continuation after 2 cron rounds failed with "model glm-5.3 concurrency limit exceeded")
+   284→Task: Fix the failed cron (re-arm webDevReview) and execute the pending PHASE 2: PDF CORE + TOOLSHELL + STORAGE (PRD §2.3, 2.4, 6.3, 6.4, 6.6) per the master-prompt phase plan.
+   285→
+   286→Work Log:
+   287→- Fixed cron failure: deleted failed job 437069, recreated as 437196 (fixed_rate 900s, priority=1 low) so review rounds no longer collide with active sessions; any future failure self-heals next tick.
+   288→- Deps (exact pins): pdf-lib@1.17.1, pdfjs-dist@4.10.38, fflate@0.8.2 (PRD §2.3; fflate = PRD-specified ZIP lib). Copied pdf.js lib+worker+cmaps+standard_fonts (4.1MB) from node_modules into /public/pdfjs — zero runtime CDN.
+   289→- Storage (§2.4): src/lib/storage/idb.ts (promise wrapper, blobs+recent stores), opfs.ts (OPFS-first working copies w/ IDB-Blob fallback, clearWorkingFiles, storage.estimate low-space check), recent-files.ts (max 20 / 30 days, metadata+thumbnail only, external-store subscribe + serialized write queue + removeRecentFilesByMeta).
+   290→- PDF layer: src/lib/pdf/pdfjs.ts (lazy same-origin runtime import with webpack+turbopack ignore comments, workerSrc/cMaps/standardFonts self-hosted) + thumbnails.ts (WeakMap doc cache, 2-slot render queue, OffscreenCanvas w/ DOM fallback, %PDF- magic-byte sniff within first 1024 bytes).
+   291→- Workers: protocol.ts (run/progress/result/error messages, page-range parser) + pool.ts (ToolWorkerPool: per-tool idle reuse, min(hw-1,4) cap, one-shot slot accounting, cancel = instant terminate + OPFS clear).
+   292→- Tool system: config-types.ts + configs.ts aggregator + tools/rotate-pdf-pages/{config.ts,worker.ts} (pdf-lib /Rotate deltas, real per-page progress, sanitized output names, typed error codes for i18n).
+   293→- ToolShell family (§6.3/6.4): tool-view + tool-shell (4 states, chain via lazy-initializer peek + key remount, working-copy lifecycle) + drop-zone (magic bytes/limits/paste/low-storage) + file-card + page-thumbnail + options-panel (schema-driven) + stepper + processing-view + result-view (download/FSA save-as/share/ZIP/rename/size delta/what-next chain/feedback/remove-from-device).
+   294→- Discovery wiring: hash route #/tool/<id> (+ROUTES.tool), ToolCard/palette/mega-menu navigate to live tools, registry rotate-pdf-pages enabled:true.
+   295→- Home (§6.1): Hero Smart Drop Zone (type detect -> suggestions; honest "coming soon" for future tools; handoff to enabled tool via chain store) + Recent files strip (IDB thumbnails, Clear, hidden when empty, honest reselect toast).
+   296→- API (§2.5): POST /api/feedback — zod (toolId/rating/reason enum/honeypot), in-memory 10/min rate limit, Prisma insert, no PII.
+   297→- i18n: +~130 keys (dropzone/tool/result/feedback/recent/smartDrop/nav) in en + real Hindi.
+   298→- QA (agent-browser): golden path smart-drop -> tool -> options -> run -> result + rename + toast; direct landing; page-range 1-2; 400-page 346KB file <1s; feedback 200 -> SQLite row; disabled chain = toast, no nav; Hindi UI; mobile 360px (no h-scroll, bottom-sheet options, sticky CTA, tab bar hidden); recent strip + Clear; remove-from-device = OPFS [] + recent 0; StrictMode race regression test (1 upload = 1 entry); network filter ZERO non-local requests; fresh-context errors 0; eslint+tsc clean; dev.log clean.
+   299→- Fixes during QA: set-state-in-effect x4 (promise-callback pattern; chain handoff via lazy useState + key remount), phaseRef removed, recentIdsRef replaced by removeRecentFilesByMeta (react-hooks/immutability), setFiles-updater side effects moved out (StrictMode double-invoke), EMPTY_ENTRIES stable snapshot, serialized recent writes, TDZ chainIn ordering, hero {count} params, DOM ClipboardEvent type, tsconfig excludes examples/skills/tests.
+   300→- Regenerated bilingual catalogs via node scripts after a MultiEdit anchor mismatch on the "•" bullet produced a non-atomic partial apply (en.json a11y group was clobbered and restored; verified JSON validity + all key groups present in both locales).
+   301→
+   302→Stage Summary:
+   303→- Phase 2 COMPLETE: full on-device tool pipeline live; only enabled tool = rotate-pdf-pages (the phase plan's demo tool). Screenshot evidence: download/qa-p2-*.png (13 files).
+   304→- Deviations: none new beyond the documented sandbox set (tools/ at app root mirrors PRD monorepo layout; result preview opens a blob tab until the §6.5 viewer phase; cancel is terminate-based per PRD).
+   305→- Next: Phase 3 first tools one at a time, starting with Merge PDF (needs dnd-kit reorder list, maxFiles=50).
+   306→---
+   307→Task ID: P3.1
+   308→Agent: Z.ai Code (webDevReview cron round, job 437196 — first successful round after the concurrency failures)
+   309→Task: Scheduled review — baseline QA passed (0 errors), so advanced the next pending phase item: PHASE 3 TOOL #1, MERGE PDF (PRD §8.1) per the worklog's next-step priority. Also fixed a UX bug found during QA.
+   310→
+   311→Work Log:
+   312→- Baseline QA: home + tool pages 0 errors, dev.log clean → proceeded to Merge PDF.
+   313→- Protocol/pool (additive): run requests now carry `fileIds` (aligned per-file options); results carry optional `detail` {files, pages} for the PRD §8.1 summary; pool resolves ToolRunResult {outputs, detail}.
+   314→- tools/merge-pdf/worker.ts: pdf-lib copyPages per file with per-file ranges (JSON map in options.fileRanges keyed by workspace id), blank page between files, best-effort form flatten (pdf-lib 1.17.1 API verified at runtime: PDFForm.flatten() — NOT flattenFields), sanitized output name (custom or <first>-merged.pdf), real per-file/per-page progress, encrypted/corrupt/invalid-range typed error codes, detail {files, pages}.
+   315→- tools/merge-pdf/config.ts: minFiles 2, maxFiles 50, options (blankBetween, flatten w/ honest hint, outputName), features + FAQ (en/hi); bookmarks-per-file deferred (pdf-lib outline is low-level — VERIFY before building; documented in FAQ honestly).
+   316→- Custom panel system (PRD §2.6 Panel.tsx): src/lib/tools/panel-types.ts (ToolPanelProps) + panels.tsx registry + tools/merge-pdf/panel.tsx (sort A→Z/Z→A/date buttons + per-file range inputs with a11y labels); ToolShell renders CustomPanel above the schema OptionsPanel in BOTH the desktop aside and the mobile bottom sheet (direct TOOL_PANELS[tool.id] map lookup — react-hooks/static-components rejects function-call lookups).
+   317→- Drag-reorder (PRD §8.1 preview): src/components/doco/tool/file-list.tsx — dnd-kit DndContext (PointerSensor distance 6, TouchSensor 200ms long-press, KeyboardSensor with sortableKeyboardCoordinates), rectSortingStrategy, restrictToParentElement modifier; grip handle button (GripVertical, cursor-grab/grabbing, touch-none, focus ring); drag styles: z-20 + scale-[1.02] + shadow-lg on active, ring-primary/40 on drop target; up/down buttons retained as the always-available keyboard path.
+   318→- Styling polish: success check animate-in zoom-in (reduced-motion respected globally), result summary chip (bg-primary/10), sticky-CTA min-files hint in primary color, options aside now max-h-[calc(100vh-11.5rem)] + internal scrollbar + mb-20 (height budget: sticky header + CTA bar).
+   319→- QA fixes found in the round: (1) FileCard root was <li> → nested inside FileList's sortable <li> = invalid HTML li>li hydration errors → root changed to <div>; (2) sticky CTA bar overlapped the bottom of the options aside on short viewports (577px innerHeight) → aside max-h accounts for the bar + internal scroll; (3) pool RunDetail needed re-export; (4) panels.tsx relative path depth (../../../tools).
+   320→- Verified via agent-browser (fresh context, 0 page errors, 0 console errors): merge landing; 2-file upload → custom panel (FILES & PAGES + sort + ranges); A→Z and Z→A reorder the grid; dnd drag aaa↔test-input reorder works; per-file range "1-2" on test-input → result "2 files, 5 pages" (3+2) + aaa-merged.pdf naming; full merge no ranges → 8 pages; blank-page-between → 9 pages (3+5+1); range "1-3" → 6 pages; invalid range "abc" → error toast + stays in workspace; Download click 0 errors; Hindi full merge UI (फ़ाइलें और पेज, खींचकर क्रम बदलें); mobile 360px no h-scroll + bottom sheet renders custom panel; rotate tool regression after pool refactor → result OK; eslint src+tools clean; tsc clean; dev.log clean.
+   321→- bun add @dnd-kit/modifiers@9.0.0 (pinned; core/sortable/utilities were preinstalled).
+   322→
+   323→Stage Summary:
+   324→- Merge PDF COMPLETE and live (#/tool/merge-pdf, registry enabled). Live tools: 2 (merge, rotate). Screenshots: download/qa-p3-*.png (7).
+   325→- Architecture win: custom-panel pattern proven — tools can now ship schema options AND rich per-tool panels without leaving the config-driven system.
+   326→- Deferred honestly: images-in-merge, per-file bookmarks (VERIFY pdf-lib outline), page-grid card expand, per-file unlock (qpdf phase).
+   327→- Next: Split PDF (§8.1) — 7 modes, ZIP output; reuses FileList + protocol detail.
+   328→
+   329→---
+   330→Task ID: P3.2
+   331→Agent: main (Z.ai Code session)
+   332→
+   333→Task: Ship Split PDF — 2nd Phase-3 tool, PRD §8.1 (7 modes + live preview + ZIP output).
+   334→
+   335→Work Log:
+   336→- Read worklog + PRD §8.1 split spec + studied merge-pdf tool (config/worker/panel)
+   337→  as the architecture reference; confirmed ResultView already handles multi-output
+   338→  ZIP + individual downloads (fflate), so split only needs to emit N outputs.
+   339→- tools/split-pdf/plan.ts — NEW pure shared module: parseRangeList ("1-5, 8, 10-end",
+   340→  open "N-", case-insensitive "end", clamped + overlap-friendly), rangesOverlap,
+   341→  computeSplitPlan for all 7 modes (range w/ one-file-per-range union, everyN chunks,
+   342→  bookmark starts w/ leading part, size estimate 0.92 margin, visual cuts-after,
+   343→  oddEven labeled parts, blanks-as-removed-separators), parseNumberListOption,
+   344→  fileKey (name|size identity for detected lists).
+   345→- src/lib/pdf/thumbnails.ts — added getPdfTopLevelOutline (pdf.js getOutline +
+   346→  dest resolution to 1-based start pages; unresolvable/external bookmarks skipped)
+   347→  and detectBlankPages (text-content gate + 24px queued render, <0.1% dark pixels
+   348→  = blank; unreadable pages treated as content) with onProgress.
+   349→- tools/split-pdf/config.ts — ToolConfig, options schema EMPTY (panel owns all
+   350→  interactive values; worker defaults defensively), minFiles/maxFiles 1, features +
+   351→  FAQ per PRD copy, outputKind pdf.
+   352→- tools/split-pdf/worker.ts — pdf-lib worker: loads once, computes authoritative
+   353→  plan via shared plan.ts, builds each part (per-page progress posts), size mode
+   354→  re-saves real bytes and halves oversized parts recursively, guards: bookmarks/
+   355→  blanks detection must be "done" AND fileKey-matched (else tool.splitWaitingDetect),
+   356→  no bookmarks → tool.splitNoBookmarks, no blanks found → tool.splitNoBlanks;
+   357→  naming <base>_part1.pdf, <base>-split.pdf (single), <base>_odd/_even.pdf.
+   358→- tools/split-pdf/panel.tsx — custom panel: role=tablist with 7 mode tabs
+   359→  (arrow-key nav, bookmarks tab disabled when outline empty), per-mode inputs
+   360→  (ranges + one-file switch + overlap warning chip, N, MB, clear-cuts), live
+   361→  PREVIEW box with color-coded parts (blue/purple/emerald/amber cycle), dashed
+   362→  cut markers w/ Scissors icon, live count "N files will be created /
+   363→  फ़ाइलें बनेंगी", "≈ estimated" chip for size mode, visual mode = thumbnail strip
+   364→  (queued 112px renders) with 44px scissors toggle buttons, bookmarks list with
+   365→  titles + start pages, blanks detection with % progress + found chips (strikethrough).
+   366→  All detection results reach the worker as plain options (JSON + fileKey), never
+   367→  stale-across-files.
+   368→- Registered: registry split-pdf enabled:true, TOOL_CONFIGS, TOOL_PANELS.
+   369→- i18n: +49 keys ×2 locales (split.* section incl. rangePrompt; tool.split*
+   370→  error codes), real Devanagari throughout.
+   371→- QA (agent-browser, split-test.pdf = 12 pages w/ blanks @4,9 + bookmarks @1,5,10):
+   372→  range "1-3, 5-7"→2 files & "10-end" keyword & overlap warning & one-file union;
+   373→  everyN 4→3 files; bookmarks→3 parts (4/5/3 pages); size 0.002MB→preview "≈1 est" →
+   374→  real run refined to 4 parts each under limit; visual scissors toggle→cut count +
+   375→  clear; oddEven→_odd/_even (6+6); blanks→2 found/removed, 3 files 10 pages;
+   376→  result view "2 files, 6 pages" + ZIP button click clean; Hindi end-to-end incl.
+   377→  "2 फ़ाइलें बनेंगी"; mobile 360px no h-scroll, bottom sheet full panel + run from
+   378→  sheet CTA; network 148 req / 0 non-local; page errors 0; eslint src+tools clean;
+   379→  tsc --noEmit clean; dev.log only 200s.
+   380→- Fixed during QA: pdf-lib copyPages direction (src.copyPages(src)→dest.copyPages
+   381→  (src) — caught via captured "couldn't be read" toast, verified all 7 modes with a
+   382→  bun smoke script before browser re-test); empty-vs-invalid ranges preview copy
+   383→  (muted prompt vs red error); lucide icon name (Bookmark not Bookmarks); plan
+   384→  import path (./plan from inside the tool folder).
+   385→- Dev-server note: the sandbox reaps plain background processes between commands;
+   386→  use the python double-fork daemon (see git history of this entry) to keep
+   387→  `bun run dev` alive across tool calls.
+   388→
+   389→Stage Summary:
+   390→- Live tools: merge-pdf, rotate-pdf-pages, split-pdf (all mode D, on-device).
+   391→- Split covers PRD §8.1 completely: 7 modes, thumbnail strip preview w/ cut
+   392→  markers + color-coded parts, live file count, validations (in-range, overlap
+   393→  warning, bookmarks tab disabled when none), naming + ZIP output.
+   394→- New shared assets for future tools: top-level outline reader, blank-page
+   395→  detector, pure split-plan module, VisualStrip thumbnail pattern.
+   396→- Screenshots: download/qa-p32-split-{landing,workspace,visual,visual-cut,
+   397→  result,result-final,hindi,mobile,mobile-visual,mobile-cut,mobile-sheet,
+   398→  mobile-result,final-desktop}.png
+   399→- Next: PageGrid family round (reuses VisualStrip thumbnails + plan patterns).
+   400→
+   401→---
+   402→Task ID: P3.3
+   403→Agent: main (Z.ai Code session — webDevReview-style round: baseline QA passed, advanced the next pending phase item)
+   404→
+   405→Task: Ship the PageGrid family (PRD §8.1 "Rotate / Rearrange / Remove / Extract") — one shared interactive
+   406→page-grid with select/drag/undo-redo/zoom/virtualization, 4 preset-tuned tools on top of it.
+   407→
+   408→Work Log:
+   409→- Baseline QA first (per review protocol): home/tools/tool pages 0 errors; rotate + merge golden
+   410→  paths re-run clean; 0 non-local network requests; mobile 360px no h-scroll → no bugs → advanced.
+   411→- Verified the risky pdf-lib APIs with a bun smoke script BEFORE building: copyPages with
+   412→  DUPLICATE indices returns independent copies ✓, rotation delta on copied pages ✓, blank pages
+   413→  with explicit size ✓ (re-ran after wiring to verify full rebuild: 12 pages all 270°).
+   414→- tools/pagegrid/model.ts — pure shared model: GridPage {uid, source, rotation}, serializeGrid/
+   415→  parseGridOption (compact [[source,rotation]] tuples), parseNumberListOption, and ALL ops pure:
+   416→  rotateIndices, deleteIndices, duplicateIndices (each right after itself), insertBlankAfter,
+   417→  moveEntry (drag), moveSelectionByOne (block move), odd/evenIndices, parseGridRange (strict,
+   418→  in-range only), gridStats. VIRTUALIZE_ABOVE = 150. Same module feeds panel AND worker.
+   419→- tools/pagegrid/worker.ts — ONE shared worker for all 4 tools: loads pdf-lib, resolves entries
+   420→  (whole grid, or extract's selection), copyPages in bulk, applies rotation deltas, inserts real
+   421→  blank pages sized from the first real page (A4 fallback), posts real per-page progress, naming
+   422→  per toolId (-rotated/-rearranged/-pages-removed/-extracted, _pageN for one-per-file), detail
+   423→  {files, pages}. Defensive empty-grid error (safety net behind the CTA gate).
+   424→- tools/pagegrid/use-grid-history.ts — undo/redo as a pure useReducer (100-deep snapshot stack);
+   425→  wrappers compute the next state through the SAME reducer so callers can serialize for options
+   426→  immediately. Rewritten after react-hooks/refs flagged ref-during-render in the first draft.
+   427→- tools/pagegrid/grid-surface.tsx — the surface: file header (name/size/pages/remove), toolbar
+   428→  (selection chip + range input + Select all/Clear; scope segmented All|Selected|Odd|Even —
+   429→  odd/even rotate-preset only; rotate L/R; duplicate/insert-blank/delete; remove-blanks w/
+   430→  detection progress (remove preset); move earlier/later; undo/redo; zoom slider 88-168 step 16),
+   431→  hint line, and the grid itself. Selection: click (single), ctrl+click (toggle), shift+click
+   432→  (range from anchor), Ctrl+A, Esc, Del/Backspace, arrow-key cell focus (roving tabindex).
+   433→  Virtualization above 150 pages: row windowing from scrollTop/viewportH/ResizeObserver, spacer
+   434→  div with computed height, translateY window (400 pages → ~30 mounted cells); drag disabled
+   435→  there with an honest amber hint + move buttons remain. All mutations flow through apply() →
+   436→  history.commit + onChange("grid"/"selected") + CTA-blocked sync — event-context only, zero
+   437→  setState-in-effect.
+   438→- tools/pagegrid/grid-cell.tsx — cell: aspect-ratio letterbox thumb with LIVE CSS rotation,
+   439→  lazy render via per-cell IntersectionObserver (300px rootMargin) + revoke on unmount, position
+   440→  badge with "from page N" provenance tooltip once reordered, amber rotation badge, selected
+   441→  check (zoom-in anim), per-cell rotate L/R + delete actions on selected cells, dnd grip
+   442→  (Pointer/Touch/Keyboard sensors) when fully mounted. Blank pages render as dashed emerald
+   443→  placeholder.
+   444→- tools/pagegrid/summary-panel.tsx — aside/mobile-sheet panel: live stats (pages out / removed /
+   445→  rotated / blanks / selected) parsed from the same serialized grid + keyboard cheat sheet.
+   446→- Surface registry concept: src/lib/tools/surfaces.tsx (TOOL_SURFACES, named wrapper components)
+   447→  + ToolSurfaceProps in panel-types.ts (setRunBlocked). ToolShell renders the surface in the
+   448→  MAIN column instead of FileList+DropZone when registered; CTA gating via runBlockedKey (amber
+   449→  TriangleAlert + reason text in the sticky bar; disabled on both desktop CTA and sheet CTA).
+   450→- Tool configs: rotate-pdf-pages REWRITTEN (empty schema, shared worker, preset features/FAQ,
+   451→  old per-file worker.ts deleted); rearrange/remove/extract NEW (extract carries the
+   452→  onePerPage schema switch). Registry: 3 new tools enabled. configs.ts/panels.tsx updated.
+   453→- i18n: +71 keys ×2 (grid.* section incl. fromPage) via python JSON round-trip (P2 lesson:
+   454→  never MultiEdit the catalogs); real Devanagari throughout.
+   455→- getPdfPageAspect() added to lib/pdf/thumbnails.ts (viewport-only, no render).
+   456→- eslint config: public/** added to ignores — the vendored pdf.js minified assets were throwing
+   457→  ~1500 pre-existing warnings/8 errors into `bun run lint` (they predate this round; src+tools
+   458→  were always clean).
+   459→- QA (agent-browser, fresh context, 0 page errors, 0 console errors, 0 non-local requests):
+   460→  rotate: 12-cell grid, thumbs lazy, select/check/actions, rotate-all → 12 amber badges + live
+   461→  img transform rotate(270deg), undo clears, run → result + summary; remove: range "2,5-7" → 4
+   462→  selected, delete → 8 cells, insert blank → renders, remove-blanks → "Removed 2 blank pages"
+   463→  toast + correct math (12-4-2+1=7), run → -pages-removed.pdf; extract: CTA blocked + hint with
+   464→  no selection, shift-click → 4 selected, run → "1 files, 4 pages" -extracted.pdf, Ctrl+A +
+   465→  one-per-file → 12 outputs + ZIP button; rearrange: pointer drag p1→p3 = [p2,p3,p1,p4,p5]
+   466→  PROVEN by "from page" labels, undo restores, move-earlier moves selection with the page;
+   467→  virtualization: 400-page file → 30 cells, scroll to 7000px → window at Page 181 + 20 lazy
+   468→  thumbs, range "200-202" + scope Selected → exactly 3 rotated, run → 400 pages; safety:
+   469→  delete-all → CTA disabled + amber warning; Hindi end-to-end (aria labels, blank-detect toast
+   470→  in Devanagari); mobile 360px no h-scroll + bottom sheet (stats + shortcuts + CTA); zoom
+   471→  slider 120→152 with cells growing; regressions: merge Hindi golden path + split landing +
+   472→  home + all-tools card navigation all clean; tsc + eslint fully clean; dev.log clean after
+   473→  compile (one transient Fast-Refresh reload during mid-edit states, resolved).
+   474→
+   475→Stage Summary:
+   476→- Live tools: 6 (merge, split, rotate [REBASED on the grid], rearrange, remove, extract) — all
+   477→  mode D, on-device. The PRD §8.1 PageGrid family is COMPLETE: common actions (select
+   478→  click/shift/Ctrl+A/range, drag reorder, rotate per page or scope, delete, duplicate, insert
+   479→  blank, undo/redo, zoom), preset extras (odd/even scope, blank auto-detect, one-page-per-file),
+   480→  large-doc virtualization + lazy thumbnails, and the all-deleted Apply safety.
+   481→- Architecture: shared pure model + ONE worker + ONE surface + per-tool thin configs — the
+   482→  pattern for every future grid-based tool. Surface registry extends the config-driven system
+   483→  without breaking panels (merge/split untouched).
+   484→- Cell provenance labels ("Page 3, from page 1") double as UX polish and QA ground truth.
+   485→- Screenshots: download/qa-p33-*.png (13).
+   486→- Dev-server note repeated: the sandbox reaps plain background processes; the python double-fork
+   487→  daemon (see P3.2 entry) keeps `bun run dev` alive across tool calls.
+   488→- Next per the phase plan: Images to PDF (needs an image-handling DropZone path + jpeg/png
+   489→  embedding worker), then PDF→JPG/PNG, PDF→Text, Watermark, Page numbers, Crop, Doc info,
+   490→  Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per round. Split/merge
+   491→  deferred follow-ups unchanged (see section 6).
+   492→
+   493→---
+   494→Task ID: P3.4
+   495→Agent: main (Z.ai Code session — webDevReview cron round: baseline QA passed, advanced the next pending phase item)
+   496→
+   497→Task: Ship the Images↔PDF conversion pair (PRD §8.6): the ImageGrid family
+   498→(images-to-pdf + jpg/png/webp-to-pdf presets) and the PDF→images pair
+   499→(pdf-to-jpg + pdf-to-png), plus the shared infra those need (image-aware
+   500→thumbnails, accept-kind routing, output-kind chains). Mandatory styling pass
+   501→included.
+   502→
+   503→Work Log:
+   504→- Baseline QA first (review protocol): home + rotate golden path + network
+   505→  filter (0 non-local) + mobile 375px no h-scroll + 0 console/page errors
+   506→  → stable → advanced. One transient finding: grid toolbar button click
+   507→  intercepted during async thumbnail layout shift (not reproducible in
+   508→  steady state; noted, not a bug).
+   509→- Infra (shared):
+   510→  - DropZone acceptKind now driven by tool.accepts (image → image/* sniff,
+   511→    pdf → %PDF- sniff); per-kind labels (tool.selectImageFiles/addMoreImages).
+   512→  - makeFileThumbnail (lib/files/thumbnail.ts): images → createImageBitmap
+   513→    downscale ≤160px; PDFs → existing queued render. Recent entries carry
+   514→    kind image/pdf correctly; home strip shows image thumbs (lazy-verified).
+   515→  - useThumbnail image fast path: image blobs are their own preview (object
+   516→    URL direct) — fixes FileCard for image inputs AND ResultView for image
+   517→    outputs (jpg/png pages render as thumbs, no pdf.js attempt).
+   518→  - ToolConfig.chainToolIds + ToolShell support: pdf-to-jpg/png chain to
+   519→    image-accepting tools only (images-to-pdf, webp/heic-to-pdf w/ Soon
+   520→    badge) — never hand a JPG to a PDF-only tool.
+   521→  - ToolSurfaceProps.addFiles: surfaces can embed their own add-more drop
+   522→    zone reusing the shell pipeline (limits, OPFS copy, recent entries).
+   523→  - Smart Drop Zone: image branch now hands off DIRECTLY to the enabled
+   524→    images-to-pdf tool (was "coming soon" toast).
+   525→  - getPdfPagePixelSize (viewport-only) for the live DPI preview panel.
+   526→- tools/imagegrid/ (NEW shared module):
+   527→  - model.ts — pure ops (rotate/delete/move/sortAz-by-name numeric-aware/
+   528→    reconcile-vs-files/serialize [[source,rotation] tuples]) feeding BOTH
+   529→    the surface and the worker (pagegrid pattern).
+   530→  - image-grid-surface.tsx — dnd-kit sortable card grid (Pointer/Touch/
+   531→    Keyboard), per-card rotate 90° L/R with LIVE CSS rotation + amber badge,
+   532→    move buttons, remove, A→Z sort (the IMG_101/IMG_100 fixer), stats chip
+   533→    row (count/size/rotated), compact add-more DropZone, all-removed safety
+   534→    (setRunBlocked + amber hint; CTA disabled), hover lift + thumbnail zoom
+   535→    (rotate+scale via CSS var), grip always visible on touch (max-lg).
+   536→  - worker.ts — magic-byte sniff (jpeg/png/webp/gif/heic), unrotated JPG/PNG
+   537→    embed ORIGINAL bytes (no re-compression), PNG dims via IHDR parse (no
+   538→    decode), rotated/other formats → createImageBitmap → OffscreenCanvas
+   539→    (rotated) → JPEG 0.92 (photos) / PNG (alpha-capable) → embed; page
+   540→    assembly: a4/letter/fit + auto/portrait/landscape + margins none/small/
+   541→    big + one/two-up (2-col grid) + white/soft/dark background + page
+   542→    numbers "n / total" (Helvetica 9pt gray); honest per-file error codes
+   543→    (unsupported/decode w/ file name detail — client-side only).
+   544→- tools/pdf-to-images/ (NEW shared worker for pdf-to-jpg + pdf-to-png):
+   545→  - pdf.js runs INSIDE the tool worker: pre-import /pdfjs/pdf.worker.min.mjs
+   546→    sets globalThis.pdfjsWorker → pdf.js detects it (#Ts) → fake-worker mode
+   547→    on our own thread (no nested worker, no window access). CRITICAL FIX
+   548→    found by QA: pdf.js's default CMap/StandardFont factories resolve URLs
+   549→    against document.baseURI (absent in workers → "document is not defined")
+   550→    — fixed with a one-property globalThis.document = { baseURI:
+   551→    self.location.href } shim, verified by a raw-worker probe BEFORE the
+   552→    fix failed identically and after it rendered 1240×1754 JPEGs.
+   553→  - Transparent PNG: pdf.js beginDrawing ALWAYS fills background||"#ffffff"
+   554→    → pass render background:"rgba(0,0,0,0)" when transparent (verified
+   555→    alpha (0,255) on a no-background circle PDF).
+   556→  - Sequential page render, one canvas at a time (memory-safe), real
+   557→    per-page progress, DPI 72/150/300/600 (scale=dpi/72), page range via
+   558→    parsePageSpec, JPG quality 40-100, naming: single page → base.ext,
+   559→    multi → base_pageN.ext, ZIP via ResultView.
+   560→  - panel.tsx — live "Page 1 at N DPI → W×H px" preview (viewport math
+   561→    only, no render) + note that all pages keep this sharpness.
+   562→- Tool configs: images-to-pdf (full 6-option schema), jpg/png/webp-to-pdf
+   563→  (thin presets, tuned copy), pdf-to-jpg (dpi/pages/quality), pdf-to-png
+   564→  (dpi/pages/transparent). Registry: 6 tools flipped enabled:true →
+   565→  13 live. configs.ts/panels.tsx/surfaces.tsx registrations.
+   566→- i18n: +30 keys ×2 locales (tool.images.* errors, igrid.* surface,
+   567→  pdfimg.* panel) via python JSON round-trip; real Devanagari throughout.
+   568→- QA (agent-browser, fresh contexts, 0 page errors, 0 console errors,
+   569→  0 non-local requests across all runs):
+   570→  images-to-pdf: 3 mixed images (jpg+png-alpha+webp) → cards w/ thumbs+dims,
+   571→  rotate 180° (badge + live transform), sort A→Z, move buttons, pageNumbers
+   572→  on → run → "1 files, 3 pages" → pypdf-inspected output: correct order,
+   573→  alpha PNG embedded RGBA, WEBP transcoded PNG, photo ORIGINAL JPEG bytes,
+   574→  "1 / 3" texts, page sizes match orientation logic (square→portrait, wide
+   575→  →landscape); two-up + dark bg: 4 images → 2 landscape pages × 2 images
+   576→  verified; jpg-to-pdf alias golden path + add-more inside workspace (2→3
+   577→  cards) + all-removed → CTA disabled + amber reason; smart-drop image →
+   578→  direct handoff (file lands in workspace); pdf-to-jpg: preview panel
+   579→  "1240 × 1754 px" at 150 DPI, range "1-3" → 3 JPGs 21-22 KB + ZIP,
+   580→  downloaded page1 = 1240×1754 RGB; pdf-to-png: single page "5" →
+   581→  split-test.png (no suffix), transparent → alpha (0,255) verified;
+   582→  12-page full run "12 files"; CANCEL: 600 DPI × 400-page file at 6% →
+   583→  Cancel → workspace + toast (deferred item closed); Hindi end-to-end
+   584→  (chip "2 तस्वीरें", sort "A→Z क्रम", hint, result "1 फ़ाइलें, 2 पेज");
+   585→  mobile 375px no h-scroll + bottom sheet w/ Hindi options; regressions:
+   586→  rotate grid (12 cells), split + merge landings, all-tools page (6 new
+   587→  tools listed), home; eslint + tsc clean; dev.log clean.
+   588→- Styling pass (mandatory): image cards hover lift + shadow + thumbnail
+   589→  zoom (rotate+scale composed via CSS var), grip visible on touch, position
+   590→  + rotation badges w/ shadow; DropZone drag-over ring-4 glow + scale +
+   591→  animated icon; ResultView output cards hover elevation; recent-strip
+   592→  lazy-load verified.
+   593→- Test assets added to download/: qa-img-photo.jpg / qa-img-alpha.png /
+   594→  qa-img-stripes.webp / qa-img-portrait.jpg (PIL-generated), qa-transparent.pdf
+   595→  (pdf-lib circle-only), qa-p34-*.png screenshots (16).
+   596→
+   597→Stage Summary:
+   598→- Live tools: 13 — merge, split, rotate, rearrange, remove, extract,
+   599→  images-to-pdf, jpg-to-pdf, png-to-pdf, webp-to-pdf, pdf-to-jpg,
+   600→  pdf-to-png. PRD §8.6 image conversion pair COMPLETE for browser-decodable
+   601→  formats (SVG/TIFF deferred — needs WASM decoders; HEIC works where the
+   602→  browser can decode, honest error otherwise).
+   603→- Architecture win: pdf.js-in-tool-worker recipe (fake-worker mode +
+   604→  document.baseURI shim + transparent-background render param) is the
+   605→  foundation for OCR (Phase 9) and every future rasterizing tool.
+   606→- ImageGrid = the second reusable surface family (after PageGrid); future
+   607→  image-input tools (scan-to-pdf, heic-to-pdf) reuse it via preset configs.
+   608→- Cancel-mid-flight finally PROVEN (the P2-era deferred risk item).
+   609→- Next per the phase plan: PDF→Text (§8.6), then Watermark, Page numbers,
+   610→  Crop, Doc info, Fill, View, Compress, Generate password, Scan, HEIC/WEBP
+   611→  — one per round. Merge "images also allowed" is now unblocked (reuse the
+   612→  imagegrid embed engine).
+   613→
+   614→---
+   615→Task ID: P3.5
+   616→Agent: main (Z.ai Code session — webDevReview cron round: fixed broken build, finished interrupted features, shipped PDF→Text)
+   617→
+   618→Task: 1) Recover the 500-on-/ broken build (missing @/lib/storage/local-snapshot
+   619→module from an interrupted prior round); 2) QA every in-flight feature that was
+   620→left half-shipped; 3) continue the phase plan with PDF→Text (PRD §8.6);
+   621→4) mandatory styling detail pass; 5) this worklog record.
+   622→
+   623→Work Log:
+   624→- Diagnosis: dev.log showed GET / 500 — Turbopack module-not-found for
+   625→  `@/lib/storage/local-snapshot`, imported by cookie-banner.tsx,
+   626→  request-tool-modal.tsx and lib/tools/favorites.ts (all already committed).
+   627→  tsc confirmed exactly 3 errors, all the same missing module — nothing else
+   628→  was broken. The prior round had been cut off right before creating it.
+   629→- FIX: created src/lib/storage/local-snapshot.ts — createLocalSnapshot<T>(
+   630→  key, parse, empty) returns a memoized () => T getter for useSyncExternalStore:
+   631→  caches on the RAW localStorage string, so the parsed value keeps a stable
+   632→  reference until the raw string actually changes (the useSyncExternalStore
+   633→  contract). SSR-safe (returns empty pre-mount), storage-failure-safe
+   634→  (try/catch → treats as absent). 63 lines incl. docs.
+   635→- QA of the recovered in-flight features (agent-browser, fresh contexts,
+   636→  0 page errors, 0 console errors throughout):
+   637→  - Cookie banner (PRD §5.3): renders on fresh context (dialog "Your choice,
+   638→    your data"), Customize → analytics switch + save → `docopdf-consent`
+   639→    persisted + banner hidden; footer "Privacy settings" re-opens it directly
+   640→    in expanded mode.
+   641→  - Request-a-tool (PRD §6.2/§9): search nonsense → empty state → "Request a
+   642→    tool" modal; submit → `docopdf-tool-requests` persisted; queued list w/
+   643→    Remove works.
+   644→  - Favorites + Last used (PRD §6.2): star on a tool card →
+   645→    `docopdf-favorites` + "Favorites · 1" tab appears and filters to exactly
+   646→    that tool; ran merge (2 files) → `docopdf-last-used` = ["merge-pdf"] +
+   647→    "Last used" tab appears. Hindi tab labels verified (पसंदीदा · 1,
+   648→    हाल में इस्तेमाल). Mobile 375px no h-scroll.
+   649→- NEW TOOL: PDF to Text (tools/pdf-to-txt/):
+   650→  - worker.ts — pdf.js inside the tool worker (fake-worker mode +
+   651→    document.baseURI shim, same proven recipe as pdf-to-images). Text
+   652→    reconstruction: pieces → y-clustered visual lines (tolerance 0.5× font
+   653→    height) → x-sorted with quarter-font gap spaces → Flow mode joins lines
+   654→    into paragraphs (baseline gap > 1.7× line height = paragraph break;
+   655→    trailing hyphen before a lowercase letter merges: "demon-stration" →
+   656→    "demonstration") / Lines mode keeps visual lines verbatim. Page range via
+   657→    parsePageSpec; optional ───── Page N ───── markers when > 1 page; per-file
+   658→    UTF-8 .txt; honest tool.errorNoText when a file yields zero selectable
+   659→    text (scans — OCR is a later phase, PRD copy).
+   660→  - config.ts — layout select (flow/lines) + pages + pageMarks switch;
+   661→    chainToolIds txt-to-pdf/markdown-to-pdf; features/FAQ in en+hi.
+   662→  - panel.tsx — LIVE page-1 text preview (getPdfPageTextPreview in
+   663→    lib/pdf/thumbnails.ts, doc-cached, text-content only): monospace pre with
+   664→    gradient fade + truncation note, word-count chip, amber TriangleAlert
+   665→    block when no selectable text (scan hint), footer privacy line. Stale
+   666→    preview guarded by file-identity comparison (lint-safe, no setState-in-
+   667→    effect).
+   668→- Infra (shared):
+   669→  - src/lib/files/text-thumbnail.ts (NEW) — renderTextThumbnail draws the
+   670→    first ~9 non-empty lines onto a 3:4 canvas (paper-white bg, ink-gray
+   671→    monospace, measured ellipsis) → .txt outputs get a REAL document
+   672→    thumbnail. Wired into makeFileThumbnail (text/ branch) AND useThumbnail
+   673→    (fast path before the pdf.js attempt — previously text blobs fell to the
+   674→    ⚠ error icon).
+   675→  - config-types.ts outputKind union += "text".
+   676→  - registry.ts pdf-to-txt enabled: true; configs.ts + panels.tsx registered.
+   677→  - result-view.tsx rename regex now strips .txt too.
+   678→  - i18n: pdftxt.* (7 keys) + tool.errorNoText, en + hi (python JSON
+   679→    round-trip, real Devanagari).
+   680→- QA of the new tool (fresh contexts, 0 errors):
+   681→  - reportlab 2-page test PDF: Flow output = clean paragraphs, hyphenation
+   682→    rejoined, numbers/symbols intact, page 2 included ("1 files, 2 pages"
+   683→    summary); page marks ON → ───── Page 1/2 ───── separators present; Lines
+   684→    mode → visual line breaks verbatim (demon-/stration kept).
+   685→  - Image-only "scan" PDF: panel shows amber "No selectable text on page 1"
+   686→    BEFORE running; run → error toast (errorNoText) → back to workspace.
+   687→  - Result view: .txt output card renders the canvas text thumbnail
+   688→    (img loaded, 200px); rename preset strips .txt.
+   689→  - Hindi end-to-end: पेज 1 टेक्स्ट प्रीव्यू panel, लेआउट combobox
+   690→    (Flow — साफ़ पैराग्राफ़), पेज-ब्रेक चिह्नित करें switch, scan copy.
+   691→  - Mobile 375px: no h-scroll; consent banner + bottom CTA co-exist.
+   692→  - Regressions: home hero, all-tools page (PDF to Text listed w/o Soon
+   693→    chip), merge landing — all clean; tsc + eslint fully clean; dev.log
+   694→    clean (only expected Fast-Refresh reloads from the i18n edits).
+   695→- Styling pass (mandatory): text thumbnails as real visual previews;
+   696→  preview panel chrome (header row w/ word-count chip, gradient-fade
+   697→  monospace body, scan-warning block, privacy footer); page-mark separator
+   698→  design; existing detail polish untouched.
+   699→- Test assets: download/qa-text-sample.pdf (reportlab, 2 pages, hyphenation
+   700→  case), download/qa-scan-sample.pdf (PIL image-only), qa-p35-*.png
+   701→  screenshots (3).
+   702→
+   703→Stage Summary:
+   704→- Build RECOVERED: the only blocker was one missing file; all three half-
+   705→  shipped features (consent banner, request-a-tool, favorites/last-used)
+   706→  verified working end-to-end, both locales.
+   707→- Live tools: 14 — merge, split, rotate, rearrange, remove, extract,
+   708→  images-to-pdf, jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt.
+   709→  PRD §8.6 text extraction COMPLETE for selectable text (OCR deferred to
+   710→  Phase 9 as planned; honest error meanwhile).
+   711→- Text-thumbnail renderer benefits every future text-output tool
+   712→  (PDF→Text/Markdown/HTML, txt-to-pdf previews of inputs are image-side only).
+   713→- Next per the phase plan: Watermark (§8.3), then Page numbers, Crop, Doc
+   714→  info, Fill, View, Compress, Generate password, Scan, HEIC/WEBP — one per
+   715→  round. Merge "images also allowed" still unblocked (reuse imagegrid engine).
+   716→- Deferred notes: switch toggle in the options panel sits under the sticky
+   717→  bottom CTA bar on short desktop viewports — scrollintoview was needed in
+   718→  QA (pre-existing layout trait, not a regression from this round; consider
+   719→  scroll-margin-bottom on option rows if it resurfaces).
+   720→- Suggested commit: "fix: create missing local-snapshot module (500 on /);
+   721→  feat: PDF to Text tool with flow/lines layouts, page marks, live preview,
+   722→  scan detection; text thumbnails for .txt outputs"
+   723→
+   724→---
+   725→Task ID: P3.6
+   726→Agent: main (Z.ai Code session — webDevReview cron round: recovered broken build, shipped Watermark)
+   727→
+   728→Task: 1) Baseline QA found `/` 500 — the P3.5 `local-snapshot.ts` fix file
+   729→had been lost (dependents committed, module never committed); recreate +
+   730→re-verify. 2) Continue the phase plan with Add Watermark (PRD §8.2):
+   731→text/logo stamp, font/size/color/opacity/rotation, 9-grid position, tile,
+   732→behind-content, layout all/odd/even/range/first-page-excluded, live canvas
+   733→preview + thumbnails strip. 3) Mandatory styling detail pass. 4) This log.
+   734→
+   735→Work Log:
+   736→- Diagnosis: dev.log GET / 500 — Turbopack module-not-found for
+   737→  `@/lib/storage/local-snapshot`; `ls src/lib/storage/` confirmed the file
+   738→  absent while cookie-banner/request-tool-modal/favorites (committed) still
+   739→  imported it. git fsck dangling commit = duplicate of P3.4, no copy ever
+   740→  committed. Recreated the module from the P3.5 spec: createLocalSnapshot
+   741→  <T>(key, parse, empty) memoizes on the RAW localStorage string (stable
+   742→  references = the useSyncExternalStore contract), SSR-safe, storage- and
+   743→  parse-failure-safe. `/` → 200 immediately.
+   744→- Baseline QA after recovery (agent-browser): home renders, 0 non-local
+   745→  requests, rotate golden path upload→run→result with 0 page errors,
+   746→  all-tools 97 cards; tsc + eslint clean. NOTE: `agent-browser upload` went
+   747→  silently inert this round (files set, change handler never fired) — the
+   748→  reliable recipe is a programmatic DataTransfer + change event via eval
+   749→  (base64-embedded for real test files). Also learned: `[m` in tool output
+   750→  renders as an ANSI reset and SWALLOWS those two chars in terminal
+   751→  displays — configs.ts "looked" corrupted but was byte-perfect.
+   752→- Smoke test BEFORE building (P3.3 lesson, scripts/smoke-watermark.ts):
+   753→  drawText color/opacity/rotate ✓, widthOfTextAtSize ✓, Contents reorder
+   754→  (my stream → index 0) ✓, embedPng + drawImage opacity/rotate ✓, WinAnsi
+   755→  throws on Devanagari ✓, save/reload keeps order ✓ (verified by zlib-
+   756→  decoding each stream of the saved file: [watermark, q, original, Q]).
+   757→- NEW TOOL: Add watermark (tools/add-watermark/):
+   758→  - wm-options.ts — ONE shared pure module for panel + surface + worker:
+   759→    option ids, defaults, resolveWmOptions coercion/clamping, 6 standard
+   760→    fonts + CSS mapping (canvas preview mirrors the pdf font), 8 color
+   761→    presets, parseHexColor, 9-grid positionCenter (PDF y-up math),
+   762→    rotatedStartPoint (rotate-around-box-center solved by
+   763→    start = center − R·(w/2, h/2)), tileSteps, targetIndices
+   764→    (all/odd/even/skipFirst/range via parsePageSpec).
+   765→  - logo-store.ts — in-memory logo File store + custom event (panel pushes,
+   766→    surface subscribes); the logo NEVER touches OPFS/IndexedDB/network.
+   767→  - worker.ts — pdf-lib engine: embeds standard font (WinAnsi checked
+   768→    UPFRONT → honest tool.errorWatermarkChars for Devanagari), stamps text
+   769→    or logo per page (positioned 9-grid with margin, or tiled grid with
+   770→    spacing), behind mode = draw then moveDrawStreamFirst (Contents array
+   771→    reorder — the verified technique), logo via PNG/JPEG embed or
+   772→    createImageBitmap→OffscreenCanvas→PNG re-encode for webp/gif,
+   773→    real per-page progress, `-watermarked.pdf` naming, detail {files, pages}.
+   774→  - panel.tsx — the control station: Text|Logo segmented tabs, text input
+   775→    with 120-char counter, font select, size slider with value chip, 8
+   776→    swatches + custom hex input (validated, snaps back on blur), opacity
+   777→    slider, rotation quick buttons (−90/−45/0/45/90) + slider, 3×3 position
+   778→    grid with dot indicators (disabled while tiling) + edge-distance slider,
+   779→    tile switch + spacing slider, behind switch, layout select + range
+   780→    input, amber hint blocks for missing text/logo.
+   781→  - wm-surface.tsx — main-column LIVE PREVIEW: renders the selected page
+   782→    (pdf.js thumb 560px) then paints the watermark with the SAME math as
+   783→    the worker (what you see is what you get), page strip (12-window,
+   784→    72px thumbs, selected ring, marked-page dots + page numbers),
+   785→    file header chip, marked-count chip + over/behind chip + invalid-range
+   786→    chip, CTA gating via setRunBlocked (no text / no logo / invalid range),
+   787→    loading skeleton + identity-scoped failure state.
+   788→  - config.ts — empty schema (split pattern), maxFiles 1 (PRD: single
+   789→    PDF), collectAssets() feeds the logo, chain to pdf-to-jpg/png/merge;
+   790→    features + FAQ en/hi (incl. honest Hindi-font answer).
+   791→- Infra (additive, 3 small edits): protocol WorkerRunRequest.assets?:
+   792→  File[]; pool.run(..., assets?); config-types ToolConfig.collectAssets?;
+   793→  tool-shell startRun collects assets (with the React-Compiler-friendly
+   794→  destructured dep). globals.css += .bg-checker (transparency
+   795→  checkerboard for the logo preview).
+   796→- Registrations: registry add-watermark enabled:true; configs.ts, panels.tsx,
+   797→  surfaces.tsx entries. i18n: wm.* 66 keys + 5 tool.errorWatermark* codes,
+   798→  en + real Devanagari hi (python merge, scripts/i18n-watermark.py).
+   799→- QA (agent-browser + VLM visual checks + structural PDF checks, fresh
+   800→  contexts, 0 page errors, 0 console errors, 0 real non-local requests):
+   801→  landing state; upload → live preview shows red diagonal CONFIDENTIAL
+   802→  centered (VLM); 9-grid top-right + rotation 0° (VLM); tile → 12-15
+   803→  repeated marks (VLM); behind run → result thumbnail tiled diagonal
+   804→  (VLM) + DOWNLOADED OUTPUT structurally verified: page-1 /Contents =
+   805→  [watermark(906B, gs+rg ops, red 0.8627/0.149 = #DC2626 exact), q,
+   806→  original, Q] → watermark genuinely draws BEHIND; both pages marked;
+   807→  logo mode: upload → centered circular logo preview (VLM) + chip +
+   808→  30% scale; logo run → output contains image XObject; CTA gating:
+   809→  cleared text → disabled + amber "Type the watermark text first",
+   810→  invalid range "abc" → disabled + amber chip, fixed to "2" →
+   811→  "1 of 2 pages marked" → run "1 files, 1 pages"; Devanagari "गोपनीय" →
+   812→  honest error toast + back to workspace (no broken file); Hindi UI end-
+   813→  to-end (panel, chips, preview, strip aria); mobile 375px no h-scroll +
+   814→  sticky CTA + bottom sheet with full panel; regressions after protocol/
+   815→  pool changes: rotate golden path ✓, all-tools lists the tool ✓; tsc +
+   816→  eslint fully clean; dev.log clean.
+   817→- Styling pass (mandatory): swatch grid with selected ring + scale,
+   818→  3×3 position picker with active dot, slider value chips (tabular-nums),
+   819→  rotation quick-buttons, mode segmented tabs, checkerboard logo preview,
+   820→  page strip with selected ring + marked dots, preview header chips
+   821→  (marked-count / over-behind / invalid-range), amber warning blocks,
+   822→  .bg-checker utility. VLM final review: "high level of visual polish…
+   823→  no misalignments or cramped elements".
+   824→
+   825→Stage Summary:
+   826→- Build RECOVERED again (same failure mode as P3.5 — file lost between
+   827→  write and commit; this time it IS committed with the round).
+   828→- Live tools: 14 — merge, split, rotate, rearrange, remove, extract,
+   829→  images/jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt,
+   830→  add-watermark. PRD §8.2 Watermark COMPLETE (text + logo + tiling +
+   831→  behind + layout + live preview); Devanagari watermark text honestly
+   832→  deferred (needs TTF embedding).
+   833→- Architecture wins: (1) the run-ASSET channel (collectAssets → protocol
+   834→  assets) lets any tool ship side-files to its worker without touching
+   835→  the storage layer; (2) the z-order Contents-reorder technique unlocks
+   836→  every future "under content" feature (page numbers under text etc.);
+   837→  (3) shared placement math between preview canvas and worker = the
+   838→  pattern for the upcoming Page numbers / Header-footer round.
+   839→- Screenshots: download/qa-p36-*.png (9) + qa-p36-wm-output.pdf /
+   840→  qa-p36-wm-logo-output.pdf (structurally verified outputs).
+   841→- Suggested commit: "fix: recreate lost local-snapshot module (500 on /);
+   842→  feat: Add watermark — text/logo stamps, 9-grid + tile + behind-content
+   843→  (Contents reorder), live canvas preview + page strip, run-asset channel;
+   844→  i18n wm.* en/hi"
+   845→
+   846→---
+   847→Task ID: P3.7
+   848→Agent: main (Z.ai Code session — webDevReview cron round: Page numbers + Header & footer + Devanagari font embedding)
+   849→
+   850→Task: 1) Baseline QA (server healthy, watermark golden path re-verified
+   851→green). 2) Ship the next two PRD §8.2 items: Add page numbers + Header &
+   852→footer, both with live canvas previews. 3) Mandatory styling detail pass.
+   853→4) This log.
+   854→
+   855→Work Log:
+   856→- Baseline: dev.log clean, `/` 200; watermark upload → preview → run →
+   857→  result re-verified (P3.6 regression green) using the P3.6 recipe
+   858→  (base64-embedded PDF + programmatic DataTransfer + change event).
+   859→- PRE-BUILD SMOKE TEST (P3.3 lesson) scripts/smoke-pagenumbers.ts:
+   860→  @pdf-lib/fontkit@1.1.1 pinned + regenerator-runtime@0.14.1 (bun throws
+   861→  "regeneratorRuntime is not defined" without it); embedFont(ttf,
+   862→  {subset:true}) → widthOfTextAtSize works for "०१२३४५६७८९", "पृष्ठ" and
+   863→  mixed "Page ५ of १०"; save/reload round-trip fine; subset output 6.7KB
+   864→  = 0.03× the 243KB source. Noto Sans Devanagari TTF downloaded once
+   865→  (build-time fetch, OFL) → public/fonts/ + license file (no runtime CDN).
+   866→- NEW shared architecture tools/stamp-common/: layout.ts (StampMark,
+   867→  StampPageContext, StampToolSpec {resolve/targets/marks/runBlocked/
+   868→  chips}, toRoman/toAlpha/toHindiDigits/formatPageNumber,
+   869→  formatStampDate dmy/mdy/ymd, resolveStampVariables, needsUnicodeFont);
+   870→  worker-lib.ts (loadStampFonts: 6 standard + devanagari subset embed,
+   871→  drawStampMark center-anchored with the 0.25em baseline, safeBaseName);
+   872→  stamp-surface.tsx (ONE generic live-preview surface for both tools:
+   873→  pdf.js base render + marks painted with the SAME math the workers use,
+   874→  canvas measurer via cssFontFor + --font-noto-devanagari for Devanagari,
+   875→  page strip + marked dots, chips, CTA gating). getPdfMetadataTitle()
+   876→  added to lib/pdf/thumbnails.ts for the {title} variable preview.
+   877→- NEW TOOL Add page numbers (tools/add-page-numbers/): pn-options.ts
+   878→  spec (8 formats, start, hindiDigits, font/size/color/opacity, 9-grid +
+   879→  margin, layout all/odd/even/skipFirst/range), worker.ts (spec.marks +
+   880→  drawStampMark per target, `-numbered.pdf`), panel.tsx (format select
+   881→  with live sample chip, start-number input with custom ▲▼ stepper,
+   882→  Hindi-digits switch with disabled state on roman/alpha formats + emerald
+   883→  "०१२३४५६७८९ embedded" pill, font select disabled+hint when Hindi forced,
+   884→  swatches + hex input, 9-grid picker with position label, margin slider,
+   885→  layout selector), config.ts (chain to add-header-footer/jpg/png/merge;
+   886→  6 features + 3 FAQ en/hi incl. honest "of N counts total pages").
+   887→- NEW TOOL Header & footer (tools/add-header-footer/): hf-options.ts
+   888→  spec (6 slots L/C/R × header/footer, shared font/size/color/opacity,
+   889→  margin, dateFormat, layout; {page}/{pages}/{date}/{filename}/{title}
+   890→  case-insensitive, unknown braces left visible; needsUnicodeFont →
+   891→  mark auto-upgrades to the embedded devanagari font incl. {filename}/
+   892→  {title} resolution), worker.ts (`-header-footer.pdf`), panel.tsx
+   893→  (variables legend with mono {token} chips, 6 labeled slot inputs with
+   894→  placeholders, date-shape select, amber empty-state gating), config.ts
+   895→  (chain to add-page-numbers; Hindi-header FAQ).
+   896→- BUG FOUND BY QA + FIXED: dev Turbopack builds module workers from
+   897→  blob: URLs → fetch("/fonts/…") inside the worker throws "Failed to
+   898→  parse URL from …" (opaque base). Diagnosed via a temporary DBG error
+   899→  detail routed through the toast. Fix in devaFontUrl(): resolve against
+   900→  self.location.href when http(s), else recover the origin from the
+   901→  blob: URL itself, else fall back to the relative path (prod workers
+   902→  are http-served). Verified: Hindi runs now succeed.
+   903→- REGISTRATION: registry add-page-numbers + add-header-footer
+   904→  enabled:true; configs.ts, panels.tsx, surfaces.tsx entries
+   905→  (StampSurface wrappers with PN_SPEC/HF_SPEC). i18n: pn.* 27 + hf.* 26
+   906→  keys + tool.errorPageNoPages/errorPageFont, en + real Devanagari hi
+   907→  (scripts/i18n-pagenumbers.py merge).
+   908→- STYLING PASS (mandatory): preview zoom control 1×/1.5×/2× (segmented,
+   909→  aria-pressed, ZoomIn icon, canvas px-scaled + shrink-0 + internal
+   910→  scroll container with scrollbar-thin); sample chip; start-number
+   911→  stepper; emerald Hindi-embedded pill; mono variable chips; position
+   912→  label under the 9-grid; amber gating blocks; header/footer on-chips.
+   913→  LAYOUT BUG FOUND + FIXED: zoomed canvas (792px) blew up the mobile grid
+   914→  track (auto max-content) → tool-shell workspace grid changed to
+   915→  `grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px]` + zoom container
+   916→  max-w-full overflow-x-auto → 375px now scrolls INSIDE the preview,
+   917→  zero page-level h-scroll (verified by measuring every wide element).
+   918→- QA (agent-browser, fresh contexts, 0 page errors, 0 console errors,
+   919→  dev.log clean): PN landing + upload + live preview (format chip "Page
+   920→  1 of 12" + canvas pixel-verified stamp at bottom-right; 3×-zoomed crop
+   921→  VLM-read "Page 1 of 12"); skip-first → "11 of 12 pages marked" + page
+   922→  strip dots; RUN → RESULT; DOWNLOADED OUTPUT structurally verified:
+   923→  11 stamp streams = pages 2-12 with EXACT sequence "Page 1 of 12" →
+   924→  "Page 11 of 12" at Tm(497.33, 38.75) = margin 36 + 0.25×11 baseline
+   925→  math, page 1 untouched; Hindi digits RUN → output has
+   926→  NotoSansDevanagari-Regular-4824 subset (FontFile2 + Type0) + 12
+   927→  streams with GID <0001> = १; HF chained from the PN RESULT (what-next
+   928→  chain works); Hindi text "गोपनीय दस्तावेज़" run → RESULT + output
+   929→  verified (11+1 stamp streams, embedded subset font); Latin variables
+   930→  run → output texts "my report" ({filename} kept the space), "1 of
+   931→  12"…"12 of 12" ({page}/{pages}), "06/10/2026" ({date} dmy); Hindi UI
+   932→  end-to-end (पेज नंबर लगाएँ, ऐसा दिखेगा, chips); mobile 375px zoom 2×
+   933→  no page h-scroll + sticky CTA (VLM: "no overlapping or cramped UI");
+   934→  regressions: all-tools lists both new tools (97 cards), rotate golden
+   935→  path ✓, watermark golden path ✓; eslint + tsc fully clean.
+   936→
+   937→Stage Summary:
+   938→- Live tools: 16 — merge, split, rotate, rearrange, remove, extract,
+   939→  images/jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt,
+   940→  add-watermark, add-page-numbers, add-header-footer. PRD §8.2 Page
+   941→  numbers + Header & footer COMPLETE (incl. Hindi digits via embedded
+   942→  font — the PRD's "Hindi digits optional" is now real, not deferred).
+   943→- Architecture wins: (1) the StampToolSpec interface = one shared
+   944→  live-preview surface + worker mark computation for any future
+   945→  "computed text on pages" tool; (2) the Devanagari embedding pipeline
+   946→  (public/fonts TTF + fontkit + subset) unblocks Hindi text in
+   947→  watermark and any text-drawing tool; (3) the blob-worker fetch fix
+   948→  documents how to fetch same-origin static assets from workers.
+   949→- Screenshots: download/qa-p37-*.png (workspace, zoom, hindi, mobile ×2,
+   950→  smoke pdf) + qa-p37-pn-output.pdf, qa-p37-pn-hindi-output.pdf,
+   951→  qa-p37-hf-hindi-output.pdf, qa-p37-hf-variables-output.pdf
+   952→  (all structurally verified outputs).
+   953→- Suggested commit: "feat: Add page numbers + Header & footer — 8 number
+   954→  formats, {page}/{pages}/{date}/{filename}/{title} variables, Hindi
+   955→  digits + Hindi text via embedded subset Devanagari font (blob-worker
+   956→  fetch fix), shared StampToolSpec preview architecture, preview zoom
+   957→  1×/1.5×/2×, mobile grid containment fix; i18n pn.*+hf.* en/hi"
+   958→
+   959→---
+   960→Task ID: P3.8
+   961→Agent: main (Z.ai Code session — webDevReview cron round: Crop PDF + shared preview chrome)
+   962→
+   963→Task: 1) Baseline QA (server healthy, page-numbers golden path re-verified
+   964→green, 0 console/page errors). 2) Ship the next PRD §8.2 item: Crop PDF —
+   965→visual crop box drag + numeric margins + apply to all/selected + auto-detect
+   966→+ before/after. 3) Mandatory styling detail pass. 4) This log.
+   967→
+   968→Work Log:
+   969→- Baseline: dev.log clean, `/` 200; add-page-numbers upload → preview →
+   970→  run → "Your file is ready!" re-verified (P3.7 regression green).
+   971→- PRE-BUILD SMOKE TEST (P3.3 lesson) scripts/smoke-crop.ts: pdf-lib
+   972→  1.17.1 getCropBox() (MediaBox fallback verified), setCropBox save→load
+   973→  round trip with /Rotate intact, the display→user mapping for
+   974→  0/90/180/270 (incl. negative -90) against worked examples, per-page
+   975→  clamping (over-sized margins → 18pt min box), compounding from an
+   976→  existing CropBox, non-zero view origins. FIRST RUN CAUGHT A REAL BUG:
+   977→  y-up conversion was inverted in fitCropRect (height 0) — fixed, then
+   978→  11/11 PASS. Fixture download/qa-p38-smoke.pdf (612×792 framed page)
+   979→  + qa-p38-rotated.pdf (2 pages, page 2 /Rotate 90) written.
+   980→- GEOMETRY MODEL (tools/crop-pdf/crop-options.ts): crop = 4 margins in
+   981→  display-space points (the pdf.js orientation, rotation applied) — the
+   982→  SAME semantic for drag overlay, panel inputs and worker. Worker maps
+   983→  margins → user-space setCropBox per page via the page's own view box
+   984→  (getCropBox with MediaBox fallback) + /Rotate (mapping derived from
+   985→  pdf.js getViewport transforms, see displayToUser). MIN_CROP_PT=18,
+   986→  over-size margins clamp per page; sameBox() skips no-op pages so
+   987→  untargeted pages never grow a /CropBox entry.
+   988→- NEW TOOL Crop PDF (tools/crop-pdf/): crop-surface.tsx (pdf.js base
+   989→  render + overlay: 8 pointer handles + move, box-shadow dim outside,
+   990→  rule-of-thirds guides, live W×H chip while dragging, keyboard nudge
+   991→  arrows/Shift=10pt, Escape cancels; BEFORE/AFTER segmented view — after
+   992→  draws exactly the cropped region (canvas 306×398 == 433×563pt ×
+   993→  scale, pixel-exact); AUTO-DETECT button scans the rendered bitmap for
+   994→  content edges (non-white or semi-transparent px) + 6pt padding with
+   995→  done/empty flash chips; zoom 1×/1.5×/2× with internal-scroll
+   996→  containment; chips: cropped size (unit-aware) + marked pages; page
+   997→  strip with target dots), panel.tsx (unit segmented pt/mm/in, margins
+   998→  arranged around a mini-page diagram — MarginField keeps typing-safe
+   999→  local drafts and the group REMOUNTS via key on external change (drag/
+  1000→  auto-detect/unit switch), reset, page targeting select + range),
+  1001→  worker.ts (setCropBox per target, progress per page, `-cropped.pdf`),
+  1002→  config.ts (chain to pdf-to-jpg/png/watermark/merge; 6 features + 3 FAQ
+  1003→  en/hi incl. honest "content stays in the file" CropBox answer).
+  1004→- SHARED PREVIEW CHROME extracted tools/stamp-common/preview-parts.tsx:
+  1005→  PreviewFileHeader + PreviewPageStrip (12-window strip, target dots,
+  1006→  URL lifecycle) + PreviewZoomControl (generic <T extends number>) —
+  1007→  stamp-surface.tsx refactored to use them (~140 lines removed);
+  1008→  page-numbers regression re-verified green after the refactor (upload →
+  1009→  zoom 2× (792px) → strip switch → run → result).
+  1010→- BUGS FOUND BY QA + FIXED: (1) canvas was missing max-h-[62vh]
+  1011→  max-w-full → mobile 375px clipped the page (435px canvas > 343px
+  1012→  available) — fixed with the stamp classes + the overlay now positions
+  1013→  itself on a MEASURED canvas box (rAF after paint) so max-height
+  1014→  clamping can never misalign the crop overlay (overlay:ALIGNED verified
+  1015→  at 309px); (2) setPointerCapture wrapped in try/catch (synthetic
+  1016→  pointer ids throw NotFoundError — real drags unaffected).
+  1017→- REGISTRATION: registry crop-pdf enabled:true; configs.ts, panels.tsx,
+  1018→  surfaces.tsx entries. i18n crop.* 30 keys + real Devanagari hi.
+  1019→- QA (agent-browser, 0 page errors, 0 console errors, dev.log clean):
+  1020→  landing + card on all-tools (no "Soon" badge, click-through ✓);
+  1021→  upload → overlay rect + "Cropped size 612 × 792 pt" chip + CTA blocked
+  1022→  "crop box covers the whole page" (amber gating); AUTO-DETECT →
+  1023→  margins [116/89/90/113] ≈ theoretical (90/90/116/114 ±1pt raster
+  1024→  rounding), "Snapped to the content on page 1" chip, CTA unblocked;
+  1025→  drag (synthetic pointer, async-gapped) → pure translation verified in
+  1026→  margins (±59/±49pt matching px→pt scale), edge clamp verified;
+  1027→  before/after toggle; RUN → RESULT → downloaded output CropBox
+  1028→  (32.4,169.6,433.2,563.2) == committed 0.1pt margins exactly;
+  1029→  ROTATED PAGE end-to-end: page 2 (/Rotate 90) renders 373×560
+  1030→  (400×600pt display), margins 100/200/100/200 via panel Enter-commits
+  1031→  → chip "200 × 200 pt" → range "2" → run → output p1 UNTOUCHED
+  1032→  (no /CropBox added — sameBox guard) + p2 CropBox (200,100,200,200)
+  1033→  EXACTLY the smoke-test worked example with rotation preserved;
+  1034→  mobile 375px: no page h-scroll, canvas 309px fits, overlay ALIGNED,
+  1035→  auto-detect + touch drag (directions + clamp correct), sheet inputs
+  1036→  (unit switch → "0.0" mm formatting), zoom 2× overflow contained INSIDE
+  1037→  the preview scroll area; Hindi UI end-to-end (क्रॉप, ऑटो-डिटेक्ट,
+  1038→  मार्जिन); search palette finds Crop PDF; result chain shows
+  1039→  pdf-to-jpg/png/watermark/merge; eslint + tsc fully clean.
+  1040→
+  1041→Stage Summary:
+  1042→- Live tools: 17 — merge, split, rotate, rearrange, remove, extract,
+  1043→  images/jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt,
+  1044→  add-watermark, add-page-numbers, add-header-footer, crop-pdf. PRD §8.2
+  1045→  Crop COMPLETE (visual drag + numeric margins + auto-detect + all/
+  1046→  selected + before/after — every clause of the spec row).
+  1047→- Architecture wins: (1) the display-margins crop model + pdf.js
+  1048→  viewport math = correct crops on rotated pages WITHOUT rasterizing;
+  1049→  (2) tools/stamp-common/preview-parts.tsx = shared preview chrome for
+  1050→  every future "canvas + page strip" tool; (3) the measured-overlay
+  1051→  pattern (rAF canvas box measurement) documents how to keep an
+  1052→  interactive overlay glued to a size-clamped canvas.
+  1053→- Screenshots: download/qa-p38-*.png (workspace, autodetect, after,
+  1054→  dragged, result, mobile ×3, zoom) + qa-p38-output.pdf,
+  1055→  qa-p38-rotated-output.pdf (structurally verified outputs).
+  1056→- Cron: webDevReview re-armed as job 440631 (15 min, priority=1) after
+  1057→  440312 hit exec limits.
+  1058→- Suggested commit: "feat: Crop PDF — visual 8-handle drag box with
+  1059→  rule-of-thirds guides, margins in pt/mm/in, auto-detect content edges,
+  1060→  before/after preview, /Rotate-aware worker (display→user geometry,
+  1061→  smoke-locked), shared preview chrome extracted (PreviewFileHeader/
+  1062→  PageStrip/ZoomControl, stamp surface refactored); i18n crop.* en/hi"
+  1063→
+  1064→---
+  1065→Task ID: P3.9
+  1066→Agent: main (Z.ai Code session — webDevReview cron round: Doc info + Remove metadata RECOVERY + QA + Devanagari everywhere)
+  1067→
+  1068→Task: 1) The previous round built change-pdf-doc-info + remove-pdf-metadata and
+  1069→committed them (f8d06dd) but died BEFORE writing its worklog entry and before
+  1070→any QA. 2) On arrival `/` was 500. 3) Recover, QA both tools end-to-end, fix
+  1071→everything found, ship the deferred Devanagari watermark upgrade, styling pass,
+  1072→this log.
+  1073→
+  1074→Work Log:
+  1075→- CRITICAL RECOVERY: `/` was 500 — src/lib/storage/local-snapshot.ts gone
+  1076→  AGAIN (3rd time). ROOT CAUSE FOUND THIS ROUND: .gitignore's `local-*` rule
+  1077→  silently matched the file — it was NEVER in git (even the P3.6 "recreate +
+  1078→  commit" 619af87 missed it because git add refused). Fixed .gitignore
+  1079→  (negation `!src/lib/storage/local-snapshot.ts`), recreated the module
+  1080→  (createLocalSnapshot: raw-string-keyed cache, SSR fallback, parse guarded),
+  1081→  committed. This failure mode can now never recur.
+  1082→- Reviewed the inherited P3.9 files (meta-common/{meta,worker-lib}, both
+  1083→  tools' config/panel/surface/worker, scripts/smoke-metadata.ts 22/22 PASS,
+  1084→  registry/configs/panels/surfaces already wired) — code was complete and
+  1085→  correct; QA was missing.
+  1086→- QA GOLDEN PATH change-pdf-doc-info (fresh contexts, 0 page/console errors):
+  1087→  upload → BEFORE card shows pdf.js-read fields → form PRE-FILLS from the
+  1088→  file (title/author/creator verified) → edit title + clear creator → AFTER
+  1089→  card live-updates (dotted-underline changed values + "will be removed"
+  1090→  chips) → CTA gated until changes → RUN → RESULT ("1 files, 1 pages",
+  1091→  974→946 B) → DOWNLOADED OUTPUT structurally verified with pdf-lib +
+  1092→  PDFName keys: Title edited to exact text, Creator REMOVED, Author/Subject/
+  1093→  Keywords/Producer/CreationDate/ModDate all KEPT, XMP stripped (default
+  1094→  switch), pages intact. Hindi UI end-to-end (जानकारी बदलें, टाइटल) + Hindi
+  1095→  title "गोपनीय वार्षिक रिपोर्ट" written via PDFHexString → verified in output
+  1096→  (UTF-16BE round trip). Mobile 375×812: no h-scroll, bottom sheet works,
+  1097→  sticky CTA.
+  1098→- QA GOLDEN PATH remove-pdf-metadata: upload → honest found-fields report
+  1099→  (6 fields + dates + custom entries + XMP row, each with "will be removed"
+  1100→  tag) → "already clean" empty state → XMP toggle OFF via native CDP click
+  1101→  (synthetic .click() is IGNORED by Radix Switch — needs pointer events):
+  1102→  Kept chip + row dims + summary count drops → RUN → output Info dict FULLY
+  1103→  REMOVED + XMP kept when toggled (verified both ways). FIXTURE LESSON: pdf.js
+  1104→  `get metadata()` only reads /Metadata when it is an INDIRECT Ref
+  1105→  (streamRef instanceof Ref) — test fixtures must context.register() the
+  1106→  stream; direct-object /Metadata is invisible to pdf.js (real PDFs always
+  1107→  use refs, app behavior is correct).
+  1108→- BUG FIXED (a11y, real): the ToolShell mounts every custom panel in BOTH
+  1109→  the desktop aside AND the mobile bottom sheet → duplicate hardcoded ids.
+  1110→  change-pdf-doc-info (`di-*`) and split-pdf (`split-ranges` etc.) broke
+  1111→  label→input association + screen readers on mobile. Both now use useId()
+  1112→  (the stamp-tool panels already did). Verified: 12 inputs / 12 unique ids
+  1113→  with the sheet open, labels resolve. Benign remainder: LogoMark's identical
+  1114→  SVG gradient id appears twice (renders correctly; noted, not fixed).
+  1115→- BUG FIXED (P3.7 regression, found via glyph probing): the previous
+  1116→  NotoSansDevanagari-Regular.ttf (GF devanagari subset) has NO Latin letters
+  1117→  — "Page ५ of १२" mapped Latin to .notdef (INVISIBLE text in live
+  1118→  page-numbers/HF mixed output!). Swapped public/fonts to the google/fonts
+  1119→  variable build (642 KB, covers Basic Latin + Devanagari, charset 551):
+  1120→  GID probes now 0 .notdef for mixed text; pdf-lib embeds the default
+  1121→  instance; OFL note updated. VERIFIED LIVE: PN hindiDigits output "Page १
+  1122→  of १" now fully visible (VLM-read on the browser-rendered PDF, zoomed).
+  1123→- FEATURE (worklog priority #2): Add watermark Devanagari upgrade — non-
+  1124→  WinAnsi text now embeds the self-hosted Noto Sans Devanagari subset via
+  1125→  stamp-common/worker-lib (loadStampFonts) instead of erroring; preview
+  1126→  canvas renders the same family via wmCssFontFor (new, unicode-aware);
+  1127→  panel shows an emerald "हिंदी embedded" pill + hint when the text needs
+  1128→  it; error copy updated (Latin+digits+Hindi supported; CJK still honest
+  1129→  error). END-TO-END VERIFIED: "गोपनीय — Confidential" watermark → output
+  1130→  embeds Type0 NotoSansDevanagari subset → VLM confirms BOTH the Devanagari
+  1131→  and Latin parts visible.
+  1132→- STYLING PASS (VLM-reviewed): "will be removed" chips unified + contrast
+  1133→  bumped (amber-500/15 bg, amber-800/amber-300 text) in BOTH surfaces;
+  1134→  remove-meta report rows extracted to one ReportRow component (5× dedup);
+  1135→  doc-info form spacing gap-3→4 + label gap-1.5→2; XMP switch row gap-3→4
+  1136→  + leading-relaxed hints. Final VLM verdict: "Production-ready (A-grade)".
+  1137→- Final: eslint clean, tsc clean, dev.log clean, / = 200, all console
+  1138→  captures 0 errors.
+  1139→
+  1140→Stage Summary:
+  1141→- Live tools: 19 — merge, split, rotate, rearrange, remove, extract,
+  1142→  images/jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt,
+  1143→  add-watermark, add-page-numbers, add-header-footer, crop-pdf,
+  1144→  change-pdf-doc-info, remove-pdf-metadata. PRD §8.2 Doc info + §8.3
+  1145→  Remove metadata COMPLETE (the inherited round is now truly done: built +
+  1146→  QA'd + logged).
+  1147→- The 3×-recurring local-snapshot 500 is dead (gitignore root cause fixed).
+  1148→- The mixed Latin+Devanagari invisibility bug (P3.7+) is fixed for ALL
+  1149→  stamp tools by the full-coverage font build.
+  1150→- Watermark now stamps real Hindi text (PRD "Hindi optional" clause fully
+  1151→  delivered across wm/pn/hf).
+  1152→- Radix Switch lesson: synthetic .click() is ignored — use native CDP
+  1153→  click (agent-browser click command) or pointer events in automation.
+  1154→- Screenshots: download/qa-p39x-*.png (12) + structurally verified outputs
+  1155→  qa-p39x-*-output.pdf / -edited / -clean / -xmpkept / -wm-deva-output /
+  1156→  -pn-mixed-output.
+  1157→- Suggested commit: "fix: .gitignore local-* root cause (3rd 500),
+  1158→  useId for duplicate panel ids, full-coverage Devanagari font (invisible
+  1159→  Latin in mixed stamps); feat: watermark Hindi stamping; P3.9 doc-info +
+  1160→  remove-metadata QA'd (info-dict strip/keep XMP both verified)"
+  1161→- Next per plan: Fill out, View, Compress (device), Generate password, Scan
+  1162→  to PDF, HEIC/WEBP — one per round. imagegrid per-image CROP UI still
+  1163→  deferred; images-in-merge still unblocked (reuse imagegrid engine).
+  1164→
+  1165→---
+  1166→Task ID: P3.10
+  1167→Agent: main (Z.ai Code session — webDevReview round: Fill out PDF forms)
+  1168→
+  1169→Task: Next PRD §8.2 item per the plan — "Fill out PDF forms" (id
+  1170→fill-out-pdf, edit, D, P1): field highlight + Tab navigation +
+  1171→checkbox/radio/dropdown + date picker + auto-fill from local profile +
+  1172→flatten after fill. Build it, QA it end-to-end with agent-browser, fix
+  1173→everything found, styling pass, this log.
+  1174→
+  1175→Work Log:
+  1176→- Read worklog, armed-state check: cron job 441340 (15-min webDevReview)
+  1177→  alive, git tree clean at 31fbe5f (P3.9). Baseline QA: / 200, 0 console
+  1178→  errors, hash-routing to merge-pdf workspace fine. configs.ts "corruption"
+  1179→  was a terminal-render artifact ([m eaten as ANSI) — file verified clean
+  1180→  by hexdump, NO fix needed.
+  1181→- BUILT tools/fill-out-pdf/ (5 files): scan.ts (pdf-lib AcroForm scan:
+  1182→  kind/label/flags/current value/options/widgets with page + user-space
+  1183→  rect per widget via P()/getObjectRef + page-ref map; userRectToDisplay
+  1184→  for /Rotate 0/90/180/270 — derived from pdf.js viewport transforms;
+  1185→  isWinAnsiText CP1252 check), profile.ts (localStorage auto-fill
+  1186→  profile name/email/phone/organization/address + matchProfileValue
+  1187→  heuristics Latin+Hindi), worker.ts (epoch-scoped "f:<fileId>::<name>"
+  1188→  flat option keys so answers can NEVER leak into a replaced file;
+  1189→  per-kind application incl. maxLength pre-truncation; non-WinAnsi
+  1190→  answers pre-rendered with the embedded Noto Devanagari subset via
+  1191→  stamp-common loadStampFonts BEFORE save() would throw WinAnsi; last
+  1192→  resort = NeedAppearances + save(updateFieldAppearances:false)),
+  1193→  surface.tsx (page preview canvas + % -positioned highlight boxes that
+  1194→  click-to-focus their field; field form in reading order = natural Tab
+  1195→  order; page chips; required/read-only/type badges; date fields get a
+  1196→  native date picker writing dd/mm/yyyy; radio clear; dropdown none;
+  1197→  optionlist checkbox multi-select; auto-fill bar + collapsible profile
+  1198→  editor; filled-count + required-left chips; CTA gating no-changes/
+  1199→  no-fields/scanning), config.ts (flatten switch + features/faq en+hi).
+  1200→  Wired: configs.ts, surfaces.tsx, registry enabled:true, i18n fill.* 48
+  1201→  keys en/hi.
+  1202→- ENGINE BUGS FOUND + FIXED (smoke script scripts/smoke-fill.ts, 40+ checks
+  1203→  ALL PASS): ① pdf-lib setText THROWS ExceededMaxLengthError on overflow
+  1204→  — worker pre-truncates (verified the throw exists + truncation
+  1205→  round-trips). ② doc.save() auto-regenerates dirty field appearances
+  1206→  with WinAnsi Helvetica and THROWS for non-WinAnsi values (would kill
+  1207→  the whole run) — worker now pre-renders non-WinAnsi text fields with
+  1208→  the embedded Devanagari font; structural verify: output widget AP
+  1209→  stream references NotoSansDevanagari-Regular subset, and VLM-confirmed
+  1210→  the Hindi text RENDERS on the browser canvas (feed output back into the
+  1211→  tool). ③ fixture lesson: createTextField+addToPage regenerates the
+  1212→  widget AP immediately (WinAnsi throw at FIXTURE time for ₹).
+  1213→- UI BUG FOUND + FIXED (browser QA): auto-fill matched the FULLY
+  1214→  QUALIFIED name ("applicant.essay" contains "applicant") — essay/pincode/
+  1215→  dob got filled with the user's name. Fixed: label-only matching,
+  1216→  generic-name = EXACT normalized label set {name, fullname,
+  1217→  applicantname, yourname, applicant, नाम, पूरानाम}, fname/lname
+  1218→  exact-only ("fullname" ⊅ lname), Devanagari kept in normalize().
+  1219→  Matcher unit-probed: 15/15 cases incl. Hindi labels.
+  1220→- QA GOLDEN PATHS (fresh contexts, 0 console errors each): ① full fill
+  1221→  (text+checkbox+radio+dropdown+optionlist multi) → RUN → "Your file is
+  1222→  ready!" → downloaded output structurally verified 9/9 (name/email/
+  1223→  agree/city=Jaipur/gender=Male/languages=Hindi+Tamil/readonly total
+  1224→  untouched/dob empty/form alive/2 pages). ② Hindi answer "अर्जुन मेहता"
+  1225→  → output value round-trips + Devanagari appearance + VLM-visible. ③
+  1226→  FLATTEN (native CDP click on Radix switch — synthetic events are
+  1227→  ignored, P3.9 lesson) → output has 0 fields left, 2 pages, permanent
+  1228→  ink. ④ Empty state (non-form PDF): honest "No fillable form fields
+  1229→  found" + editor-phase note. ⑤ Auto-fill: saved profile → one click →
+  1230→  name+email filled, ZERO false matches after the fix. ⑥ Hindi UI
+  1231→  end-to-end (फ़ॉर्म भरें CTA run → ready). ⑦ Highlight-box click focuses
+  1232→  the right input + scrolls; focusing an input highlights its page box.
+  1233→  ⑧ Mobile 375×812: no h-scroll, stacked layout, VLM-verified clean.
+  1234→  ⑨ Date picker: calendar affordance on date-ish fields writes
+  1235→  dd/mm/yyyy into the (still free-text) input.
+  1236→- STYLING PASS (VLM-reviewed): first VLM verdict flagged faint highlight
+  1237→  boxes → bumped to border-2 + bg-primary/15 (unfilled), emerald fill
+  1238→  state, ring on focus; second VLM pass: "clearly visible with good
+  1239→  contrast". Rows keep Page chips + kind badges + required (red) +
+  1240→  read-only (lock) + emerald "Filled" dots.
+  1241→- Final: eslint clean, tsc clean, smoke-fill ALL PASS, dev.log clean
+  1242→  (only transient 500s while the paren-broken regex was mid-edit — fixed
+  1243→  immediately; last GETs all 200).
+  1244→
+  1245→Stage Summary:
+  1246→- Live tools: 20 — merge, split, rotate, rearrange, remove, extract,
+  1247→  images/jpg/png/webp-to-pdf, pdf-to-jpg, pdf-to-png, pdf-to-txt,
+  1248→  add-watermark, add-page-numbers, add-header-footer, crop-pdf,
+  1249→  change-pdf-doc-info, remove-pdf-metadata, fill-out-pdf. PRD §8.2
+  1250→  "Fill out PDF forms" COMPLETE (highlight/Tab/checkbox/radio/dropdown/
+  1251→  date picker/auto-fill profile/flatten — every PRD clause delivered).
+  1252→- The WinAnsi-save-crash engine insight applies to ANY future form
+  1253→  work: pdf-lib save() regenerates dirty appearances with Helvetica and
+  1254→  throws on non-Latin — the Devanagari pre-render + NeedAppearances
+  1255→  fallback pattern lives in tools/fill-out-pdf/worker.ts.
+  1256→- Automation lessons re-confirmed: Radix Switch/Checkbox need NATIVE
+  1257→  CDP clicks (agent-browser click), not synthetic events; same-frame
+  1258→  double toggles on one optionlist overwrite each other (stale props by
+  1259→  design of the shared-values architecture) — space interactions ≥1
+  1260→  frame in QA, humans are never affected.
+  1261→- Screenshots: download/qa-p310-{workspace,empty-state,hindi-ui,hindi-
+  1262→  render,highlights-fixed,mobile}.png + outputs qa-p310-fixture.pdf,
+  1263→  -output.pdf, -output2.pdf, -hindi-output.pdf, -flat-output.pdf.
+  1264→- Suggested commit: "feat: Fill out PDF forms (PRD §8.2) — AcroForm scan
+  1265→  with widget rects + /Rotate display mapping, click-to-focus highlight
+  1266→  boxes on live preview, reading-order field form (text/multiline/
+  1267→  maxLength/checkbox/radio/dropdown/optionlist/date picker), local
+  1268→  auto-fill profile (label-exact matching, Latin+Hindi), flatten switch;
+  1269→  worker: file-id epoch keys (no cross-file leaks), maxLength truncate,
+  1270→  Devanagari pre-render for non-WinAnsi answers + NeedAppearances
+  1271→  fallback; smoke-fill 40+ checks; i18n fill.* en/hi"
+  1272→- Next per plan: View, Compress (device), Generate password, Scan to
+  1273→  PDF, HEIC/WEBP — one per round. Unblocked leftovers: images-in-merge
+  1274→  auto-convert (reuse imagegrid engine), imagegrid per-image crop UI.
+  1275→
+  1276→---
+  1277→Task ID: P3.11
+  1278→Agent: webDevReview (main agent, session web-3597fa1e)
+  1279→Task: webDevReview cycle — QA the live site, then ship the next PRD §7.7 tool: View PDF (PRD §6.5 viewer), plus mandatory styling/features.
+  1280→
+  1281→Work Log:
+  1282→- Read worklog fully; baseline QA (agent-browser): home + category pages clean,
+  1283→  0 console errors, footer natural. dev.log showed only HISTORICAL 500s from
+  1284→  the P3.10 mid-edit regex (already fixed; all recent GETs 200).
+  1285→- Designed + shipped **View PDF** (`view-pdf`, category view, D-mode, P1):
+  1286→  - **New architecture: viewer-only tools.** `ToolConfig.viewerOnly: true`
+  1287→    (createWorker/outputKind now optional; pool guards the missing factory).
+  1288→    ToolShell hides the sticky run CTA + options aside + BottomSheet for such
+  1289→    tools and renders the workspace surface FULL-WIDTH — the surface IS the
+  1290→    product. Added `onChain` to ToolSurfaceProps; shell wires it to
+  1291→    handleChain (enabled/coming-soon toasts preserved).
+  1292→  - `tools/view-pdf/surface.tsx` (~1660 lines): full viewer with
+  1293→    continuous/single/two-page-spread layouts, zoom 25-400% via steps +
+  1294→    fit-width/fit-page (ResizeObserver-driven, DPR-capped rendering),
+  1295→    90-degree view rotation, dark reading mode (canvas invert+hue filter),
+  1296→    thumbnails/outline sidebar (lazy thumbnails, flattened bookmarks w/
+  1297→    depth + resolved pages), full-text search (Ctrl+F) with per-item
+  1298→    proportional highlight boxes + active-match ring + results drawer +
+  1299→    Enter/Shift+Enter navigation + auto-jump to first match, selectable
+  1300→    text layer via pdf.js TextLayer (+ `.pdf-textLayer` CSS in
+  1301→    globals.css, --scale-factor var), go-to-page input + G shortcut,
+  1302→    arrows/PageUp/PageDown move by page in every layout, +/- zoom,
+  1303→    R rotate, Esc closes search. Print = hidden iframe w/ blob URL
+  1304→    (native PDF print), Download = original bytes, Share via
+  1305→    navigator.share when available. Continue-with strip chains into
+  1306→    merge/split/rotate/fill-out-pdf.
+  1307→  - Password flow (PRD §6.5): PasswordException → inline prompt (stays
+  1308→    local), wrong-password note, same-password resubmit re-runs the open
+  1309→    (pwTry epoch). qpdf-AES-256 fixture QA'd end to end.
+  1310→- **Bugs found by QA + fixed:**
+  1311→  1. Page slots had NO explicit size → collapsed to ~32px, breaking layout,
+  1312→     lazy IO, scroll math, fit modes (root cause: slot must be the layout
+  1313→     authority — now sized from pageSizes×scale).
+  1314→  2. Native /Rotate was double-applied vs slot math — pageSizes now store
+  1315→     UNROTATED media size + page.rotate; displaySize composes
+  1316→     rot+viewRotation exactly like pdf.js viewports.
+  1317→  3. Search highlights pointed at wrong items: geo items were compacted
+  1318→     while search indexes the RAW content.items — geo now carries
+  1319→     itemIndex (fixed 4px-wide / wrong-position boxes).
+  1320→  4. Search didn't auto-jump to the first match; Enter now lands on match 1.
+  1321→  5. Same-wrong-password resubmit gave no feedback (pwTry epoch).
+  1322→  6. "Search in document (Ctrl+F) (Ctrl+F)" doubled title.
+  1323→- React Compiler lint reworks (all green): geo ref→state + boxes useMemo;
+  1324→  container-size ref→state (RO fires after observe); doc-effect sync
+  1325→  resets → documented adjust-state-during-render pattern (openedFor);
+  1326→  search early-reset → searchResult carries its query (pure derivation).
+  1327→- **Styling/features passes (VLM-reviewed ×6):** mobile toolbar was 3 rows /
+  1328→  133px tall → single scrollable row (49px, scrollbar-none, shrink-0 items,
+  1329→  fit buttons hidden <sm); highlight box confirmed clearly visible (closeup
+  1330→  PASS); dark+spread PASS after re-shoot; landing copy for viewerOnly
+  1331→  tools (view.how1-3) + dropzone singular "1 file" (limitsOne) in en/hi;
+  1332→  fixed share-button JSX mangled by a partial edit (tsc caught nothing —
+  1333→  found by inspection).
+  1334→- QA GOLDEN PATHS (fresh contexts, 0 console errors each): upload →
+  1335→  viewer renders (6 pages, 180% fit-width, 2 lazily-rendered canvases) →
+  1336→  zoom 200% ✓ → spread/single slots ✓ → rotate → landscape slot ✓ → dark
+  1337→  filter ✓ → search "zoom"/"pineapple"/"fox" counts+highlight+drawer+ring ✓
+  1338→  → page input goto 2 ✓ → thumbs 6 rendered + active thumb tracks page ✓ →
+  1339→  outline 6 rows → click row 4 jumps to page 4 ✓ → arrows move by page ✓ →
+  1340→  G focuses page input ✓ → password wrong→note, right "user123"→unlocked ✓,
+  1341→  same-wrong resubmit retries ✓ → Hindi UI end-to-end (viewer, toolbar
+  1342→  titles, continue strip) ✓ → mobile 375×812 single-row toolbar, no
+  1343→  h-scroll, canvases render ✓ → category page shows View PDF live (5 Soon).
+  1344→- tsc clean, eslint clean, dev.log clean (all 200s).
+  1345→
+  1346→Stage Summary:
+  1347→- Live tools: 21 (20 + view-pdf). PRD §6.5 viewer delivered except
+  1348→  presentation mode + attachments/annotations lists (see risks).
+  1349→- Key architecture additions: viewerOnly ToolConfig + full-width shell
+  1350→  mode + surface onChain. Reusable for Compare PDFs (P3) later.
+  1351→- Engine insights: page slots MUST be sized from pageSizes×scale (layout
+  1352→  authority); geo itemIndex must align with RAW pdf.js items (never compact
+  1353→  shared indices); pdf.js TextLayer needs --scale-factor + minimal CSS
+  1354→  (added to globals.css); print via hidden iframe + blob URL works in
+  1355→  Chromium; PasswordException retry needs an epoch (same-input resubmits).
+  1356→- QA fixtures: download/qa-p311-fixture.pdf (6 pages, outline,
+  1357→  searchable), qa-p311-locked.pdf (AES-256, user "user123").
+  1358→  Screenshots: qa-p311-{landing,viewer-sidebar,viewer-search-fixed,
+  1359→  highlight-closeup,dark-spread2,mobile-fixed,password,hindi-viewer}.png.
+  1360→- Suggested commit: "feat: View PDF (PRD §6.5) — viewer-only tool
+  1361→  architecture (no run step, full-width surface, surface chains), lazy
+  1362→  page rendering ±2, text layer, search w/ on-page highlights + drawer,
+  1363→  thumbnails/outline sidebar, zoom/fit/rotate/spread/dark mode, password
+  1364→  prompt (local), print/download/share, keyboard shortcuts, EN+HI;
+  1365→  shell: viewerOnly mode + singular dropzone limits copy"
+  1366→- Next per plan (one per round): Compress (device), Generate password,
+  1367→  Scan to PDF, HEIC/WEBP. Unblocked leftovers: images-in-merge
+  1368→  auto-convert, imagegrid per-image crop UI.
+  1369→- Risks/debt (small): (1) search is case-insensitive substring per text
+  1370→  item — no regex/diacritic folding yet (PRD's search-pdf tool, P2, will
+  1371→  supersede); (2) attachments/annotations sidebar lists + presentation
+  1372→  (fullscreen) mode from §6.5 not built — candidates for a later polish
+  1373→  round; (3) cross-item phrase matches (match spans two text items) not
+  1374→  highlighted — item-level only; (4) huge page counts (>500) probe all
+  1375→  sizes upfront — fine in QA, worth a progress bar someday; (5) print uses
+  1376→  the browser's native PDF print UI (blob iframe) — consistent + zero
+  1377→  re-render cost, but no page-range selection.
+  1378→
+  1379→---
+  1380→Task ID: P3.12
+  1381→Agent: webDevReview (main agent, session web-3597fa1e)
+  1382→Task: webDevReview cycle — baseline QA, then ship the next PRD §7.5 P1 tool: Compress PDF (device mode), plus mandatory styling/features.
+  1383→
+  1384→Work Log:
+  1385→- Read worklog fully; baseline QA (agent-browser): home + optimize category
+  1386→  clean, 0 console errors, Compress PDF showed "Soon" badge. dev.log all 200s.
+  1387→- ENGINE LESSON (cost 2 smoke failures — pin this for future pdf-lib work):
+  1388→  ① PDFName.asString() returns the name WITH the leading slash ("/DeviceRGB")
+  1389→    — comparing it to "DeviceRGB" silently fails. Compare POOLED PDFName
+  1390→    objects by identity instead: cs === PDFName.of("DeviceRGB"). PDFName.of
+  1391→    is a pool (same instance per name), so identity works everywhere.
+  1392→  ② context.obj() maps plain strings to PDFName — a real /Indexed palette
+  1393→    string arrives as PDFString/PDFHexString (both have .asBytes()), so
+  1394→    fixtures must build those explicitly.
+  1395→- Built tools/compress-pdf/ (3 files):
+  1396→  - engine.ts (PURE, bun-testable): resolveParams (light .82/2400, rec
+  1397→    .65/1600, strong .45/1200, custom clamps q .2-.97 / dim 200-8000),
+  1398→    classifyImage (DCTDecode→jpeg; Flate/LZW/A85/AHex/RunLength + DeviceGray
+  1399→    1c / DeviceRGB 3c / DeviceCMYK 4c / ICCBased N / Indexed palette; skips
+  1400→    ImageMask, JPX/CCITT/JBIG2, DCT-in-nested-filter, bpc≠8), 
+  1401→    collectImageCandidates (ALL image XObjects, EXCLUDES /SMask + /Mask
+  1402→    alpha objects via protectedRefs — re-encoding alpha as lossy RGB would
+  1403→    corrupt transparency; skips <8px images), replaceImageStream (new
+  1404→    PDFRawStream DCTDecode w/ updated W/H/ColorSpace, carries /SMask /Mask
+  1405→    /Name /Interpolate), targetSize (never upscales), grayscaleImageData
+  1406→    (Rec.601), indexedPalette (PDFString+PDFHexString inline palettes).
+  1407→  - worker.ts: DCT→createImageBitmap (browser JPEG decode); raw→
+  1408→    decodePDFRawStream→ImageData by colorspace (gray/rgb/cmyk-naive/
+  1409→    indexed w/ palette expansion incl. stream-backed palettes); Offscreen
+  1410→    draw to target size + optional luminance grayscale → JPEG re-encode →
+  1411→    size-guarded (≥2% win else keep original); replaceImageStream per
+  1412→    candidate; optional stripAllMetadata (meta-common); progress per image.
+  1413→  - config.ts: preset select (Light/Recommended/Strong/Custom) + Custom
+  1414→    reveals quality 30-95% + maxDim 600-4000px via NEW showWhen schema;
+  1415→    grayscale + stripMetadata switches; en+hi features/FAQ (6/3).
+  1416→- SCHEMA EXTENSION: OptionField.showWhen {id, equals} + fieldVisible() in
+  1417→  config-types.ts; OptionsPanel filters on it. Hidden fields keep values.
+  1418→- Wired: configs.ts import + registry enabled:true. Result view already
+  1419→  shows before→after size + % saved chip (no changes needed).
+  1420→- QA (fresh contexts, 0 console errors each):
+  1421→  ① GOLDEN PATH: upload 1.5MB fixture (PIL noisy gradient JPEG 2200x1500
+  1422→    + flat Flate PNG + alpha PNG + text-only page, 4 pages) → Recommended →
+  1423→    "1.5 MB → 148 KB — 90% smaller". Structural verify of output: 4 pages,
+  1424→    photo is now jpeg 1600x1091 (DCTDecode), SMask 17 0 R preserved on the
+  1425→    alpha image, flat/alpha originals kept (size guard), text layer INTACT
+  1426→    (BT/Tj hex literal "Compress QA Fixture" decodes correctly on page 1).
+  1427→  ② CUSTOM reveal: dropdown→Custom shows quality 65 + maxDim 1600 inputs;
+  1428→    switch back to Recommended hides them (showWhen works both ways).
+  1429→  ③ GRAYSCALE + STRIP: 146 KB; output has NO Info dict, NO /Metadata XMP.
+  1430→  ④ HINDI UI end-to-end: पीडीएफ़ कंप्रेस करें → आपकी फ़ाइल तैयार है! →
+  1431→    90% छोटी → डाउनलोड.
+  1432→  ⑤ MOBILE 375×812: no h-scroll; VLM verdict: clean, no overlaps, delta
+  1433→    prominently displayed.
+  1434→  ⑥ ENCRYPTED PDF: password-protected fixture → toast "Something went
+  1435→    wrong / This PDF is password-protected. Unlock it first, then try
+  1436→    again." + return to workspace (caught via MutationObserver — toasts
+  1437→    auto-dismiss, sleep() misses them).
+  1438→  ⑦ Optimize category page: Compress PDF live (no Soon badge).
+  1439→  ⑧ VLM desktop review: layout clean, hierarchy clear, size savings
+  1440→    prominent; custom-reveal panel: fields clean, spacing professional.
+  1441→- smoke-compress.ts: 22/22 PASS (params clamping, candidate discovery,
+  1442→    SMask exclusion, targetSize, luminance math, classify skip paths,
+  1443→    replaceImageStream dict + SMask carry, doc reload round-trip).
+  1444→- eslint clean, tsc clean, dev.log clean (all 200s).
+  1445→
+  1446→Stage Summary:
+  1447→- Live tools: 22 (21 + compress-pdf). PRD §7.5 core delivered.
+  1448→- Key architecture additions: showWhen conditional option fields (reusable
+  1449→  for every future tool); pure-engine/impure-worker split for compress.
+  1450→- Engine insights for any future image-touching tool (N-up, Rasterize,
+  1451→  Images-in-merge): see ENGINE LESSON above — PDFName identity comparison,
+  1452→  PDFString vs literal strings, SMask protection pattern, size-guard
+  1453→  pattern (never regress), dimension change is safe because cm matrices
+  1454→  stretch images into the same drawn box.
+  1455→- QA fixtures: download/qa-p312-fixture.pdf (1.5MB, 3 image kinds + text
+  1456→  page), qa-p311-locked.pdf reused for encrypted path. Outputs: -output
+  1457→  (148KB), -compressed-gray (146KB, no Info/XMP). Screenshots: qa-p312-
+  1458→  {baseline-optimize, custom-reveal, result, mobile-result}.png.
+  1459→- Suggested commit: "feat: Compress PDF (PRD §7.5) — device-side image
+  1460→  re-encode engine (DCT/Flate/LZW decode, colorspace-aware raw pixels,
+  1461→  Indexed palettes incl. stream-backed), JPEG re-encode at preset/custom
+  1462→  quality+maxDim, grayscale, optional metadata strip, per-image size
+  1463→  guard (never regress), SMask/Mask protection; showWhen conditional
+  1464→  option fields; smoke 22/22; QA 90% smaller w/ text layer verified"
+  1465→- Next per plan (one per round): Generate password (PRD §7.4 qpdf-based),
+  1466→  Scan to PDF, HEIC/WEBP converters. Unblocked leftovers: images-in-merge
+  1467→  auto-convert, imagegrid per-image crop UI, view-pdf presentation mode.
+  1468→- Risks/debt (small): ① no "compress to target size" loop yet (separate
+  1469→  P2 tool compress-pdf-to-size — iterative quality ladder);
+  1470→  ② JPEG2000/CCITT/JBIG2 images are skipped (rare in the wild — browsers
+  1471→  can't decode JPX losslessly anyway); ③ 16-bit and non-8bpc raw images
+  1472→  skipped; ④ large multi-image PDFs re-encode sequentially — fine in QA
+  1473→  (4 images <2s), a 200-image file would want the existing per-page
+  1474→  progress bar (already wired per-image).
+  1475→
+  1476→---
+  1477→Task ID: P3.13
+  1478→Agent: webDevReview (main agent, session web-3597fa1e)
+  1479→Task: webDevReview cycle — baseline QA, then ship the highest-popularity P1 gap: Sign PDF (PRD §7.6, pop 88), plus mandatory styling/features.
+  1480→
+  1481→Work Log:
+  1482→- Read worklog fully (disk state: 22 live tools, P3.12 was last entry — the
+  1483→  previous session's "30 live / A1 audit" summary did NOT match disk; the
+  1484→  registry is the source of truth: 22 live). Baseline QA clean (dev.log 200s).
+  1485→  Pick: **sign-pdf** (pop 88, biggest P1 gap; P3.12 plan said "generate
+  1486→  password" next but that tool is a simple password GENERATOR — Web Crypto,
+  1487→  no PDF machinery — queued for a quick round later; sign-pdf is the flagship).
+  1488→- INFRA FIX (critical for ALL future rounds): background processes spawned
+  1489→  by tool invocations are REAPED at invocation end — `nohup`/`setsid`/`env -i`
+  1490→  all die; only a TRUE DOUBLE-FORK daemon survives (verified: python
+  1491→  double-fork sleep lived, single-fork died). Wrote scripts/dev-daemon.py
+  1492→  (double-fork → exec `bun run dev`, log /tmp/docopdf-dev-daemon.log). The
+  1493→  platform's original dev server had died mid-session; restarted via daemon.
+  1494→- Shipped **tools/sign-pdf/** (7 files):
+  1495→  - engine.ts (PURE, bun-tested): SignPlacement model stores cx/cy/w as
+  1496→    fractions of the page DISPLAY box + on-screen rot; displayFracToUserPoint
+  1497→    corner-walked for every /Rotate (R0/90/180/270); placementToDrawBox
+  1498→    derives the pdf-lib draw (anchor via watermark's rotated-start-point
+  1499→    formula, angle = R - rotCss — user→screen map is det<0 so display-CW is
+  1500→    user-CCW); placementTargets (this/all/odd/even/range); defensive
+  1501→    parsePlacementsOption (clamps, caps 60).
+  1502→  - raster.ts: 5 script fonts self-hosted at /public/fonts/sign/ (Great
+  1503→    Vibes, Dancing Script, Caveat, Homemade Apple, Kalam w/ Devanagari+
+  1504→    Latin subsets, ~295KB total, LAZY FontFace load only inside the tool);
+  1505→    renderTextSignature (tight ink-box trim), renderCheckmark (bezier ✓),
+  1506→    trimCanvasToInk, removeWhiteBackground (corner-sampled paper color,
+  1507→    tolerance + soft alpha ramp, only fires on light bg).
+  1508→  - signature-store.ts: localStorage "docopdf.signatures" (cap 8, ~1.2MB
+  1509→    guard, quota-safe); quick stamps are EPHEMERAL session entries (a shared
+  1510→    computer never accumulates dates); event-bus like logo-store;
+  1511→    signatureAssetFiles() → File[] "sig-<id>.png" rides collectAssets (no
+  1512→    image data in options).
+  1513→  - signature-dialog.tsx: Draw (smoothed quadratic strokes, undo/clear,
+  1514→    ink swatches, pen width, DPR-aware canvas + ResizeObserver) | Type
+  1515→    (5 font chips w/ live preview, ink, default = fill-profile name) |
+  1516→    Upload (auto white-bg removal switch, trim, 12MB guard).
+  1517→  - surface.tsx: page preview (fill-out-pdf skeleton + shared strip/zoom),
+  1518→    click-to-place when armed, per-placement boxes with drag (pointer
+  1519→    capture) / SE resize handle / rotate handle (atan2 + 15° snap + live
+  1520→    angle chip) / delete button / keyboard (arrows nudge, Del removes, Esc
+  1521→    deselects); right rail = signature tray (grid, kind icons, remove) +
+  1522→    quick stamps (Date via toLocaleDateString en/hi, Name/Initials via
+  1523→    Great Vibes from the fill profile, Checkmark) + selected-placement
+  1524→    inspector (pages select + range reveal, size/rotation/opacity sliders).
+  1525→    Placements live in options "p:<fileId>" (+ "sigkey") — replacing the
+  1526→    file can never leak placements (fill-out-pdf's epoch-key pattern).
+  1527→  - worker.ts: fails fast (no placements/missing asset/invalid range) →
+  1528→    embeds each sig PNG once → placementToDrawBox per target page →
+  1529→    drawImage(rotate, opacity) → save(useObjectStreams) → "<name>-signed.pdf".
+  1530→  - config.ts: options [] (split-tool pattern), collectAssets, features/FAQ
+  1531→    bilingual, chain → compress-pdf (live) + lock-pdf (soon) + view-pdf.
+  1532→- SHARED PROTOCOL BUG FIXED: parsePageSpec("8-") documented as open range
+  1533→  (8→last) but treated as single page 8 — dash-without-end now = open
+  1534→  range (end=pageCount). Affects watermark/merge/pdf-to-txt/pdf-to-images/
+  1535→  sign (5 tools) — docstring was right, code was wrong.
+  1536→- i18n: full "sign" section (69 keys) en+hi with PERFECT key-tree parity;
+  1537→  added missing tool.pagesPlaceholder (was rendering as a raw key in
+  1538→  crop/wm/pn/hf/sign range inputs — pre-existing bug, one key fixes 5 tools);
+  1539→  removed orphan tool.errorFont debug key (en-only; real key pn.errorFont).
+  1540→- QA (fresh contexts; 0 console errors during scripted walk; toasts that
+  1541→  auto-dismiss were the only thing needing MutationObserver-free checks):
+  1542→  ① GOLDEN PATH: upload 4-page fixture (pages 2/3 have /Rotate 90/270) →
+  1543→    Type "R. K. Sharma" (Great Vibes) → click-to-place → drag to 30%/40% →
+  1544→    resize 25%→35% → rotate handle to 90° (snap) → inspector Home+arrows to
+  1545→    -12° → run → 20KB output. STRUCTURAL: cm matrix decoded by hand —
+  1546→    dw=208.348 (=0.35×A4 width), rotation matrix = cos/sin(12°) EXACT,
+  1547→    anchor (81.602, 460.348) matches hand computation to 4 decimals.
+  1548→  ② EVERY-PAGE mode: placement on the /Rotate 90 page → output has the
+  1549→    image on all 4 pages; page 2 cm: translate(232.233, 416.736) + [0,1,-1,0]
+  1550→    (=90° CCW) EXACT; page 3 (/Rotate 270): translate(363.047, 425.154) +
+  1551→    [0,-1,1,0] EXACT — the display↔user mapping is provably correct.
+  1552→  ③ Deterministic pixel check (threshold lum<35 on the app's own viewer
+  1553→    canvases): signature bbox x 50.4–73.5% / y 33.7–36.4% on portrait page 1
+  1554→    AND both rotated landscape pages — expected 49.5–74.5% / 33–37% ✓
+  1555→    upright on rotated pages.
+  1556→  ④ DRAW: 3 synthetic strokes on the pad → saved → placed → run → pdftoppm
+  1557→    render + VLM confirm at 68%/62%, upright, clean.
+  1558→  ⑤ UPLOAD: 640×240 white-bg PNG → bg removal verified at PIXEL level
+  1559→    (4 corners alpha=0, 74,013 transparent px, 7,199 ink px kept, trimmed
+  1560→    to 514×158) → placed + run OK.
+  1561→  ⑥ QUICK STAMPS: date "9 Oct 2026" + checkmark placed + verified in
+  1562→    rendered output at exact spots (VLM); Name with no profile → correct
+  1563→    toast. Stamps are session-only (gone after reload — verified).
+  1564→  ⑦ PERSISTENCE: signature library survives reload (localStorage).
+  1565→  ⑧ HINDI UI end-to-end: switch locale → tray/hints/buttons Hindi; typed
+  1566→    "राम कुमार शर्मा" with Kalam (हिंदी) font → placed → run → output
+  1567→    renders Devanagari correctly (VLM: no tofu, upright, intact page).
+  1568→  ⑨ ENCRYPTED PDF: getPdfPageCount rejects PasswordException → amber
+  1569→    "password-protected. Unlock it first" card (was: infinite spinner +
+  1570→    raw "wm.previewLoading" key — both bugs fixed this round).
+  1571→  ⑩ MOBILE 375×812: no h-scroll, rail below preview, touch placement
+  1572→    works, CTA visible (VLM 8.5/10 design review: "production-ready").
+  1573→  ⑪ Deletion flows: box × button (2→1), keyboard Delete on focused box
+  1574→    (1→0), tray remove (4→3 incl. placement cascade) all verified.
+  1575→  ⑫ Security category: Sign PDF live, no Soon badge. Registry: 23 live.
+  1576→- tsc clean, eslint clean, smoke-sign.ts 71/71 PASS (corner invariants for
+  1577→  every rotation × rotation, center round-trips, targets, defensive parse).
+  1578→
+  1579→Stage Summary:
+  1580→- Live tools: 23 (22 + sign-pdf). The biggest P1 gap (pop 88) is closed.
+  1581→  Remaining P1 gaps by pop: lock-pdf(78), unlock-pdf(75), scan-pdf(62),
+  1582→  convert-to-pdf(58), convert-from-pdf(44), heic-to-jpg(36),
+  1583→  generate-password(26), webp-to-jpg(24), heic-to-png(20), webp-to-png(14).
+  1584→- ENGINE INSIGHTS (pin these): ① display fractions (what CSS positions)
+  1585→  are the right placement model — the worker's displayFracToUserPoint is
+  1586→  corner-walked per /Rotate and PROVEN exact on R0/90/270 outputs; total
+  1587→  pdf-lib angle = pageRotation - cssRotation. ② pdf.js getDocument without
+  1588→  onPassword REJECTS with PasswordException (tested) — surfaces that gate
+  1589→  their preview on pageCount must catch it or they hang in "loading".
+  1590→  ③ Radix Tabs/Select/Slider need NATIVE CDP clicks/keys (synthetic
+  1591→  element.click() is ignored) — slider keyboard works (Home + arrows).
+  1592→- INFRA: scripts/dev-daemon.py (double-fork) is THE way to run the dev
+  1593→  server — plain background invocations get reaped. Documented in this log
+  1594→  for every future round.
+  1595→- Assets: /public/fonts/sign/*.woff2 (5 fonts, 295KB, lazy). QA fixtures:
+  1596→  download/qa-sign-fixture.pdf (4 pages, /Rotate 90+270), qa-sign-upload.png,
+  1597→  outputs qa-sign-signed-{page1,all,stamps}.pdf + qa-sign-hindi-output.pdf.
+  1598→  Screenshots qa-sign-01…23-*.png.
+  1599→- Suggested commit: "feat: Sign PDF (PRD §7.6) — draw/type/upload signature
+  1600→  creation (5 script fonts incl. Kalam Devanagari, white-bg removal, ink
+  1601→  trim), click-to-place with drag/resize/rotate handles + 15° snap, quick
+  1602→  stamps (date/name/initials/checkmark, session-only), localStorage
+  1603→  library, per-placement pages/size/rotation/opacity, /Rotate-exact
+  1604→  placement engine (71 smoke assertions), encrypted-PDF card, EN+HI;
+  1605→  fix: parsePageSpec open ranges '8-', missing tool.pagesPlaceholder key,
+  1606→  orphan errorFont"
+  1607→- Next per plan (one per round): generate-password (small, Web Crypto —
+  1608→  no-file tool needs a viewerOnly-like config mode), then lock-pdf/unlock
+  1609→  (need pdf encryption: @cantoo/pdf-lib or qpdf-wasm research), scan-pdf
+  1610→  (camera), HEIC/WEBP converters (WASM decoders).
+  1611→- Risks/debt (small): ① the aside Options card is near-empty for surface
+  1612→  tools (options: []) — a real option (e.g. "signature line") would earn
+  1613→  its space; ② a signature dragged to the very bottom edge may sit under
+  1614→  the sticky CTA bar until scrolled (z-index stacking, VLM-noted);
+  1615→  ③ only 5 of the PRD's 8 script fonts shipped (bundle-conscious);
+  1616→  ④ "encrypted storage" for signatures is plain localStorage (PRD wording)
+  1617→  — honest device-only copy instead; ⑤ view-pdf PasswordException prompt
+  1618→  exists there, but the shared renderPdfThumbnail has no password path —
+  1619→  other preview tools would need the same catch sign-pdf now has.
+  1620→
+  1621→---
+  1622→Task ID: P3.14
+  1623→Agent: Z.ai Code (main orchestrator, session web-3597fa1e)
+  1624→Task: Ship the Redact PDF tool (PRD §8.4, security category, pop 28) —
+  1625→true redaction with search-based marking, manual boxes, verified-gone output.
+  1626→Also recovered the lost ResultView "Start over" feature for ALL tools.
+  1627→
+  1628→Work Log:
+  1629→- STATE RECONCILIATION (important for every future round): the previous
+  1630→  session's summary claimed "44 tools live, P4.5 Start-over complete" — the
+  1631→  DISK disagrees: worklog ended at P3.13, registry had 23 enabled tools, and
+  1632→  ResultView had NO start-over button. Disk is always the source of truth;
+  1633→  this round shipped against the disk state (P3 plan: one tool per round).
+  1634→- Dev server was DOWN at session start; restarted via scripts/dev-daemon.py
+  1635→  (double-fork — the only way processes survive invocation reaping).
+  1636→- Shipped tools/redact-pdf/ (5 files):
+  1637→  - engine.ts (PURE, 49/49 smoke): RedactMark model (display fractions,
+  1638→    sign's proven placement geometry); 4 Indian-pattern regexes with
+  1639→    look-around guards (Aadhaar 12-digit grouped/solid, PAN, IN mobile
+  1640→    incl. +91/91- and 5+5 split forms, email) — 16-digit order ids and
+  1641→    landlines rejected; termMatches (case-insensitive); buildPieces/
+  1642→    buildLines with synthetic-space joining whose segment offsets map
+  1643→    every character back to its covering piece; pieceUserBox (rotated
+  1644→    glyph runs via advance/up vectors); userRectToDisplay (pdf.js viewport
+  1645→    transforms, R0/90/180/270 hand-verified); displayRectToFraction
+  1646→    (clamped + padded); parseRedactMarks (defensive: clamps, dedupes,
+  1647→    caps 600, drops bad kinds/pages).
+  1648→  - search.ts: extractPageTexts (main-thread pdf.js via the shared
+  1649→    loadPdfjs, WeakMap cache per File, failed parses don't poison the
+  1650→    cache) + findSensitiveMarks (patterns+terms → enabled marks) +
+  1651→    hasNoText (scan detection for the honest hint).
+  1652→  - surface.tsx: sign-skeleton preview (header/strip/zoom/canvas +
+  1653→    PasswordException card) with: found matches as translucent red
+  1654→    switches (click = keep/skip, chip shows the kind), manual boxes drawn
+  1655→    by dragging empty canvas (drag/resize/delete + keyboard nudge), a
+  1656→    selected-mark inspector (kind/text/page/state + keep/redact/delete),
+  1657→    Find rail (4 preset toggles + custom terms textarea + Find & mark +
+  1658→    per-kind count chips + Clear found), how-it-works security card.
+  1659→    Marks live in options "m:<fileId>" + "mkey" (epoch-key — replacing
+  1660→    the file can never leak boxes). Live-drag state commits once on
+  1661→    release (sign's pattern).
+  1662→  - worker.ts (the security core): pdf.js renders each marked page at
+  1663→    the chosen DPI (40MP pixel cap), paints OPAQUE boxes onto the raster
+  1664→    BEFORE encoding, then rebuilds the output as a NEW PDFDocument —
+  1665→    unmarked pages copied vector-perfect (copyPages), marked pages become
+  1666→    JPEG-only addPage([displayDims]) draws. Because nothing from a marked
+  1667→    page is ever copied, its content streams, annotations, widgets and
+  1668→    form values never enter the file (in-place surgery would leave
+  1669→    orphaned-but-serialized objects — pdf-lib writes orphans; the
+  1670→    rebuild sidesteps the whole problem). VERIFICATION STEP: the saved
+  1671→    bytes are re-opened with pdf.js and every marked page must extract
+  1672→    ZERO text or the run fails honestly (tool.errorRedactVerify).
+  1673→  - config.ts: schema options fill the shared aside (paying off P3.13's
+  1674→    empty-options debt): Flatten quality 96/150/300 DPI + box colour
+  1675→    black/white (both opaque); features + FAQ honestly explain the
+  1676→    flatten model; chains → view/remove-metadata/compress/pdf-to-jpg.
+  1677→- Wiring: registry redact-pdf enabled: true (24 live), configs.ts +
+  1678→  surfaces.tsx entries.
+  1679→- i18n: full "redact" section (44 keys) en+hi with PERFECT key-tree
+  1680→  parity + tool.errorRedactNoMarks / tool.errorRedactVerify. Merge
+  1681→  script scripts/i18n-redact.py (same pattern as i18n-watermark).
+  1682→- RECOVERED LOST FEATURE (all tools): ResultView "Start over with a new
+  1683→  file" — shell startOver() clears outputs, files, options (per-file
+  1684→  marks/placements/ranges die so nothing leaks across documents) and
+  1685→  returns to the landing state on the SAME tool page; button rendered
+  1686→  under the What-next card (RotateCcw icon). i18n result.startOver en+hi.
+  1687→- Fixed along the way: sign-pdf + redact grid class was mangled
+  1688→  ("grid-cols-inmax" — actually correct on disk; the READ pipeline eats
+  1689→  "[m" sequences — beware when grepping Tailwind arbitrary-value classes).
+  1690→- QA (agent-browser, fresh contexts; ONE benign console warning the whole
+  1691→  session — a pdf.js font-load race during cleanup, everything rendered):
+  1692→  ① GOLDEN PATH: upload 3-page fixture (page 1 = Aadhaar/PAN/phone/
+  1693→  email lines, page 2 = /Rotate 90 with phone+email, page 3 = clean
+  1694→  text) → Find & mark → "6 matches marked on 2 pages" → run → output
+  1695→  downloaded. STRUCTURAL VERIFY (bun + pdf-lib + zlib): zero text
+  1696→  operators on ALL flattened pages, zero font programs, zero annotations,
+  1697→  AcroForm absent, one JPEG XObject per page, and NO sensitive string at
+  1698→  byte level (plain latin1 + UTF-16BE, decompressed streams included).
+  1699→  ② PIXEL VERIFY (in-app pdf-to-jpg on the output, 1240×1754): all four
+  1700→  match rows 65-77% solid BLACK at the exact expected fractions (x 10%,
+  1701→  y 13/16/19/22%); clean areas <1% dark; VLM confirms 4 black rectangles,
+  1702→  ORCHID line + heading + name still readable, text sharp.
+  1703→  ③ ROTATED PAGE: page 2 rasterizes landscape (842×595, rotation
+  1704→  normalized to 0); its phone+email matches paint as two VERTICAL bands at
+  1705→  display x 84.6-88.7% = user y 712-747 — the head-tilted reading of a
+  1706→  /Rotate 90 page is preserved and covered exactly; title (user y 780)
+  1707→  stays readable.
+  1708→  ④ SELECTIVE REDACTION: page-2 matches toggled OFF before run → output
+  1709→  page 2 KEEPS /Rotate 90 + its vector text (phone/email strings found in
+  1710→  the DECOMPRESSED stream — exactly the kept content), page 3 fully
+  1711→  selectable, page 1 flattened + its strings gone everywhere.
+  1712→  ⑤ CUSTOM TERM + TOGGLE: "orchid" term found + marked; toggled off →
+  1713→  dashed muted box, run keeps the line (verified in output1: ORCHID
+  1714→  readable). Manual box drag → box at EXACTLY the drawn fractions
+  1715→  (30.05%, 19.79%, 31.87%, 26.93%) → 100% solid black in output page 3.
+  1716→  ⑥ HINDI end-to-end: workspace + find + run + result + Start-over all
+  1717→  Devanagari; 6 मैच चिह्नित; आपकी फ़ाइल तैयार है!
+  1718→  ⑦ MOBILE 375×812: no h-scroll, clean vertical stack, red boxes + CTA
+  1719→  visible (VLM: "well-optimized, no critical rendering errors").
+  1720→  ⑧ ENCRYPTED: qa-p311-locked.pdf → amber "password-protected. Unlock it
+  1721→  first" card (no spinner hang).
+  1722→  ⑨ SCAN: image-only fixture → Find → "No matches found" + "no
+  1723→  selectable text — looks like a scan. Draw boxes instead." hint.
+  1724→  ⑩ START OVER (new): result → "नई फ़ाइल के साथ शुरू करें" → landing with
+  1725→  fresh dropzone; options reset (marks can't leak to the next file).
+  1726→  ⑪ Security category: Redact PDF live, no Soon badge.
+  1727→  ⑫ Desktop VLM design review: 8.5/10 "production-ready" (hierarchy 9,
+  1728→  color 9; notes: slight spacing under Find button, thumbnails floating).
+  1729→- smoke-redact.ts 49/49 PASS; eslint clean; tsc clean (after prisma
+  1730→  generate); dev.log clean (the @swc/helpers module-not-found noise at
+  1731→  daemon startup predates this round — known Next16/bun quirk, app fine).
+  1732→
+  1733→Stage Summary:
+  1734→- Live tools: 24 (23 + redact-pdf). PRD §8.4 Redact delivered with a
+  1735→  provably-secure flatten model — see the worker docstring for why
+  1736→  rebuild-beats-surgery (orphan serialization).
+  1737→- ENGINE INSIGHTS (pin these): ① pdf.js text items' transform is USER
+  1738→  space; item.width is in user units; map glyph boxes through
+  1739→  viewport.transform for display fractions — R0/90/180/270 verified by
+  1740→  hand in smoke §5. ② pdf-lib serializes ORPHANED objects — deleting a
+  1741→  dict entry does NOT remove data from the file; only rebuilding into a
+  1742→  fresh context (copyPages/addPage) guarantees the data never existed.
+  1743→  ③ pdf-lib normalize() sets empty Font/Annots placeholders on pages —
+  1744→  presence ≠ leak; check entry counts. ④ The READ/grep pipeline eats
+  1745→  "[m" — never trust greps over Tailwind arbitrary-value classes.
+  1746→- RECOVERED: ResultView Start-over (was in the lost pre-P3.14 worklog
+  1747→  summary as "P4.5, all tools" — disk had nothing; now real for all tools).
+  1748→- Assets: QA fixtures download/qa-redact-fixture.pdf (3 pages: sensitive
+  1749→  text, /Rotate 90, clean), qa-redact-scan.pdf (no text layer); outputs
+  1750→  qa-redact-output.pdf (all-pages redact), qa-redact-output2.pdf
+  1751→  (selective), qa-redact-page{1,2,3}.jpg (pixel-proof). Screenshots
+  1752→  /tmp/redact-01…13 (landing, workspace, found, mobile, hindi, encrypted,
+  1753→  scan, final-desktop).
+  1754→- Suggested commit: "feat: Redact PDF (PRD §8.4) — find sensitive text
+  1755→  (Aadhaar/PAN/phone/email patterns + custom terms, coverage-preserving
+  1756→  line joining), review boxes + manual draw/drag/resize, flatten-rebuild
+  1757→  output (marked pages → opaque-box JPEG pages in a fresh doc: text
+  1758→  layers, annotations, form values never copied), post-save zero-text
+  1759→  verification, DPI + colour options in shared panel; EN+HI 46 keys;
+  1760→  smoke 49/49; feat: ResultView start-over for all tools (options+
+  1761→  files+outputs reset); fix: none needed on disk (grep artifact)"
+  1762→- Next per plan (one per round): generate-password (small, Web Crypto,
+  1763→  needs a viewerOnly-like no-file mode), then lock-pdf/unlock-pdf
+  1764→  (@cantoo/pdf-lib or qpdf-wasm research), scan-pdf (camera),
+  1765→  HEIC/WEBP converters (WASM decoders).
+  1766→- Risks/debt (small): ① redaction search cannot span line breaks (a
+  1767→  12-digit Aadhaar split across two lines is missed — line-scoped by
+  1768→  design; FAQ could mention it); ② marked pages flatten at JPEG q0.92 —
+  1769→  photographic scans at 300 DPI produce large outputs (fine for KYC-style
+  1770→  docs; a PNG path could be added for text-heavy pages); ③ the worker
+  1771→  re-parses the output per verification page (one pdf.js doc per page —
+  1772→  could reuse a single doc handle); ④ unreferenced XObjects with hidden
+  1773→  text in the ORIGINAL are never copied anyway (rebuild model) — but the
+  1774→  FAQ wording stays scoped to what we verify (no text on marked pages).
+  1775→
+  1776→---
+  1777→Task ID: P3.15
+  1778→Agent: main (Z.ai Code)
+  1779→Task: Status report to user + next planned tool: GENERATE PASSWORD (PRD §8.4 security row, line 884) — the first NO-FILE tool.
+  1780→
+  1781→Work Log:
+  1782→- User asked for a status report (24 tools live at round start). Delivered
+  1783→  the full done/remaining breakdown, then continued with the plan's next
+  1784→  tool: generate-password. Re-armed the disabled 15-min webDevReview cron
+  1785→  (old job 455636 deleted → new job 456137, priority 1).
+  1786→- NEW ARCHITECTURE PATTERN — "noFile" tools (config-types.ts): config
+  1787→  `noFile: true` renders the tool's SURFACE directly on the LANDING page in
+  1788→  place of the DropZone. No upload, no workspace/processing/result phases,
+  1789→  no sticky CTA, no options aside (surfaceOnly = viewerOnly || noFile).
+  1790→  Plus optional `config.howKeys` for custom 3-step landing copy (defaults
+  1791→  stay tool.how1-3 / view.how1-3). This is the template for every future
+  1792→  generator-style tool (QR code, invoice number generator etc.).
+  1793→- tools/generate-password/ (3 files):
+  1794→  - engine.ts (PURE, smoke 56/56): randomInt via Web Crypto
+  1795→    crypto.getRandomValues with REJECTION SAMPLING (no modulo bias —
+  1796→    chi-square < 30 over 70k draws); generateRandom (one char from EVERY
+  1797→    enabled set first + unbiased Fisher-Yates shuffle to hide structure;
+  1798→    length clamped 8-64; avoid-ambiguous strips 0O1lI|'"{}[];:,. and
+  1799→    friends); generatePronounceable (onset×nucleus×coda syllable soup —
+  1800→    entropy counted per actual randomInt draw); generatePassphrase with
+  1801→    256 EN + 256 HI common words (both = 512, i.e. exactly 8/8/9 bits per
+  1802→    word), separators -._/space/none, capitalize (+1 bit/word), addNumber
+  1803→    (2-digit on a random word, honest bits). classifyStrength bands
+  1804→    (<28/36/60/80 → 0-4), crackSeconds = 2^(bits-1)/1e10 (GPU offline
+  1805→    rig, honest bad-case), crackBucket/crackCount for localized copy,
+  1806→    passwordStats checklist helper.
+  1807→  - surface.tsx: the whole product. Big mono output (masked ••• when
+  1808→    hidden), Copy (timeout-RACED clipboard writeText → 800ms → execCommand
+  1809→    fallback → toast either way — see clipboard insight below),
+  1810→    Regenerate (archives outgoing value), Show/Hide; strength card
+  1811→    (5-segment colored meter + bits + crack estimate); 3 mode tabs;
+  1812→    random controls (length slider 8-64 + 4 charset chips — last one
+  1813→    can't be turned off + avoid-ambiguous switch); pronounceable length
+  1814→    slider; passphrase controls (words 3-8, EN/HI/Both, 5 separators,
+  1815→    capitalize + addNumber switches); live checklist chips; session-only
+  1816→    history (last 6, Clear, dies with the tab); privacy line.
+  1817→    STATE PATTERN (react-hooks/set-state-in-effect-proof): ONE AllOpts
+  1818→    object + generateFrom dispatcher; every option change regenerates
+  1819→    inside its own event handler (applyOpts/patchRandom/patchPhrase) —
+  1820→    NO regenerate-effect at all; initial value via lazy useState
+  1821→    initializer.
+  1822→  - config.ts: noFile + howKeys + 5 features + 3 FAQ (L10n inline).
+  1823→- Wiring: registry enabled:true (25 live), configs.ts + surfaces.tsx.
+  1824→- i18n: full "gp" section — 57 top-level keys + 9 crack.* buckets, en+hi
+  1825→  PERFECT key-tree parity (955 = 955 total keys each). Merge script
+  1826→  scripts/i18n-password.py. FAQ/Q&A typo round: nested-q mistake fixed.
+  1827→- QA (agent-browser; smoke 56/56; eslint clean; tsc clean; dev.log clean):
+  1828→  ① LANDING = SURFACE: #/tool/generate-password renders the generator
+  1829→  immediately (no dropzone): password s0j!%V0sEuLj>2p!, Excellent, 103
+  1830→  bits (= 16·log2(83)), "tens of thousands of years" crack line, all
+  1831→  three modes + chips visible. ② PASSPHRASE: EN 4-word dash-joined;
+  1832→  हिंदी words (फल-गुलाब-नाग-गर्म); Both mixed + capitalize + addNumber →
+  1833→  "Bamboo-Frost-छाया-Apron64"; space separator → "Glacier चाँद कहानी
+  1834→  Tulip86". ③ RANDOM: pointer-drag length slider 16→58 (regenerates at
+  1835→  58 chars); End-key path also exercised. ④ COPY: eval-click (no user
+  1836→  activation) → after the 800ms race → honest failure toast "Could not
+  1837→  copy…" (execCommand needs a gesture — correct fallback design);
+  1838→  NATIVE CDP click → "Copied!" button + "Password copied to clipboard"
+  1839→  toast — both paths give feedback (the race exists because headless
+  1840→  AND some Android WebViews leave writeText() pending forever).
+  1841→  ⑤ REGENERATE ×2 → session history rows accumulate (2 entries
+  1842→  verified). ⑥ HIDE/SHOW → ••• mask + restore. ⑦ HINDI locale: full
+  1843→  Devanagari UI, hi passphrase "भोर39 संध्या झींगुर सुबह". ⑧ MOBILE
+  1844→  375×812: no h-scroll; VLM 8/10 (thin slider track note only).
+  1845→  ⑨ CATEGORY #/tools/security: "पासवर्ड बनाएँ" card listed, NO Soon
+  1846→  badge. ⑩ Desktop VLM final: 8.5/10 "clean, professional, highly
+  1847→  functional… entropy meter effectively builds trust". ⑪ Console: zero
+  1848→  errors/warnings all session.
+  1849→
+  1850→Stage Summary:
+  1851→- Live tools: 25 (24 + generate-password). PRD §8.4 Generate password
+  1852→  delivered: length 8-64, charsets, avoid-ambiguous, pronounceable,
+  1853→  passphrase (HI/EN/Both 256-word lists), copy button, strength meter —
+  1854→  Web Crypto only, nothing stored (session history included).
+  1855→- ARCHITECTURAL GAIN: the noFile surface-on-landing pattern + howKeys —
+  1856→  reusable for every file-less tool coming in the catalog (QR generator,
+  1857→  etc.).
+  1858→- CLIPBOARD INSIGHT (pin): navigator.clipboard.writeText can HANG (never
+  1859→  resolve) in browsers without a permission event (headless, some
+  1860→  Android WebViews). ALWAYS race it with a timeout before falling back to
+  1861→  execCommand — otherwise the copy button gives zero feedback. Also:
+  1862→  Radix shadcn toasts render as ol/li (NOT [data-sonner-toast]) — the
+  1863→  QA toast selector was wrong, not the toast.
+  1864→- STATE INSIGHT (pin): "regenerate on options change" WITHOUT an effect:
+  1865→  one AllOpts object + generation inside the change handlers themselves;
+  1866→  initial value from a lazy useState initializer. Lint-clean under
+  1867→  react-hooks/set-state-in-effect.
+  1868→- Engine assets: smoke-password.ts 56/56; scripts/i18n-password.py;
+  1869→  QA screenshots /tmp/gp-01…07 (landing, clean, copy-toast, hindi,
+  1870→  mobile, category, final-desktop).
+  1871→- Suggested commit: "feat: Generate Password (PRD §8.4) — Web Crypto
+  1872→  random/pronounceable/passphrase (256-word HI+EN lists), honest
+  1873→  strength meter + offline crack estimate, timeout-raced clipboard copy,
+  1874→  session-only history; new noFile tool pattern (surface-on-landing +
+  1875→  howKeys); EN+HI 66 keys; smoke 56/56"
+  1876→- Next per plan (one per round): lock-pdf/unlock-pdf (@cantoo/pdf-lib or
+  1877→  qpdf-wasm research first — encryption is the P1 gap), then scan-pdf
+  1878→  (camera), then HEIC/WEBP converters (WASM decoders).
+  1879→- Risks/debt (small): ① word lists are 256/256 — fine for passphrases but
+  1880→  an EFF-style 7k list would push per-word entropy to ~12.9 bits
+  1881→  (documented trade-off, count kept exact for honest math); ② pronounce
+  1882→  entropy counts pool offers, not English phonotactics (documented in
+  1883→  code); ③ no export/download of the password (by design — copy only).
+  1884→
+  1885→---
+  1886→Task ID: P3.16
+  1887→Agent: main (Z.ai Code)
+  1888→Task: LOCK PDF + UNLOCK PDF (PRD §8.4 security, lines 848-857) — AES-256
+  1889→encryption pair. The P1 catalog gap closed.
+  1890→
+  1891→Work Log:
+  1892→- Research: @cantoo/pdf-lib 2.11.1 chosen (pdf-lib fork, MIT, actively
+  1893→  maintained, AES-256/V5/R6 encryption). qpdf-wasm 0.1.0 exists but is
+  1894→  pre-1.0; @cantoo won on API + maintenance. Installed alongside pdf-lib
+  1895→  (both coexist; only lock/unlock workers import @cantoo).
+  1896→- PROTOTYPE FINDINGS (pinned for everyone):
+  1897→  ① @cantoo encrypt() produces AES-256 V5/R6/AESV3 by default, AES-128
+  1898→  V4/R4/AESV2 optional — exactly the PRD spec.
+  1899→  ② NAIVE UNLOCK IS A TRAP: load(password)+save() keeps the ORIGINAL
+  1900→  xref-stream object serialized in the output, so stale "/Encrypt N 0 R"
+  1901→  trailer entries survive — plain pdf-lib then rejects the "unlocked"
+  1902→  file as still-encrypted (chain tools break). FIX = redact rebuild
+  1903→  pattern: fresh PDFDocument + copyPages (+ PDFObjectCopier for the
+  1904→  AcroForm) writes its own trailer — verified zero "/Encrypt" bytes.
+  1905→  ③ @CANTOO PARSE BUG: re-parsing an encrypted file returns GARBAGE for
+  1906→  trailer Info strings (title/author) — but the FILE ITSELF IS CORRECT:
+  1907→  pdf.js reads Title/Author perfectly. So lockPdf saves honest files;
+  1908→  unlockPdf must NOT copy Info from the tainted parse — the surface
+  1909→  reads metadata via pdf.js and the worker re-applies it with fresh
+  1910→  setters (custom keys dropped, standard six preserved).
+  1911→  ④ Form fields + filled values survive the rebuild ONLY with the
+  1912→  manual PDFObjectCopier AcroForm copy (plain copyPages drops them).
+  1913→  ⑤ Wrong password throws Error("Password incorrect"); no password on
+  1914→  encrypted throws EncryptedPDFError; owner-only files open with the
+  1915→  EMPTY user password "" (both unlock modes handled).
+  1916→- Shipped tools/lock-common/security.ts (PURE, smoke 32/32): LOCK_IDS +
+  1917→  UNLOCK_IDS option contracts; SecurityError codes; lockPdf (validate
+  1918→  6+ chars, reject already-locked, permissions map incl. a11y +
+  1919→  documentAssembly:false); unlockPdf (detect → password → rebuild →
+  1920→  meta re-apply); verifyLocked (opens with pw AND refuses without);
+  1921→  verifyUnlocked (zero "/Encrypt" bytes + plain reload); estimateTypedBits
+  1922→  (charset entropy + common-password penalty for the surface meter).
+  1923→- tools/lock-pdf/: worker (parse → lock → verify → -locked.pdf), config
+  1924→  (features/FAQ honest about permissions being reader-enforced), surface
+  1925→  (the password cockpit: open pw + eye toggle + live 5-segment strength
+  1926→  meter + one-tap Generate card [reuses generate-password engine,
+  1927→  avoidAmbiguous 16 chars] + confirm field w/ setCustomValidity mismatch
+  1928→  + owner pw optional + 6 permission switches + AES-256/128 selector +
+  1929→  PRD "recover nahi hoga" amber warning; CTA gated at <6 chars via
+  1930→  setRunBlocked).
+  1931→- tools/unlock-pdf/: worker (meta JSON in, unlock, verify, -unlocked.pdf),
+  1932→  config (features/FAQ incl. honest "no cracking" policy), surface
+  1933→  (pdf.js probe detects the lock kind: PasswordException → required
+  1934→  password field with DEBOUNCED live check + green "password looks
+  1935→  right" badge; opens-freely → "restrictions will be stripped" card;
+  1936→  unreadable → repair suggestion; policy card always visible; metadata
+  1937→  snapshot rides options as unlock.meta JSON).
+  1938→- Wiring: registry lock-pdf + unlock-pdf enabled:true (27 live),
+  1939→  configs.ts + surfaces.tsx.
+  1940→- i18n: lock (30) + unlock (13) + 5 tool.error* keys, en+hi PERFECT
+  1941→  parity (1003 = 1003). Merge script scripts/i18n-lock.py.
+  1942→- Lint round: react-hooks/set-state-in-effect in the unlock surface —
+  1943→  fixed with the remove-meta file-identity tagging pattern (probe/pages
+  1944→  state carries its File; swapped files render "checking" with no
+  1945→  synchronous reset). UserPermissions type isn't re-exported by @cantoo
+  1946→  (structural inline type); setKeywords takes string[] (comma-split).
+  1947→- QA (agent-browser; smoke 32/32 + password smoke 56/56 regression;
+  1948→  eslint clean; tsc clean; dev.log clean; console: zero errors):
+  1949→  ① LOCK GOLDEN PATH: fixture (2 pages, text + filled form + title/
+  1950→  author) → typed "Monsoon#2026!" → meter Excellent 85 bits → run →
+  1951→  result. OUTPUT STRUCTURALLY VERIFIED: /Encrypt present, AES-256
+  1952→  V5/R6/AESV3, /P -1036 (restrictions), opens with password (2 pages),
+  1953→  form fields + "Ramesh Kumar" value survive, pdf.js no-password =
+  1954→  PasswordException, with-password Title "Salary Slip October" intact,
+  1955→  page text intact.
+  1956→  ② Generate button: suggests 16-char avoid-ambiguous password
+  1957→  ("jE5yVg>+%q=5Hq_~") → "Use this" fills the field.
+  1958→  ③ SHORT PASSWORD: 5 chars → CTA disabled + "at least 6" hint.
+  1959→  ④ UNLOCK GOLDEN PATH: the locked output → password field appears
+  1960→  (probe detected) → wrong pw → no badge; correct pw → green "looks
+  1961→  right" badge → run → OUTPUT VERIFIED: ZERO /Encrypt bytes, plain
+  1962→  pdf-lib opens (chain-compat), forms + values survive, Title survives
+  1963→  (pdf.js meta path!), pdf.js opens freely, text intact.
+  1964→  ⑤ OWNER-ONLY: restrictions-only fixture → "No open password needed"
+  1965→  + strip card → run → verified clean + forms + title.
+  1966→  ⑥ ERROR HONESTY: wrong pw → "That password is not correct."; locking
+  1967→  a locked file → "already password-protected — unlock it first";
+  1968→  unlocking a plain file → "no password — nothing to unlock".
+  1969→  ⑦ HINDI: result + start-over + lock landing all Devanagari (आपकी
+  1970→  फ़ाइल तैयार है, नई फ़ाइल के साथ शुरू करें, पासवर्ड लगाएँ).
+  1971→  ⑧ MOBILE 375×812: no h-scroll; VLM 8/10.
+  1972→  ⑨ CATEGORY #/tools/security: both cards live, no Soon badges.
+  1973→  ⑩ DESKTOP VLM: 8.5/10 "highly polished, professional… balances
+  1974→  technical complexity with an approachable aesthetic".
+  1975→  ⑪ QA LESSON (pin): after several Fast-Refresh full reloads the SPA
+  1976→  state can silently break (CTA clicks do nothing, injected script
+  1977→  fragments appear in body) — ALWAYS location.reload() before blaming
+  1978→  the app. Also never add a stopPropagation() capture listener while
+  1979→  debugging clicks — it kills React's delegated listener permanently
+  1980→  for that node.
+  1981→- Cleaned: scripts/proto-*.ts deleted (throwaway prototypes), one-off
+  1982→  verify scripts removed. Kept: smoke-lock.ts, i18n-lock.py,
+  1983→  make-lock-fixture.ts, make-owneronly.ts.
+  1984→
+  1985→Stage Summary:
+  1986→- Live tools: 27 (25 + lock-pdf + unlock-pdf). PRD §8.4 Protect/Unlock
+  1987→  delivered: AES-256 (default)/AES-128, open+owner passwords, 6
+  1988→  permission switches, strength meter + generate, both unlock modes
+  1989→  (known password / owner restrictions), verified outputs, honest
+  1990→  errors — all on-device.
+  1991→- DEPENDENCY ADDITION: @cantoo/pdf-lib@2.11.1 (MIT) — first package
+  1992→  addition since Phase 2. Both workers import it; everything else keeps
+  1993→  plain pdf-lib 1.17.1.
+  1994→- ENGINE INSIGHTS pinned above (①-⑤) — especially the naive-unlock
+  1995→  xref trap and the @cantoo Info parse bug; they will matter for any
+  1996→  future encrypted-PDF work (PDF/A, repair, etc.).
+  1997→- Assets: smoke-lock.ts 32/32; QA fixtures download/qa-lock-fixture.pdf
+  1998→  + qa-owneronly.pdf; screenshots /tmp/lk-01…07 + ul-01…06 (workspace,
+  1999→  strong-pw, generated, result, wrong-pw, owner-only, hindi, mobile,
+  2000→  final-desktop).
+
+[showing lines 1-2000 of 3327; use offset=2001 with limit to continue reading]

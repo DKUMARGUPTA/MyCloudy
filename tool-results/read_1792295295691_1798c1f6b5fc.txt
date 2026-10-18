@@ -1,0 +1,816 @@
+   951→            onPointerLeave={end}
+   952→          />
+   953→        </div>
+   954→        <div className="mt-3 flex flex-wrap items-center gap-2">
+   955→          <Button type="button" variant="outline" size="sm" onClick={clear}>
+   956→            {t("editPdf.signClear")}
+   957→          </Button>
+   958→          <span className="ml-auto flex gap-2">
+   959→            <Button type="button" variant="outline" size="sm" onClick={onClose}>
+   960→              {t("common.cancel")}
+   961→            </Button>
+   962→            <Button type="button" size="sm" disabled={!hasInk} onClick={finish}>
+   963→              {t("editPdf.signDone")}
+   964→            </Button>
+   965→          </span>
+   966→        </div>
+   967→      </div>
+   968→    </div>
+   969→  );
+   970→}
+   971→
+   972→// ---------------------------------------------------------------------------
+   973→// Existing-text pieces overlay (P8.3 — click-to-edit)
+   974→// ---------------------------------------------------------------------------
+   975→
+   976→/**
+   977→ * Hover-able buttons over every harvested text piece. The wrapper is
+   978→ * pointer-events-none so gestures pass through to the overlay beneath;
+   979→ * only the buttons catch clicks. Vertical hit bands are padded to a
+   980→ * comfortable minimum (a raw 12pt line is ~16px on screen — too thin), so
+   981→ * the band is CENTRED on the piece to stay honest about which line you
+   982→ * hit. Keyboard users tab through pieces in reading order.
+   983→ */
+   984→export function TextPieceButtons({
+   985→  pieces,
+   986→  dispW,
+   987→  dispH,
+   988→  onPick,
+   989→}: {
+   990→  pieces: HarvestPiece[];
+   991→  dispW: number;
+   992→  dispH: number;
+   993→  onPick: (piece: HarvestPiece) => void;
+   994→}): React.JSX.Element | null {
+   995→  const { t } = useI18n();
+   996→  if (pieces.length === 0) return null;
+   997→  return (
+   998→    <div className="pointer-events-none absolute inset-0 z-30" role="presentation">
+   999→      {pieces.map((p) => {
+  1000→        const rect = pieceRect(p);
+  1001→        const centerY = rect.y + rect.h / 2;
+  1002→        // Comfortable minimum band (display pt) centred on the piece.
+  1003→        const bandH = Math.max(rect.h, 22);
+  1004→        const top = Math.max(0, centerY - bandH / 2);
+  1005→        const label = `${t("editPdf.pieceLabel")}: ${p.str.slice(0, 60)}`;
+  1006→        return (
+  1007→          <button
+  1008→            key={p.index}
+  1009→            type="button"
+  1010→            className="pointer-events-auto absolute rounded-sm bg-transparent outline-none transition-colors hover:bg-primary/10 hover:outline-2 hover:outline-primary focus-visible:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
+  1011→            style={{
+  1012→              left: `${(rect.x / dispW) * 100}%`,
+  1013→              top: `${(top / dispH) * 100}%`,
+  1014→              width: `${(rect.w / dispW) * 100}%`,
+  1015→              height: `${(bandH / dispH) * 100}%`,
+  1016→              outlineOffset: "-1px",
+  1017→            }}
+  1018→            onClick={() => onPick(p)}
+  1019→            aria-label={label}
+  1020→            title={label}
+  1021→          />
+  1022→        );
+  1023→      })}
+  1024→    </div>
+  1025→  );
+  1026→}
+  1027→
+  1028→// ---------------------------------------------------------------------------
+  1029→// Find & replace dialog (P8.3 — same font rules as click-to-edit)
+  1030→// ---------------------------------------------------------------------------
+  1031→
+  1032→export interface FrMatchView {
+  1033→  key: string;
+  1034→  page: number;
+  1035→  /** Excerpt split around the occurrence: [before, hit, after]. */
+  1036→  before: string;
+  1037→  hit: string;
+  1038→  after: string;
+  1039→  done: boolean;
+  1040→}
+  1041→
+  1042→export function FindReplaceDialog({
+  1043→  query,
+  1044→  onQuery,
+  1045→  replacement,
+  1046→  onReplacement,
+  1047→  matchCase,
+  1048→  onMatchCase,
+  1049→  scanning,
+  1050→  scanPage,
+  1051→  scanPages,
+  1052→  matches,
+  1053→  hasQuery,
+  1054→  onReplaceOne,
+  1055→  onReplaceAll,
+  1056→  onJump,
+  1057→  onClose,
+  1058→}: {
+  1059→  query: string;
+  1060→  onQuery: (next: string) => void;
+  1061→  replacement: string;
+  1062→  onReplacement: (next: string) => void;
+  1063→  matchCase: boolean;
+  1064→  onMatchCase: (next: boolean) => void;
+  1065→  scanning: boolean;
+  1066→  scanPage: number;
+  1067→  scanPages: number;
+  1068→  matches: FrMatchView[];
+  1069→  hasQuery: boolean;
+  1070→  onReplaceOne: () => void;
+  1071→  onReplaceAll: () => void;
+  1072→  onJump: (index: number) => void;
+  1073→  onClose: () => void;
+  1074→}): React.JSX.Element {
+  1075→  const { t } = useI18n();
+  1076→  const queryRef = useRef<HTMLInputElement | null>(null);
+  1077→
+  1078→  useEffect(() => {
+  1079→    queryRef.current?.focus();
+  1080→  }, []);
+  1081→
+  1082→  useEffect(() => {
+  1083→    const onKey = (event: KeyboardEvent): void => {
+  1084→      if (event.key === "Escape") {
+  1085→        event.preventDefault();
+  1086→        onClose();
+  1087→      }
+  1088→    };
+  1089→    window.addEventListener("keydown", onKey);
+  1090→    return () => window.removeEventListener("keydown", onKey);
+  1091→  }, [onClose]);
+  1092→
+  1093→  return (
+  1094→    <div
+  1095→      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm"
+  1096→      role="dialog"
+  1097→      aria-modal="true"
+  1098→      aria-label={t("editPdf.frTitle")}
+  1099→      onPointerDown={(event) => {
+  1100→        if (event.target === event.currentTarget) onClose();
+  1101→      }}
+  1102→    >
+  1103→      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-card border border-border bg-card p-4 shadow-xl">
+  1104→        <div className="flex items-center gap-2">
+  1105→          <Replace className="size-4 text-primary" aria-hidden="true" />
+  1106→          <h3 className="text-sm font-semibold text-foreground">
+  1107→            {t("editPdf.frTitle")}
+  1108→          </h3>
+  1109→          <Button
+  1110→            type="button"
+  1111→            variant="ghost"
+  1112→            size="icon"
+  1113→            className="ml-auto size-8 rounded-btn"
+  1114→            onClick={onClose}
+  1115→            aria-label={t("editPdf.frClose")}
+  1116→          >
+  1117→            <X className="size-4" aria-hidden="true" />
+  1118→          </Button>
+  1119→        </div>
+  1120→
+  1121→        <div className="mt-3 flex flex-col gap-2.5">
+  1122→          <div className="flex flex-col gap-1.5">
+  1123→            <Label htmlFor="ed-fr-find" className="text-xs font-medium text-muted-foreground">
+  1124→              {t("editPdf.frFind")}
+  1125→            </Label>
+  1126→            <Input
+  1127→              id="ed-fr-find"
+  1128→              ref={queryRef}
+  1129→              value={query}
+  1130→              onChange={(event) => onQuery(event.target.value)}
+  1131→              placeholder={t("editPdf.frFindPlaceholder")}
+  1132→              className="h-9 rounded-btn"
+  1133→            />
+  1134→          </div>
+  1135→          <div className="flex flex-col gap-1.5">
+  1136→            <Label htmlFor="ed-fr-repl" className="text-xs font-medium text-muted-foreground">
+  1137→              {t("editPdf.frReplace")}
+  1138→            </Label>
+  1139→            <Input
+  1140→              id="ed-fr-repl"
+  1141→              value={replacement}
+  1142→              onChange={(event) => onReplacement(event.target.value)}
+  1143→              placeholder={t("editPdf.frReplacePlaceholder")}
+  1144→              className="h-9 rounded-btn"
+  1145→            />
+  1146→          </div>
+  1147→          <div className="flex items-center justify-between gap-2">
+  1148→            <Label htmlFor="ed-fr-case" className="text-xs font-medium text-muted-foreground">
+  1149→              {t("editPdf.frMatchCase")}
+  1150→            </Label>
+  1151→            <Switch
+  1152→              id="ed-fr-case"
+  1153→              checked={matchCase}
+  1154→              onCheckedChange={onMatchCase}
+  1155→            />
+  1156→          </div>
+  1157→        </div>
+  1158→
+  1159→        <div className="mt-3 min-h-24 flex-1 overflow-hidden rounded-btn border border-border bg-background">
+  1160→          {scanning ? (
+  1161→            <div className="flex h-24 flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+  1162→              <span className="animate-pulse">{t("editPdf.frScan")}</span>
+  1163→              <span className="tabular-nums">
+  1164→                {scanPage} / {scanPages}
+  1165→              </span>
+  1166→            </div>
+  1167→          ) : !hasQuery ? (
+  1168→            <p className="p-3 text-xs text-muted-foreground">
+  1169→              {t("editPdf.frHint")}
+  1170→            </p>
+  1171→          ) : matches.length === 0 ? (
+  1172→            <p className="p-3 text-xs text-muted-foreground">
+  1173→              {t("editPdf.frNoMatches")}
+  1174→            </p>
+  1175→          ) : (
+  1176→            <ul className="flex max-h-96 flex-col gap-1 overflow-y-auto p-1.5 scrollbar-thin">
+  1177→              {matches.map((m, i) => (
+  1178→                <li key={m.key}>
+  1179→                  <button
+  1180→                    type="button"
+  1181→                    className={cn(
+  1182→                      "flex w-full items-center gap-2 rounded-btn border px-2 py-1.5 text-left text-xs outline-none transition-colors hover:bg-accent focus-visible:bg-accent",
+  1183→                      m.done
+  1184→                        ? "border-transparent text-muted-foreground"
+  1185→                        : "border-transparent text-foreground"
+  1186→                    )}
+  1187→                    onClick={() => onJump(i)}
+  1188→                    aria-label={`${t("editPdf.frPage", { page: m.page + 1 })}: ${m.hit}`}
+  1189→                  >
+  1190→                    <span className="shrink-0 rounded-chip bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary tabular-nums">
+  1191→                      {t("editPdf.frPage", { page: m.page + 1 })}
+  1192→                    </span>
+  1193→                    <span className="min-w-0 flex-1 truncate">
+  1194→                      <span className="text-muted-foreground">{m.before}</span>
+  1195→                      <mark className="rounded-sm bg-amber-200/80 px-0.5 text-foreground dark:bg-amber-500/40">
+  1196→                        {m.hit}
+  1197→                      </mark>
+  1198→                      <span className="text-muted-foreground">{m.after}</span>
+  1199→                    </span>
+  1200→                    {m.done ? (
+  1201→                      <Check
+  1202→                        className="size-3.5 shrink-0 text-emerald-600"
+  1203→                        aria-hidden="true"
+  1204→                      />
+  1205→                    ) : null}
+  1206→                  </button>
+  1207→                </li>
+  1208→              ))}
+  1209→            </ul>
+  1210→          )}
+  1211→        </div>
+  1212→
+  1213→        {hasQuery && !scanning && matches.length > 0 ? (
+  1214→          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+  1215→            {t("editPdf.frMatchesCount", { n: matches.length })}
+  1216→            {" · "}
+  1217→            {t("editPdf.frNote")}
+  1218→          </p>
+  1219→        ) : null}
+  1220→
+  1221→        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+  1222→          <Button
+  1223→            type="button"
+  1224→            variant="outline"
+  1225→            size="sm"
+  1226→            className="h-9 rounded-btn"
+  1227→            disabled={scanning || matches.length === 0}
+  1228→            onClick={onReplaceOne}
+  1229→          >
+  1230→            {t("editPdf.frReplaceOne")}
+  1231→          </Button>
+  1232→          <Button
+  1233→            type="button"
+  1234→            size="sm"
+  1235→            className="h-9 rounded-btn"
+  1236→            disabled={scanning || matches.length === 0}
+  1237→            onClick={onReplaceAll}
+  1238→          >
+  1239→            {t("editPdf.frReplaceAll")}
+  1240→          </Button>
+  1241→        </div>
+  1242→      </div>
+  1243→    </div>
+  1244→  );
+  1245→}
+  1246→
+  1247→// ---------------------------------------------------------------------------
+  1248→// Context menu
+  1249→// ---------------------------------------------------------------------------
+  1250→
+  1251→export interface ContextMenuState {
+  1252→  x: number;
+  1253→  y: number;
+  1254→  objId: string;
+  1255→}
+  1256→
+  1257→export function EditorContextMenu({
+  1258→  state,
+  1259→  locked,
+  1260→  onDuplicate,
+  1261→  onBringFront,
+  1262→  onSendBack,
+  1263→  onToggleLock,
+  1264→  onDelete,
+  1265→  onClose,
+  1266→}: {
+  1267→  state: ContextMenuState;
+  1268→  locked: boolean;
+  1269→  onDuplicate: () => void;
+  1270→  onBringFront: () => void;
+  1271→  onSendBack: () => void;
+  1272→  onToggleLock: () => void;
+  1273→  onDelete: () => void;
+  1274→  onClose: () => void;
+  1275→}): React.JSX.Element {
+  1276→  const { t } = useI18n();
+  1277→  const items: { label: string; action: () => void; danger?: boolean }[] = [
+  1278→    { label: t("editPdf.bringFront"), action: onBringFront },
+  1279→    { label: t("editPdf.sendBack"), action: onSendBack },
+  1280→    {
+  1281→      label: locked ? t("editPdf.unlock") : t("editPdf.lock"),
+  1282→      action: onToggleLock,
+  1283→    },
+  1284→    { label: t("editPdf.duplicate"), action: onDuplicate },
+  1285→    { label: t("editPdf.delete"), action: onDelete, danger: true },
+  1286→  ];
+  1287→  return (
+  1288→    <div
+  1289→      className="fixed z-50 min-w-44 overflow-hidden rounded-btn border border-border bg-card py-1 shadow-lg"
+  1290→      style={{ left: state.x, top: state.y }}
+  1291→      role="menu"
+  1292→      aria-label={t("editPdf.menuLabel")}
+  1293→    >
+  1294→      {items.map((item) => (
+  1295→        <button
+  1296→          key={item.label}
+  1297→          type="button"
+  1298→          role="menuitem"
+  1299→          className={cn(
+  1300→            "block w-full px-3 py-2 text-left text-xs outline-none transition-colors hover:bg-accent focus-visible:bg-accent",
+  1301→            item.danger ? "text-destructive" : "text-foreground"
+  1302→          )}
+  1303→          onClick={() => {
+  1304→            item.action();
+  1305→            onClose();
+  1306→          }}
+  1307→        >
+  1308→          {item.label}
+  1309→        </button>
+  1310→      ))}
+  1311→    </div>
+  1312→  );
+  1313→}
+  1314→
+  1315→// ---------------------------------------------------------------------------
+  1316→// Object rendering on the canvas (display-space, percentage positioned)
+  1317→// ---------------------------------------------------------------------------
+  1318→
+  1319→export function ObjView({
+  1320→  obj,
+  1321→  view,
+  1322→  dispW,
+  1323→  dispH,
+  1324→  scale,
+  1325→  selected,
+  1326→  editing,
+  1327→  imageUrl,
+  1328→  onCreateDrag,
+  1329→  onStartEdit,
+  1330→  onContextMenu,
+  1331→}: {
+  1332→  obj: EditorObject;
+  1333→  view: PageView;
+  1334→  dispW: number;
+  1335→  dispH: number;
+  1336→  scale: number;
+  1337→  selected: boolean;
+  1338→  editing: boolean;
+  1339→  imageUrl: string | null;
+  1340→  onCreateDrag: (event: React.PointerEvent<HTMLDivElement>) => void;
+  1341→  onStartEdit: () => void;
+  1342→  onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => void;
+  1343→}): React.JSX.Element {
+  1344→  const disp = pdfRectToDisplay(obj, view);
+  1345→  const boxStyle: React.CSSProperties = {
+  1346→    left: `${(disp.x / dispW) * 100}%`,
+  1347→    top: `${(disp.y / dispH) * 100}%`,
+  1348→    width: `${(disp.w / dispW) * 100}%`,
+  1349→    height: `${(disp.h / dispH) * 100}%`,
+  1350→    opacity: obj.hidden ? 0.4 : obj.opacity,
+  1351→  };
+  1352→  const w = disp.w * scale;
+  1353→  const h = disp.h * scale;
+  1354→
+  1355→  let inner: React.JSX.Element;
+  1356→  switch (obj.kind) {
+  1357→    case "text":
+  1358→      inner = editing ? (
+  1359→        <span className="sr-only">{obj.text}</span>
+  1360→      ) : (
+  1361→        <span
+  1362→          className="block size-full whitespace-pre-wrap break-words"
+  1363→          style={{
+  1364→            fontFamily: cssFor(obj.font),
+  1365→            fontSize: `${obj.size * scale}px`,
+  1366→            lineHeight: 1.32,
+  1367→            color: obj.color,
+  1368→            fontWeight: obj.bold ? 700 : 400,
+  1369→            fontStyle: obj.italic ? "italic" : "normal",
+  1370→            textDecoration: obj.underline ? "underline" : "none",
+  1371→            textAlign: obj.align,
+  1372→            padding: `${3 * scale}px`,
+  1373→            background: obj.bg ?? "transparent",
+  1374→            overflow: "hidden",
+  1375→          }}
+  1376→          onDoubleClick={(e) => {
+  1377→            e.stopPropagation();
+  1378→            onStartEdit();
+  1379→          }}
+  1380→        >
+  1381→          {obj.text}
+  1382→        </span>
+  1383→      );
+  1384→      break;
+  1385→    case "image":
+  1386→      inner = imageUrl ? (
+  1387→        <img
+  1388→          src={imageUrl}
+  1389→          alt=""
+  1390→          draggable={false}
+  1391→          className="pointer-events-none size-full select-none object-fill"
+  1392→        />
+  1393→      ) : (
+  1394→        <span className="block size-full rounded-sm bg-muted" />
+  1395→      );
+  1396→      break;
+  1397→    case "rect":
+  1398→    case "ellipse":
+  1399→      inner = (
+  1400→        <span
+  1401→          className="block size-full"
+  1402→          style={{
+  1403→            borderRadius: obj.kind === "ellipse" ? "50%" : undefined,
+  1404→            background: obj.fill ?? "transparent",
+  1405→            border:
+  1406→              obj.stroke !== null
+  1407→                ? `${Math.max(1, obj.strokeW * scale)}px ${obj.dash ? "dashed" : "solid"} ${obj.stroke}`
+  1408→                : undefined,
+  1409→            boxSizing: "border-box",
+  1410→          }}
+  1411→        />
+  1412→      );
+  1413→      break;
+  1414→    case "line":
+  1415→    case "arrow": {
+  1416→      const x1 = obj.flip ? 0 : w;
+  1417→      const y1 = obj.flip ? h : 0;
+  1418→      const x2 = obj.flip ? w : 0;
+  1419→      const y2 = obj.flip ? 0 : h;
+  1420→      inner = (
+  1421→        <svg
+  1422→          className="pointer-events-none absolute inset-0 overflow-visible"
+  1423→          width={w}
+  1424→          height={h}
+  1425→        >
+  1426→          <line
+  1427→            x1={x1}
+  1428→            y1={y1}
+  1429→            x2={x2}
+  1430→            y2={y2}
+  1431→            stroke={obj.stroke ?? "#dc2626"}
+  1432→            strokeWidth={Math.max(1, obj.strokeW * scale)}
+  1433→            strokeDasharray={obj.dash ? "6 4" : undefined}
+  1434→            strokeLinecap="round"
+  1435→          />
+  1436→          {obj.kind === "arrow" ? (
+  1437→            <polygon
+  1438→              points={arrowHeadPoints(x1, y1, x2, y2, Math.max(6, 12 * scale))}
+  1439→              fill={obj.stroke ?? "#dc2626"}
+  1440→            />
+  1441→          ) : null}
+  1442→        </svg>
+  1443→      );
+  1444→      break;
+  1445→    }
+  1446→    case "draw":
+  1447→      inner = (
+  1448→        <svg
+  1449→          className="pointer-events-none absolute inset-0 overflow-visible"
+  1450→          width={w}
+  1451→          height={h}
+  1452→        >
+  1453→          <polyline
+  1454→            points={obj.pts
+  1455→              .map(([fx, fy]) => `${fx * w},${fy * h}`)
+  1456→              .join(" ")}
+  1457→            fill="none"
+  1458→            stroke={obj.stroke}
+  1459→            strokeWidth={Math.max(1, obj.strokeW * scale)}
+  1460→            strokeLinecap="round"
+  1461→            strokeLinejoin="round"
+  1462→          />
+  1463→        </svg>
+  1464→      );
+  1465→      break;
+  1466→    case "whiteout":
+  1467→      inner = (
+  1468→        <span
+  1469→          className="block size-full"
+  1470→          style={{ background: obj.fill }}
+  1471→        />
+  1472→      );
+  1473→      break;
+  1474→    case "field": {
+  1475→      // Widget chrome preview — dashed primary border + a name tag; the
+  1476→      // export gives every flavour its real AcroForm appearance.
+  1477→      const isRound = obj.fieldType === "radio";
+  1478→      const isCheckbox = obj.fieldType === "checkbox";
+  1479→      inner = (
+  1480→        <span
+  1481→          className={cn(
+  1482→            "block size-full border-2 border-dashed",
+  1483→            isRound || isCheckbox ? "rounded-[3px]" : "rounded-[4px]",
+  1484→            obj.required
+  1485→              ? "border-primary/80 bg-primary/5"
+  1486→              : "border-primary/50 bg-primary/5"
+  1487→          )}
+  1488→        >
+  1489→          {isCheckbox ? (
+  1490→            <svg
+  1491→              className="pointer-events-none absolute inset-0 size-full"
+  1492→              viewBox="0 0 24 24"
+  1493→              aria-hidden="true"
+  1494→            >
+  1495→              <path
+  1496→                d="M5 12.5 10 17.5 19 6.5"
+  1497→                fill="none"
+  1498→                stroke="currentColor"
+  1499→                strokeWidth="2.4"
+  1500→                strokeLinecap="round"
+  1501→                strokeLinejoin="round"
+  1502→                className="text-primary/60"
+  1503→              />
+  1504→            </svg>
+  1505→          ) : isRound ? (
+  1506→            <span className="pointer-events-none absolute inset-[18%] rounded-full border-2 border-primary/60" />
+  1507→          ) : obj.fieldType === "dropdown" ? (
+  1508→            <span className="pointer-events-none absolute inset-y-0 right-0 flex w-5 items-center justify-center text-primary/70">
+  1509→              <ArrowDown className="size-3.5" aria-hidden="true" />
+  1510→            </span>
+  1511→          ) : obj.fieldType === "multiline" ? (
+  1512→            <span className="pointer-events-none absolute inset-x-1 inset-y-[30%] space-y-[0.45em]">
+  1513→              <span className="block h-px bg-primary/25" />
+  1514→              <span className="block h-px bg-primary/25" />
+  1515→            </span>
+  1516→          ) : null}
+  1517→          {obj.name.trim().length > 0 && obj.w * scale > 44 ? (
+  1518→            <span
+  1519→              className={cn(
+  1520→                "pointer-events-none absolute -top-[1.4em] left-0 max-w-full truncate rounded-chip bg-primary px-1 py-px text-[9px] font-semibold leading-tight text-primary-foreground",
+  1521→                isCheckbox || isRound ? "left-[85%]" : ""
+  1522→              )}
+  1523→            >
+  1524→              {obj.name}
+  1525→            </span>
+  1526→          ) : null}
+  1527→        </span>
+  1528→      );
+  1529→      break;
+  1530→    }
+  1531→  }
+  1532→
+  1533→  return (
+  1534→    <div
+  1535→      className={cn(
+  1536→        "absolute",
+  1537→        obj.locked ? "cursor-default" : "cursor-move",
+  1538→        selected && "outline-2 outline-offset-0 outline-primary z-10"
+  1539→      )}
+  1540→      style={boxStyle}
+  1541→      onPointerDown={onCreateDrag}
+  1542→      onDoubleClick={(e) => {
+  1543→        e.stopPropagation();
+  1544→        if (obj.kind === "text") onStartEdit();
+  1545→      }}
+  1546→      onContextMenu={onContextMenu}
+  1547→      data-obj-id={obj.id}
+  1548→      aria-label={obj.kind === "text" ? obj.text.slice(0, 60) : obj.kind}
+  1549→    >
+  1550→      {inner}
+  1551→      {selected ? (
+  1552→        <>
+  1553→          {(["nw", "ne", "sw", "se"] as const).map((edge) => (
+  1554→            <span
+  1555→              key={edge}
+  1556→              data-handle={edge}
+  1557→              className="absolute z-20 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary bg-white"
+  1558→              style={{
+  1559→                left: edge === "ne" || edge === "se" ? "100%" : "0%",
+  1560→                top: edge === "sw" || edge === "se" ? "100%" : "0%",
+  1561→                cursor: edge === "nw" || edge === "se" ? "nwse-resize" : "nesw-resize",
+  1562→                touchAction: "none",
+  1563→              }}
+  1564→            />
+  1565→          ))}
+  1566→        </>
+  1567→      ) : null}
+  1568→    </div>
+  1569→  );
+  1570→}
+  1571→
+  1572→function cssFor(font: string): string {
+  1573→  const found = FONT_OPTIONS.find((f) => f.id === font);
+  1574→  return found?.css ?? "Arial, Helvetica, sans-serif";
+  1575→}
+  1576→
+  1577→function FieldFields({
+  1578→  obj,
+  1579→  onPatch,
+  1580→}: {
+  1581→  obj: FieldObj;
+  1582→  onPatch: (patch: Partial<EditorObject>) => void;
+  1583→}): React.JSX.Element {
+  1584→  const { t } = useI18n();
+  1585→  const isCheckbox = obj.fieldType === "checkbox";
+  1586→  const isRadio = obj.fieldType === "radio";
+  1587→  const isDropdown = obj.fieldType === "dropdown";
+  1588→  return (
+  1589→    <>
+  1590→      <div className="flex flex-col gap-1.5">
+  1591→        <Label htmlFor="ed-fname" className="text-xs font-medium text-muted-foreground">
+  1592→          {t("editPdf.fieldName")}
+  1593→        </Label>
+  1594→        <Input
+  1595→          id="ed-fname"
+  1596→          type="text"
+  1597→          value={obj.name}
+  1598→          maxLength={60}
+  1599→          onChange={(e) => onPatch({ name: e.target.value })}
+  1600→          className="h-9 w-full rounded-btn"
+  1601→        />
+  1602→        {isRadio ? (
+  1603→          <p className="text-[11px] leading-relaxed text-muted-foreground">
+  1604→            {t("editPdf.radioGroupHint")}
+  1605→          </p>
+  1606→        ) : null}
+  1607→      </div>
+  1608→
+  1609→      <div className="flex flex-col gap-1.5">
+  1610→        <Label htmlFor="ed-ftype" className="text-xs font-medium text-muted-foreground">
+  1611→          {t("editPdf.fieldTypeLabel")}
+  1612→        </Label>
+  1613→        <Select
+  1614→          value={obj.fieldType}
+  1615→          onValueChange={(v) => {
+  1616→            const nextType = v as FieldObj["fieldType"];
+  1617→            if (nextType === "checkbox" || nextType === "radio") {
+  1618→              const size = Math.min(obj.w, obj.h);
+  1619→              onPatch({ fieldType: nextType, w: size, h: size });
+  1620→            } else {
+  1621→              onPatch({ fieldType: nextType });
+  1622→            }
+  1623→          }}
+  1624→        >
+  1625→          <SelectTrigger id="ed-ftype" className="h-9 w-full rounded-btn">
+  1626→            <SelectValue />
+  1627→          </SelectTrigger>
+  1628→          <SelectContent>
+  1629→            {(["text", "multiline", "checkbox", "dropdown", "radio"] as const).map(
+  1630→              (id) => (
+  1631→                <SelectItem key={id} value={id}>
+  1632→                  {t(`editPdf.fieldType_${id}`)}
+  1633→                </SelectItem>
+  1634→              )
+  1635→            )}
+  1636→          </SelectContent>
+  1637→        </Select>
+  1638→      </div>
+  1639→
+  1640→      {isCheckbox ? (
+  1641→        <div className="flex items-center justify-between gap-2">
+  1642→          <Label htmlFor="ed-fchecked" className="text-xs font-medium text-muted-foreground">
+  1643→            {t("editPdf.fieldChecked")}
+  1644→          </Label>
+  1645→          <Switch
+  1646→            id="ed-fchecked"
+  1647→            checked={obj.value === "on"}
+  1648→            onCheckedChange={(next) => onPatch({ value: next ? "on" : "" })}
+  1649→          />
+  1650→        </div>
+  1651→      ) : null}
+  1652→
+  1653→      {isRadio ? (
+  1654→        <div className="flex flex-col gap-1.5">
+  1655→          <Label htmlFor="ed-fopt" className="text-xs font-medium text-muted-foreground">
+  1656→            {t("editPdf.fieldOptionValue")}
+  1657→          </Label>
+  1658→          <Input
+  1659→            id="ed-fopt"
+  1660→            type="text"
+  1661→            value={obj.value}
+  1662→            maxLength={40}
+  1663→            placeholder={t("editPdf.fieldOptionPlaceholder")}
+  1664→            onChange={(e) => onPatch({ value: e.target.value })}
+  1665→            className="h-9 w-full rounded-btn"
+  1666→          />
+  1667→        </div>
+  1668→      ) : null}
+  1669→
+  1670→      {obj.fieldType === "text" || obj.fieldType === "multiline" ? (
+  1671→        <div className="flex flex-col gap-1.5">
+  1672→          <Label htmlFor="ed-fval" className="text-xs font-medium text-muted-foreground">
+  1673→            {t("editPdf.fieldValue")}
+  1674→          </Label>
+  1675→          <Input
+  1676→            id="ed-fval"
+  1677→            type="text"
+  1678→            value={obj.value}
+  1679→            maxLength={200}
+  1680→            placeholder={t("editPdf.fieldValuePlaceholder")}
+  1681→            onChange={(e) => onPatch({ value: e.target.value })}
+  1682→            className="h-9 w-full rounded-btn"
+  1683→          />
+  1684→        </div>
+  1685→      ) : null}
+  1686→
+  1687→      {isDropdown ? (
+  1688→        <div className="flex flex-col gap-1.5">
+  1689→          <Label htmlFor="ed-fopts" className="text-xs font-medium text-muted-foreground">
+  1690→            {t("editPdf.fieldOptions")}
+  1691→          </Label>
+  1692→          <textarea
+  1693→            id="ed-fopts"
+  1694→            value={obj.options.join("\n")}
+  1695→            rows={4}
+  1696→            onChange={(e) =>
+  1697→              onPatch({
+  1698→                options: e.target.value.split("\n").map((s) => s.slice(0, 80)),
+  1699→              })
+  1700→            }
+  1701→            placeholder={t("editPdf.fieldOptionsPlaceholder")}
+  1702→            className="w-full resize-y rounded-btn border border-input bg-background px-3 py-2 text-xs text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+  1703→          />
+  1704→          {obj.options.length > 0 ? (
+  1705→            <div className="flex flex-col gap-1.5">
+  1706→              <Label htmlFor="ed-fsel" className="text-xs font-medium text-muted-foreground">
+  1707→                {t("editPdf.fieldSelected")}
+  1708→              </Label>
+  1709→              <Select
+  1710→                value={obj.value || "__none__"}
+  1711→                onValueChange={(v) => onPatch({ value: v === "__none__" ? "" : v })}
+  1712→              >
+  1713→                <SelectTrigger id="ed-fsel" className="h-9 w-full rounded-btn">
+  1714→                  <SelectValue />
+  1715→                </SelectTrigger>
+  1716→                <SelectContent>
+  1717→                  <SelectItem value="__none__">
+  1718→                    {t("editPdf.fieldNoDefault")}
+  1719→                  </SelectItem>
+  1720→                  {obj.options.map((option) => (
+  1721→                    <SelectItem key={option} value={option}>
+  1722→                      {option}
+  1723→                    </SelectItem>
+  1724→                  ))}
+  1725→                </SelectContent>
+  1726→              </Select>
+  1727→            </div>
+  1728→          ) : null}
+  1729→        </div>
+  1730→      ) : null}
+  1731→
+  1732→      <div className="flex items-center justify-between gap-2">
+  1733→        <Label htmlFor="ed-freq" className="text-xs font-medium text-muted-foreground">
+  1734→          {t("editPdf.fieldRequired")}
+  1735→        </Label>
+  1736→        <Switch
+  1737→          id="ed-freq"
+  1738→          checked={obj.required}
+  1739→          onCheckedChange={(next) => onPatch({ required: next })}
+  1740→        />
+  1741→      </div>
+  1742→
+  1743→      <p className="text-[11px] leading-relaxed text-muted-foreground">
+  1744→        {t("editPdf.fieldHint")}
+  1745→      </p>
+  1746→    </>
+  1747→  );
+  1748→}
+  1749→
+  1750→function arrowHeadPoints(
+  1751→  x1: number,
+  1752→  y1: number,
+  1753→  x2: number,
+  1754→  y2: number,
+  1755→  size: number
+  1756→): string {
+  1757→  const angle = Math.atan2(y2 - y1, x2 - x1);
+  1758→  const a1 = angle + Math.PI - 0.45;
+  1759→  const a2 = angle + Math.PI + 0.45;
+  1760→  return [
+  1761→    `${x2},${y2}`,
+  1762→    `${x2 + size * Math.cos(a1)},${y2 + size * Math.sin(a1)}`,
+  1763→    `${x2 + size * Math.cos(a2)},${y2 + size * Math.sin(a2)}`,
+  1764→  ].join(" ");
+  1765→}
+  1766→

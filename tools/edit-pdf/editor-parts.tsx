@@ -5,11 +5,14 @@ import {
   ArrowLeftRight,
   ArrowUp,
   ArrowDown,
+  ArrowDownToLine,
+  ArrowUpToLine,
   Baseline,
   Bold,
   Brush,
   Check,
   Copy,
+  Ellipsis,
   Eraser,
   FormInput,
   Image as ImageIcon,
@@ -23,6 +26,7 @@ import {
   Plus,
   Redo2,
   Replace,
+  RotateCw,
   Square,
   TextCursorInput,
   Trash2,
@@ -44,10 +48,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { BottomSheet } from "@/components/doco/bottom-sheet";
 import { useI18n } from "@/components/providers/locale-provider";
 import { cn } from "@/lib/utils";
 import {
   FONT_OPTIONS,
+  isRotatable,
+  normalizeRotation,
   pdfRectToDisplay,
   pieceRect,
   type EditorObject,
@@ -133,6 +140,342 @@ export function EditorToolbar({
         {t("editPdf.objectCount", { count: objectCount })}
       </span>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mobile chrome (P8.6, PRD §8.2 — simplified bottom toolbar + More sheet)
+// ---------------------------------------------------------------------------
+
+const MOBILE_TOOLS: { id: ToolId; icon: typeof Type; key: string }[] = [
+  { id: "select", icon: MousePointer2, key: "editPdf.toolSelect" },
+  { id: "text", icon: Type, key: "editPdf.toolText" },
+  { id: "draw", icon: Brush, key: "editPdf.toolDraw" },
+  { id: "sign", icon: PenLine, key: "editPdf.toolSign" },
+  { id: "image", icon: ImageIcon, key: "editPdf.toolImage" },
+];
+
+/** Sticky bottom toolbar for touch/small screens — 44px+ targets. */
+export function MobileToolbar({
+  tool,
+  onTool,
+  onMore,
+}: {
+  tool: ToolId;
+  onTool: (next: ToolId) => void;
+  onMore: () => void;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div
+      role="toolbar"
+      aria-label={t("editPdf.toolbarLabel")}
+      className="sticky bottom-0 z-30 -mx-1 flex items-stretch gap-1 rounded-card border border-border bg-card/95 p-1.5 shadow-lg backdrop-blur"
+    >
+      {MOBILE_TOOLS.map(({ id, icon: Icon, key }) => (
+        <button
+          key={id}
+          type="button"
+          aria-pressed={tool === id}
+          aria-label={t(key)}
+          title={t(key)}
+          onClick={() => onTool(id)}
+          className={cn(
+            "flex h-14 min-w-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-btn text-[10px] font-medium leading-none outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+            tool === id
+              ? "bg-primary text-primary-foreground"
+              : "text-foreground hover:bg-accent"
+          )}
+        >
+          <Icon className="size-5" aria-hidden="true" />
+          <span aria-hidden="true">{t(key)}</span>
+        </button>
+      ))}
+      <button
+        type="button"
+        aria-label={t("editPdf.moreTools")}
+        aria-haspopup="dialog"
+        title={t("editPdf.moreTools")}
+        onClick={onMore}
+        className="flex h-14 min-w-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-btn text-[10px] font-medium leading-none text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >
+        <Ellipsis className="size-5" aria-hidden="true" />
+        <span aria-hidden="true">{t("editPdf.moreTools")}</span>
+      </button>
+    </div>
+  );
+}
+
+const MORE_TOOLS: { id: ToolId; icon: typeof Type; key: string }[] = [
+  { id: "edittext", icon: TextCursorInput, key: "editPdf.toolEditText" },
+  { id: "rect", icon: Square, key: "editPdf.toolRect" },
+  { id: "ellipse", icon: Minus, key: "editPdf.toolEllipse" },
+  { id: "line", icon: Minus, key: "editPdf.toolLine" },
+  { id: "arrow", icon: ArrowUp, key: "editPdf.toolArrow" },
+  { id: "whiteout", icon: Eraser, key: "editPdf.toolWhiteout" },
+  { id: "field", icon: FormInput, key: "editPdf.toolField" },
+];
+
+/** "More" bottom sheet — the rest of the tools + undo/redo/duplicate/
+ * delete + zoom (PRD §8.2 mobile list). */
+export function MoreSheet({
+  open,
+  onOpenChange,
+  tool,
+  onTool,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  canDuplicate,
+  onDuplicate,
+  canDelete,
+  onDelete,
+  zoom,
+  onZoom,
+  onFindReplace,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  tool: ToolId;
+  onTool: (next: ToolId) => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  canDuplicate: boolean;
+  onDuplicate: () => void;
+  canDelete: boolean;
+  onDelete: () => void;
+  zoom: number;
+  onZoom: (next: number) => void;
+  onFindReplace: () => void;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  const pick = (id: ToolId): void => {
+    onTool(id);
+    onOpenChange(false);
+  };
+  const row =
+    "flex h-11 w-full items-center gap-3 rounded-btn px-3 text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent";
+  return (
+    <BottomSheet
+      open={open}
+      onOpenChange={onOpenChange}
+      title={t("editPdf.moreTools")}
+    >
+      <div className="flex max-h-[65vh] flex-col gap-1 overflow-y-auto pb-1 scrollbar-thin">
+        {MORE_TOOLS.map(({ id, icon: Icon, key }) => (
+          <button
+            key={id}
+            type="button"
+            className={cn(
+              row,
+              tool === id && "bg-primary/10 font-medium text-primary"
+            )}
+            aria-pressed={tool === id}
+            onClick={() => pick(id)}
+          >
+            <Icon className="size-4 shrink-0" aria-hidden="true" />
+            {t(key)}
+          </button>
+        ))}
+        <button type="button" className={row} onClick={() => {
+          onFindReplace();
+          onOpenChange(false);
+        }}>
+          <Replace className="size-4 shrink-0" aria-hidden="true" />
+          {t("editPdf.frTitle")}
+        </button>
+
+        <div
+          role="group"
+          aria-label={t("editPdf.undo")}
+          className="mt-2 flex gap-1.5 border-t border-border pt-3"
+        >
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 flex-1 rounded-btn"
+            disabled={!canUndo}
+            onClick={onUndo}
+            aria-label={t("editPdf.undo")}
+          >
+            <Undo2 className="size-4" aria-hidden="true" />
+            {t("editPdf.undo")}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 flex-1 rounded-btn"
+            disabled={!canRedo}
+            onClick={onRedo}
+            aria-label={t("editPdf.redo")}
+          >
+            <Redo2 className="size-4" aria-hidden="true" />
+            {t("editPdf.redo")}
+          </Button>
+        </div>
+
+        <div className="flex gap-1.5">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 flex-1 rounded-btn"
+            disabled={!canDuplicate}
+            onClick={onDuplicate}
+            aria-label={t("editPdf.duplicate")}
+          >
+            <Copy className="size-4" aria-hidden="true" />
+            {t("editPdf.duplicate")}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 flex-1 rounded-btn text-destructive hover:text-destructive"
+            disabled={!canDelete}
+            onClick={onDelete}
+            aria-label={t("editPdf.delete")}
+          >
+            <Trash2 className="size-4" aria-hidden="true" />
+            {t("editPdf.delete")}
+          </Button>
+        </div>
+
+        <div
+          role="group"
+          aria-label={t("editPdf.zoomLabel")}
+          className="mt-2 flex items-center gap-0.5 rounded-btn border border-border bg-background p-0.5"
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-11 rounded-md"
+            disabled={zoom <= 0.75}
+            onClick={() => onZoom(Math.max(0.75, Math.round((zoom - 0.25) * 100) / 100))}
+            aria-label={t("editPdf.zoomOut")}
+          >
+            <Minus className="size-4" aria-hidden="true" />
+          </Button>
+          <span className="min-w-11 text-center text-xs font-semibold tabular-nums text-foreground">
+            {Math.round(zoom * 100)}%
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-11 rounded-md"
+            disabled={zoom >= 3}
+            onClick={() => onZoom(Math.min(3, Math.round((zoom + 0.25) * 100) / 100))}
+            aria-label={t("editPdf.zoomIn")}
+          >
+            <Plus className="size-4" aria-hidden="true" />
+          </Button>
+        </div>
+      </div>
+    </BottomSheet>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Snap guides (P8.6) — 1px accent lines across the page
+// ---------------------------------------------------------------------------
+
+export function SnapGuides({
+  guides,
+  dispW,
+  dispH,
+}: {
+  guides: { axis: "x" | "y"; pos: number }[];
+  dispW: number;
+  dispH: number;
+}): React.JSX.Element | null {
+  if (guides.length === 0 || dispW <= 0 || dispH <= 0) return null;
+  return (
+    <div className="pointer-events-none absolute inset-0 z-30" aria-hidden="true">
+      {guides.map((g, i) =>
+        g.axis === "x" ? (
+          <span
+            key={`x${i}`}
+            className="absolute inset-y-0 w-px bg-primary"
+            style={{ left: `${(g.pos / dispW) * 100}%` }}
+          />
+        ) : (
+          <span
+            key={`y${i}`}
+            className="absolute inset-x-0 h-px bg-primary"
+            style={{ top: `${(g.pos / dispH) * 100}%` }}
+          />
+        )
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Multi-selection summary (P8.6)
+// ---------------------------------------------------------------------------
+
+export function MultiSelectPanel({
+  count,
+  locked,
+  onBringFront,
+  onSendBack,
+  onDuplicate,
+  onDelete,
+  onToggleLock,
+}: {
+  count: number;
+  locked: boolean;
+  onBringFront: () => void;
+  onSendBack: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onToggleLock: () => void;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  const btn =
+    "flex h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-btn border border-border bg-background px-1 text-[10px] font-medium leading-none outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40";
+  return (
+    <section className="rounded-card border border-border bg-card p-4">
+      <h3 className="text-sm font-semibold text-foreground">
+        {t("editPdf.multiTitle", { n: count })}
+      </h3>
+      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+        {t("editPdf.multiHint")}
+      </p>
+      <div className="mt-3 grid grid-cols-3 gap-1.5">
+        <button type="button" className={btn} onClick={onBringFront}>
+          <ArrowUpToLine className="size-4" aria-hidden="true" />
+          {t("editPdf.bringFront")}
+        </button>
+        <button type="button" className={btn} onClick={onSendBack}>
+          <ArrowDownToLine className="size-4" aria-hidden="true" />
+          {t("editPdf.sendBack")}
+        </button>
+        <button type="button" className={btn} onClick={onToggleLock}>
+          {locked ? (
+            <Lock className="size-4" aria-hidden="true" />
+          ) : (
+            <LockOpen className="size-4" aria-hidden="true" />
+          )}
+          {locked ? t("editPdf.unlock") : t("editPdf.lock")}
+        </button>
+        <button type="button" className={btn} onClick={onDuplicate}>
+          <Copy className="size-4" aria-hidden="true" />
+          {t("editPdf.duplicate")}
+        </button>
+        <button
+          type="button"
+          className={cn(btn, "col-span-2 text-destructive hover:bg-destructive/10")}
+          onClick={onDelete}
+        >
+          <Trash2 className="size-4" aria-hidden="true" />
+          {t("editPdf.delete")}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -474,6 +817,30 @@ export function PropertiesPanel({
             aria-label={t("editPdf.opacity")}
           />
         </div>
+
+        {isRotatable(obj) ? (
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="ed-rot" className="text-xs font-medium text-muted-foreground">
+              {t("editPdf.rotation")}
+            </Label>
+            <Input
+              id="ed-rot"
+              type="number"
+              min={-180}
+              max={180}
+              step={1}
+              value={Math.round(obj.rotation)}
+              onChange={(e) => {
+                const parsed = Number(e.target.value);
+                if (Number.isFinite(parsed)) {
+                  onPatch({ rotation: normalizeRotation(parsed) });
+                }
+              }}
+              className="h-9 w-20 rounded-btn text-right"
+              aria-label={t("editPdf.rotation")}
+            />
+          </div>
+        ) : null}
 
         <ActionRow
           onRaise={onRaise}
@@ -1325,6 +1692,7 @@ export function ObjView({
   selected,
   editing,
   imageUrl,
+  rotationHandle,
   onCreateDrag,
   onStartEdit,
   onContextMenu,
@@ -1337,10 +1705,13 @@ export function ObjView({
   selected: boolean;
   editing: boolean;
   imageUrl: string | null;
+  /** Show the rotation handle (single selection + rotatable kind). */
+  rotationHandle: boolean;
   onCreateDrag: (event: React.PointerEvent<HTMLDivElement>) => void;
   onStartEdit: () => void;
   onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => void;
 }): React.JSX.Element {
+  const { t } = useI18n();
   const disp = pdfRectToDisplay(obj, view);
   const boxStyle: React.CSSProperties = {
     left: `${(disp.x / dispW) * 100}%`,
@@ -1535,7 +1906,7 @@ export function ObjView({
       className={cn(
         "absolute",
         obj.locked ? "cursor-default" : "cursor-move",
-        selected && "outline-2 outline-offset-0 outline-primary z-10"
+        selected && "z-10"
       )}
       style={boxStyle}
       onPointerDown={onCreateDrag}
@@ -1547,21 +1918,53 @@ export function ObjView({
       data-obj-id={obj.id}
       aria-label={obj.kind === "text" ? obj.text.slice(0, 60) : obj.kind}
     >
-      {inner}
+      {/* P8.6: the content rotates around its center (CSS degrees are
+          clockwise on screen; model rotation is visual-CCW → negate). The
+          outer box stays axis-aligned so handles and hit areas don't spin. */}
+      <div
+        className={cn(
+          "absolute inset-0",
+          selected && "outline-2 outline-offset-0 outline-primary"
+        )}
+        style={
+          obj.rotation
+            ? {
+                transform: `rotate(${-obj.rotation}deg)`,
+                transformOrigin: "center center",
+              }
+            : undefined
+        }
+      >
+        {inner}
+      </div>
       {selected ? (
         <>
+          {rotationHandle ? (
+            <span
+              data-handle="rot"
+              aria-label={t("editPdf.rotation")}
+              title={t("editPdf.rotation")}
+              className="pointer-coarse:size-11 absolute left-1/2 top-0 z-20 flex size-6 -translate-x-1/2 -translate-y-[130%] cursor-grab items-center justify-center rounded-full border border-border bg-card shadow-sm touch-none"
+            >
+              <RotateCw
+                className="pointer-coarse:size-5 size-3.5 text-primary"
+                aria-hidden="true"
+              />
+            </span>
+          ) : null}
           {(["nw", "ne", "sw", "se"] as const).map((edge) => (
             <span
               key={edge}
               data-handle={edge}
-              className="absolute z-20 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary bg-white"
+              className="pointer-coarse:size-11 absolute z-20 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full touch-none"
               style={{
                 left: edge === "ne" || edge === "se" ? "100%" : "0%",
                 top: edge === "sw" || edge === "se" ? "100%" : "0%",
                 cursor: edge === "nw" || edge === "se" ? "nwse-resize" : "nesw-resize",
-                touchAction: "none",
               }}
-            />
+            >
+              <span className="pointer-coarse:size-5 size-3 rounded-full border-2 border-primary bg-white" />
+            </span>
           ))}
         </>
       ) : null}

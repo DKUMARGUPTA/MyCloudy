@@ -21,6 +21,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
 import { useI18n } from "@/components/providers/locale-provider";
+import { BottomSheet } from "@/components/doco/bottom-sheet";
+import { Button } from "@/components/ui/button";
 import {
   PreviewFileHeader,
   PreviewPageStrip,
@@ -39,9 +41,13 @@ import {
   EditorToolbar,
   FindReplaceDialog,
   LayersPanel,
+  MobileToolbar,
+  MoreSheet,
+  MultiSelectPanel,
   ObjView,
   PropertiesPanel,
   SignPadDialog,
+  SnapGuides,
   TextPieceButtons,
   type ContextMenuState,
   type FrMatchView,
@@ -49,28 +55,44 @@ import {
 } from "./editor-parts";
 import { harvestPageText, scanPagesText } from "./text-layer";
 import {
+  deleteDraft,
+  draftHasImages,
+  encodeDraft,
+  loadDraft,
+  saveDraft,
+  draftKeyFor,
+  type EditDraft,
+} from "./drafts";
+import {
   HISTORY_LIMIT,
   LINE_HEIGHT,
   MIN_OBJ_PT,
   TEXT_PAD,
+  bringManyToFront,
   bringToFront,
   buildReplaceLineObjects,
   buildReplacePieceObjects,
   clampN,
+  computeSnap,
+  displayAngle,
   displayRectToPdf,
   displaySize,
   duplicateObject,
+  duplicateObjects,
   groupPiecesIntoLines,
-  luminance,
+  isRotatable,
   lowerOne,
+  luminance,
   makeDraw,
   makeField,
   makeImage,
   makeShape,
   makeText,
   makeWhiteout,
+  marqueeSelection,
   medianRgb,
   normaliseDraw,
+  normalizeRotation,
   pdfRectToDisplay,
   pickInkFromPixels,
   pieceRect,
@@ -79,9 +101,11 @@ import {
   redoStep,
   rgbToHex,
   roundPt,
+  sendManyToBack,
   sendToBack,
   substituteOccurrences,
   takenFieldNames,
+  unionRects,
   undoStep,
   type EditorObject,
   type HarvestPiece,
@@ -90,6 +114,7 @@ import {
   type ObjRect,
   type PageView,
   type PieceLine,
+  type SnapGuide,
 } from "./model";
 
 /**
@@ -109,6 +134,35 @@ const KEY_PREFIX = "e:";
 const EKEY_ID = "ekey";
 /** Minimum drag (fraction of the page) that becomes a new object. */
 const MIN_DRAW = 0.02;
+/** P8.6: snap threshold at display scale (page pt, zoom-adjusted). */
+const SNAP_BASE_PT = 4;
+/** P8.6: long-press opens the context menu after this long (ms). */
+const LONG_PRESS_MS = 500;
+/** P8.6: movement that cancels a long-press (display pt). */
+const LONG_PRESS_SLOP = 8;
+/** P8.6: a marquee drag smaller than this is a click (display pt). */
+const MARQUEE_MIN_PT = 4;
+/** P8.6: autosave debounce (ms). */
+const DRAFT_DEBOUNCE_MS = 1500;
+
+/** Mobile mode = coarse pointer OR narrower than the lg breakpoint. */
+function useMobileMode(): boolean {
+  const [mobile, setMobile] = useState(false);
+  useEffect(() => {
+    const coarse = window.matchMedia("(pointer: coarse)");
+    const update = (): void => {
+      setMobile(coarse.matches || window.innerWidth < 1024);
+    };
+    update();
+    coarse.addEventListener("change", update);
+    window.addEventListener("resize", update);
+    return () => {
+      coarse.removeEventListener("change", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+  return mobile;
+}
 
 /** Proper-noun font labels for the matched/closest toasts. */
 const FONT_LABEL: Record<string, string> = {
@@ -144,10 +198,11 @@ type Gesture =
     }
   | {
       type: "move";
-      id: string;
+      ids: string[];
       grabDx: number;
       grabDy: number;
-      orig: ObjRect;
+      origs: ObjRect[];
+      union: ObjRect;
     }
   | {
       type: "resize";
@@ -156,6 +211,22 @@ type Gesture =
       orig: ObjRect;
       keepAspect: boolean;
       aspect: number;
+    }
+  | {
+      type: "rotate";
+      id: string;
+      cx: number;
+      cy: number;
+      startAngle: number;
+      startRotation: number;
+    }
+  | {
+      type: "marquee";
+      x0: number;
+      y0: number;
+      x1: number;
+      y1: number;
+      base: string[];
     }
   | { type: "stroke"; pts: { x: number; y: number }[] };
 
@@ -565,22 +636,63 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
 
   // --- Selection + tools ----------------------------------------------------
   const [tool, setTool] = useState<ToolId>("select");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const [signOpen, setSignOpen] = useState(false);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [guides, setGuides] = useState<SnapGuide[]>([]);
+  const mobileMode = useMobileMode();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [propsOpen, setPropsOpen] = useState(false);
   const overlayRef = useRef<HTMLDivElement | null>(null);
+  const zoomWrapRef = useRef<HTMLDivElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
+  // P8.6 pinch: live pointer cache (capture-phase on the overlay) — when 2
+  // pointers are active, single-finger gestures are cancelled and the
+  // pinch math owns zoom + pan.
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = useRef<{
+    dist: number;
+    zoom: number;
+    mid: { x: number; y: number };
+    scroll: { left: number; top: number };
+  } | null>(null);
+  // P8.6 long-press context menu (coarse pointers).
+  const longPressRef = useRef<{
+    id: string;
+    x: number;
+    y: number;
+    clientX: number;
+    clientY: number;
+    timer: number;
+  } | null>(null);
+  const coarseRef = useRef(false);
 
   const pageObjects = useMemo(
     () => objects.filter((o) => o.page === selectedPage),
     [objects, selectedPage]
   );
   const selected = useMemo(
-    () => objects.find((o) => o.id === selectedId) ?? null,
+    () => (selectedId !== null ? objects.find((o) => o.id === selectedId) ?? null : null),
     [objects, selectedId]
+  );
+  /** P8.6: the multi-selection outline = the union of the selected bboxes. */
+  const multiUnion = useMemo(() => {
+    if (selectedIds.length < 2 || !currentView) return null;
+    const rects = selectedIds
+      .map((id) => objects.find((o) => o.id === id))
+      .filter((o): o is EditorObject => o !== undefined && !o.hidden)
+      .map((o) => pdfRectToDisplay(o, currentView));
+    return unionRects(rects);
+  }, [selectedIds, objects, currentView]);
+  const allSelectedLocked = useMemo(
+    () =>
+      selectedIds.length > 0 &&
+      selectedIds.every((id) => objects.find((o) => o.id === id)?.locked === true),
+    [selectedIds, objects]
   );
   const editing = useMemo(
     () => (editingId !== null ? objects.find((o) => o.id === editingId) ?? null : null),
@@ -614,24 +726,70 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         objectsRef.current.filter((o) => o.id !== id),
         `remove:${id}`
       );
-      if (selectedId === id) setSelectedId(null);
+      setSelectedIds((prev) => prev.filter((sid) => sid !== id));
       if (editingId === id) setEditingId(null);
     },
-    [applyObjects, selectedId, editingId]
+    [applyObjects, editingId]
   );
 
-  const duplicateSel = useCallback((): void => {
-    if (!selectedId) return;
-    const result = duplicateObject(objectsRef.current, selectedId);
-    if (result.copy) {
-      applyObjects(result.objects, `dup:${selectedId}`);
-      setSelectedId(result.copy.id);
+  /** P8.6: removes EVERY selected object in one history step. */
+  const removeSelected = useCallback((): void => {
+    if (selectedIds.length === 0) return;
+    const gone = new Set(selectedIds);
+    applyObjects(
+      objectsRef.current.filter((o) => !gone.has(o.id)),
+      `removeMany:${selectedIds.length}`
+    );
+    setSelectedIds([]);
+    setEditingId(null);
+  }, [applyObjects, selectedIds]);
+
+  const duplicateSelected = useCallback((): void => {
+    if (selectedIds.length === 0) return;
+    if (selectedIds.length === 1) {
+      const result = duplicateObject(objectsRef.current, selectedIds[0]);
+      if (result.copy) {
+        applyObjects(result.objects, `dup:${selectedIds[0]}`);
+        setSelectedIds([result.copy.id]);
+      }
+      return;
     }
-  }, [applyObjects, selectedId]);
+    const result = duplicateObjects(objectsRef.current, selectedIds);
+    if (result.copies.length > 0) {
+      applyObjects(result.objects, `dupMany:${selectedIds.length}`);
+      setSelectedIds(result.copies.map((c) => c.id));
+    }
+  }, [applyObjects, selectedIds]);
+
+  /** P8.6: moves every selected object by a display delta (one step). */
+  const nudgeSelected = useCallback(
+    (dx: number, dy: number): void => {
+      if (selectedIds.length === 0 || !currentView || !pageDisp) return;
+      const ids = new Set(selectedIds);
+      applyObjects(
+        objectsRef.current.map((o) => {
+          if (!ids.has(o.id)) return o;
+          const disp = pdfRectToDisplay(o, currentView);
+          const pdf = displayRectToPdf(
+            {
+              x: clampN(disp.x + dx, 0, pageDisp.w - disp.w),
+              y: clampN(disp.y + dy, 0, pageDisp.h - disp.h),
+              w: disp.w,
+              h: disp.h,
+            },
+            currentView
+          );
+          return { ...o, x: roundPt(pdf.x), y: roundPt(pdf.y) } as EditorObject;
+        }),
+        `nudge:${selectedIds.length}`
+      );
+    },
+    [applyObjects, currentView, pageDisp, selectedIds]
+  );
 
   // --- Text editing ---------------------------------------------------------
   const startEditText = useCallback((id: string): void => {
-    setSelectedId(id);
+    setSelectedIds([id]);
     setEditingId(id);
     setTool("select");
   }, []);
@@ -672,7 +830,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       const pdf = displayRectToPdf(disp, currentView);
       const obj = makeImage(selectedPage, pdf, key);
       applyObjects([...objectsRef.current, obj], `add:${obj.id}`);
-      setSelectedId(obj.id);
+      setSelectedIds([obj.id]);
       setTool("select");
     },
     [applyObjects, currentView, pageDisp, selectedPage]
@@ -727,7 +885,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       return;
     }
     setTool(next);
-    setSelectedId(null);
+    setSelectedIds([]);
   }, []);
 
   // --- Existing-text editing (P8.3) ------------------------------------------
@@ -787,7 +945,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         samples.ink
       );
       applyObjects([...objectsRef.current, cover, text], `replace:${text.id}`);
-      setSelectedId(text.id);
+      setSelectedIds([text.id]);
       setEditingId(text.id);
       setTool("select");
       // PRD §8.2: "UI me clear message — font mil gaya / nahi mila".
@@ -957,15 +1115,126 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     };
   };
 
+  // P8.6 pinch: capture-phase pointer cache. Runs BEFORE any child handler
+  // (so a second finger cancels an in-flight drag), on every pointer over
+  // the page.
+  const cancelLongPress = (): void => {
+    if (longPressRef.current !== null) {
+      clearTimeout(longPressRef.current.timer);
+      longPressRef.current = null;
+    }
+  };
+
+  const initPinch = (): void => {
+    const pts = [...pointersRef.current.values()];
+    if (pts.length < 2) {
+      pinchRef.current = null;
+      return;
+    }
+    const wrap = zoomWrapRef.current;
+    const box = wrap?.getBoundingClientRect();
+    pinchRef.current = {
+      dist: Math.max(1, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)),
+      zoom,
+      mid: box
+        ? {
+            x: (pts[0].x + pts[1].x) / 2 - box.left,
+            y: (pts[0].y + pts[1].y) / 2 - box.top,
+          }
+        : { x: 0, y: 0 },
+      scroll: {
+        left: wrap?.scrollLeft ?? 0,
+        top: wrap?.scrollTop ?? 0,
+      },
+    };
+  };
+
+  const applyPinch = (): void => {
+    const pinch = pinchRef.current;
+    const wrap = zoomWrapRef.current;
+    if (!pinch || !wrap || !pageDisp) return;
+    const pts = [...pointersRef.current.values()];
+    if (pts.length < 2) return;
+    const box = wrap.getBoundingClientRect();
+    const dist = Math.max(1, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+    const mid = {
+      x: (pts[0].x + pts[1].x) / 2 - box.left,
+      y: (pts[0].y + pts[1].y) / 2 - box.top,
+    };
+    const z = clampN((pinch.zoom * dist) / pinch.dist, 0.75, 3);
+    // Keep the pinch-start content point under the CURRENT midpoint and
+    // let the midpoint's own movement pan the page (s1 = p*z − scroll).
+    const ratio = z / pinch.zoom;
+    const left = (pinch.scroll.left + pinch.mid.x) * ratio - mid.x;
+    const top = (pinch.scroll.top + pinch.mid.y) * ratio - mid.y;
+    setZoom(z);
+    const settle = (): void => {
+      wrap.scrollLeft = left;
+      wrap.scrollTop = top;
+    };
+    settle();
+    requestAnimationFrame(settle);
+  };
+
+  const trackPointerDown = (
+    event: React.PointerEvent<HTMLDivElement>
+  ): void => {
+    pointersRef.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    });
+    if (pointersRef.current.size === 2) {
+      // Second finger: single-pointer gestures are dead, pinch owns zoom.
+      cancelLongPress();
+      setGesture(null);
+      setGuides([]);
+      initPinch();
+    }
+  };
+
+  const trackPointerMove = (
+    event: React.PointerEvent<HTMLDivElement>
+  ): void => {
+    if (!pointersRef.current.has(event.pointerId)) return;
+    pointersRef.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    });
+    if (pointersRef.current.size >= 2) {
+      applyPinch();
+      event.preventDefault();
+    }
+  };
+
+  const trackPointerEnd = (event: React.PointerEvent<HTMLDivElement>): void => {
+    pointersRef.current.delete(event.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+  };
+
   const handleOverlayPointerDown = (
     event: React.PointerEvent<HTMLDivElement>
   ): void => {
     if (!base || !currentView || event.button !== 0) return;
+    if (pointersRef.current.size >= 2) return; // pinch owns the canvas
     if (menu) setMenu(null);
     const pos = displayPos(event);
     if (tool === "select") {
-      setSelectedId(null);
+      // P8.6: dragging on empty canvas marquee-selects; a click clears.
       setEditingId(null);
+      try {
+        overlayRef.current?.setPointerCapture(event.pointerId);
+      } catch {
+        /* synthetic pointers */
+      }
+      setGesture({
+        type: "marquee",
+        x0: pos.x,
+        y0: pos.y,
+        x1: pos.x,
+        y1: pos.y,
+        base: event.shiftKey ? [...selectedIds] : [],
+      });
+      event.preventDefault();
       return;
     }
     // Clicks land on the piece buttons (pointer-events-auto); anything
@@ -977,7 +1246,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       } catch {
         /* synthetic pointers */
       }
-      setSelectedId(null);
+      setSelectedIds([]);
       setGesture({ type: "stroke", pts: [pos] });
       event.preventDefault();
       return;
@@ -988,7 +1257,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     } catch {
       /* synthetic pointers */
     }
-    setSelectedId(null);
+    setSelectedIds([]);
     setGesture({
       type: "create",
       kind: tool as CreateKind,
@@ -1003,8 +1272,16 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
   const handleOverlayPointerMove = (
     event: React.PointerEvent<HTMLDivElement>
   ): void => {
+    if (pointersRef.current.size >= 2) return; // pinch owns the canvas
     if (!gesture || !pageDisp || !currentView) return;
     const pos = displayPos(event);
+    // Long-press cancels as soon as the finger drifts past the slop.
+    if (longPressRef.current !== null) {
+      const lp = longPressRef.current;
+      if (Math.hypot(pos.x - lp.x, pos.y - lp.y) > LONG_PRESS_SLOP) {
+        cancelLongPress();
+      }
+    }
     if (gesture.type === "stroke") {
       const last = gesture.pts[gesture.pts.length - 1];
       if (Math.hypot(pos.x - last.x, pos.y - last.y) > 1.5) {
@@ -1012,30 +1289,66 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       }
       return;
     }
-    if (gesture.type === "create") {
+    if (gesture.type === "create" || gesture.type === "marquee") {
       setGesture({ ...gesture, x1: pos.x, y1: pos.y });
       return;
     }
+    if (gesture.type === "rotate") {
+      const angle = displayAngle(pos, { x: gesture.cx, y: gesture.cy });
+      let delta = (angle - gesture.startAngle) % 360;
+      if (delta > 180) delta -= 360;
+      if (delta <= -180) delta += 360;
+      let next = gesture.startRotation + delta;
+      // Shift = 15° steps, otherwise a 1° grid (PRD §8.2 rotation).
+      next = event.shiftKey ? Math.round(next / 15) * 15 : Math.round(next);
+      patchObject(gesture.id, { rotation: normalizeRotation(next) });
+      return;
+    }
     if (gesture.type === "move") {
-      const obj = objectsRef.current.find((o) => o.id === gesture.id);
-      if (!obj) {
-        setGesture(null);
-        return;
-      }
-      const disp = pdfRectToDisplay(obj, currentView);
-      // grabDx/grabDy are the pointer's offset FROM the object origin at
-      // gesture start — pos - grab IS the new origin (no extra disp add).
-      const next = {
-        x: clampN(pos.x - gesture.grabDx, 0, pageDisp.w - disp.w),
-        y: clampN(pos.y - gesture.grabDy, 0, pageDisp.h - disp.h),
-        w: disp.w,
-        h: disp.h,
+      // P8.6: group move — the union rect is proposed from the pointer,
+      // clamped to the page, snapped to the guides, then the same display
+      // delta is applied to every selected object (one history group).
+      const union = gesture.union;
+      const proposed = {
+        x: clampN(pos.x - gesture.grabDx, 0, pageDisp.w - union.w),
+        y: clampN(pos.y - gesture.grabDy, 0, pageDisp.h - union.h),
+        w: union.w,
+        h: union.h,
       };
-      const pdf = displayRectToPdf(next, currentView);
-      patchObject(gesture.id, {
-        x: roundPt(pdf.x),
-        y: roundPt(pdf.y),
+      const moving = new Set(gesture.ids);
+      const others = objectsRef.current
+        .filter((o) => o.page === selectedPage && !o.hidden && !moving.has(o.id))
+        .map((o) => pdfRectToDisplay(o, currentView));
+      const snap = computeSnap(
+        proposed,
+        pageDisp,
+        others,
+        SNAP_BASE_PT * zoom
+      );
+      setGuides(snap.guides);
+      const dx = proposed.x + snap.dx - union.x;
+      const dy = proposed.y + snap.dy - union.y;
+      const byId = new Map<string, ObjRect>();
+      gesture.ids.forEach((id, i) => {
+        const orig = gesture.origs[i];
+        const pdf = displayRectToPdf(
+          { x: orig.x + dx, y: orig.y + dy, w: orig.w, h: orig.h },
+          currentView
+        );
+        byId.set(id, { x: roundPt(pdf.x), y: roundPt(pdf.y), w: 0, h: 0 });
       });
+      applyObjects(
+        objectsRef.current.map((o) =>
+          byId.has(o.id)
+            ? ({
+                ...o,
+                x: (byId.get(o.id) as { x: number }).x,
+                y: (byId.get(o.id) as { y: number }).y,
+              } as EditorObject)
+            : o
+        ),
+        `move:${gesture.ids.length > 1 ? "grp" : gesture.ids[0]}`
+      );
       return;
     }
     // resize
@@ -1100,8 +1413,10 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
   };
 
   const handleOverlayPointerUp = (): void => {
+    cancelLongPress();
     if (!gesture || !currentView || !pageDisp) {
       setGesture(null);
+      setGuides([]);
       return;
     }
     if (gesture.type === "stroke") {
@@ -1111,8 +1426,51 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         const pdf = displayRectToPdf(norm.rect, currentView);
         const obj = makeDraw(selectedPage, pdf, norm.fracs);
         applyObjects([...objectsRef.current, obj], `add:${obj.id}`);
-        setSelectedId(obj.id);
+        setSelectedIds([obj.id]);
         setTool("select");
+        if (mobileMode) setPropsOpen(true);
+      }
+      return;
+    }
+    if (gesture.type === "marquee") {
+      const x0 = Math.min(gesture.x0, gesture.x1);
+      const x1 = Math.max(gesture.x0, gesture.x1);
+      const y0 = Math.min(gesture.y0, gesture.y1);
+      const y1 = Math.max(gesture.y0, gesture.y1);
+      const clicked = x1 - x0 < MARQUEE_MIN_PT && y1 - y0 < MARQUEE_MIN_PT;
+      setGesture(null);
+      let next: string[];
+      if (clicked) {
+        // Plain tap on empty canvas clears (shift keeps the current set).
+        next = gesture.base;
+      } else {
+        const rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+        const hits = marqueeSelection(
+          objectsRef.current,
+          currentView,
+          selectedPage,
+          rect
+        );
+        next =
+          gesture.base.length > 0
+            ? [...new Set([...gesture.base, ...hits])]
+            : hits;
+      }
+      setSelectedIds(next);
+      if (mobileMode && next.length > 0 && editingId === null) {
+        setPropsOpen(true);
+      }
+      return;
+    }
+    if (gesture.type === "rotate") {
+      setGesture(null);
+      return;
+    }
+    if (gesture.type === "move") {
+      setGesture(null);
+      setGuides([]);
+      if (mobileMode && selectedIds.length > 0 && editingId === null) {
+        setPropsOpen(true);
       }
       return;
     }
@@ -1164,9 +1522,11 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
           break;
       }
       applyObjects([...objectsRef.current, obj], `add:${obj.id}`);
-      setSelectedId(obj.id);
+      setSelectedIds([obj.id]);
       if (obj.kind === "text") {
         setEditingId(obj.id);
+      } else if (mobileMode) {
+        setPropsOpen(true);
       }
       setTool("select");
       return;
@@ -1178,23 +1538,54 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     event: React.PointerEvent<HTMLDivElement>
   ): void => {
     if (!base || !currentView || event.button !== 0 || tool !== "select") return;
+    if (pointersRef.current.size >= 2) return; // pinch owns the canvas
     event.stopPropagation();
-    setSelectedId(obj.id);
+    if (event.shiftKey) {
+      // P8.6: shift-click toggles this object in/out of the selection.
+      setSelectedIds((prev) =>
+        prev.includes(obj.id)
+          ? prev.filter((sid) => sid !== obj.id)
+          : [...prev, obj.id]
+      );
+      return;
+    }
+    if (!selectedIds.includes(obj.id)) {
+      setSelectedIds([obj.id]);
+    }
     if (obj.locked || editingId === obj.id) return;
     const handleEl = (event.target as HTMLElement).closest("[data-handle]");
     if (handleEl) {
-      const edge = handleEl.getAttribute("data-handle") as HitEdge;
+      const edge = handleEl.getAttribute("data-handle");
       try {
         overlayRef.current?.setPointerCapture(event.pointerId);
       } catch {
         /* synthetic pointers */
+      }
+      if (edge === "rot") {
+        // P8.6 rotation handle — the gesture tracks the angle around the
+        // object's display center (Shift snaps to 15° steps).
+        const disp = pdfRectToDisplay(obj, currentView);
+        const pos = displayPos(event);
+        setGesture({
+          type: "rotate",
+          id: obj.id,
+          cx: disp.x + disp.w / 2,
+          cy: disp.y + disp.h / 2,
+          startAngle: displayAngle(pos, {
+            x: disp.x + disp.w / 2,
+            y: disp.y + disp.h / 2,
+          }),
+          startRotation: obj.rotation,
+        });
+        event.preventDefault();
+        return;
       }
       const orig = pdfRectToDisplay(obj, currentView);
       const keepAspect = event.shiftKey && obj.kind === "image";
       setGesture({
         type: "resize",
         id: obj.id,
-        edge,
+        edge: edge as HitEdge,
         orig,
         keepAspect,
         aspect: orig.w / Math.max(1, orig.h),
@@ -1207,15 +1598,39 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     } catch {
       /* synthetic pointers */
     }
+    // P8.6: multi-select drag — the union of every selected object moves.
+    const ids = selectedIds.includes(obj.id) ? selectedIds : [obj.id];
+    const targets = objectsRef.current.filter(
+      (o) => ids.includes(o.id) && !o.locked && !o.hidden
+    );
+    if (targets.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    const dispRects = targets.map((o) => pdfRectToDisplay(o, currentView));
+    const union = unionRects(dispRects) ?? dispRects[0];
     const pos = displayPos(event);
-    const disp = pdfRectToDisplay(obj, currentView);
     setGesture({
       type: "move",
-      id: obj.id,
-      grabDx: pos.x - disp.x,
-      grabDy: pos.y - disp.y,
-      orig: disp,
+      ids: targets.map((o) => o.id),
+      grabDx: pos.x - union.x,
+      grabDy: pos.y - union.y,
+      origs: dispRects,
+      union,
     });
+    // P8.6: long-press opens the object menu on touch (canceled by move).
+    if (coarseRef.current) {
+      cancelLongPress();
+      const start = { x: pos.x, y: pos.y };
+      const client = { x: event.clientX, y: event.clientY };
+      const id = obj.id;
+      const timer = window.setTimeout(() => {
+        longPressRef.current = null;
+        setGesture(null);
+        setMenu({ x: client.x, y: client.y, objId: id });
+      }, LONG_PRESS_MS);
+      longPressRef.current = { id, x: start.x, y: start.y, clientX: client.x, clientY: client.y, timer };
+    }
     event.preventDefault();
   };
 
@@ -1224,7 +1639,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
   ): void => {
     event.preventDefault();
     event.stopPropagation();
-    setSelectedId(obj.id);
+    if (!selectedIds.includes(obj.id)) setSelectedIds([obj.id]);
     setMenu({ x: event.clientX, y: event.clientY, objId: obj.id });
   };
 
@@ -1258,41 +1673,29 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       }
       if (mod && key === "d") {
         event.preventDefault();
-        duplicateSel();
+        duplicateSelected();
         return;
       }
       if (mod) return;
       if (event.key === "Delete" || event.key === "Backspace") {
-        if (selectedId !== null) {
+        if (selectedIds.length > 0) {
           event.preventDefault();
-          removeObject(selectedId);
+          removeSelected();
         }
         return;
       }
       if (event.key === "Escape") {
-        setSelectedId(null);
+        setSelectedIds([]);
         setMenu(null);
+        setPropsOpen(false);
         return;
       }
-      if (event.key.startsWith("Arrow") && selectedId !== null && currentView) {
+      if (event.key.startsWith("Arrow") && selectedIds.length > 0) {
         event.preventDefault();
         const step = event.shiftKey ? 10 : 1;
-        const obj = objectsRef.current.find((o) => o.id === selectedId);
-        if (!obj) return;
-        const disp = pdfRectToDisplay(obj, currentView);
         const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
         const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-        const next = {
-          x: clampN(disp.x + dx, 0, (pageDisp?.w ?? disp.w + disp.x) - disp.w),
-          y: clampN(disp.y + dy, 0, (pageDisp?.h ?? disp.h + disp.y) - disp.h),
-          w: disp.w,
-          h: disp.h,
-        };
-        const pdf = displayRectToPdf(next, currentView);
-        patchObject(selectedId, {
-          x: roundPt(pdf.x),
-          y: roundPt(pdf.y),
-        });
+        nudgeSelected(dx, dy);
         return;
       }
       switch (key) {
@@ -1339,16 +1742,84 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     currentView,
-    duplicateSel,
+    duplicateSelected,
     editingId,
-    pageDisp,
-    patchObject,
+    nudgeSelected,
     redo,
-    removeObject,
-    selectedId,
+    removeSelected,
+    selectedIds,
     signOpen,
     undo,
   ]);
+
+  // --- P8.6: mobile mode + sheets ---------------------------------------------
+  // Keep the raw coarse-pointer flag in a ref for the long-press path.
+  useEffect(() => {
+    coarseRef.current =
+      typeof window !== "undefined" &&
+      window.matchMedia("(pointer: coarse)").matches;
+  }, []);
+  // The properties sheet closes when the selection goes empty.
+  useEffect(() => {
+    if (selectedIds.length === 0) setPropsOpen(false);
+  }, [selectedIds.length]);
+
+  // --- P8.6: autosave drafts -----------------------------------------------------
+  const draftKey = useMemo(
+    () => (file ? draftKeyFor(file.name, file.size, file.lastModified) : null),
+    [file]
+  );
+  const [draft, setDraft] = useState<EditDraft | null>(null);
+  const draftCheckedFor = useRef("");
+
+  // On a freshly loaded document: offer a found draft (once per session).
+  useEffect(() => {
+    if (!viewsReady || !file || !draftKey || draftCheckedFor.current === fileId) {
+      return;
+    }
+    draftCheckedFor.current = fileId;
+    void (async () => {
+      try {
+        const found = await loadDraft(draftKey);
+        if (found) setDraft(found);
+      } catch {
+        /* private mode / IDB unavailable — autosave silently off */
+      }
+    })();
+  }, [viewsReady, file, draftKey, fileId]);
+
+  const resumeDraft = useCallback((): void => {
+    if (!draft) return;
+    setSelectedPage(Math.min(draft.page, Math.max(0, pageCount - 1)));
+    setZoom(clampN(draft.zoom, 0.75, 3));
+    applyObjects(
+      [...objectsRef.current, ...draft.objects],
+      `draft:resume:${draft.savedAt}`
+    );
+    setDraft(null);
+    toast({ title: t("editPdf.draftRestored") });
+  }, [applyObjects, draft, pageCount, t, toast]);
+
+  const discardDraft = useCallback((): void => {
+    setDraft(null);
+    if (draftKey) void deleteDraft(draftKey);
+  }, [draftKey]);
+
+  // Debounced autosave — only objects JSON (never file bytes), skipped while
+  // the resume banner is up; any manual edit dismisses the banner and takes
+  // over the draft slot.
+  useEffect(() => {
+    if (!viewsReady || !draftKey || !fileId) return;
+    if (objects.length === 0) return;
+    if (draft !== null) {
+      setDraft(null);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      void saveDraft(draftKey, encodeDraft(objectsRef.current, selectedPage, zoom));
+    }, DRAFT_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+  }, [objects, selectedPage, zoom, viewsReady, draftKey, fileId, draft]);
 
   // --- Guards -----------------------------------------------------------------
   if (!file) return null;
@@ -1387,6 +1858,24 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         top: `${(Math.min(gesture.y0, gesture.y1) / (pageDisp?.h ?? 1)) * 100}%`,
         width: `${(Math.abs(gesture.x1 - gesture.x0) / (pageDisp?.w ?? 1)) * 100}%`,
         height: `${(Math.abs(gesture.y1 - gesture.y0) / (pageDisp?.h ?? 1)) * 100}%`,
+      }
+    : null;
+
+  const marqueePreview = gesture?.type === "marquee" && pageDisp
+    ? {
+        left: `${(Math.min(gesture.x0, gesture.x1) / pageDisp.w) * 100}%`,
+        top: `${(Math.min(gesture.y0, gesture.y1) / pageDisp.h) * 100}%`,
+        width: `${(Math.abs(gesture.x1 - gesture.x0) / pageDisp.w) * 100}%`,
+        height: `${(Math.abs(gesture.y1 - gesture.y0) / pageDisp.h) * 100}%`,
+      }
+    : null;
+
+  const unionOutline = multiUnion && pageDisp
+    ? {
+        left: `${(multiUnion.x / pageDisp.w) * 100}%`,
+        top: `${(multiUnion.y / pageDisp.h) * 100}%`,
+        width: `${(multiUnion.w / pageDisp.w) * 100}%`,
+        height: `${(multiUnion.h / pageDisp.h) * 100}%`,
       }
     : null;
 
@@ -1429,11 +1918,53 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         </div>
       ) : null}
 
-      <EditorToolbar
-        tool={tool}
-        onTool={onTool}
-        objectCount={objects.length}
-      />
+      {/* P8.6 autosave: a draft from a previous session on this file. */}
+      {draft ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-2.5 rounded-card border border-amber-300/60 bg-amber-50 p-3 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <TriangleAlert className="size-4 shrink-0" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold">
+              {t("editPdf.draftFoundTitle")}
+            </p>
+            <p className="mt-0.5 text-xs leading-relaxed">
+              {t("editPdf.draftFoundHint")}
+              {draftHasImages(draft)
+                ? ` ${t("editPdf.draftImagesNote")}`
+                : ""}
+            </p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-11 rounded-btn sm:h-9"
+              onClick={discardDraft}
+            >
+              {t("editPdf.draftDiscard")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-11 rounded-btn sm:h-9"
+              onClick={resumeDraft}
+            >
+              {t("editPdf.draftResume")}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {!mobileMode ? (
+        <EditorToolbar
+          tool={tool}
+          onTool={onTool}
+          objectCount={objects.length}
+        />
+      ) : null}
 
       <div className="flex flex-col gap-3 lg:flex-row">
         {/* Canvas column */}
@@ -1461,25 +1992,33 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
             />
           ) : null}
 
-          {base && !failed && pageDisp && currentView ? (
-            <div className="relative mx-auto w-fit max-w-full overflow-hidden rounded-card border border-border bg-card shadow-sm">
+          {base && !failed && pageDisp && currentView ? (() => {
+            // P8.6: at zoom > 1 the page wrapper becomes a scrollable box
+            // (pinch pan target) with an explicitly sized inner page so the
+            // overlay keeps mapping 1:1 to the full canvas. At zoom ≤ 1 the
+            // original fit-to-width layout is kept untouched.
+            const zoomed = zoom > 1;
+            const canvas = (
               <canvas
-                className="block max-w-full"
-                style={{
-                  width: `${pageDisp.w * zoom}px`,
-                }}
+                className={zoomed ? "absolute inset-0 block h-full w-full" : "block max-w-full"}
+                style={
+                  zoomed
+                    ? undefined
+                    : { width: `${pageDisp.w * zoom}px` }
+                }
                 aria-label={t("editPdf.canvasLabel")}
-                ref={(canvas) => {
-                  (canvasRef as { current: HTMLCanvasElement | null }).current =
-                    canvas;
-                  if (!canvas) return;
-                  const ctx = canvas.getContext("2d");
+                ref={(c) => {
+                  (canvasRef as { current: HTMLCanvasElement | null }).current = c;
+                  if (!c) return;
+                  const ctx = c.getContext("2d");
                   if (!ctx) return;
-                  canvas.width = base.bitmap.width;
-                  canvas.height = base.bitmap.height;
+                  c.width = base.bitmap.width;
+                  c.height = base.bitmap.height;
                   ctx.drawImage(base.bitmap, 0, 0);
                 }}
               />
+            );
+            const overlay = (
               <div
                 ref={overlayRef}
                 className="absolute inset-0 touch-none"
@@ -1491,10 +2030,17 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
                         ? "text"
                         : "crosshair",
                 }}
+                onPointerDownCapture={trackPointerDown}
+                onPointerMoveCapture={trackPointerMove}
+                onPointerUpCapture={trackPointerEnd}
+                onPointerCancelCapture={trackPointerEnd}
                 onPointerDown={handleOverlayPointerDown}
                 onPointerMove={handleOverlayPointerMove}
                 onPointerUp={handleOverlayPointerUp}
-                onPointerLeave={handleOverlayPointerUp}
+                onPointerLeave={(event) => {
+                  trackPointerEnd(event);
+                  handleOverlayPointerUp();
+                }}
                 onContextMenu={(event) => event.preventDefault()}
                 role="presentation"
               >
@@ -1506,8 +2052,11 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
                     dispW={pageDisp.w}
                     dispH={pageDisp.h}
                     scale={renderScale}
-                    selected={selectedId === obj.id}
+                    selected={selectedIds.includes(obj.id)}
                     editing={editingId === obj.id}
+                    rotationHandle={
+                      selectedIds.length === 1 && isRotatable(obj)
+                    }
                     imageUrl={
                       obj.kind === "image"
                         ? assetUrls.get(obj.assetKey) ?? null
@@ -1518,6 +2067,18 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
                     onContextMenu={handleContextMenu(obj)}
                   />
                 ))}
+
+                {/* P8.6: shared dashed outline around a multi-selection. */}
+                {unionOutline ? (
+                  <div
+                    className="pointer-events-none absolute z-[5] border border-dashed border-primary/70"
+                    style={unionOutline}
+                    aria-hidden="true"
+                  />
+                ) : null}
+
+                {/* P8.6: snap guide lines while dragging. */}
+                <SnapGuides guides={guides} dispW={pageDisp.w} dispH={pageDisp.h} />
 
                 {/* P8.3: click-to-edit existing text pieces. */}
                 {tool === "edittext" && piecesState === "ready" ? (
@@ -1570,6 +2131,15 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
                   />
                 ) : null}
 
+                {/* P8.6: marquee rubber-band while dragging empty canvas. */}
+                {marqueePreview ? (
+                  <div
+                    className="pointer-events-none absolute z-20 border border-dashed border-primary bg-primary/5"
+                    style={marqueePreview}
+                    aria-hidden="true"
+                  />
+                ) : null}
+
                 {strokePreview && gesture?.type === "stroke" && pageDisp ? (
                   <svg
                     className="pointer-events-none absolute inset-0"
@@ -1592,8 +2162,36 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
                   </svg>
                 ) : null}
               </div>
-            </div>
-          ) : (
+            );
+            if (zoomed) {
+              return (
+                <div
+                  ref={zoomWrapRef}
+                  className="mx-auto w-fit max-w-full overflow-auto rounded-card border border-border bg-card shadow-sm scrollbar-thin"
+                >
+                  <div
+                    className="relative"
+                    style={{
+                      width: `${pageDisp.w * zoom}px`,
+                      height: `${pageDisp.h * zoom}px`,
+                    }}
+                  >
+                    {canvas}
+                    {overlay}
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div
+                ref={zoomWrapRef}
+                className="relative mx-auto w-fit max-w-full overflow-hidden rounded-card border border-border bg-card shadow-sm"
+              >
+                {canvas}
+                {overlay}
+              </div>
+            );
+          })() : (
             <div className="flex h-64 items-center justify-center rounded-card border border-border bg-card">
               {failed ? (
                 <p className="text-xs text-muted-foreground">
@@ -1635,39 +2233,180 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
           ) : null}
         </div>
 
-        {/* Right rail: properties + layers */}
-        <div className="flex w-full shrink-0 flex-col gap-3 lg:w-80">
-          <PropertiesPanel
-            object={selected}
-            onPatch={(patch) => {
-              if (selected) patchObject(selected.id, patch);
-            }}
-            onRaise={() => {
-              if (selectedId)
-                applyObjects(raiseOne(objectsRef.current, selectedId), `z:${selectedId}`);
-            }}
-            onLower={() => {
-              if (selectedId)
-                applyObjects(lowerOne(objectsRef.current, selectedId), `z:${selectedId}`);
-            }}
-            onDuplicate={duplicateSel}
-            onDelete={() => {
-              if (selectedId) removeObject(selectedId);
-            }}
-            onToggleLock={() => {
-              if (selected)
-                patchObject(selected.id, { locked: !selected.locked });
-            }}
-          />
-          <LayersPanel
-            objects={pageObjects}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onPatch={patchObject}
-            onRemove={removeObject}
-          />
-        </div>
+        {/* Right rail: properties + layers (desktop; mobile uses the sheet) */}
+        {!mobileMode ? (
+          <div className="flex w-full shrink-0 flex-col gap-3 lg:w-80">
+            {selectedIds.length > 1 ? (
+              <MultiSelectPanel
+                count={selectedIds.length}
+                locked={allSelectedLocked}
+                onBringFront={() =>
+                  applyObjects(
+                    bringManyToFront(objectsRef.current, new Set(selectedIds)),
+                    `zMany:${selectedIds.length}`
+                  )
+                }
+                onSendBack={() =>
+                  applyObjects(
+                    sendManyToBack(objectsRef.current, new Set(selectedIds)),
+                    `zMany:${selectedIds.length}`
+                  )
+                }
+                onDuplicate={duplicateSelected}
+                onDelete={removeSelected}
+                onToggleLock={() => {
+                  const next = !allSelectedLocked;
+                  const ids = new Set(selectedIds);
+                  applyObjects(
+                    objectsRef.current.map((o) =>
+                      ids.has(o.id) ? ({ ...o, locked: next } as EditorObject) : o
+                    ),
+                    `lockMany:${selectedIds.length}`
+                  );
+                }}
+              />
+            ) : (
+              <PropertiesPanel
+                object={selected}
+                onPatch={(patch) => {
+                  if (selected) patchObject(selected.id, patch);
+                }}
+                onRaise={() => {
+                  if (selectedId)
+                    applyObjects(raiseOne(objectsRef.current, selectedId), `z:${selectedId}`);
+                }}
+                onLower={() => {
+                  if (selectedId)
+                    applyObjects(lowerOne(objectsRef.current, selectedId), `z:${selectedId}`);
+                }}
+                onDuplicate={duplicateSelected}
+                onDelete={() => {
+                  if (selectedId) removeObject(selectedId);
+                }}
+                onToggleLock={() => {
+                  if (selected)
+                    patchObject(selected.id, { locked: !selected.locked });
+                }}
+              />
+            )}
+            <LayersPanel
+              objects={pageObjects}
+              selectedId={selectedId}
+              onSelect={(id) => setSelectedIds([id])}
+              onPatch={patchObject}
+              onRemove={removeObject}
+            />
+          </div>
+        ) : null}
       </div>
+
+      {/* P8.6 mobile: simplified bottom toolbar + More sheet + properties
+          sheet (reuses the exact PropertiesPanel/LayersPanel components). */}
+      {mobileMode ? (
+        <MobileToolbar
+          tool={tool}
+          onTool={onTool}
+          onMore={() => {
+            setPropsOpen(false);
+            setMoreOpen(true);
+          }}
+        />
+      ) : null}
+
+      {mobileMode ? (
+        <MoreSheet
+          open={moreOpen}
+          onOpenChange={setMoreOpen}
+          tool={tool}
+          onTool={onTool}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={undo}
+          onRedo={redo}
+          canDuplicate={selectedIds.length > 0}
+          onDuplicate={duplicateSelected}
+          canDelete={selectedIds.length > 0}
+          onDelete={removeSelected}
+          zoom={zoom}
+          onZoom={setZoom}
+          onFindReplace={openFindReplace}
+        />
+      ) : null}
+
+      {mobileMode ? (
+        <BottomSheet
+          open={propsOpen}
+          onOpenChange={setPropsOpen}
+          title={
+            selectedIds.length > 1
+              ? t("editPdf.multiTitle", { n: selectedIds.length })
+              : t("editPdf.propertiesTitle")
+          }
+        >
+          <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto pb-2 scrollbar-thin">
+            {selectedIds.length > 1 ? (
+              <MultiSelectPanel
+                count={selectedIds.length}
+                locked={allSelectedLocked}
+                onBringFront={() =>
+                  applyObjects(
+                    bringManyToFront(objectsRef.current, new Set(selectedIds)),
+                    `zMany:${selectedIds.length}`
+                  )
+                }
+                onSendBack={() =>
+                  applyObjects(
+                    sendManyToBack(objectsRef.current, new Set(selectedIds)),
+                    `zMany:${selectedIds.length}`
+                  )
+                }
+                onDuplicate={duplicateSelected}
+                onDelete={removeSelected}
+                onToggleLock={() => {
+                  const next = !allSelectedLocked;
+                  const ids = new Set(selectedIds);
+                  applyObjects(
+                    objectsRef.current.map((o) =>
+                      ids.has(o.id) ? ({ ...o, locked: next } as EditorObject) : o
+                    ),
+                    `lockMany:${selectedIds.length}`
+                  );
+                }}
+              />
+            ) : (
+              <PropertiesPanel
+                object={selected}
+                onPatch={(patch) => {
+                  if (selected) patchObject(selected.id, patch);
+                }}
+                onRaise={() => {
+                  if (selectedId)
+                    applyObjects(raiseOne(objectsRef.current, selectedId), `z:${selectedId}`);
+                }}
+                onLower={() => {
+                  if (selectedId)
+                    applyObjects(lowerOne(objectsRef.current, selectedId), `z:${selectedId}`);
+                }}
+                onDuplicate={duplicateSelected}
+                onDelete={() => {
+                  if (selectedId) removeObject(selectedId);
+                }}
+                onToggleLock={() => {
+                  if (selected)
+                    patchObject(selected.id, { locked: !selected.locked });
+                }}
+              />
+            )}
+            <LayersPanel
+              objects={pageObjects}
+              selectedId={selectedId}
+              onSelect={(id) => setSelectedIds([id])}
+              onPatch={patchObject}
+              onRemove={removeObject}
+            />
+          </div>
+        </BottomSheet>
+      ) : null}
 
       {/* Hidden image input */}
       <input
@@ -1717,26 +2456,50 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         />
       ) : null}
 
-      {menu && selected ? (
-        <EditorContextMenu
-          state={menu}
-          locked={selected.locked}
-          onDuplicate={duplicateSel}
-          onBringFront={() =>
-            applyObjects(bringToFront(objectsRef.current, menu.objId), `z:${menu.objId}`)
-          }
-          onSendBack={() =>
-            applyObjects(sendToBack(objectsRef.current, menu.objId), `z:${menu.objId}`)
-          }
-          onToggleLock={() =>
-            patchObject(menu.objId, {
-              locked: !objectsRef.current.find((o) => o.id === menu.objId)?.locked,
-            })
-          }
-          onDelete={() => removeObject(menu.objId)}
-          onClose={() => setMenu(null)}
-        />
-      ) : null}
+      {menu ? (() => {
+        // The menu acts on the whole selection when the target is part of
+        // it (P8.6 multi-select), otherwise just the clicked object.
+        const ids = selectedIds.includes(menu.objId) ? selectedIds : [menu.objId];
+        const idSet = new Set(ids);
+        const target = objects.find((o) => o.id === menu.objId);
+        return (
+          <EditorContextMenu
+            state={menu}
+            locked={idSet.size > 1 ? allSelectedLocked : target?.locked === true}
+            onDuplicate={duplicateSelected}
+            onBringFront={() =>
+              applyObjects(
+                ids.length > 1
+                  ? bringManyToFront(objectsRef.current, idSet)
+                  : bringToFront(objectsRef.current, menu.objId),
+                `z:${menu.objId}`
+              )
+            }
+            onSendBack={() =>
+              applyObjects(
+                ids.length > 1
+                  ? sendManyToBack(objectsRef.current, idSet)
+                  : sendToBack(objectsRef.current, menu.objId),
+                `z:${menu.objId}`
+              )
+            }
+            onToggleLock={() => {
+              const next = !(target?.locked === true);
+              applyObjects(
+                objectsRef.current.map((o) =>
+                  idSet.has(o.id) ? ({ ...o, locked: next } as EditorObject) : o
+                ),
+                `lock:${menu.objId}`
+              );
+            }}
+            onDelete={() => {
+              if (ids.length > 1) removeSelected();
+              else removeObject(menu.objId);
+            }}
+            onClose={() => setMenu(null)}
+          />
+        );
+      })() : null}
     </div>
   );
 }

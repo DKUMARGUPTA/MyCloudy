@@ -37,19 +37,29 @@ function lookup(dict: unknown, key: string): string | undefined {
 }
 
 /**
- * ICU-lite plural subset: `{n, plural, =1 {one thing} other {# things}}`
- * — `#` inside a branch is replaced by the number. Anything that doesn't
- * match stays untouched (plain {param} replacement below still applies).
+ * ICU-lite plural subset: `{n, plural, =0 {none} =1 {one thing} other {# things}}`
+ * — any number of `=N` exact branches before the required `other`. `#` inside
+ * a branch is replaced by the number. Anything that doesn't match stays
+ * untouched (plain {param} replacement below still applies).
  */
-const PLURAL_RE =
-  /\{(\w+),\s*plural,\s*=1\s*\{([^{}]*)\}\s*other\s*\{([^{}]*)\}\}/g;
+const PLURAL_RE = /\{(\w+),\s*plural,\s*((?:=\d+\s*\{[^{}]*\}\s*)*)other\s*\{([^{}]*)\}\}/g;
+const EXACT_RE = /=(\d+)\s*\{([^{}]*)\}/g;
 
 function applyParams(value: string, params: TranslateParams): string {
   let out = value.replace(
     PLURAL_RE,
-    (_match, name: string, one: string, other: string) => {
+    (_match, name: string, exacts: string, other: string) => {
       const n = Number(params[name]);
-      const branch = n === 1 ? one : other;
+      let branch = other;
+      if (Number.isFinite(n)) {
+        // First matching =N branch wins; otherwise `other`.
+        for (const m of exacts.matchAll(EXACT_RE)) {
+          if (Number(m[1]) === n) {
+            branch = m[2];
+            break;
+          }
+        }
+      }
       return branch.replaceAll("#", String(n));
     }
   );

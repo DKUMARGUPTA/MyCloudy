@@ -6,6 +6,7 @@ import {
   type PDFFont,
   type PDFImage,
   type PDFPage,
+  type Rotation,
 } from "pdf-lib";
 
 import type { OptionValues } from "@/lib/tools/config-types";
@@ -18,7 +19,10 @@ import {
   TEXT_PAD,
   displayToPdfPoint,
   hexToRgb,
+  lineEndpoints,
   pdfRectToDisplay,
+  rotateDisplayPoint,
+  rotationAnchor,
   sanitizeObjects,
   wrapText,
   type DrawObj,
@@ -135,6 +139,53 @@ function objPointToPdf(
   };
 }
 
+/**
+ * P8.6 rotation: rotates a DISPLAY point around the object's display
+ * center when the object carries a visual rotation (identity otherwise).
+ * Text anchors, underline endpoints and line/arrow endpoints all go
+ * through this so the whole object turns around its CENTER.
+ */
+function rotDisp(
+  obj: EditorObject,
+  view: PageView,
+  p: { x: number; y: number }
+): { x: number; y: number } {
+  if (obj.rotation % 360 === 0) return p;
+  const disp = pdfRectToDisplay(obj, view);
+  return rotateDisplayPoint(
+    p,
+    { x: disp.x + disp.w / 2, y: disp.y + disp.h / 2 },
+    obj.rotation
+  );
+}
+
+/**
+ * P8.6 rotation: the (x, y, width, height) pdf-lib draw call for a rect-like
+ * object. At rotation 0 this is the object itself (byte-identical legacy
+ * path — no rotate option is passed at all); at rotation ≠ 0 the anchor is
+ * compensated so pdf-lib's rotate-around-(x,y) turns the rect around its
+ * CENTER (model.rotationAnchor math).
+ */
+function rotatedRectDraw(o: ObjRect, rotation: number): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotate?: Rotation;
+} {
+  if (rotation % 360 === 0) {
+    return { x: o.x, y: o.y, width: o.w, height: o.h };
+  }
+  const anchor = rotationAnchor(o, rotation);
+  return {
+    x: anchor.x,
+    y: anchor.y,
+    width: o.w,
+    height: o.h,
+    rotate: degrees(rotation),
+  };
+}
+
 function rgbOf(hex: string) {
   const { r, g, b } = hexToRgb(hex);
   return rgb(r, g, b);
@@ -178,16 +229,28 @@ function drawTextObject(o: TextObj, ctx: DrawCtx): void {
   );
   const ascent = font.heightAtSize(size, { descender: false });
   const lh = LINE_HEIGHT * size;
-  const rotate = degrees(ctx.view.rotate || 0);
+  // P8.6: object rotation adds on top of the /Rotate compensation (the
+  // page rotation keeps words upright; the object rotation turns them).
+  const rotate = degrees((ctx.view.rotate || 0) + (o.rotation || 0));
 
   if (o.bg !== null) {
-    const rect = clampToPage(o, ctx.view);
-    if (rect) {
+    if (o.rotation % 360 === 0) {
+      const rect = clampToPage(o, ctx.view);
+      if (rect) {
+        ctx.page.drawRectangle({
+          x: rect.x,
+          y: rect.y,
+          width: rect.w,
+          height: rect.h,
+          color: rgbOf(o.bg),
+          opacity: o.opacity,
+        });
+      }
+    } else {
+      // Rotated bg: rotate around the object's user-space center. The
+      // visual may extend past the crop box — viewers clip at the MediaBox.
       ctx.page.drawRectangle({
-        x: rect.x,
-        y: rect.y,
-        width: rect.w,
-        height: rect.h,
+        ...rotatedRectDraw(o, o.rotation),
         color: rgbOf(o.bg),
         opacity: o.opacity,
       });
@@ -205,7 +268,10 @@ function drawTextObject(o: TextObj, ctx: DrawCtx): void {
           ? disp.x + disp.w - pad - lineW
           : disp.x + pad;
     const baselineY = disp.y + pad + ascent + i * lh;
-    const anchor = displayToPdfPoint(startX, baselineY, ctx.view);
+    // P8.6: rotate the display-space anchor around the object's display
+    // center so the text turns around its center, not its corner.
+    const rotatedAnchor = rotDisp(o, ctx.view, { x: startX, y: baselineY });
+    const anchor = displayToPdfPoint(rotatedAnchor.x, rotatedAnchor.y, ctx.view);
     ctx.page.drawText(line, {
       x: anchor.x,
       y: anchor.y,
@@ -217,8 +283,10 @@ function drawTextObject(o: TextObj, ctx: DrawCtx): void {
     });
     if (o.underline && line.length > 0) {
       const uy = baselineY + Math.max(1.2, size * 0.1);
-      const p1 = displayToPdfPoint(startX, uy, ctx.view);
-      const p2 = displayToPdfPoint(startX + lineW, uy, ctx.view);
+      const u1 = rotDisp(o, ctx.view, { x: startX, y: uy });
+      const u2 = rotDisp(o, ctx.view, { x: startX + lineW, y: uy });
+      const p1 = displayToPdfPoint(u1.x, u1.y, ctx.view);
+      const p2 = displayToPdfPoint(u2.x, u2.y, ctx.view);
       ctx.page.drawLine({
         start: p1,
         end: p2,
@@ -245,37 +313,61 @@ function drawImageObject(o: ImageObj, ctx: DrawCtx): void {
   const image = ctx.imageFor(o.assetKey);
   if (!image) return;
   // pdf-lib drawImage ignores w/h — explicit width/height only (P4.4 pin).
-  ctx.page.drawImage(image, {
-    x: o.x,
-    y: o.y,
-    width: o.w,
-    height: o.h,
-    opacity: o.opacity,
-  });
+  // P8.6: rotated images draw from the center-compensated anchor
+  // (rotation 0 keeps the exact legacy call — byte-identical).
+  if (o.rotation % 360 === 0) {
+    ctx.page.drawImage(image, {
+      x: o.x,
+      y: o.y,
+      width: o.w,
+      height: o.h,
+      opacity: o.opacity,
+    });
+  } else {
+    ctx.page.drawImage(image, {
+      ...rotatedRectDraw(o, o.rotation),
+      opacity: o.opacity,
+    });
+  }
 }
 
 function drawShapeObject(o: ShapeObj, ctx: DrawCtx): void {
   const stroke = o.stroke !== null ? rgbOf(o.stroke) : undefined;
   const fill = o.fill !== null ? rgbOf(o.fill) : undefined;
   const borderDash = o.dash ? [4, 3] : undefined;
+  const rotation = o.rotation || 0;
   if (o.kind === "rect") {
-    const rect = clampToPage(o, ctx.view);
-    if (!rect) return;
-    ctx.page.drawRectangle({
-      x: rect.x,
-      y: rect.y,
-      width: rect.w,
-      height: rect.h,
-      color: fill,
-      opacity: fill !== undefined ? o.opacity : undefined,
-      borderColor: stroke,
-      borderWidth: stroke !== undefined ? o.strokeW : 0,
-      borderOpacity: stroke !== undefined ? o.opacity : undefined,
-      borderDashArray: stroke !== undefined ? borderDash : undefined,
-    });
+    if (rotation % 360 === 0) {
+      const rect = clampToPage(o, ctx.view);
+      if (!rect) return;
+      ctx.page.drawRectangle({
+        x: rect.x,
+        y: rect.y,
+        width: rect.w,
+        height: rect.h,
+        color: fill,
+        opacity: fill !== undefined ? o.opacity : undefined,
+        borderColor: stroke,
+        borderWidth: stroke !== undefined ? o.strokeW : 0,
+        borderOpacity: stroke !== undefined ? o.opacity : undefined,
+        borderDashArray: stroke !== undefined ? borderDash : undefined,
+      });
+    } else {
+      ctx.page.drawRectangle({
+        ...rotatedRectDraw(o, rotation),
+        color: fill,
+        opacity: fill !== undefined ? o.opacity : undefined,
+        borderColor: stroke,
+        borderWidth: stroke !== undefined ? o.strokeW : 0,
+        borderOpacity: stroke !== undefined ? o.opacity : undefined,
+        borderDashArray: stroke !== undefined ? borderDash : undefined,
+      });
+    }
     return;
   }
   if (o.kind === "ellipse") {
+    // Ellipses never rotate (pdf-lib drawEllipse has no rotate) — honest
+    // disable in the UI; a stray rotation value is simply ignored.
     const cx = o.x + o.w / 2;
     const cy = o.y + o.h / 2;
     ctx.page.drawEllipse({
@@ -292,12 +384,14 @@ function drawShapeObject(o: ShapeObj, ctx: DrawCtx): void {
     });
     return;
   }
-  // line / arrow — endpoints through the display mapping.
-  const [f1, f2] = o.flip
-    ? [{ fx: 0, fy: 1 }, { fx: 1, fy: 0 }]
-    : [{ fx: 0, fy: 0 }, { fx: 1, fy: 1 }];
-  const p1 = objPointToPdf(o, ctx.view, f1.fx, f1.fy);
-  const p2 = objPointToPdf(o, ctx.view, f2.fx, f2.fy);
+  // line / arrow — display endpoints (flip-aware), rotated around the
+  // object's display center, then mapped to user space.
+  const disp = pdfRectToDisplay(o, ctx.view);
+  const ends = lineEndpoints(disp, o.flip);
+  const e1 = rotDisp(o, ctx.view, { x: ends.x1, y: ends.y1 });
+  const e2 = rotDisp(o, ctx.view, { x: ends.x2, y: ends.y2 });
+  const p1 = displayToPdfPoint(e1.x, e1.y, ctx.view);
+  const p2 = displayToPdfPoint(e2.x, e2.y, ctx.view);
   ctx.page.drawLine({
     start: p1,
     end: p2,
@@ -347,16 +441,24 @@ function drawFreehand(o: DrawObj, ctx: DrawCtx): void {
 
 function drawWhiteout(o: EditorObject, ctx: DrawCtx): void {
   if (o.kind !== "whiteout") return;
-  const rect = clampToPage(o, ctx.view);
-  if (!rect) return;
-  ctx.page.drawRectangle({
-    x: rect.x,
-    y: rect.y,
-    width: rect.w,
-    height: rect.h,
-    color: rgbOf(o.fill),
-    opacity: o.opacity,
-  });
+  if (o.rotation % 360 === 0) {
+    const rect = clampToPage(o, ctx.view);
+    if (!rect) return;
+    ctx.page.drawRectangle({
+      x: rect.x,
+      y: rect.y,
+      width: rect.w,
+      height: rect.h,
+      color: rgbOf(o.fill),
+      opacity: o.opacity,
+    });
+  } else {
+    ctx.page.drawRectangle({
+      ...rotatedRectDraw(o, o.rotation),
+      color: rgbOf(o.fill),
+      opacity: o.opacity,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

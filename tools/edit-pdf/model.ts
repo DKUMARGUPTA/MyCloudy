@@ -60,6 +60,10 @@ export interface ObjBase {
   opacity: number;
   locked: boolean;
   hidden: boolean;
+  /** Visual rotation in degrees, CCW-positive, normalized to (-180, 180].
+   * Ellipses, freehand strokes and form fields never rotate (P8.6) —
+   * pdf-lib's drawEllipse has no rotate and AcroForm widgets stay upright. */
+  rotation: number;
 }
 
 export interface TextObj extends ObjBase {
@@ -299,6 +303,7 @@ export function makeText(
     opacity: 1,
     locked: false,
     hidden: false,
+    rotation: 0,
     kind: "text",
     text: "",
     font: "helvetica",
@@ -328,6 +333,7 @@ export function makeImage(
     opacity: 1,
     locked: false,
     hidden: false,
+    rotation: 0,
     kind: "image",
     assetKey,
   };
@@ -348,6 +354,7 @@ export function makeShape(
     opacity: 1,
     locked: false,
     hidden: false,
+    rotation: 0,
     kind,
     fill: null,
     stroke: DEFAULT_STROKE_COLOR,
@@ -372,6 +379,7 @@ export function makeDraw(
     opacity: 1,
     locked: false,
     hidden: false,
+    rotation: 0,
     kind: "draw",
     pts,
     stroke: DEFAULT_STROKE_COLOR,
@@ -390,6 +398,7 @@ export function makeWhiteout(page: number, rect: ObjRect): WhiteoutObj {
     opacity: 1,
     locked: false,
     hidden: false,
+    rotation: 0,
     kind: "whiteout",
     fill: DEFAULT_WHITEOUT_COLOR,
   };
@@ -454,6 +463,7 @@ export function makeField(
     opacity: 1,
     locked: false,
     hidden: false,
+    rotation: 0,
     kind: "field",
     fieldType,
     name: suggestFieldName(taken),
@@ -514,6 +524,103 @@ export function lineEndpoints(
 }
 
 // ---------------------------------------------------------------------------
+// Rotation (P8.6) — pure math for the handle + the export compensation
+// ---------------------------------------------------------------------------
+
+/** Normalizes any angle into (-180, 180], 0.1° granularity; garbage → 0. */
+export function normalizeRotation(deg: number): number {
+  if (!Number.isFinite(deg)) return 0;
+  let d = deg % 360;
+  if (d > 180) d -= 360;
+  if (d <= -180) d += 360;
+  return Math.round(d * 10) / 10;
+}
+
+/** Kinds whose objects can rotate (pdf-lib drawEllipse has no rotate;
+ * AcroForm widgets and freehand strokes stay upright — honest disables). */
+export const ROTATABLE_KINDS: ReadonlySet<string> = new Set([
+  "text",
+  "image",
+  "rect",
+  "whiteout",
+  "line",
+  "arrow",
+]);
+
+export function isRotatable(obj: EditorObject): boolean {
+  return ROTATABLE_KINDS.has(obj.kind);
+}
+
+/**
+ * USER-SPACE anchor that makes pdf-lib's rotate-around-(x,y) semantics
+ * rotate a w×h rect around its CENTER instead: pdf-lib draws the rect from
+ * the anchor then rotates around it, so the anchor must sit at
+ * C − R(deg)·(w/2, h/2). At 0° this is exactly the rect origin.
+ */
+export function rotationAnchor(
+  rect: ObjRect,
+  deg: number
+): { x: number; y: number } {
+  const r = (deg * Math.PI) / 180;
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  return {
+    x: cx - (cos * rect.w - sin * rect.h) / 2,
+    y: cy - (sin * rect.w + cos * rect.h) / 2,
+  };
+}
+
+/**
+ * Rotates a DISPLAY point around a display center by `deg` VISUAL
+ * counterclockwise (display space is y-down, so the matrix is the standard
+ * math rotation with the angle negated). Used for text anchors and
+ * line/arrow endpoints on every /Rotate page.
+ */
+export function rotateDisplayPoint(
+  p: { x: number; y: number },
+  c: { x: number; y: number },
+  deg: number
+): { x: number; y: number } {
+  const r = (deg * Math.PI) / 180;
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  const dx = p.x - c.x;
+  const dy = p.y - c.y;
+  return { x: c.x + cos * dx + sin * dy, y: c.y - sin * dx + cos * dy };
+}
+
+/** Angle (deg, visual CCW) of a display point around a display center. */
+export function displayAngle(
+  p: { x: number; y: number },
+  c: { x: number; y: number }
+): number {
+  return (Math.atan2(-(p.y - c.y), p.x - c.x) * 180) / Math.PI;
+}
+
+/** Point-in-rect that accounts for the object's visual rotation. */
+export function hitRectRotated(
+  disp: ObjRect,
+  rotation: number,
+  px: number,
+  py: number
+): boolean {
+  if (rotation % 360 === 0) {
+    return hitRect(disp, px, py);
+  }
+  const c = { x: disp.x + disp.w / 2, y: disp.y + disp.h / 2 };
+  // Inverse of the visual-CCW rotation maps the point into object space.
+  const local = rotateDisplayPoint({ x: px, y: py }, c, -rotation);
+  return (
+    local.x >= disp.x &&
+    local.x <= disp.x + disp.w &&
+    local.y >= disp.y &&
+    local.y <= disp.y + disp.h
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Hit-testing + z-order (display-space, axis-aligned)
 // ---------------------------------------------------------------------------
 
@@ -557,10 +664,124 @@ export function pickObject(
   for (let i = objects.length - 1; i >= 0; i -= 1) {
     const obj = objects[i];
     if (obj.hidden) continue;
-    if (!hitRect(pdfRectToDisplay(obj, view), px, py)) continue;
+    if (!hitRectRotated(pdfRectToDisplay(obj, view), obj.rotation, px, py)) continue;
     return obj;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Snap guides (P8.6) — pure candidate/threshold math for move gestures
+// ---------------------------------------------------------------------------
+
+/** A guide line to draw on the page (display pt, page-relative). */
+export interface SnapGuide {
+  axis: "x" | "y";
+  pos: number;
+}
+
+export interface SnapResult {
+  /** Correction to add to the proposed position (display pt). */
+  dx: number;
+  dy: number;
+  /** The guide lines the snap engaged (targets that were hit). */
+  guides: SnapGuide[];
+}
+
+/**
+ * Snaps a moving rect's edges/centers to the page edges/center and the
+ * other objects' edges/centers (threshold in display pt). Pure: given the
+ * PROPOSED rect, return the correction + the engaged guide lines.
+ */
+export function computeSnap(
+  proposed: ObjRect,
+  page: { w: number; h: number },
+  others: ObjRect[],
+  threshold: number
+): SnapResult {
+  const targetXs: number[] = [0, page.w / 2, page.w];
+  const targetYs: number[] = [0, page.h / 2, page.h];
+  for (const o of others) {
+    targetXs.push(o.x, o.x + o.w / 2, o.x + o.w);
+    targetYs.push(o.y, o.y + o.h / 2, o.y + o.h);
+  }
+  const bestFor = (
+    moving: number[],
+    targets: number[],
+    axis: "x" | "y"
+  ): { d: number; guide: SnapGuide | null } => {
+    let bestD = 0;
+    let bestGuide: SnapGuide | null = null;
+    for (const m of moving) {
+      for (const t of targets) {
+        const d = t - m;
+        if (Math.abs(d) <= threshold && (bestGuide === null || Math.abs(d) < Math.abs(bestD))) {
+          bestD = d;
+          bestGuide = { axis, pos: t };
+        }
+      }
+    }
+    return { d: bestGuide === null ? 0 : bestD, guide: bestGuide };
+  };
+  const x = bestFor(
+    [proposed.x, proposed.x + proposed.w / 2, proposed.x + proposed.w],
+    targetXs,
+    "x"
+  );
+  const y = bestFor(
+    [proposed.y, proposed.y + proposed.h / 2, proposed.y + proposed.h],
+    targetYs,
+    "y"
+  );
+  const guides: SnapGuide[] = [];
+  if (x.guide) guides.push(x.guide);
+  if (y.guide) guides.push(y.guide);
+  return { dx: x.d, dy: y.d, guides };
+}
+
+// ---------------------------------------------------------------------------
+// Multi-select (P8.6) — marquee + group z-order/duplicate
+// ---------------------------------------------------------------------------
+
+/** True when two display rects overlap (marquee intersection test). */
+export function rectsIntersect(a: ObjRect, b: ObjRect): boolean {
+  return (
+    a.x < b.x + b.w &&
+    a.x + a.w > b.x &&
+    a.y < b.y + b.h &&
+    a.y + a.h > b.y
+  );
+}
+
+/** Ids of visible objects on `page` intersecting the marquee rect. */
+export function marqueeSelection(
+  objects: EditorObject[],
+  view: PageView,
+  page: number,
+  rect: ObjRect
+): string[] {
+  const ids: string[] = [];
+  for (const obj of objects) {
+    if (obj.hidden || obj.page !== page) continue;
+    if (rectsIntersect(rect, pdfRectToDisplay(obj, view))) ids.push(obj.id);
+  }
+  return ids;
+}
+
+/** Union bbox of the given display rects (empty → null). */
+export function unionRects(rects: ObjRect[]): ObjRect | null {
+  if (rects.length === 0) return null;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const r of rects) {
+    x0 = Math.min(x0, r.x);
+    y0 = Math.min(y0, r.y);
+    x1 = Math.max(x1, r.x + r.w);
+    y1 = Math.max(y1, r.y + r.h);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
 /** Resize a rect from one corner, keeping w/h ≥ min. Returns display rect. */
@@ -684,6 +905,42 @@ export function duplicateObject(
   return { objects: next, copy };
 }
 
+/** Brings every id in `ids` to the FRONT, preserving their relative order. */
+export function bringManyToFront(
+  objects: EditorObject[],
+  ids: ReadonlySet<string>
+): EditorObject[] {
+  const moving = objects.filter((o) => ids.has(o.id));
+  if (moving.length === 0) return objects;
+  return [...objects.filter((o) => !ids.has(o.id)), ...moving];
+}
+
+/** Sends every id in `ids` to the BACK, preserving their relative order. */
+export function sendManyToBack(
+  objects: EditorObject[],
+  ids: ReadonlySet<string>
+): EditorObject[] {
+  const moving = objects.filter((o) => ids.has(o.id));
+  if (moving.length === 0) return objects;
+  return [...moving, ...objects.filter((o) => !ids.has(o.id))];
+}
+
+/** Duplicates every id in `ids` (copies land right after their sources,
+ * in z order). Field copies rename like duplicateObject does. */
+export function duplicateObjects(
+  objects: EditorObject[],
+  ids: readonly string[]
+): { objects: EditorObject[]; copies: EditorObject[] } {
+  let next = [...objects];
+  const copies: EditorObject[] = [];
+  for (const id of ids) {
+    const result = duplicateObject(next, id);
+    next = result.objects;
+    if (result.copy) copies.push(result.copy);
+  }
+  return { objects: next, copies };
+}
+
 // ---------------------------------------------------------------------------
 // History (snapshot stack — simple, unlimited, JSON)
 // ---------------------------------------------------------------------------
@@ -795,6 +1052,7 @@ export function sanitizeObject(
     opacity: clampN(num(o.opacity, 1), 0.05, 1),
     locked: bool(o.locked, false),
     hidden: bool(o.hidden, false),
+    rotation: normalizeRotation(num(o.rotation, 0)),
   };
   switch (kind) {
     case "text":

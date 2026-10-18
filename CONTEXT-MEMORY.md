@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P8.4 ke baad — Edit PDF editor mein FORM FIELDS (AcroForm text/multiline/checkbox/dropdown/radio) — 61 tools live, Phase-8 mein sirf 8.6 bachi.
+> **Updated:** P8.6 ke baad — editor MOBILE POLISH (pinch/long-press/snap/multi-select/rotation/drafts) + ICU plural engine fix — **Phase 8 COMPLETE (6/6)**, 61 tools live.
 
 ---
 
@@ -14,10 +14,10 @@
 | Total tools in registry | **97** |
 | **Ready to use (LIVE)** | **61** ✅ |
 | Pending (Coming Soon) | **36** ⏳ |
-| Phase | 3/4 (tools one-by-one) + Phase 8 editor: 8.1–8.5 DONE, sirf **8.6 mobile polish** bachi |
+| Phase | 3/4 (tools one-by-one) + Phase 8 editor: **COMPLETE (6/6)** ✅ |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1888 = 1888 flat-leaf keys parity) |
+| i18n | English + हिंदी (1898 = 1898 flat-leaf keys parity) |
 | SEO (SEO round) | Title/description/keywords research se, JSON-LD (WebApplication + FAQPage), home Popular-Tools + FAQ sections, robots.txt + sitemap.xml |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
@@ -106,10 +106,10 @@
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Edit PDF sub-phase 8.6 mobile polish** — editor ka aakhri tukda (8.1–8.5 sab done: shell/objects/text-edit/forms/export)
-2. Phase-3 ke bade tools: `word-to-pdf` (S), `create-resume`, `create-photo-collage`… (create category baaki: photo-collage, card, fillable-form, resume, passport-photo)
+1. **Phase-3 create tools** (next!): `create-photo-collage`, `create-card` (Hindi festival templates), `create-fillable-pdf-form`, `create-resume` (8 templates), `passport-photo` (India sizes)
+2. **P6 static pages** (Privacy, Terms, Contact, About + API routes) → **P7 PWA** (manifest, service worker, offline)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: edit-pdf FORM FIELDS ✅ — Task-3: create-pdf ✅)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: edit-pdf FORM FIELDS ✅ — Task-3: create-pdf ✅ — **P8.6: mobile polish ✅ PHASE-8 COMPLETE**)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -167,7 +167,7 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 | 5 | Sign PDF | ✅ DONE (P3.13) |
 | 6 | Static pages (Privacy, Terms, Contact, About...) + API routes | ⏳ Pending |
 | 7 | PWA (manifest, service worker, offline) + performance | ⏳ Pending |
-| 8 | Editor (6 sub-phases: shell, objects, text edit, forms, export, mobile) | 🔨 8.1–8.5 ✅, sirf **8.6 mobile polish** bachi |
+| 8 | Editor (6 sub-phases: shell, objects, text edit, forms, export, mobile) | ✅ DONE (P8.1–P8.6) |
 | 9 | Advanced tools (OCR, N-up, Overlay, Redact...) | 🔨 Partial |
 | 10 | Accounts + Pro (Razorpay, GST invoice, server limits) | ⏳ Pending |
 | 11 | services/worker Docker (LibreOffice, ClamAV) | ⏳ Docs only |
@@ -222,6 +222,15 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 ---
 
 ## 📝 Session Log (naya kaam yahan append karo)
+
+### P8.6 — Editor MOBILE POLISH ✅ (Phase-8 COMPLETE 6/6)
+- **PRD §8.2 Mobile mode + P8.1-deferred items sab shipped:** simplified bottom toolbar (Select/Text/Draw/Sign/Image/More), More-sheet (baaki tools + undo/redo/duplicate/delete + zoom), pinch-zoom + two-finger pan, properties BottomSheet mobile pe, ≥44px handles (pointer-coarse scaling), long-press context menu (500ms/8pt slop), snap guides (page edges/centers + dusre objects, 1px primary lines), marquee + shift multi-select (group move/order/duplicate/delete), object ROTATION (−180..180°, Shift=15° steps; ellipse/freehand/fields honestly excluded), autosave drafts (IndexedDB, 24h TTL, Resume/Discard banner, image-assets honesty).
+- **⚠️ ICU PLURAL ENGINE BUG FIX (production):** `src/i18n/index.ts` ka PLURAL_RE sirf `=1 {…} other {…}` match karta tha — `=0`-style keys (`editPdf.pageOf`, `ann.pageOf`) RAW template render ho rahe the ("Page 1 of 3 · {objects, plural…}"). Upgraded: arbitrary `=N` exact branches before `other`, first-match wins, `#` substitution intact, old keys byte-compatible.
+- **Rotation export math:** pdf-lib rotate-(x,y)-anchor ko center-rotation banane ke liye `rotationAnchor = C − R·(w/2,h/2)` (model.ts pure, smoke-verified 8 angles + 0°=origin). Worker: rotatedRectDraw (0° = legacy path — byte-identical, backward-compat PROVEN), text anchors display-rotate, line endpoints point-rotate. Byte-audits: 90° text Tm matrix, 30° rect anchor-cm == math, rotation-0 ≡ omitted-key.
+- **QA-harness pins:** (1) EMPTY text object blur pe DELETE ho jata hai (endEdit cleanup) — rotate-test Box se karo; (2) `set device` CDP pointer:coarse media query NAHI badalta — matchMedia stub + SPA hash-remount se test karo; (3) Back-nav ke baad dropzone HMR-remount ghost — full reload se theek; (4) handle-drag se pehle scrollIntoView (y>viewport = silent no-op).
+- **Smoke 68/68** (smoke-edit-pdf-mobile.ts: normalize/anchor/hit/snap/marquee/drafts + REAL worker rotated battery + byte-audits) + regressions 48/48 + 71/71 + 44/44.
+- **QA:** desktop (rotation −72° live transform, marquee 2-obj dashed union, 2 snap guides, export byte-verified %PDF-+%%EOF 2419B) + mobile 375×812 (44px toolbar, More sheet 14 items, props BottomSheet, long-press 5-item menu, pinch 100%→183%, overflowX=0) + drafts (banner→Resume→restore) + Hindi (चुनें/टेक्स्ट/ड्रॉ करें/साइन/तस्वीर/और टूल) + zero console errors. Screenshots qa-edit-mobile-hi.png / qa-edit-desktop-p86.png.
+- Live: 61 | i18n 1898=1898 | tsc + eslint + dev.log clean | **Next: Phase-3 create tools (photo-collage, card, fillable-form, resume, passport-photo)**, then P6 static pages + P7 PWA
 
 ### P8.4 — Edit PDF FORM FIELDS ✅ (editor sub-phase 8.4)
 - **PRD §8.2.1 Forms:** editor ke Form tool se live AcroForm fields place karo — text, multiline, checkbox, dropdown, radio group — export par FLATTEN NAHI, real fillable widgets (kisi bhi reader mein bharo).

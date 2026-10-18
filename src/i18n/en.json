@@ -1757,7 +1757,7 @@
     "signClear": "Clear",
     "signDone": "Add to page",
     "menuLabel": "Object menu",
-    "hintSelect": "Click an object to select it. Drag to move, drag a corner to resize, double-click text to edit it. Arrow keys nudge, Delete removes.",
+    "hintSelect": "Click an object to select it. Drag to move; drag a corner to resize; double-click text to edit it. Drag on empty space to select several objects, Shift-click to add or remove. Arrow keys nudge, Delete removes.",
     "hintText": "Click on the page to add a text box, or drag to draw one — then just type. Hindi typing works with the Devanagari font.",
     "hintDraw": "Draw directly on the page with your finger, stylus or mouse.",
     "hintShape": "Drag on the page to draw it. Hold Shift while resizing an image to keep its aspect ratio.",
@@ -1821,7 +1821,17 @@
     "fieldRequired": "Required",
     "radioGroupHint": "Circles sharing this name work as one group.",
     "fieldHint": "Exports as a real fillable form field — fill it in any PDF reader. Give radio circles the same name to build one group.",
-    "hintField": "Click for a text field, or drag to draw one — then pick its type, name and default in Properties. Same-name radio circles become one group."
+    "hintField": "Click for a text field, or drag to draw one — then pick its type, name and default in Properties. Same-name radio circles become one group.",
+    "moreTools": "More tools",
+    "rotation": "Rotation (°)",
+    "multiTitle": "{n, plural, =1 {1 object selected} other {# objects selected}}",
+    "multiHint": "Group actions apply to every selected object. Tap a single object to edit its style.",
+    "draftFoundTitle": "Draft found",
+    "draftFoundHint": "Your edits from the last session on this file are saved on this device.",
+    "draftImagesNote": "Images from that session must be re-added.",
+    "draftResume": "Resume",
+    "draftDiscard": "Discard",
+    "draftRestored": "Draft restored"
   },
   "ann": {
     "how1": "Upload a PDF — it opens right on your device, ready to mark up.",
