@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (ye file uska quick summary hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** Task-3 + SEO round ke baad — Create PDF (61st tool) + keyword-research SEO injection shipped — **61 tools live**.
+> **Updated:** P8.4 ke baad — Edit PDF editor mein FORM FIELDS (AcroForm text/multiline/checkbox/dropdown/radio) — 61 tools live, Phase-8 mein sirf 8.6 bachi.
 
 ---
 
@@ -14,10 +14,10 @@
 | Total tools in registry | **97** |
 | **Ready to use (LIVE)** | **61** ✅ |
 | Pending (Coming Soon) | **36** ⏳ |
-| Phase | 3/4 (tools one-by-one) + Phase 8 editor IN PROGRESS |
+| Phase | 3/4 (tools one-by-one) + Phase 8 editor: 8.1–8.5 DONE, sirf **8.6 mobile polish** bachi |
 | Server | Next.js 16.1.3, port 3000, HTTP 200, dev.log clean |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी (1840 = 1840 keys parity) |
+| i18n | English + हिंदी (1862 = 1862 keys parity) |
 | SEO (SEO round) | Title/description/keywords research se, JSON-LD (WebApplication + FAQPage), home Popular-Tools + FAQ sections, robots.txt + sitemap.xml |
 | HEIC decode | Self-hosted libheif WASM — har browser mein (Safari native fallback) |
 | OCR (P3.19) | Self-hosted Tesseract 7 LSTM — eng + hin, searchable PDF + TXT |
@@ -41,7 +41,7 @@
 - ✅ Copy from PDF (`copy-from-pdf`) — P4.3: click-to-select paragraphs (columns/tables split, headings+bullets), clipboard copy Text/Markdown/CSV, run exports .txt/.md with auto-OCR (P4.4: image-scan OCR bhi fixed — niche pdfjs-common insight dekho)
 
 ### ✏️ Edit (11/11) — CATEGORY COMPLETE
-- ✅ **Edit PDF (`edit-pdf`) — P8.1: FLAGSHIP EDITOR v1 live!** Text (4 fonts + Devanagari, B/I/U, align, colors, bg), images (upload + aspect resize), shapes (rect/ellipse/line/arrow + fill/stroke/dash), freehand draw, whiteout, signature pad, select/move/resize, z-order + lock/hide, properties + layers panels, context menu, coalesced undo/redo, full keyboard, zoom, export worker (rotation-compensated text, embedded fonts, DCTDecode image passthrough); **P8.3: EXISTING TEXT EDIT** — click any line (pdf.js text pieces) → whiteout (bg-sampled cover) + retype same spot with matched font (standard-14 exact, name-table closest, Devanagari auto), ink colour picked from page pixels; **Find & Replace** (whole-doc scan, line-level replace-one/all, match case, done markers, same font rules)
+- ✅ **Edit PDF (`edit-pdf`) — P8.1: FLAGSHIP EDITOR v1 live!** Text (4 fonts + Devanagari, B/I/U, align, colors, bg), images (upload + aspect resize), shapes (rect/ellipse/line/arrow + fill/stroke/dash), freehand draw, whiteout, signature pad, select/move/resize, z-order + lock/hide, properties + layers panels, context menu, coalesced undo/redo, full keyboard, zoom, export worker (rotation-compensated text, embedded fonts, DCTDecode image passthrough); **P8.3: EXISTING TEXT EDIT** — click any line (pdf.js text pieces) → whiteout (bg-sampled cover) + retype same spot with matched font (standard-14 exact, name-table closest, Devanagari auto), ink colour picked from page pixels; **Find & Replace** (whole-doc scan, line-level replace-one/all, match case, done markers, same font rules); **P8.4: FORM FIELDS** — Form tool se AcroForm widgets place karo (text / multiline / checkbox / dropdown / radio-group — same-name circles ek group), name + default value/selection/checked + required flags, z-order = tab order, existing source fields se name-dedupe, export par LIVE fillable (flatten NAHI)
 - ✅ Fill out PDF forms (`fill-out-pdf`) — AcroForm scan, auto-fill profile (name/email/phone/address), Hindi Devanagari support, flatten switch
 - ✅ Make PDF fillable (`make-pdf-fillable`) — P4.2: auto-detect (underlines/boxes/checkbox squares) + manual drag-draw + rename/type-edit + AcroForm export
 - ✅ Annotate PDF (`annotate-pdf`) — P8.2: drag-to-highlight WORD-SNAPS to pdf.js text runs (per-line quads), underline/strikeout follow text lines, sticky notes (Devanagari-safe /Contents), scanned-page /Square fallback, comments rail; **REAL PDF annotations** (/Highlight /Underline /StrikeOut /Text + /QuadPoints Acrobat order) — Chrome/Acrobat mein editable
@@ -106,10 +106,10 @@
 
 ### 🔜 Next Up — Priority Queue (Phase 2 tools, sabse pehle)
 Ye PRD ke hisaab se agle banne hain (one per round):
-1. **Edit PDF sub-phase 8.4** (form fields in editor) / **8.6 mobile polish** — write/create dono ho gaye
+1. **Edit PDF sub-phase 8.6 mobile polish** — editor ka aakhri tukda (8.1–8.5 sab done: shell/objects/text-edit/forms/export)
 2. Phase-3 ke bade tools: `word-to-pdf` (S), `create-resume`, `create-photo-collage`… (create category baaki: photo-collage, card, fillable-form, resume, passport-photo)
 
-*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: write-pdf ✅ — Task-3: create-pdf ✅)*
+*(P4.1: 14 tools wired ✅ — P4.2: rasterize + make-fillable ✅ — P4.3: copy-from-pdf ✅ — P4.4: image-render FIX + TIFF/SVG ✅ — P4.5: assemble-pdf ✅ — P4.6: set-pdf-viewer-preferences ✅ — P4.7: resize-image-kb ✅ — P8.1: edit-pdf v1 ✅ — P8.2: annotate-pdf ✅ — P8.3: edit-pdf existing-text + F&R ✅ — P8.4: edit-pdf FORM FIELDS ✅ — Task-3: create-pdf ✅)*
 
 ### 🌐 Server-based (Mode S) — Phase 3+ (sandbox mein backend docs only)
 `word-to-pdf`, `powerpoint-to-pdf`, `excel-to-pdf`, `pdf-to-word`, `pdf-to-excel`,
@@ -222,6 +222,16 @@ Ye PRD ke hisaab se agle banne hain (one per round):
 ---
 
 ## 📝 Session Log (naya kaam yahan append karo)
+
+### P8.4 — Edit PDF FORM FIELDS ✅ (editor sub-phase 8.4)
+- **PRD §8.2.1 Forms:** editor ke Form tool se live AcroForm fields place karo — text, multiline, checkbox, dropdown, radio group — export par FLATTEN NAHI, real fillable widgets (kisi bhi reader mein bharo).
+- **Model:** FieldObj (kind "field") — fieldType × 5, name, value (checkbox="on" sentinel), required, dropdown options[]. makeField square-normalises checkbox/radio, suggestFieldName/takenFieldNames "Field/Field 2…" naming, duplicateObject non-radio copies rename karta hai, sanitizer (garbage type→text, empty name→Field, options dedupe/trim/80-char/50-cap, dropdown value sirf real options mein, square widgets).
+- **Worker:** addFieldObjects pass content ke BAAD (widgets upar baithe hain; array order = tab order) — pdf-lib form API: createTextField (+multiline/required/setText), createCheckBox (square-centred + check), createDropdown (addOptions + select), createRadioGroup (same-name objects → EK group, har object apna export value). **uniqueName EXISTING source AcroForm names ke against dedupe**; winAnsiSafe guard — Devanagari default/options honestly skip (field banta hai, value khali). **⚠️ doc.getForm() EMPTY /AcroForm CREATE kar deta hai field-less run pe — isliye objects.some(field) GATE zaroori (byte-clean passthrough).**
+- **UI:** toolbar Form field button (FormInput icon), ObjView widget-chrome (dashed primary border + name tag; checkbox ✓ svg, radio inner circle, dropdown ▾, multiline lines), FieldFields properties (name/type/value/checked/option-value/choices+default/required), Layers label = field name, keyboard 'f', resize keep-square, hintField.
+- **i18n:** +22 keys ×2 (merge-edit-forms-i18n.ts, how2 intentional update) — 1862=1862.
+- **Smoke 44/44** (smoke-edit-pdf-forms.ts — REAL worker: battery 5 fields + 6 widgets pdf-lib form-API se verified; existing-name dedupe Email→Email 2; deva honest skip; field-less passthrough NO /AcroForm) + regressions 48/48 + 71/71.
+- **QA:** browser golden path — text+checkbox+dropdown+radio-pair place karke run → output pdf-lib se BYTE-VERIFIED (Full Name value+required, Subscribe checked, City options+Jaipur selected, Plan group Basic|Pro = 2 objects → 1 group, 5 widgets); result chain mein fill-out-pdf; HI full (फ़ॉर्म फ़ील्ड/फ़ील्ड का नाम/प्रकार/अनिवार्य); mobile 375×812 overflowX=0 + CTA 44px; zero console errors; zero non-local requests. Screenshots qa-edit-forms-{desktop,mobile}.png + byte-verified qa-edit-forms-output.pdf.
+- Live: 61 (feature on existing tool) | i18n 1862=1862 | tsc + eslint + dev.log clean | Phase 8: sirf 8.6 mobile polish bachi
 
 ### SEO Round — Keyword research injection ✅ (user-provided research)
 - **User ne Semrush-style keyword research diya** (pdf converter 1.2M, jpg to pdf 450K, pdf to word 450K, pdf to jpg 301K, pdf editor 246K, free tool to edit pdf documents 3.6K, pdf tools 1.9K, pdf conversion tool 1.6K, pdf editing tools freeware...) — sab inject kiya:

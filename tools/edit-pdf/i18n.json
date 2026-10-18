@@ -2,7 +2,7 @@
   "en": {
     "editPdf": {
       "how1": "Upload a PDF — it opens right in the editor on your device.",
-      "how2": "Click existing text to retype it, or add text, images, shapes, drawings and whiteout.",
+      "how2": "Click existing text to retype it, or add text, images, shapes, drawings, whiteout and fillable form fields.",
       "how3": "Press the button — your edited PDF is built on-device and downloads instantly.",
       "toolbarLabel": "Editor tools",
       "toolSelect": "Select",
@@ -113,13 +113,35 @@
       "errorImageTitle": "Image could not be added",
       "errorImageDesc": "Try a JPG, PNG, WEBP or HEIC image.",
       "errorBuild": "The edited PDF could not be built",
-      "errorFont": "Some text could not be encoded — try the Devanagari font for Hindi text."
+      "errorFont": "Some text could not be encoded — try the Devanagari font for Hindi text.",
+      "toolField": "Form field",
+      "kind_field": "Form field",
+      "fieldName": "Field name",
+      "fieldTypeLabel": "Type",
+      "fieldType_text": "Text field",
+      "fieldType_multiline": "Multi-line text",
+      "fieldType_checkbox": "Checkbox",
+      "fieldType_dropdown": "Dropdown",
+      "fieldType_radio": "Radio (circle)",
+      "fieldChecked": "Checked by default",
+      "fieldOptionValue": "Option value",
+      "fieldOptionPlaceholder": "e.g. Yes",
+      "fieldValue": "Default text",
+      "fieldValuePlaceholder": "Shown before anyone types",
+      "fieldOptions": "Choices (one per line)",
+      "fieldOptionsPlaceholder": "One choice per line",
+      "fieldSelected": "Default choice",
+      "fieldNoDefault": "No default",
+      "fieldRequired": "Required",
+      "radioGroupHint": "Circles sharing this name work as one group.",
+      "fieldHint": "Exports as a real fillable form field — fill it in any PDF reader. Give radio circles the same name to build one group.",
+      "hintField": "Click for a text field, or drag to draw one — then pick its type, name and default in Properties. Same-name radio circles become one group."
     }
   },
   "hi": {
     "editPdf": {
       "how1": "एक PDF अपलोड करें — वह सीधे आपके डिवाइस पर एडिटर में खुलती है।",
-      "how2": "मौजूदा टेक्स्ट पर क्लिक करके बदलें, या टेक्स्ट, तस्वीर, आकृति, ड्रॉइंग और व्हाइटआउट जोड़ें।",
+      "how2": "मौजूदा टेक्स्ट पर क्लिक करके बदलें, या टेक्स्ट, तस्वीर, आकृति, ड्रॉइंग, व्हाइटआउट और भरने योग्य फ़ॉर्म फ़ील्ड जोड़ें।",
       "how3": "बटन दबाएँ — आपकी एडिट की हुई PDF ऑन-डिवाइस बनकर तुरंत डाउनलोड होती है।",
       "toolbarLabel": "एडिटर टूल",
       "toolSelect": "चुनें",
@@ -230,7 +252,29 @@
       "errorImageTitle": "तस्वीर नहीं जुड़ पाई",
       "errorImageDesc": "JPG, PNG, WEBP या HEIC तस्वीर आज़माएँ।",
       "errorBuild": "एडिट की हुई PDF नहीं बन पाई",
-      "errorFont": "कुछ टेक्स्ट एनकोड नहीं हो पाया — हिंदी के लिए देवनागरी फ़ॉन्ट चुनें।"
+      "errorFont": "कुछ टेक्स्ट एनकोड नहीं हो पाया — हिंदी के लिए देवनागरी फ़ॉन्ट चुनें।",
+      "toolField": "फ़ॉर्म फ़ील्ड",
+      "kind_field": "फ़ॉर्म फ़ील्ड",
+      "fieldName": "फ़ील्ड का नाम",
+      "fieldTypeLabel": "प्रकार",
+      "fieldType_text": "टेक्स्ट फ़ील्ड",
+      "fieldType_multiline": "मल्टी-लाइन टेक्स्ट",
+      "fieldType_checkbox": "चेकबॉक्स",
+      "fieldType_dropdown": "ड्रॉपडाउन",
+      "fieldType_radio": "रेडियो (गोल)",
+      "fieldChecked": "पहले से चुना हुआ",
+      "fieldOptionValue": "विकल्प का मान",
+      "fieldOptionPlaceholder": "जैसे हाँ",
+      "fieldValue": "डिफ़ॉल्ट टेक्स्ट",
+      "fieldValuePlaceholder": "टाइप करने से पहले दिखता है",
+      "fieldOptions": "विकल्प (हर लाइन में एक)",
+      "fieldOptionsPlaceholder": "हर लाइन में एक विकल्प",
+      "fieldSelected": "डिफ़ॉल्ट विकल्प",
+      "fieldNoDefault": "कोई डिफ़ॉल्ट नहीं",
+      "fieldRequired": "अनिवार्य",
+      "radioGroupHint": "इसी नाम के गोले मिलकर एक ग्रुप बनाते हैं।",
+      "fieldHint": "असली भरने योग्य फ़ॉर्म फ़ील्ड बनता है — किसी भी PDF रीडर में भरें। रेडियो गोलों को एक ही नाम देकर ग्रुप बनाएँ।",
+      "hintField": "टेक्स्ट फ़ील्ड के लिए क्लिक करें, या ड्रैग करके बनाएँ — फिर गुण में प्रकार, नाम और डिफ़ॉल्ट चुनें। एक ही नाम के रेडियो गोले एक ग्रुप बनते हैं।"
     }
   }
 }

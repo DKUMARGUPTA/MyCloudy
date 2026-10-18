@@ -64,6 +64,7 @@ import {
   luminance,
   lowerOne,
   makeDraw,
+  makeField,
   makeImage,
   makeShape,
   makeText,
@@ -80,6 +81,7 @@ import {
   roundPt,
   sendToBack,
   substituteOccurrences,
+  takenFieldNames,
   undoStep,
   type EditorObject,
   type HarvestPiece,
@@ -122,7 +124,14 @@ interface EditorBlob {
   assetOrder: string[];
 }
 
-type CreateKind = "text" | "rect" | "ellipse" | "line" | "arrow" | "whiteout";
+type CreateKind =
+  | "text"
+  | "rect"
+  | "ellipse"
+  | "line"
+  | "arrow"
+  | "whiteout"
+  | "field";
 
 type Gesture =
   | {
@@ -1063,6 +1072,23 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         x = orig.x + orig.w - w;
         y = orig.y + orig.h - h;
       }
+    } else {
+      // Checkbox/radio widgets export as squares — keep the drag honest.
+      const target = objectsRef.current.find((o) => o.id === gesture.id);
+      if (
+        target?.kind === "field" &&
+        (target.fieldType === "checkbox" || target.fieldType === "radio")
+      ) {
+        const size = Math.max(min, Math.min(w, h));
+        if (gesture.edge === "ne" || gesture.edge === "nw") {
+          y = y + (h - size);
+        }
+        if (gesture.edge === "sw" || gesture.edge === "nw") {
+          x = x + (w - size);
+        }
+        w = size;
+        h = size;
+      }
     }
     const pdf = displayRectToPdf({ x, y, w, h }, currentView);
     patchObject(gesture.id, {
@@ -1104,6 +1130,10 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       } else if (gesture.kind === "text") {
         // Click = default-size text box at the click point.
         disp = { x: gesture.x0, y: gesture.y0, w: 160, h: Math.max(18, 16 * LINE_HEIGHT + 2 * TEXT_PAD) };
+      } else if (gesture.kind === "field") {
+        // Click = a default-size single-line text field (switch the type
+        // and size it in the properties panel afterwards).
+        disp = { x: gesture.x0, y: gesture.y0, w: 160, h: 20 };
       } else {
         return;
       }
@@ -1125,6 +1155,9 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         case "rect":
         case "ellipse":
           obj = makeShape(selectedPage, pdf, gesture.kind);
+          break;
+        case "field":
+          obj = makeField(selectedPage, pdf, takenFieldNames(objectsRef.current));
           break;
         default:
           obj = makeWhiteout(selectedPage, pdf);
@@ -1290,6 +1323,9 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         case "w":
           setTool("whiteout");
           break;
+        case "f":
+          setTool("field");
+          break;
         case "+":
         case "=":
           setZoom((z) => Math.min(3, Math.round((z + 0.25) * 100) / 100));
@@ -1372,7 +1408,9 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
           ? "editPdf.hintEditText"
           : tool === "draw"
             ? "editPdf.hintDraw"
-            : "editPdf.hintShape";
+            : tool === "field"
+              ? "editPdf.hintField"
+              : "editPdf.hintShape";
 
   return (
     <div className="flex flex-col gap-3">

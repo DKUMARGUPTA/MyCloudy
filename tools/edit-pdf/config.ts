@@ -23,7 +23,7 @@ export const config: ToolConfig = {
   fullWidthSurface: true,
   options: [],
   howKeys: ["editPdf.how1", "editPdf.how2", "editPdf.how3"],
-  chainToolIds: ["view-pdf", "compress-pdf", "lock-pdf"],
+  chainToolIds: ["view-pdf", "fill-out-pdf", "compress-pdf", "lock-pdf"],
   collectAssets: () => collectRunAssets(),
   features: [
     {
@@ -41,6 +41,10 @@ export const config: ToolConfig = {
     {
       en: "Whiteout hides anything — cover old content, then type over it",
       hi: "व्हाइटआउट कुछ भी छिपा देता है — पुरानी चीज़ ढककर ऊपर लिखें",
+    },
+    {
+      en: "Add fillable form fields — text boxes, checkboxes, dropdowns and radio groups with names, defaults and required flags",
+      hi: "भरने योग्य फ़ॉर्म फ़ील्ड जोड़ें — टेक्स्ट बॉक्स, चेकबॉक्स, ड्रॉपडाउन और रेडियो ग्रुप, नाम, डिफ़ॉल्ट और अनिवार्य फ़्लैग के साथ",
     },
     {
       en: "Sign with your finger — draw a signature and drop it on the page; full undo/redo, 100% on-device",
@@ -74,8 +78,8 @@ export const config: ToolConfig = {
         hi: "डाउनलोड करने पर मेरे ऑब्जेक्ट का क्या होता है?",
       },
       a: {
-        en: "They are flattened into the page itself — text becomes real PDF text, shapes become vector drawings and images are embedded. The download opens in any PDF reader.",
-        hi: "वे पेज में ही मिल जाते हैं — टेक्स्ट असली PDF टेक्स्ट बनता है, आकृतियाँ वेक्टर ड्रॉइंग और तस्वीरें एम्बेड होती हैं। डाउनलोड कोई भी PDF रीडर खोल सकता है।",
+        en: "Text, shapes, drawings and images are flattened into the page itself — text becomes real PDF text, shapes become vector drawings and images are embedded. Form fields you placed stay live: they export as real fillable AcroForm fields anyone can type into in any PDF reader.",
+        hi: "टेक्स्ट, आकृतियाँ, ड्रॉइंग और तस्वीरें पेज में ही मिल जाती हैं — टेक्स्ट असली PDF टेक्स्ट बनता है, आकृतियाँ वेक्टर ड्रॉइंग और तस्वीरें एम्बेड होती हैं। आपके रखे फ़ॉर्म फ़ील्ड ज़िंदा रहते हैं: वे असली भरने योग्य AcroForm फ़ील्ड बनते हैं जिन्हें कोई भी PDF रीडर में भर सकता है।",
       },
     },
   ],

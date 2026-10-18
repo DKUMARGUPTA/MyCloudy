@@ -36,7 +36,16 @@ export type ObjKind =
   | "line"
   | "arrow"
   | "draw"
-  | "whiteout";
+  | "whiteout"
+  | "field";
+
+/** AcroForm widget flavours a field object can export as (P8.4). */
+export type FieldType =
+  | "text"
+  | "multiline"
+  | "checkbox"
+  | "dropdown"
+  | "radio";
 
 export type TextAlign = "left" | "center" | "right";
 
@@ -97,12 +106,27 @@ export interface WhiteoutObj extends ObjBase {
   fill: string;
 }
 
+/** A live AcroForm field placed on the page (P8.4). Checkbox default
+ * state rides `value === "on"`; dropdown `value` must be one of
+ * `options`; radio objects sharing one `name` form a single group and
+ * each carries its own export `value`. */
+export interface FieldObj extends ObjBase {
+  kind: "field";
+  fieldType: FieldType;
+  name: string;
+  value: string;
+  required: boolean;
+  /** Dropdown choices (dropdown only). */
+  options: string[];
+}
+
 export type EditorObject =
   | TextObj
   | ImageObj
   | ShapeObj
   | DrawObj
-  | WhiteoutObj;
+  | WhiteoutObj
+  | FieldObj;
 
 export interface ObjRect {
   x: number;
@@ -371,6 +395,75 @@ export function makeWhiteout(page: number, rect: ObjRect): WhiteoutObj {
   };
 }
 
+/** Checkbox default-value sentinel (checked ⇔ value === "on"). */
+export const FIELD_CHECKED = "on";
+
+/** Suggests a unique field name: "Field", "Field 2", … against the
+ * names (and radio group names) already on the page/document. */
+export function suggestFieldName(taken: ReadonlySet<string>): string {
+  const base = "Field";
+  if (!taken.has(base)) return base;
+  for (let n = 2; n < 500; n += 1) {
+    const candidate = `${base} ${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${base} ${Date.now()}`;
+}
+
+/** Collects every field name currently in use (radio groups included). */
+export function takenFieldNames(objects: EditorObject[]): Set<string> {
+  const taken = new Set<string>();
+  for (const obj of objects) {
+    if (obj.kind === "field" && obj.name.trim().length > 0) {
+      taken.add(obj.name.trim());
+    }
+  }
+  return taken;
+}
+
+/** Default display sizes for click-created fields (pt). */
+export const FIELD_DEFAULT_W = 160;
+export const FIELD_DEFAULT_H = 20;
+export const CHECKBOX_DEFAULT = 14;
+
+export function makeField(
+  page: number,
+  rect: ObjRect,
+  taken: ReadonlySet<string>,
+  overrides: Partial<FieldObj> = {}
+): FieldObj {
+  const fieldType = overrides.fieldType ?? "text";
+  // Checkbox/radio widgets want squares — normalise the rect.
+  let w = rect.w;
+  let h = rect.h;
+  if (fieldType === "checkbox" || fieldType === "radio") {
+    const size = Math.max(
+      MIN_OBJ_PT,
+      Math.min(Math.abs(rect.w), Math.abs(rect.h)) || CHECKBOX_DEFAULT
+    );
+    w = size;
+    h = size;
+  }
+  return {
+    id: nextObjId("f"),
+    page,
+    x: roundPt(rect.x),
+    y: roundPt(rect.y),
+    w: roundPt(w),
+    h: roundPt(h),
+    opacity: 1,
+    locked: false,
+    hidden: false,
+    kind: "field",
+    fieldType,
+    name: suggestFieldName(taken),
+    value: "",
+    required: false,
+    options: [],
+    ...overrides,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Freehand helpers
 // ---------------------------------------------------------------------------
@@ -580,6 +673,12 @@ export function duplicateObject(
     x: roundPt(src.x + 12),
     y: roundPt(Math.max(0, src.y - 12)),
   };
+  // Duplicated fields need their own name — same-name fields share one
+  // AcroForm value in every reader (radio groups excepted, where the
+  // caller duplicates on purpose).
+  if (copy.kind === "field" && copy.fieldType !== "radio") {
+    copy.name = suggestFieldName(takenFieldNames(objects));
+  }
   const next = [...objects];
   next.splice(idx + 1, 0, copy);
   return { objects: next, copy };
@@ -661,6 +760,15 @@ const KINDS: ObjKind[] = [
   "arrow",
   "draw",
   "whiteout",
+  "field",
+];
+
+const FIELD_TYPES: FieldType[] = [
+  "text",
+  "multiline",
+  "checkbox",
+  "dropdown",
+  "radio",
 ];
 
 /** Parses + clamps one raw object from the wire blob. null = drop it. */
@@ -745,6 +853,43 @@ export function sanitizeObject(
     }
     case "whiteout":
       return { ...base, kind, fill: color(o.fill, "#ffffff") };
+    case "field": {
+      const fieldType = FIELD_TYPES.includes(o.fieldType as FieldType)
+        ? (o.fieldType as FieldType)
+        : "text";
+      const rawOptions = Array.isArray(o.options) ? o.options : [];
+      const options = [
+        ...new Set(
+          rawOptions
+            .filter((v): v is string => typeof v === "string")
+            .map((v) => v.trim().slice(0, 80))
+            .filter((v) => v.length > 0)
+        ),
+      ].slice(0, 50);
+      const value = str(o.value, "").slice(0, 200);
+      const name =
+        str(o.name, "").replace(/\s+/g, " ").trim().slice(0, 60) ||
+        "Field";
+      let h = base.h;
+      if (fieldType === "checkbox" || fieldType === "radio") {
+        // Square widgets (the worker squares them at export too — this
+        // keeps the editor preview honest about the final shape).
+        const size = Math.max(MIN_OBJ_PT, Math.min(base.w, base.h));
+        base.w = size;
+        h = size;
+      }
+      return {
+        ...base,
+        w: base.w,
+        h,
+        kind,
+        fieldType,
+        name,
+        value: fieldType === "dropdown" && !options.includes(value) ? "" : value,
+        required: bool(o.required, false),
+        options: fieldType === "dropdown" ? options : [],
+      };
+    }
   }
 }
 

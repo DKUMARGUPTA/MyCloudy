@@ -11,6 +11,7 @@ import {
   Check,
   Copy,
   Eraser,
+  FormInput,
   Image as ImageIcon,
   Italic,
   Layers,
@@ -50,6 +51,7 @@ import {
   pdfRectToDisplay,
   pieceRect,
   type EditorObject,
+  type FieldObj,
   type HarvestPiece,
   type ObjRect,
   type PageView,
@@ -78,7 +80,8 @@ export type ToolId =
   | "arrow"
   | "draw"
   | "whiteout"
-  | "sign";
+  | "sign"
+  | "field";
 
 const TOOL_BUTTONS: { id: ToolId; icon: typeof Type; key: string }[] = [
   { id: "select", icon: MousePointer2, key: "editPdf.toolSelect" },
@@ -92,6 +95,7 @@ const TOOL_BUTTONS: { id: ToolId; icon: typeof Type; key: string }[] = [
   { id: "draw", icon: Brush, key: "editPdf.toolDraw" },
   { id: "whiteout", icon: Eraser, key: "editPdf.toolWhiteout" },
   { id: "sign", icon: PenLine, key: "editPdf.toolSign" },
+  { id: "field", icon: FormInput, key: "editPdf.toolField" },
 ];
 
 export function EditorToolbar({
@@ -453,6 +457,9 @@ export function PropertiesPanel({
             {t("editPdf.imageHint")}
           </p>
         ) : null}
+        {obj.kind === "field" ? (
+          <FieldFields obj={obj} onPatch={onPatch} />
+        ) : null}
 
         <div className="flex flex-col gap-2">
           <Label className="text-xs font-medium text-muted-foreground">
@@ -683,6 +690,7 @@ const KIND_ICONS: Record<string, typeof Type> = {
   arrow: ArrowUp,
   draw: Brush,
   whiteout: Eraser,
+  field: FormInput,
 };
 
 export function LayersPanel({
@@ -722,7 +730,9 @@ export function LayersPanel({
                 ? obj.text.split("\n")[0].slice(0, 28) || t("editPdf.kind_text")
                 : obj.kind === "image"
                   ? t("editPdf.kind_image")
-                  : t(`editPdf.kind_${obj.kind}`);
+                  : obj.kind === "field"
+                    ? obj.name.trim().slice(0, 28) || t("editPdf.kind_field")
+                    : t(`editPdf.kind_${obj.kind}`);
             return (
               <li key={obj.id}>
                 <div
@@ -1461,6 +1471,63 @@ export function ObjView({
         />
       );
       break;
+    case "field": {
+      // Widget chrome preview — dashed primary border + a name tag; the
+      // export gives every flavour its real AcroForm appearance.
+      const isRound = obj.fieldType === "radio";
+      const isCheckbox = obj.fieldType === "checkbox";
+      inner = (
+        <span
+          className={cn(
+            "block size-full border-2 border-dashed",
+            isRound || isCheckbox ? "rounded-[3px]" : "rounded-[4px]",
+            obj.required
+              ? "border-primary/80 bg-primary/5"
+              : "border-primary/50 bg-primary/5"
+          )}
+        >
+          {isCheckbox ? (
+            <svg
+              className="pointer-events-none absolute inset-0 size-full"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M5 12.5 10 17.5 19 6.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-primary/60"
+              />
+            </svg>
+          ) : isRound ? (
+            <span className="pointer-events-none absolute inset-[18%] rounded-full border-2 border-primary/60" />
+          ) : obj.fieldType === "dropdown" ? (
+            <span className="pointer-events-none absolute inset-y-0 right-0 flex w-5 items-center justify-center text-primary/70">
+              <ArrowDown className="size-3.5" aria-hidden="true" />
+            </span>
+          ) : obj.fieldType === "multiline" ? (
+            <span className="pointer-events-none absolute inset-x-1 inset-y-[30%] space-y-[0.45em]">
+              <span className="block h-px bg-primary/25" />
+              <span className="block h-px bg-primary/25" />
+            </span>
+          ) : null}
+          {obj.name.trim().length > 0 && obj.w * scale > 44 ? (
+            <span
+              className={cn(
+                "pointer-events-none absolute -top-[1.4em] left-0 max-w-full truncate rounded-chip bg-primary px-1 py-px text-[9px] font-semibold leading-tight text-primary-foreground",
+                isCheckbox || isRound ? "left-[85%]" : ""
+              )}
+            >
+              {obj.name}
+            </span>
+          ) : null}
+        </span>
+      );
+      break;
+    }
   }
 
   return (
@@ -1505,6 +1572,179 @@ export function ObjView({
 function cssFor(font: string): string {
   const found = FONT_OPTIONS.find((f) => f.id === font);
   return found?.css ?? "Arial, Helvetica, sans-serif";
+}
+
+function FieldFields({
+  obj,
+  onPatch,
+}: {
+  obj: FieldObj;
+  onPatch: (patch: Partial<EditorObject>) => void;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  const isCheckbox = obj.fieldType === "checkbox";
+  const isRadio = obj.fieldType === "radio";
+  const isDropdown = obj.fieldType === "dropdown";
+  return (
+    <>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="ed-fname" className="text-xs font-medium text-muted-foreground">
+          {t("editPdf.fieldName")}
+        </Label>
+        <Input
+          id="ed-fname"
+          type="text"
+          value={obj.name}
+          maxLength={60}
+          onChange={(e) => onPatch({ name: e.target.value })}
+          className="h-9 w-full rounded-btn"
+        />
+        {isRadio ? (
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {t("editPdf.radioGroupHint")}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="ed-ftype" className="text-xs font-medium text-muted-foreground">
+          {t("editPdf.fieldTypeLabel")}
+        </Label>
+        <Select
+          value={obj.fieldType}
+          onValueChange={(v) => {
+            const nextType = v as FieldObj["fieldType"];
+            if (nextType === "checkbox" || nextType === "radio") {
+              const size = Math.min(obj.w, obj.h);
+              onPatch({ fieldType: nextType, w: size, h: size });
+            } else {
+              onPatch({ fieldType: nextType });
+            }
+          }}
+        >
+          <SelectTrigger id="ed-ftype" className="h-9 w-full rounded-btn">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(["text", "multiline", "checkbox", "dropdown", "radio"] as const).map(
+              (id) => (
+                <SelectItem key={id} value={id}>
+                  {t(`editPdf.fieldType_${id}`)}
+                </SelectItem>
+              )
+            )}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {isCheckbox ? (
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="ed-fchecked" className="text-xs font-medium text-muted-foreground">
+            {t("editPdf.fieldChecked")}
+          </Label>
+          <Switch
+            id="ed-fchecked"
+            checked={obj.value === "on"}
+            onCheckedChange={(next) => onPatch({ value: next ? "on" : "" })}
+          />
+        </div>
+      ) : null}
+
+      {isRadio ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="ed-fopt" className="text-xs font-medium text-muted-foreground">
+            {t("editPdf.fieldOptionValue")}
+          </Label>
+          <Input
+            id="ed-fopt"
+            type="text"
+            value={obj.value}
+            maxLength={40}
+            placeholder={t("editPdf.fieldOptionPlaceholder")}
+            onChange={(e) => onPatch({ value: e.target.value })}
+            className="h-9 w-full rounded-btn"
+          />
+        </div>
+      ) : null}
+
+      {obj.fieldType === "text" || obj.fieldType === "multiline" ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="ed-fval" className="text-xs font-medium text-muted-foreground">
+            {t("editPdf.fieldValue")}
+          </Label>
+          <Input
+            id="ed-fval"
+            type="text"
+            value={obj.value}
+            maxLength={200}
+            placeholder={t("editPdf.fieldValuePlaceholder")}
+            onChange={(e) => onPatch({ value: e.target.value })}
+            className="h-9 w-full rounded-btn"
+          />
+        </div>
+      ) : null}
+
+      {isDropdown ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="ed-fopts" className="text-xs font-medium text-muted-foreground">
+            {t("editPdf.fieldOptions")}
+          </Label>
+          <textarea
+            id="ed-fopts"
+            value={obj.options.join("\n")}
+            rows={4}
+            onChange={(e) =>
+              onPatch({
+                options: e.target.value.split("\n").map((s) => s.slice(0, 80)),
+              })
+            }
+            placeholder={t("editPdf.fieldOptionsPlaceholder")}
+            className="w-full resize-y rounded-btn border border-input bg-background px-3 py-2 text-xs text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          />
+          {obj.options.length > 0 ? (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="ed-fsel" className="text-xs font-medium text-muted-foreground">
+                {t("editPdf.fieldSelected")}
+              </Label>
+              <Select
+                value={obj.value || "__none__"}
+                onValueChange={(v) => onPatch({ value: v === "__none__" ? "" : v })}
+              >
+                <SelectTrigger id="ed-fsel" className="h-9 w-full rounded-btn">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">
+                    {t("editPdf.fieldNoDefault")}
+                  </SelectItem>
+                  {obj.options.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="flex items-center justify-between gap-2">
+        <Label htmlFor="ed-freq" className="text-xs font-medium text-muted-foreground">
+          {t("editPdf.fieldRequired")}
+        </Label>
+        <Switch
+          id="ed-freq"
+          checked={obj.required}
+          onCheckedChange={(next) => onPatch({ required: next })}
+        />
+      </div>
+
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {t("editPdf.fieldHint")}
+      </p>
+    </>
+  );
 }
 
 function arrowHeadPoints(

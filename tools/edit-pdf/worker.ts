@@ -13,6 +13,7 @@ import type { WorkerRunRequest, WorkerResponse } from "@/lib/workers/protocol";
 import { loadStampFonts } from "../stamp-common/worker-lib";
 import type { StampFontId } from "../stamp-common/layout";
 import {
+  FIELD_CHECKED,
   LINE_HEIGHT,
   TEXT_PAD,
   displayToPdfPoint,
@@ -359,6 +360,173 @@ function drawWhiteout(o: EditorObject, ctx: DrawCtx): void {
 }
 
 // ---------------------------------------------------------------------------
+// Form fields (P8.4) — real AcroForm widgets, not page content
+// ---------------------------------------------------------------------------
+
+/** Widget chrome shared by every field flavour (make-pdf-fillable's
+ * light-grey visual language so placed fields read as interactive). */
+const FIELD_BORDER = rgb(0.62, 0.65, 0.7);
+const CHECK_BORDER = rgb(0.45, 0.49, 0.55);
+
+interface FieldCounters {
+  added: number;
+  textFields: number;
+  checkboxes: number;
+  dropdowns: number;
+  radios: number;
+}
+
+/** True when pdf-lib's Helvetica appearance stream can encode the string
+ * (Devanagari and friends cannot — honest skip, field still created). */
+function winAnsiSafe(s: string): boolean {
+  for (const ch of s) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code > 0xff) return false;
+  }
+  return true;
+}
+
+/** Creates the AcroForm widgets for every field object. Radio objects
+ * that share one name become a single group (one circle each). */
+function addFieldObjects(
+  objects: EditorObject[],
+  pages: PDFPage[],
+  doc: PDFDocument,
+  counters: FieldCounters
+): void {
+  const form = doc.getForm();
+  const taken = new Set<string>();
+  for (const existing of form.getFields()) {
+    taken.add(existing.getName());
+  }
+  const uniqueName = (base: string): string => {
+    let clean = base.replace(/\s+/g, " ").trim().slice(0, 60) || "Field";
+    if (!taken.has(clean)) {
+      taken.add(clean);
+      return clean;
+    }
+    for (let n = 2; n < 500; n += 1) {
+      const candidate = `${clean} ${n}`;
+      if (!taken.has(candidate)) {
+        taken.add(candidate);
+        return candidate;
+      }
+    }
+    clean = `${clean} ${Date.now()}`;
+    taken.add(clean);
+    return clean;
+  };
+
+  const radioGroups = new Map<string, ReturnType<typeof form.createRadioGroup>>();
+  let radioFallback = 0;
+
+  for (const obj of objects) {
+    if (obj.kind !== "field") continue;
+    const page = pages[obj.page];
+    if (!page) continue;
+
+    if (obj.fieldType === "radio") {
+      // One group per shared name; every object adds one circle widget.
+      let group = radioGroups.get(obj.name);
+      if (!group) {
+        group = form.createRadioGroup(uniqueName(obj.name));
+        radioGroups.set(obj.name, group);
+        if (obj.required) group.enableRequired();
+      }
+      let option = obj.value.trim();
+      if (option.length === 0 || !winAnsiSafe(option)) {
+        radioFallback += 1;
+        option = `Option ${radioFallback}`;
+      }
+      try {
+        group.addOptionToPage(option, page, {
+          x: obj.x,
+          y: obj.y,
+          width: obj.w,
+          height: obj.h,
+          borderWidth: 1,
+          borderColor: CHECK_BORDER,
+        });
+        counters.added += 1;
+        counters.radios += 1;
+      } catch {
+        /* widget add failed (rare geometry) — skip honestly */
+      }
+      continue;
+    }
+
+    const name = uniqueName(obj.name);
+    try {
+      if (obj.fieldType === "checkbox") {
+        const box = form.createCheckBox(name);
+        if (obj.required) box.enableRequired();
+        if (obj.value === FIELD_CHECKED) box.check();
+        const size = Math.min(obj.w, obj.h);
+        box.addToPage(page, {
+          x: obj.x + (obj.w - size) / 2,
+          y: obj.y + (obj.h - size) / 2,
+          width: size,
+          height: size,
+          borderWidth: 1,
+          borderColor: CHECK_BORDER,
+        });
+        counters.checkboxes += 1;
+      } else if (obj.fieldType === "dropdown") {
+        const list = form.createDropdown(name);
+        if (obj.required) list.enableRequired();
+        for (const option of obj.options) {
+          if (!winAnsiSafe(option)) continue;
+          try {
+            list.addOptions(option);
+          } catch {
+            /* unencodable choice — skipped honestly */
+          }
+        }
+        if (obj.value && winAnsiSafe(obj.value) && obj.options.includes(obj.value)) {
+          try {
+            list.select(obj.value);
+          } catch {
+            /* default selection skipped honestly */
+          }
+        }
+        list.addToPage(page, {
+          x: obj.x,
+          y: obj.y,
+          width: obj.w,
+          height: obj.h,
+          borderWidth: 1,
+          borderColor: FIELD_BORDER,
+        });
+        counters.dropdowns += 1;
+      } else {
+        const field = form.createTextField(name);
+        if (obj.fieldType === "multiline") field.enableMultiline();
+        if (obj.required) field.enableRequired();
+        if (obj.value.length > 0 && winAnsiSafe(obj.value)) {
+          try {
+            field.setText(obj.value);
+          } catch {
+            /* unencodable default — field still created empty */
+          }
+        }
+        field.addToPage(page, {
+          x: obj.x,
+          y: obj.y,
+          width: obj.w,
+          height: obj.h,
+          borderWidth: 1,
+          borderColor: FIELD_BORDER,
+        });
+        counters.textFields += 1;
+      }
+      counters.added += 1;
+    } catch {
+      /* field creation failed — skip this one honestly */
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 
@@ -509,6 +677,25 @@ async function run(request: WorkerRunRequest): Promise<void> {
     });
   }
 
+  // Form fields (P8.4) — AcroForm widgets AFTER page content so they sit
+  // on top in every reader; array order = tab order (annotation order).
+  // doc.getForm() would CREATE an empty /AcroForm on a field-less run —
+  // gate on actual fields so passthrough stays byte-clean.
+  const counters: FieldCounters = {
+    added: 0,
+    textFields: 0,
+    checkboxes: 0,
+    dropdowns: 0,
+    radios: 0,
+  };
+  if (objects.some((o) => o.kind === "field")) {
+    try {
+      addFieldObjects(objects, pages, doc, counters);
+    } catch {
+      /* AcroForm already broken in the source — fields skipped honestly */
+    }
+  }
+
   post({ type: "progress", runId, pct: 92, stage: "saving" });
 
   const saved = await doc.save({ useObjectStreams: true });
@@ -531,6 +718,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       pages: pages.length,
       objects: drawn,
       images: embedded,
+      fields: counters.added,
     },
   });
 }
