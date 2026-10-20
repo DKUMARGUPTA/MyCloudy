@@ -178,12 +178,37 @@
     scroll-behavior: smooth;
     /* Keep anchored sections clear of the sticky header */
     scroll-padding-top: 5rem;
+    /* iOS Safari: never auto-inflate text in landscape / on zoom */
+    -webkit-text-size-adjust: 100%;
+    /* iOS Safari: no rubber-band page bounce while sheets are open */
+    overscroll-behavior-y: none;
   }
   html.dark {
     color-scheme: dark;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
+  }
+  /*
+   * iOS Safari touch feel (PRD §5 mobile):
+   * - manipulation kills the 300 ms double-tap-zoom delay on buttons/links
+   *   (pinch-zoom on the page itself still works — only double-tap is off);
+   * - transparent tap highlight matches the app's own hover/active styles.
+   */
+  button,
+  a,
+  [role="button"],
+  [role="tab"],
+  input[type="submit"] {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* iPhone notch / home-indicator inset helpers (viewport-fit=cover). */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pb-safe-2 {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
   }
   ::selection {
     background: color-mix(in oklab, var(--primary) 24%, transparent);

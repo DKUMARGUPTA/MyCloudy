@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/doco/modal";
@@ -35,6 +35,15 @@ export default function Home() {
   const [searchOpen, setSearchOpen] = useState(false);
   const openPro = useCallback(() => setProOpen(true), []);
   const openSearch = useCallback(() => setSearchOpen(true), []);
+
+  /*
+   * Boot marker for the iOS compatibility watchdog (boot-script.ts): once
+   * the shell has mounted, the fallback screen must never appear, and
+   * later errors route to the React error boundary instead.
+   */
+  useEffect(() => {
+    (window as unknown as { __DP_BOOTED__?: boolean }).__DP_BOOTED__ = true;
+  }, []);
 
   return (
     <div className="flex min-h-screen flex-col bg-background">

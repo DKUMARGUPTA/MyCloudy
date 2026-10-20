@@ -849,7 +849,11 @@ export function validatePlaceholders(
   for (const field of TEXT_FIELD_ORDER) {
     const value = texts[field];
     if (typeof value !== "string") continue;
-    for (const match of value.matchAll(re)) {
+    // iOS-safe: String.matchAll is Safari 13+; exec-loop works everywhere
+    // (this runs inside the tool web worker, which shares the JSC engine).
+    re.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(value)) !== null) {
       const name = match[1];
       if (!columns.includes(name) && !seen.has(name)) {
         seen.add(name);

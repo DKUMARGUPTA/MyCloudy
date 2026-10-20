@@ -4,6 +4,8 @@ import { ThemeProvider } from "next-themes";
 
 import { Toaster } from "@/components/ui/toaster";
 import { LocaleProvider } from "@/components/providers/locale-provider";
+import { AppErrorBoundary } from "@/components/doco/error-boundary";
+import { BOOT_SCRIPT } from "@/lib/compat/boot-script";
 
 import "./globals.css";
 
@@ -72,6 +74,7 @@ export const metadata: Metadata = {
   ],
   icons: {
     icon: [{ url: "/logo.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/apple-touch-icon.png" }],
   },
   openGraph: {
     type: "website",
@@ -92,6 +95,13 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "/",
   },
+  /* iOS: standalone home-screen app + no telephone autolinking of text. */
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "DocoPDF",
+  },
+  formatDetection: { telephone: false },
   robots: {
     index: true,
     follow: true,
@@ -105,9 +115,15 @@ export const metadata: Metadata = {
   },
 };
 
+/*
+ * iOS Safari hardening (viewport):
+ * viewport-fit=cover lets the layout paint into the notch / home-indicator
+ * area; fixed bars compensate with safe-area padding (globals.css).
+ */
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#FFFFFF" },
     { media: "(prefers-color-scheme: dark)", color: "#0B1220" },
@@ -210,6 +226,12 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${notoSansDevanagari.variable} font-sans antialiased bg-background text-foreground`}
       >
+        {/*
+         * iOS/Safari compatibility boot script — MUST be the first thing in
+         * <body> so polyfills exist before every app chunk parses. See
+         * src/lib/compat/boot-script.ts (error capture, polyfills, watchdog).
+         */}
+        <script dangerouslySetInnerHTML={{ __html: BOOT_SCRIPT }} />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
@@ -229,10 +251,25 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <LocaleProvider>
-            {children}
+            <AppErrorBoundary>{children}</AppErrorBoundary>
             <Toaster />
           </LocaleProvider>
         </ThemeProvider>
+        <noscript>
+          <div
+            style={{
+              padding: "24px",
+              fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif",
+              textAlign: "center",
+              color: "#0f172a",
+            }}
+          >
+            <strong>DocoPDF needs JavaScript to run.</strong>
+            <br />
+            DocoPDF को चलाने के लिए JavaScript ज़रूरी है — your browser has it
+            turned off (or blocked).
+          </div>
+        </noscript>
       </body>
     </html>
   );

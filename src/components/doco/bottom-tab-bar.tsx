@@ -41,8 +41,7 @@ export function BottomTabBar({
   return (
     <nav
       aria-label={t("tabs.tools")}
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/92 backdrop-blur-md md:hidden"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/92 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md md:hidden"
     >
       <ul className="grid grid-cols-3">
         {tabs.map(({ id, href, label, icon: Icon, active }) => (

@@ -46,6 +46,10 @@ const PLURAL_RE = /\{(\w+),\s*plural,\s*((?:=\d+\s*\{[^{}]*\}\s*)*)other\s*\{([^
 const EXACT_RE = /=(\d+)\s*\{([^{}]*)\}/g;
 
 function applyParams(value: string, params: TranslateParams): string {
+  // iOS-SAFE: no matchAll (Safari 13+) and no replaceAll (Safari 13.1+) —
+  // this is the hottest function in the app (every t() with params), and on
+  // older iPhones it crashed hydration with a white screen. RegExp /g
+  // exec-loops + split/join are supported everywhere (ES3+).
   let out = value.replace(
     PLURAL_RE,
     (_match, name: string, exacts: string, other: string) => {
@@ -53,18 +57,20 @@ function applyParams(value: string, params: TranslateParams): string {
       let branch = other;
       if (Number.isFinite(n)) {
         // First matching =N branch wins; otherwise `other`.
-        for (const m of exacts.matchAll(EXACT_RE)) {
+        EXACT_RE.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = EXACT_RE.exec(exacts)) !== null) {
           if (Number(m[1]) === n) {
             branch = m[2];
             break;
           }
         }
       }
-      return branch.replaceAll("#", String(n));
+      return branch.split("#").join(String(n));
     }
   );
   for (const [name, replacement] of Object.entries(params)) {
-    out = out.replaceAll(`{${name}}`, String(replacement));
+    out = out.split(`{${name}}`).join(String(replacement));
   }
   return out;
 }
