@@ -60,3 +60,6 @@ server.log
 .env
 db/*.db
 !db/.gitkeep
+
+# push token (never commit)
+.github-token
