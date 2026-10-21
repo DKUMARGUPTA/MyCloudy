@@ -38,6 +38,10 @@ import { CardSurface } from "../../../tools/create-card/surface";
 import { InvoiceSurface } from "../../../tools/create-invoice/surface";
 import { FormSurface } from "../../../tools/create-fillable-pdf-form/surface";
 import { ResumeSurface } from "../../../tools/create-resume/surface";
+import { WordToPdfSurface } from "../../../tools/word-to-pdf/surface";
+import { PdfToWordSurface } from "../../../tools/pdf-to-word/surface";
+import { ExcelToPdfSurface } from "../../../tools/excel-to-pdf/surface";
+import { PdfToExcelSurface } from "../../../tools/pdf-to-excel/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -123,6 +127,10 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "create-invoice": InvoiceSurface,
   "create-fillable-pdf-form": FormSurface,
   "create-resume": ResumeSurface,
+  "word-to-pdf": WordToPdfSurface,
+  "pdf-to-word": PdfToWordSurface,
+  "excel-to-pdf": ExcelToPdfSurface,
+  "pdf-to-excel": PdfToExcelSurface,
 };
 
 export function getToolSurface(

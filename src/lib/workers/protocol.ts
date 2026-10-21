@@ -47,6 +47,10 @@ export interface RunDetail {
   notes?: number;
   /** Words of text written into the output (write-pdf). */
   words?: number;
+  /** Paragraphs extracted into the output (pdf-to-word). */
+  paragraphs?: number;
+  /** Headings detected in the output (pdf-to-word). */
+  headings?: number;
 }
 
 export interface ToolOutput {

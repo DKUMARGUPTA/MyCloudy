@@ -65,6 +65,11 @@ import { config as createCard } from "../../../tools/create-card/config";
 import { config as createInvoice } from "../../../tools/create-invoice/config";
 import { config as createFillableForm } from "../../../tools/create-fillable-pdf-form/config";
 import { config as createResume } from "../../../tools/create-resume/config";
+import { config as wordToPdf } from "../../../tools/word-to-pdf/config";
+import { config as pdfToWord } from "../../../tools/pdf-to-word/config";
+import { config as excelToPdf } from "../../../tools/excel-to-pdf/config";
+import { config as pdfToExcel } from "../../../tools/pdf-to-excel/config";
+
 
 /**
  * Live tool configs (PRD §2.6 "Tool config pattern").
@@ -140,6 +145,10 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [createInvoice.toolId]: createInvoice,
   [createFillableForm.toolId]: createFillableForm,
   [createResume.toolId]: createResume,
+  [wordToPdf.toolId]: wordToPdf,
+  [pdfToWord.toolId]: pdfToWord,
+  [excelToPdf.toolId]: excelToPdf,
+  [pdfToExcel.toolId]: pdfToExcel,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

@@ -1361,7 +1361,8 @@ export const ALL_TOOLS: ToolDef[] = [
   def({
     id: "word-to-pdf",
     category: "convert-to",
-    mode: "S",
+    mode: "D",
+    enabled: true,
     phase: "P3",
     icon: FileText,
     popularity: 85,
@@ -1394,7 +1395,8 @@ export const ALL_TOOLS: ToolDef[] = [
   def({
     id: "excel-to-pdf",
     category: "convert-to",
-    mode: "S",
+    mode: "D",
+    enabled: true,
     phase: "P3",
     icon: FileSpreadsheet,
     popularity: 28,
@@ -1639,7 +1641,8 @@ export const ALL_TOOLS: ToolDef[] = [
   def({
     id: "pdf-to-word",
     category: "convert-from",
-    mode: "S",
+    mode: "D",
+    enabled: true,
     phase: "P3",
     icon: FileText,
     popularity: 83,
@@ -1672,7 +1675,8 @@ export const ALL_TOOLS: ToolDef[] = [
   def({
     id: "pdf-to-excel",
     category: "convert-from",
-    mode: "S",
+    mode: "D",
+    enabled: true,
     phase: "P3",
     icon: FileSpreadsheet,
     popularity: 24,
