@@ -3551,3 +3551,25 @@ Stage Summary:
 - Evidence: smoke 79/79 (incl. real Do-op photo proof + parse-level font asserts), tsc 0, lint 0/0, i18n 2620=2620, browser golden paths in both languages with export toasts, mobile no-overflow.
 - NEW PINNED LESSON: react-hooks/refs flags TRANSITIVE ref writes — a render-called helper that reaches `docRef.current =` through any callback chain fails lint even with zero direct .current in its body; the fix is functional setState + option-sync riding the doc effect (stable onChange). Also: fontkit in bun needs regenerator-runtime (txt2pdf/invoice precedent held).
 - Project state: 66 live / 97 total / 31 pending | i18n 2620=2620 | GitHub push still BLOCKED on read-only PAT (see GH-PUSH-1) | next queue: passport-photo (67th) → office-conversion batches → e-invoice/signature/pdf-a families → P6+P7.
+
+---
+Task ID: WHY-1
+Agent: orchestrator (main session — user round: "ye mistake kyu ho rah hai baar baar / github par push kyu nahi kiya / tools coming soon kyu")
+Task: Diagnose and answer the user's three questions about recurring work loss, failed push, and regressed tools.
+
+Work Log:
+- Re-tried the push with the SAME token the user re-pasted (in case its permissions had been edited server-side): git push → 403 "Permission to DKUMARGUPTA/MyCloudy.git denied" again.
+- Definitive API diagnosis: GET /user works (token authenticates as DKUMARGUPTA), GET /repos/…/MyCloudy works (repo accessible), but PUT /repos/…/contents/push-test.txt → 403 "Resource not accessible by personal access token". The repo's permissions object (admin/push:true) reflects the USER; the fine-grained PAT itself only carries Contents: READ. No git-push URL format can bypass a token-level permission.
+- Created scripts/push-github.sh — one-command durable backup: MYCLOUDY_GH_TOKEN=<token> bash scripts/push-github.sh pushes main (force — remote still holds only the unrelated 2-file initial commit) + ALL tags + verifies via ls-remote. This becomes a MANDATORY step of every future batch.
+- ROOT-CAUSE ANSWER for the user (recorded here so any future agent knows the disk history):
+  1) WORK LOSS (tools regressing to "Coming Soon"): the dev sandbox is EPHEMERAL. Sessions that built tools 67→90 (office-conversion batches B2–B5 + e-invoice family B6, tags checkpoint-69…90) ran on a DIFFERENT sandbox instance. When that instance was recycled, its disk — including its local git tags and the tool implementations — vanished. This disk was restored from an OLDER snapshot (65-live era). Evidence: this git repo had ZERO tags and a 3515-line worklog ending at IOS-COMPAT when this round began; tools/pdf-to-tiff held only a 6.7 KB config.ts stub where a full implementation + smoke had once existed. No external backup existed because the GitHub repo was empty (LICENSE+README only) — the token arrived only after the loss.
+  2) PUSH FAILURE: token is read-only (Contents: Read). Exact user fix: GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → select token → Repository access: Only select repositories → MyCloudy → Permissions → Repository permissions → Contents: Read and write → Update/Regenerate. (Or a classic PAT with the `repo` scope.)
+  3) "COMING SOON" TOOLS: the site renders from THIS disk's registry (66 live / 97 total / 31 pending). ~20 of the pending tools (pdf/word/excel/ppt/odt/rtf/epub/svg conversions + 5 e-invoice tools) were genuinely live in the lost sandbox and are now gone with it; the other ~11 (signature family, pdf-a family, webpage-to-pdf, publisher-to-pdf, pdf-to-html/markdown/webp, passport-photo) were never built on any disk.
+- Rebuild plan (worklog retains the full architecture knowledge from the lost sessions — fflate OOXML builders, Noto/Helvetica font recipes, worker protocols, smoke conventions, wiring surgery): rebuild in batches of 4 with commit+tag+PUSH each time. create-resume (66th) was already successfully rebuilt last round, proving the recovery pattern.
+- Security note repeated to user: the PAT was pasted in chat — rotate it after the first successful push.
+
+Stage Summary:
+- Diagnosis complete and honest: ephemeral sandbox + no external backup = the work loss; read-only token = the push failure; disk rollback = the "Coming Soon" regressions. None of the lost code can be recovered from this disk — it must be rebuilt.
+- scripts/push-github.sh is the durable-backup path; needs only a read+write token.
+- Current disk: 66 live / 97 total / 31 pending | i18n 2620=2620 | tags checkpoint-65-tools, checkpoint-66-tools | working tree clean.
+- New batch protocol from now on: build → smoke → tsc/lint → browser QA → commit → tag → PUSH GitHub (tag must be visible ON GITHUB, not just locally).
