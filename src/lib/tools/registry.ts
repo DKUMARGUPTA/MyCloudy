@@ -846,10 +846,11 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Contact,
     popularity: 18,
     accepts: "any",
+    enabled: true,
     name: { en: "Create resume", hi: "रिज़्यूमे बनाएँ" },
     description: {
-      en: "Step-by-step form, 8 templates, live preview, data stays local.",
-      hi: "स्टेप-बाय-स्टेप फ़ॉर्म, 8 टेम्पलेट, डेटा डिवाइस पर।",
+      en: "3 ATS templates, live preview, selectable-text PDF, data stays local.",
+      hi: "3 ATS टेम्पलेट, लाइव प्रीव्यू, चुनने योग्य टेक्स्ट वाली PDF, डेटा डिवाइस पर।",
     },
     tags: {
       en: ["cv", "job application", "biodata"],
