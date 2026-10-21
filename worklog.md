@@ -3573,3 +3573,20 @@ Stage Summary:
 - scripts/push-github.sh is the durable-backup path; needs only a read+write token.
 - Current disk: 66 live / 97 total / 31 pending | i18n 2620=2620 | tags checkpoint-65-tools, checkpoint-66-tools | working tree clean.
 - New batch protocol from now on: build → smoke → tsc/lint → browser QA → commit → tag → PUSH GitHub (tag must be visible ON GITHUB, not just locally).
+
+---
+Task ID: GH-PUSH-2
+Agent: orchestrator (main session — user provided classic PAT ghp_…)
+Task: Push the entire project to GitHub now that a write-capable token exists.
+
+Work Log:
+- User provided a classic PAT (repo scope). Verified BEFORE pushing: GET /user → DKUMARGUPTA; PUT contents API write test → SUCCESS (test file created + deleted cleanly).
+- Ran scripts/push-github.sh (the WHY-1 durable-backup script): git push --force main (remote held only the unrelated 2-file initial commit 4a6e219) + git push --tags.
+- RESULT (verified via ls-remote + trees API): main = 18e6334 (66 tools live), tags checkpoint-65-tools (eaf7e3e) + checkpoint-66-tools (6cf7cf8) ALL VISIBLE ON GITHUB. Full tree landed: src/, tools/ (80 folders), public/, scripts/, prisma/, docs/, mini-services/, worklog.md, LICENSE, README (MyCloudy rebrand).
+- FIRST DURABLE BACKUP IN PROJECT HISTORY: from this point on, a sandbox rollback can no longer destroy work — GitHub holds it.
+- New protocol is now ACTIVE and proven: every future batch = build → smoke → tsc/lint → browser QA → commit → tag → `MYCLOUDY_GH_TOKEN=<token> bash scripts/push-github.sh`.
+
+Stage Summary:
+- GitHub repo DKUMARGUPTA/MyCloudy now mirrors the full 66-live-tool project + 2 checkpoint tags. Push verified at the ref level (ls-remote) and the tree level (80 tool folders, complete top-level structure).
+- Security reminder to user: rotate this PAT after today (it was pasted in chat).
+- Next: rebuild the ~20 tools lost to the sandbox rollback (office conversions B-batches + e-invoice family), pushing to GitHub after every batch of 4.
