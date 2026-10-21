@@ -1,0 +1,986 @@
+     1→/**
+     2→ * Word to PDF (RB1-a — the 67th tool, rebuild) — pure model. No DOM, no
+     3→ * pdf-lib, no worker APIs: the same parseDocx feeds the surface's live
+     4→ * file summary AND the worker's render path, so the preview numbers can
+     5→ * never disagree with the output.
+     6→ *
+     7→ *  - parseDocx: fflate unzipSync → word/document.xml (plus optional
+     8→ *    word/styles.xml for heading resolution) → a dependency-free SAX-ish
+     9→ *    tokenizer (no DOMParser — workers) → blocks:
+    10→ *      {kind:"para", runs:[{text,bold,italic,sizePt?,bullet?}], align?,
+    11→ *       headingLevel?, listLevel?}
+    12→ *      {kind:"table", rows: string[][]}
+    13→ *      {kind:"pagebreak"}            (w:br w:type="page")
+    14→ *  - parseWordRun: the worker-boundary coercion (parseResumeRun pattern)
+    15→ *    — clamp arrays, strip control chars, cap every length. A tampered
+    16→ *    payload can never reach the renderer as a wrong type.
+    17→ *  - needsNoto / isWinAnsiText: pure-WinAnsi content → non-embedded
+    18→ *    base-14 Helvetica; ANY non-WinAnsi char (Devanagari, ₹ …) → the
+    19→ *    self-hosted Noto Sans Devanagari subset (fontkit).
+    20→ *  - hindiNorm: the pinned lost-session lesson — Noto subset CMaps can
+    21→ *    inject stray ASCII quotes (") between Devanagari words; strip " from
+    22→ *    strings that contain Devanagari, ONLY those.
+    23→ *
+    24→ * Honest limits (mirrored in config.ts): images, headers/footers,
+    25→ * footnotes, text boxes and multi-column layouts are not carried over;
+    26→ * numbered lists print as bullets; the old binary .doc format is not a
+    27→ * ZIP and is rejected up front.
+    28→ */
+    29→
+    30→import { unzipSync } from "fflate";
+    31→
+    32→/* ------------------------------------------------------------------ */
+    33→/* Hard caps (mirrored by the boundary parser)                          */
+    34→/* ------------------------------------------------------------------ */
+    35→
+    36→export const MAX_PARAGRAPHS = 500;
+    37→export const MAX_TABLE_ROWS = 50;
+    38→export const MAX_TABLE_COLS = 30;
+    39→export const MAX_BLOCKS = 800; // paras + tables + explicit breaks
+    40→export const MAX_RUN_TEXT = 2_000;
+    41→export const MAX_PARA_TEXT = 10_000;
+    42→export const MAX_CELL_TEXT = 1_000;
+    43→export const MAX_RUNS_PER_PARA = 200;
+    44→
+    45→/* ------------------------------------------------------------------ */
+    46→/* Doc model                                                            */
+    47→/* ------------------------------------------------------------------ */
+    48→
+    49→export type DocxAlign = "left" | "center" | "right" | "justify";
+    50→
+    51→export interface DocxRun {
+    52→  text: string;
+    53→  bold: boolean;
+    54→  italic: boolean;
+    55→  /** explicit w:sz / w:szCs half-point size in pt (4–72). */
+    56→  sizePt?: number;
+    57→  /** true on the first run of a list-item paragraph (w:numPr). */
+    58→  bullet?: boolean;
+    59→}
+    60→
+    61→export interface DocxParaBlock {
+    62→  kind: "para";
+    63→  runs: DocxRun[];
+    64→  align?: DocxAlign;
+    65→  /** 0 = Title, 1..3 = Heading1..3 (deeper Word levels flatten to 3). */
+    66→  headingLevel?: 0 | 1 | 2 | 3;
+    67→  /** present when the paragraph is a list item (w:numPr) — 0..3 nesting. */
+    68→  listLevel?: number;
+    69→}
+    70→
+    71→export interface DocxTableBlock {
+    72→  kind: "table";
+    73→  rows: string[][];
+    74→}
+    75→
+    76→export interface DocxPageBreakBlock {
+    77→  kind: "pagebreak";
+    78→}
+    79→
+    80→export type DocxBlock = DocxParaBlock | DocxTableBlock | DocxPageBreakBlock;
+    81→
+    82→export interface ParsedDoc {
+    83→  blocks: DocxBlock[];
+    84→  paraCount: number;
+    85→  tableCount: number;
+    86→  wordCount: number;
+    87→  charCount: number;
+    88→  /** true when any hard cap was hit — the surface shows an honest note. */
+    89→  truncated: boolean;
+    90→}
+    91→
+    92→function emptyDoc(): ParsedDoc {
+    93→  return {
+    94→    blocks: [],
+    95→    paraCount: 0,
+    96→    tableCount: 0,
+    97→    wordCount: 0,
+    98→    charCount: 0,
+    99→    truncated: false,
+   100→  };
+   101→}
+   102→
+   103→/** Honest stats derived from the blocks alone (parse + coercion agree). */
+   104→function docStats(blocks: DocxBlock[]): Omit<ParsedDoc, "blocks" | "truncated"> {
+   105→  let paraCount = 0;
+   106→  let tableCount = 0;
+   107→  let words = 0;
+   108→  let chars = 0;
+   109→  const count = (s: string): void => {
+   110→    chars += s.length;
+   111→    words += s.split(/\s+/).filter(Boolean).length;
+   112→  };
+   113→  for (const b of blocks) {
+   114→    if (b.kind === "para") {
+   115→      paraCount += 1;
+   116→      for (const r of b.runs) count(r.text);
+   117→    } else if (b.kind === "table") {
+   118→      tableCount += 1;
+   119→      for (const row of b.rows) for (const cell of row) count(cell);
+   120→    }
+   121→  }
+   122→  return { paraCount, tableCount, wordCount: words, charCount: chars };
+   123→}
+   124→
+   125→/* ------------------------------------------------------------------ */
+   126→/* WinAnsi detection → Helvetica vs embedded Noto (create-resume copy) */
+   127→/* ------------------------------------------------------------------ */
+   128→
+   129→const WINANSI_EXTRA = new Set([
+   130→  0x20ac, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030,
+   131→  0x0160, 0x2039, 0x0152, 0x017d, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022,
+   132→  0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x017e, 0x0178,
+   133→]);
+   134→
+   135→/** true when every char is encodable in WinAnsi (CP1252) minus controls. */
+   136→export function isWinAnsiText(s: string): boolean {
+   137→  for (let i = 0; i < s.length; i++) {
+   138→    const c = s.charCodeAt(i);
+   139→    if (c >= 0x20 && c <= 0x7e) continue;
+   140→    if (c >= 0xa0 && c <= 0xff) continue;
+   141→    if (WINANSI_EXTRA.has(c)) continue;
+   142→    return false;
+   143→  }
+   144→  return true;
+   145→}
+   146→
+   147→/** true when any drawn text needs the Devanagari (non-WinAnsi) font. */
+   148→export function needsNoto(doc: ParsedDoc): boolean {
+   149→  for (const b of doc.blocks) {
+   150→    if (b.kind === "para") {
+   151→      for (const r of b.runs) if (!isWinAnsiText(r.text)) return true;
+   152→    } else if (b.kind === "table") {
+   153→      for (const row of b.rows) {
+   154→        for (const cell of row) if (!isWinAnsiText(cell)) return true;
+   155→      }
+   156→    }
+   157→  }
+   158→  return false;
+   159→}
+   160→
+   161→/* ------------------------------------------------------------------ */
+   162→/* hindiNorm — the pinned lost-session lesson                           */
+   163→/* ------------------------------------------------------------------ */
+   164→
+   165→const DEVA_RE = /[\u0900-\u097F]/;
+   166→
+   167→/**
+   168→ * Noto subset CMaps can inject stray ASCII quotes (") between Devanagari
+   169→ * words. Strip `"` — but ONLY from strings that actually contain
+   170→ * Devanagari; English quotes are left completely alone.
+   171→ */
+   172→export function hindiNorm(s: string): string {
+   173→  return DEVA_RE.test(s) ? s.split('"').join("") : s;
+   174→}
+   175→
+   176→/* ------------------------------------------------------------------ */
+   177→/* XML entities                                                         */
+   178→/* ------------------------------------------------------------------ */
+   179→
+   180→const NAMED_ENTITIES: Record<string, string> = {
+   181→  amp: "&",
+   182→  lt: "<",
+   183→  gt: ">",
+   184→  quot: '"',
+   185→  apos: "'",
+   186→  nbsp: "\u00a0",
+   187→  tab: "\t",
+   188→  newline: "\n",
+   189→};
+   190→
+   191→const ENTITY_RE = /&(#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z][a-zA-Z0-9]*);/g;
+   192→
+   193→function decodeEntities(s: string): string {
+   194→  if (!s.includes("&")) return s;
+   195→  return s.replace(ENTITY_RE, (match, body: string) => {
+   196→    if (body.charCodeAt(0) === 35 /* # */) {
+   197→      const hex = body[1] === "x" || body[1] === "X";
+   198→      const code = Number.parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10);
+   199→      if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return match;
+   200→      try {
+   201→        return String.fromCodePoint(code);
+   202→      } catch {
+   203→        return match;
+   204→      }
+   205→    }
+   206→    return NAMED_ENTITIES[body] ?? match;
+   207→  });
+   208→}
+   209→
+   210→/* ------------------------------------------------------------------ */
+   211→/* prefix / local-name helpers                                          */
+   212→/* ------------------------------------------------------------------ */
+   213→
+   214→function prefixOf(name: string): string {
+   215→  const colon = name.indexOf(":");
+   216→  return colon < 0 ? "" : name.slice(0, colon);
+   217→}
+   218→
+   219→function localName(name: string): string {
+   220→  const colon = name.indexOf(":");
+   221→  return colon < 0 ? name : name.slice(colon + 1);
+   222→}
+   223→
+   224→/* ------------------------------------------------------------------ */
+   225→/* Dependency-free XML tokenizer (SAX events; no DOMParser in workers)  */
+   226→/* ------------------------------------------------------------------ */
+   227→
+   228→export interface SaxHandlers {
+   229→  open(name: string, attrs: Record<string, string>): void;
+   230→  text(value: string): void;
+   231→  close(name: string): void;
+   232→}
+   233→
+   234→const WS_RE = /[\s]/;
+   235→const NAME_STOP_RE = /[\s/>]/;
+   236→const ATTR_NAME_STOP_RE = /[\s=/>]/;
+   237→
+   238→/**
+   239→ * Tolerant linear tokenizer for well-formed Word XML: real elements emit
+   240→ * open/close (self-closing emits both), <?…?> / <!--…--> / <![CDATA[…]]>
+   241→ * are skipped (CDATA becomes raw text), everything else between tags is
+   242→ * text with entity decoding. Malformed input degrades instead of throwing.
+   243→ */
+   244→export function parseXmlSax(xml: string, h: SaxHandlers): void {
+   245→  const n = xml.length;
+   246→  let i = 0;
+   247→  while (i < n) {
+   248→    const lt = xml.indexOf("<", i);
+   249→    if (lt < 0) {
+   250→      if (i < n) h.text(decodeEntities(xml.slice(i)));
+   251→      break;
+   252→    }
+   253→    if (lt > i) h.text(decodeEntities(xml.slice(i, lt)));
+   254→
+   255→    if (xml.startsWith("<?", lt)) {
+   256→      const end = xml.indexOf("?>", lt);
+   257→      i = end < 0 ? n : end + 2;
+   258→      continue;
+   259→    }
+   260→    if (xml.startsWith("<!--", lt)) {
+   261→      const end = xml.indexOf("-->", lt);
+   262→      i = end < 0 ? n : end + 3;
+   263→      continue;
+   264→    }
+   265→    if (xml.startsWith("<![CDATA[", lt)) {
+   266→      const end = xml.indexOf("]]>", lt);
+   267→      h.text(xml.slice(lt + 9, end < 0 ? n : end)); // raw — no entities
+   268→      i = end < 0 ? n : end + 3;
+   269→      continue;
+   270→    }
+   271→    if (xml.charCodeAt(lt + 1) === 33 /* ! */) {
+   272→      const end = xml.indexOf(">", lt);
+   273→      i = end < 0 ? n : end + 1;
+   274→      continue;
+   275→    }
+   276→
+   277→    let j = lt + 1;
+   278→    let closing = false;
+   279→    if (xml.charCodeAt(j) === 47 /* / */) {
+   280→      closing = true;
+   281→      j += 1;
+   282→    }
+   283→    const nameStart = j;
+   284→    while (j < n && !NAME_STOP_RE.test(xml[j])) j += 1;
+   285→    const name = xml.slice(nameStart, j);
+   286→    if (name === "") {
+   287→      // "<" that isn't a tag at all — emit it as text and move on.
+   288→      h.text("<");
+   289→      i = lt + 1;
+   290→      continue;
+   291→    }
+   292→
+   293→    const attrs: Record<string, string> = {};
+   294→    let selfClosing = false;
+   295→    while (j < n) {
+   296→      while (j < n && WS_RE.test(xml[j])) j += 1;
+   297→      const c = xml.charCodeAt(j);
+   298→      if (c === 47 /* / */) {
+   299→        selfClosing = true;
+   300→        j += 1;
+   301→        continue;
+   302→      }
+   303→      if (c === 62 /* > */) {
+   304→        j += 1;
+   305→        break;
+   306→      }
+   307→      const aStart = j;
+   308→      while (j < n && !ATTR_NAME_STOP_RE.test(xml[j])) j += 1;
+   309→      const aName = xml.slice(aStart, j);
+   310→      while (j < n && WS_RE.test(xml[j])) j += 1;
+   311→      let aVal = "";
+   312→      if (xml.charCodeAt(j) === 61 /* = */) {
+   313→        j += 1;
+   314→        while (j < n && WS_RE.test(xml[j])) j += 1;
+   315→        const q = xml.charCodeAt(j);
+   316→        if (q === 34 /* " */ || q === 39 /* ' */) {
+   317→          j += 1;
+   318→          const vStart = j;
+   319→          while (j < n && xml.charCodeAt(j) !== q) j += 1;
+   320→          aVal = xml.slice(vStart, j);
+   321→          j += 1;
+   322→        } else {
+   323→          const vStart = j;
+   324→          while (j < n && !WS_RE.test(xml[j]) && xml.charCodeAt(j) !== 62) {
+   325→            j += 1;
+   326→          }
+   327→          aVal = xml.slice(vStart, j);
+   328→        }
+   329→      }
+   330→      if (aName) attrs[aName] = decodeEntities(aVal);
+   331→      if (j >= n) break;
+   332→    }
+   333→
+   334→    if (closing) {
+   335→      h.close(name);
+   336→    } else {
+   337→      h.open(name, attrs);
+   338→      if (selfClosing) h.close(name);
+   339→    }
+   340→    i = j;
+   341→  }
+   342→}
+   343→
+   344→/* ------------------------------------------------------------------ */
+   345→/* styles.xml → styleId → heading level (0 = Title, 1..9)               */
+   346→/* ------------------------------------------------------------------ */
+   347→
+   348→function parseStylesXml(xml: string): Map<string, number> {
+   349→  const map = new Map<string, number>();
+   350→  let styleId = ""; // active paragraph style id ("" = not tracking)
+   351→  let nameVal = ""; // its w:name val
+   352→  let outline: number | null = null; // its w:outlineLvl, 1-based
+   353→  parseXmlSax(xml, {
+   354→    open(name, attrs) {
+   355→      if (prefixOf(name) !== "w") return;
+   356→      const local = localName(name);
+   357→      if (local === "style") {
+   358→        const id = attrs["w:styleId"] ?? "";
+   359→        styleId =
+   360→          id && (attrs["w:type"] === undefined || attrs["w:type"] === "paragraph")
+   361→            ? id
+   362→            : "";
+   363→        nameVal = "";
+   364→        outline = null;
+   365→      } else if (local === "name" && styleId) {
+   366→        nameVal = attrs["w:val"] ?? "";
+   367→      } else if (local === "outlineLvl" && styleId) {
+   368→        const v = Number.parseInt(attrs["w:val"] ?? "", 10);
+   369→        outline = Number.isFinite(v) && v >= 0 && v <= 8 ? v + 1 : null;
+   370→      }
+   371→    },
+   372→    text() {
+   373→      /* style names/levels live in attributes, never text */
+   374→    },
+   375→    close(name) {
+   376→      if (prefixOf(name) !== "w" || localName(name) !== "style") return;
+   377→      if (styleId) {
+   378→        const trim = nameVal.trim();
+   379→        let level: number | undefined;
+   380→        if (/^title$/i.test(trim)) {
+   381→          level = 0;
+   382→        } else {
+   383→          const m = /^heading[ \-]?([1-9])$/i.exec(trim);
+   384→          if (m) level = Number.parseInt(m[1], 10);
+   385→          else if (outline !== null) level = outline;
+   386→        }
+   387→        if (level !== undefined) map.set(styleId, level);
+   388→      }
+   389→      styleId = "";
+   390→    },
+   391→  });
+   392→  return map;
+   393→}
+   394→
+   395→/* ------------------------------------------------------------------ */
+   396→/* document.xml assembler                                               */
+   397→/* ------------------------------------------------------------------ */
+   398→
+   399→const ALIGN_MAP: Record<string, DocxAlign> = {
+   400→  left: "left",
+   401→  start: "left",
+   402→  center: "center",
+   403→  right: "right",
+   404→  end: "right",
+   405→  both: "justify",
+   406→  justify: "justify",
+   407→};
+   408→
+   409→/** "Heading1"/"Title" style ids map directly (English Word UI ids). */
+   410→function directHeadingLevel(styleId: string): number | undefined {
+   411→  const t = /^title$/i.exec(styleId);
+   412→  if (t) return 0;
+   413→  const m = /^heading([1-9])$/i.exec(styleId);
+   414→  return m ? Number.parseInt(m[1], 10) : undefined;
+   415→}
+   416→
+   417→/** Half-point string → pt (4..72), undefined when absent/invalid. */
+   418→function halfPointsToPt(val: string | undefined): number | undefined {
+   419→  if (val === undefined) return undefined;
+   420→  const hp = Number.parseInt(val, 10);
+   421→  if (!Number.isFinite(hp)) return undefined;
+   422→  const pt = hp / 2;
+   423→  return pt >= 4 && pt <= 72 ? pt : undefined;
+   424→}
+   425→
+   426→/** w:b / w:bCs toggles: absent = on, "0"/"false"/"none" = off. */
+   427→function toggleVal(attrs: Record<string, string>): boolean {
+   428→  const v = attrs["w:val"];
+   429→  return v === undefined || (v !== "0" && v !== "false" && v !== "none");
+   430→}
+   431→
+   432→interface RunState {
+   433→  text: string;
+   434→  bold: boolean;
+   435→  italic: boolean;
+   436→  sizePt: number | undefined;
+   437→}
+   438→
+   439→interface ParaState {
+   440→  runs: DocxRun[];
+   441→  run: RunState | null;
+   442→  styleId: string;
+   443→  align: DocxAlign | undefined;
+   444→  listLevel: number; // -1 = not a list item
+   445→  pageBreak: boolean;
+   446→  firstRunDone: boolean;
+   447→  textLen: number;
+   448→}
+   449→
+   450→interface TableFrame {
+   451→  rows: string[][];
+   452→}
+   453→
+   454→interface CellFrame {
+   455→  texts: string[];
+   456→}
+   457→
+   458→/**
+   459→ * Streams the tokenizer events into blocks. All state is plain fields —
+   460→ * the class exists only to keep the handlers together; it is pure.
+   461→ */
+   462→class DocxAssembler {
+   463→  private readonly styles: Map<string, number>;
+   464→  readonly blocks: DocxBlock[] = [];
+   465→  private paraBlocks = 0;
+   466→  truncated = false;
+   467→
+   468→  /* --- walker state --- */
+   469→  private depth = 0;
+   470→  private inBody = false;
+   471→  /** depth of the outermost ignored element (drawing/pict/sectPr), -1 = off. */
+   472→  private skipDepth = -1;
+   473→  private tableStack: TableFrame[] = [];
+   474→  private rowStack: string[][] = [];
+   475→  private cellStack: CellFrame[] = [];
+   476→  private para: ParaState | null = null;
+   477→  private inNumPr = false;
+   478→  private textTarget = false;
+   479→
+   480→  constructor(styles: Map<string, number>) {
+   481→    this.styles = styles;
+   482→  }
+   483→
+   484→  private pushBlock(b: DocxBlock): void {
+   485→    if (this.blocks.length >= MAX_BLOCKS) {
+   486→      this.truncated = true;
+   487→      return;
+   488→    }
+   489→    if (b.kind === "para") {
+   490→      if (this.paraBlocks >= MAX_PARAGRAPHS) {
+   491→        this.truncated = true;
+   492→        return;
+   493→      }
+   494→      this.paraBlocks += 1;
+   495→    }
+   496→    this.blocks.push(b);
+   497→  }
+   498→
+   499→  readonly handlers: SaxHandlers = {
+   500→    open: (name, attrs) => {
+   501→      this.depth += 1;
+   502→      if (this.skipDepth !== -1) return;
+   503→      const local = localName(name);
+   504→      if (local === "sectPr") {
+   505→        this.skipDepth = this.depth;
+   506→        return;
+   507→      }
+   508→      // drawings / VML pictures: skipped wholesale (images are never
+   509→      // rendered — the honest limit; also drops text-box duplicates).
+   510→      if (local === "drawing" || local === "pict") {
+   511→        this.skipDepth = this.depth;
+   512→        return;
+   513→      }
+   514→      if (prefixOf(name) !== "w") return;
+   515→      switch (local) {
+   516→        case "body":
+   517→          this.inBody = true;
+   518→          break;
+   519→        case "tbl":
+   520→          this.tableStack.push({ rows: [] });
+   521→          break;
+   522→        case "tr":
+   523→          this.rowStack.push([]);
+   524→          break;
+   525→        case "tc":
+   526→          this.cellStack.push({ texts: [] });
+   527→          break;
+   528→        case "p":
+   529→          this.para = {
+   530→            runs: [],
+   531→            run: null,
+   532→            styleId: "",
+   533→            align: undefined,
+   534→            listLevel: -1,
+   535→            pageBreak: false,
+   536→            firstRunDone: false,
+   537→            textLen: 0,
+   538→          };
+   539→          break;
+   540→        case "r": {
+   541→          const para = this.para;
+   542→          if (para !== null && para.run === null) {
+   543→            para.run = { text: "", bold: false, italic: false, sizePt: undefined };
+   544→          }
+   545→          break;
+   546→        }
+   547→        case "pStyle":
+   548→          if (this.para !== null) this.para.styleId = attrs["w:val"] ?? "";
+   549→          break;
+   550→        case "jc":
+   551→          if (this.para !== null) {
+   552→            this.para.align = ALIGN_MAP[attrs["w:val"] ?? ""] ?? undefined;
+   553→          }
+   554→          break;
+   555→        case "numPr":
+   556→          if (this.para !== null) {
+   557→            this.inNumPr = true;
+   558→            this.para.listLevel = 0;
+   559→          }
+   560→          break;
+   561→        case "ilvl":
+   562→          if (this.inNumPr && this.para !== null) {
+   563→            const v = Number.parseInt(attrs["w:val"] ?? "0", 10);
+   564→            this.para.listLevel = Number.isFinite(v) && v >= 0 ? Math.min(v, 3) : 0;
+   565→          }
+   566→          break;
+   567→        case "numId":
+   568→          // numId 0 explicitly CANCELS a list inherited from the style.
+   569→          if (this.inNumPr && this.para !== null && (attrs["w:val"] ?? "") === "0") {
+   570→            this.para.listLevel = -1;
+   571→          }
+   572→          break;
+   573→        case "b":
+   574→        case "bCs": {
+   575→          const run = this.para?.run;
+   576→          if (run) run.bold = run.bold || toggleVal(attrs);
+   577→          break;
+   578→        }
+   579→        case "i":
+   580→        case "iCs": {
+   581→          const run = this.para?.run;
+   582→          if (run) run.italic = run.italic || toggleVal(attrs);
+   583→          break;
+   584→        }
+   585→        case "sz": {
+   586→          const run = this.para?.run;
+   587→          if (run && run.sizePt === undefined) {
+   588→            run.sizePt = halfPointsToPt(attrs["w:val"]);
+   589→          }
+   590→          break;
+   591→        }
+   592→        case "szCs": {
+   593→          const run = this.para?.run;
+   594→          if (run && run.sizePt === undefined) {
+   595→            run.sizePt = halfPointsToPt(attrs["w:val"]);
+   596→          }
+   597→          break;
+   598→        }
+   599→        case "t":
+   600→          this.textTarget = true;
+   601→          break;
+   602→        case "tab": {
+   603→          const run = this.para?.run;
+   604→          if (run) run.text += "\t";
+   605→          break;
+   606→        }
+   607→        case "br": {
+   608→          if (attrs["w:type"] === "page") {
+   609→            if (this.para !== null) this.para.pageBreak = true;
+   610→          } else {
+   611→            const run = this.para?.run;
+   612→            if (run) run.text += "\n";
+   613→          }
+   614→          break;
+   615→        }
+   616→        default:
+   617→          break;
+   618→      }
+   619→    },
+   620→
+   621→    text: (value) => {
+   622→      if (!this.textTarget) return;
+   623→      const run = this.para?.run;
+   624→      if (run) run.text += hindiNorm(value);
+   625→    },
+   626→
+   627→    close: (name) => {
+   628→      const closingDepth = this.depth;
+   629→      this.depth = Math.max(0, this.depth - 1);
+   630→      if (this.skipDepth !== -1) {
+   631→        if (closingDepth === this.skipDepth) this.skipDepth = -1;
+   632→        return;
+   633→      }
+   634→      const local = localName(name);
+   635→      if (prefixOf(name) !== "w") return;
+   636→      switch (local) {
+   637→        case "body":
+   638→          this.inBody = false;
+   639→          break;
+   640→        case "t":
+   641→          this.textTarget = false;
+   642→          break;
+   643→        case "numPr":
+   644→          this.inNumPr = false;
+   645→          break;
+   646→        case "r":
+   647→          this.endRun();
+   648→          break;
+   649→        case "p":
+   650→          this.endPara();
+   651→          break;
+   652→        case "tc": {
+   653→          const cell = this.cellStack.pop();
+   654→          if (cell && this.rowStack.length > 0) {
+   655→            const row = this.rowStack[this.rowStack.length - 1];
+   656→            if (row.length < MAX_TABLE_COLS) {
+   657→              row.push(cell.texts.join("\n").slice(0, MAX_CELL_TEXT));
+   658→            } else {
+   659→              this.truncated = true;
+   660→            }
+   661→          }
+   662→          break;
+   663→        }
+   664→        case "tr": {
+   665→          const row = this.rowStack.pop();
+   666→          if (row && this.tableStack.length > 0) {
+   667→            const table = this.tableStack[this.tableStack.length - 1];
+   668→            if (table.rows.length < MAX_TABLE_ROWS) table.rows.push(row);
+   669→            else this.truncated = true;
+   670→          }
+   671→          break;
+   672→        }
+   673→        case "tbl": {
+   674→          const table = this.tableStack.pop();
+   675→          if (!table) break;
+   676→          if (this.tableStack.length === 0) {
+   677→            if (table.rows.length > 0) {
+   678→              this.pushBlock({ kind: "table", rows: table.rows });
+   679→            }
+   680→          } else if (this.cellStack.length > 0) {
+   681→            // nested table inside a cell — flatten its text honestly.
+   682→            const cell = this.cellStack[this.cellStack.length - 1];
+   683→            const flat = table.rows.map((r) => r.join(" ")).join(" ");
+   684→            if (flat) cell.texts.push(flat.slice(0, MAX_CELL_TEXT));
+   685→          }
+   686→          break;
+   687→        }
+   688→        default:
+   689→          break;
+   690→      }
+   691→    },
+   692→  };
+   693→
+   694→  /** Non-empty text runs become blocks; the first one carries the bullet. */
+   695→  private endRun(): void {
+   696→    const para = this.para;
+   697→    if (!para || !para.run) return;
+   698→    const run = para.run;
+   699→    para.run = null;
+   700→    if (run.text === "") return;
+   701→    const text = run.text.slice(0, MAX_RUN_TEXT);
+   702→    if (text === "") return;
+   703→    if (para.runs.length >= MAX_RUNS_PER_PARA || para.textLen >= MAX_PARA_TEXT) {
+   704→      this.truncated = true;
+   705→      return;
+   706→    }
+   707→    para.textLen += text.length;
+   708→    para.runs.push({
+   709→      text,
+   710→      bold: run.bold,
+   711→      italic: run.italic,
+   712→      sizePt: run.sizePt,
+   713→      bullet: para.listLevel >= 0 && !para.firstRunDone ? true : undefined,
+   714→    });
+   715→    para.firstRunDone = true;
+   716→  }
+   717→
+   718→  private endPara(): void {
+   719→    const para = this.para;
+   720→    this.para = null;
+   721→    this.inNumPr = false;
+   722→    if (!para) return;
+   723→
+   724→    if (this.cellStack.length > 0) {
+   725→      // paragraph inside a table cell — contributes to the cell text
+   726→      const cell = this.cellStack[this.cellStack.length - 1];
+   727→      cell.texts.push(para.runs.map((r) => r.text).join("").slice(0, MAX_CELL_TEXT));
+   728→      return;
+   729→    }
+   730→    if (!this.inBody) return;
+   731→
+   732→    const text = para.runs.map((r) => r.text).join("");
+   733→    const isList = para.listLevel >= 0;
+   734→    const hasText = text.trim().length > 0;
+   735→
+   736→    if (!hasText && para.pageBreak) {
+   737→      this.pushBlock({ kind: "pagebreak" });
+   738→      return;
+   739→    }
+   740→    if (!hasText && !isList) {
+   741→      // Word's empty spacing paragraph — keep one honest blank line.
+   742→      this.pushBlock({ kind: "para", runs: [] });
+   743→      return;
+   744→    }
+   745→
+   746→    let headingLevel: 0 | 1 | 2 | 3 | undefined;
+   747→    const direct = directHeadingLevel(para.styleId);
+   748→    const viaStyles = direct === undefined ? this.styles.get(para.styleId) : direct;
+   749→    if (viaStyles !== undefined) {
+   750→      headingLevel = viaStyles === 0 ? 0 : (Math.min(3, viaStyles) as 1 | 2 | 3);
+   751→    }
+   752→
+   753→    this.pushBlock({
+   754→      kind: "para",
+   755→      runs: para.runs,
+   756→      align: para.align,
+   757→      headingLevel,
+   758→      listLevel: isList ? para.listLevel : undefined,
+   759→    });
+   760→    if (para.pageBreak) this.pushBlock({ kind: "pagebreak" });
+   761→  }
+   762→
+   763→  finish(): ParsedDoc {
+   764→    return {
+   765→      blocks: this.blocks,
+   766→      ...docStats(this.blocks),
+   767→      truncated: this.truncated,
+   768→    };
+   769→  }
+   770→}
+   771→
+   772→/* ------------------------------------------------------------------ */
+   773→/* parseDocx                                                            */
+   774→/* ------------------------------------------------------------------ */
+   775→
+   776→/**
+   777→ * Unzips a .docx (OOXML ZIP) and extracts the body flow. Any failure —
+   778→ * not a ZIP, no word/document.xml, empty body — returns an EMPTY doc
+   779→ * (the caller decides whether that is an error for the user).
+   780→ */
+   781→export function parseDocx(bytes: Uint8Array): ParsedDoc {
+   782→  let entries: Record<string, Uint8Array> | null = null;
+   783→  try {
+   784→    entries = unzipSync(bytes) as Record<string, Uint8Array>;
+   785→  } catch {
+   786→    return emptyDoc();
+   787→  }
+   788→  const docBytes = entries?.["word/document.xml"];
+   789→  if (!docBytes || docBytes.length === 0) return emptyDoc();
+   790→
+   791→  const decode = (b: Uint8Array): string => {
+   792→    let s = new TextDecoder("utf-8", { fatal: false }).decode(b);
+   793→    if (s.charCodeAt(0) === 0xfeff) s = s.slice(1);
+   794→    return s;
+   795→  };
+   796→
+   797→  let styles = new Map<string, number>();
+   798→  const styleBytes = entries?.["word/styles.xml"];
+   799→  if (styleBytes && styleBytes.length > 0) {
+   800→    try {
+   801→      styles = parseStylesXml(decode(styleBytes));
+   802→    } catch {
+   803→      styles = new Map();
+   804→    }
+   805→  }
+   806→
+   807→  const asm = new DocxAssembler(styles);
+   808→  try {
+   809→    parseXmlSax(decode(docBytes), asm.handlers);
+   810→  } catch {
+   811→    return emptyDoc();
+   812→  }
+   813→  return asm.finish();
+   814→}
+   815→
+   816→/* ------------------------------------------------------------------ */
+   817→/* parseWordRun — worker-boundary coercion (parseResumeRun pattern)     */
+   818→/* ------------------------------------------------------------------ */
+   819→
+   820→function cleanText(v: unknown, max: number): string {
+   821→  if (typeof v !== "string") return "";
+   822→  return v
+   823→    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+   824→    .slice(0, max);
+   825→}
+   826→
+   827→function coerceAlign(v: unknown): DocxAlign | undefined {
+   828→  return v === "left" || v === "center" || v === "right" || v === "justify"
+   829→    ? v
+   830→    : undefined;
+   831→}
+   832→
+   833→function coerceHeading(v: unknown): 0 | 1 | 2 | 3 | undefined {
+   834→  const n = typeof v === "number" ? v : Number.parseInt(String(v), 10);
+   835→  if (!Number.isFinite(n)) return undefined;
+   836→  if (n === 0) return 0;
+   837→  if (n >= 1 && n <= 3) return n as 1 | 2 | 3;
+   838→  return undefined;
+   839→}
+   840→
+   841→function coerceLevel(v: unknown): number | undefined {
+   842→  const n = typeof v === "number" ? v : Number.parseInt(String(v), 10);
+   843→  if (!Number.isFinite(n) || n < 0) return undefined;
+   844→  return Math.min(3, Math.floor(n));
+   845→}
+   846→
+   847→function coerceSize(v: unknown): number | undefined {
+   848→  const n = typeof v === "number" ? v : Number.NaN;
+   849→  if (!Number.isFinite(n)) return undefined;
+   850→  return n >= 4 && n <= 72 ? n : undefined;
+   851→}
+   852→
+   853→/**
+   854→ * Full defensive coercion of a serialized ParsedDoc at the worker
+   855→ * boundary: garbage → empty doc, arrays clamped, every text capped,
+   856→ * unknown enum values dropped. Also re-derives listLevel from run-level
+   857→ * bullet flags when the block forgot it.
+   858→ */
+   859→export function parseWordRun(raw: string): ParsedDoc {
+   860→  let parsed: unknown;
+   861→  try {
+   862→    parsed = JSON.parse(raw);
+   863→  } catch {
+   864→    return emptyDoc();
+   865→  }
+   866→  const o = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Record<
+   867→    string,
+   868→    unknown
+   869→  >;
+   870→  if (!Array.isArray(o.blocks)) return emptyDoc();
+   871→
+   872→  let truncated = o.truncated === true;
+   873→  const blocks: DocxBlock[] = [];
+   874→  let paraBlocks = 0;
+   875→
+   876→  outer: for (const bo of o.blocks) {
+   877→    if (blocks.length >= MAX_BLOCKS) {
+   878→      truncated = true;
+   879→      break;
+   880→    }
+   881→    if (typeof bo !== "object" || bo === null) continue;
+   882→    const b = bo as Record<string, unknown>;
+   883→    const kind = b.kind;
+   884→
+   885→    if (kind === "pagebreak") {
+   886→      blocks.push({ kind: "pagebreak" });
+   887→      continue;
+   888→    }
+   889→
+   890→    if (kind === "table") {
+   891→      const rawRows = Array.isArray(b.rows) ? b.rows : [];
+   892→      const rows: string[][] = [];
+   893→      for (const ro of rawRows) {
+   894→        if (rows.length >= MAX_TABLE_ROWS) {
+   895→          truncated = true;
+   896→          break;
+   897→        }
+   898→        if (!Array.isArray(ro)) continue;
+   899→        const cells: string[] = [];
+   900→        for (const co of ro) {
+   901→          if (cells.length >= MAX_TABLE_COLS) {
+   902→            truncated = true;
+   903→            break;
+   904→          }
+   905→          cells.push(hindiNorm(cleanText(co, MAX_CELL_TEXT)));
+   906→        }
+   907→        if (cells.length > 0) rows.push(cells);
+   908→      }
+   909→      if (rows.length > 0) blocks.push({ kind: "table", rows });
+   910→      continue;
+   911→    }
+   912→
+   913→    if (kind !== "para") continue;
+   914→    if (paraBlocks >= MAX_PARAGRAPHS) {
+   915→      truncated = true;
+   916→      break outer;
+   917→    }
+   918→    const rawRuns = Array.isArray(b.runs) ? b.runs : [];
+   919→    const runs: DocxRun[] = [];
+   920→    let textLen = 0;
+   921→    let bulletSeen = false;
+   922→    for (const ro of rawRuns) {
+   923→      if (runs.length >= MAX_RUNS_PER_PARA || textLen >= MAX_PARA_TEXT) {
+   924→        truncated = true;
+   925→        break;
+   926→      }
+   927→      if (typeof ro !== "object" || ro === null) continue;
+   928→      const r = ro as Record<string, unknown>;
+   929→      let text = hindiNorm(cleanText(r.text, MAX_RUN_TEXT));
+   930→      if (textLen + text.length > MAX_PARA_TEXT) {
+   931→        text = text.slice(0, Math.max(0, MAX_PARA_TEXT - textLen));
+   932→      }
+   933→      if (text === "") continue;
+   934→      textLen += text.length;
+   935→      const bullet = r.bullet === true;
+   936→      if (bullet) bulletSeen = true;
+   937→      runs.push({
+   938→        text,
+   939→        bold: r.bold === true,
+   940→        italic: r.italic === true,
+   941→        sizePt: coerceSize(r.sizePt),
+   942→        bullet: bullet || undefined,
+   943→      });
+   944→    }
+   945→    const headingLevel = coerceHeading(b.headingLevel);
+   946→    const align = coerceAlign(b.align);
+   947→    let listLevel = coerceLevel(b.listLevel);
+   948→    if (listLevel === undefined && bulletSeen) listLevel = 0;
+   949→    if (runs.length === 0 && listLevel === undefined && headingLevel === undefined && align === undefined) {
+   950→      // preserve honest blank lines, drop fully-empty husks
+   951→      blocks.push({ kind: "para", runs: [] });
+   952→      paraBlocks += 1;
+   953→      continue;
+   954→    }
+   955→    blocks.push({
+   956→      kind: "para",
+   957→      runs,
+   958→      align,
+   959→      headingLevel,
+   960→      listLevel,
+   961→    });
+   962→    paraBlocks += 1;
+   963→  }
+   964→
+   965→  return { blocks, ...docStats(blocks), truncated };
+   966→}
+   967→
+   968→/* ------------------------------------------------------------------ */
+   969→/* Output file name (house pdf-to-txt convention + localized fallback)  */
+   970→/* ------------------------------------------------------------------ */
+   971→
+   972→/**
+   973→ * "Report v2.docx" → "Report v2.pdf"; a nameless file falls back to the
+   974→ * localized word ("document" / "दस्तावेज़"). Unicode survives; path
+   975→ * separators and unsafe chars do not.
+   976→ */
+   977→export function outputPdfName(fileName: string, fileWord: string): string {
+   978→  const base = fileName
+   979→    .replace(/\.(docx|doc)$/i, "")
+   980→    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+   981→    .trim()
+   982→    .slice(0, 120);
+   983→  const fallback = cleanText(fileWord, 60).trim() || "document";
+   984→  return `${base || fallback}.pdf`;
+   985→}
+   986→

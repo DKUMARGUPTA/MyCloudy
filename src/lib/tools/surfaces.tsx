@@ -42,6 +42,10 @@ import { WordToPdfSurface } from "../../../tools/word-to-pdf/surface";
 import { PdfToWordSurface } from "../../../tools/pdf-to-word/surface";
 import { ExcelToPdfSurface } from "../../../tools/excel-to-pdf/surface";
 import { PdfToExcelSurface } from "../../../tools/pdf-to-excel/surface";
+import { PowerpointToPdfSurface } from "../../../tools/powerpoint-to-pdf/surface";
+import { RtfToPdfSurface } from "../../../tools/rtf-to-pdf/surface";
+import { OdtToPdfSurface } from "../../../tools/odt-to-pdf/surface";
+import { HtmlToPdfSurface } from "../../../tools/html-to-pdf/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -131,6 +135,10 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "pdf-to-word": PdfToWordSurface,
   "excel-to-pdf": ExcelToPdfSurface,
   "pdf-to-excel": PdfToExcelSurface,
+  "powerpoint-to-pdf": PowerpointToPdfSurface,
+  "rtf-to-pdf": RtfToPdfSurface,
+  "odt-to-pdf": OdtToPdfSurface,
+  "html-to-pdf": HtmlToPdfSurface,
 };
 
 export function getToolSurface(

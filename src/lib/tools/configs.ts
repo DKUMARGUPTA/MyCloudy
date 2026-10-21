@@ -69,6 +69,10 @@ import { config as wordToPdf } from "../../../tools/word-to-pdf/config";
 import { config as pdfToWord } from "../../../tools/pdf-to-word/config";
 import { config as excelToPdf } from "../../../tools/excel-to-pdf/config";
 import { config as pdfToExcel } from "../../../tools/pdf-to-excel/config";
+import { config as powerpointToPdf } from "../../../tools/powerpoint-to-pdf/config";
+import { config as rtfToPdf } from "../../../tools/rtf-to-pdf/config";
+import { config as odtToPdf } from "../../../tools/odt-to-pdf/config";
+import { config as htmlToPdf } from "../../../tools/html-to-pdf/config";
 
 
 /**
@@ -149,6 +153,10 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [pdfToWord.toolId]: pdfToWord,
   [excelToPdf.toolId]: excelToPdf,
   [pdfToExcel.toolId]: pdfToExcel,
+  [powerpointToPdf.toolId]: powerpointToPdf,
+  [rtfToPdf.toolId]: rtfToPdf,
+  [odtToPdf.toolId]: odtToPdf,
+  [htmlToPdf.toolId]: htmlToPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {
