@@ -3513,3 +3513,23 @@ Stage Summary:
 - Lesson pinned: (1) String.prototype methods are NOT transpiled by SWC — matchAll/replaceAll in a hot path is a silent old-iPhone killer; audit worker code separately (polyfills don't cross into Web Workers); (2) Next 16: appleWebApp/formatDetection live in Metadata, viewportFit in Viewport; (3) boot-script testing needs setTimeout/clearTimeout shadowing via new Function params — the script legitimately uses bare globals that alias window in real browsers.
 - Project state: 65 live / 97 total / 32 pending | i18n parity untouched (catalog changes: none) | lint+tsc+smokes green | dev.log clean.
 - NOTE for next round: the P11 emerald rebrand + P12 enterprise plan (admin console, accounts, Turso/Supabase, IndexedDB-heavy files) and the DocoPDF → sidocs.in rename request were planned in a previous session but are NOT on disk (context was lost before those phases started) — worklog's last on-disk entry before this one was INVOICE-LOGO-FIX. Decide/reconfirm scope with the user before starting those.
+
+---
+Task ID: GH-PUSH-1
+Agent: orchestrator (main session — user round: "ye github ka token and repo link hai abhi sab kuch push karo github par phir aage kam karna hai")
+Task: Push the whole project to https://github.com/DKUMARGUPTA/MyCloudy with the user-provided fine-grained PAT.
+
+Work Log:
+- Full disk-truth audit FIRST (sandbox was restored to an older snapshot): registry = 97 defs / 65 enabled / 32 pending; worklog's last on-disk entry = IOS-COMPAT (65 live). The old cron-470122 message claiming "85/97 live, checkpoint-85-tools" described the LOST sandbox, not this disk. tools/pdf-to-tiff + tools/pdf-to-webp hold ONLY config.ts stubs (Oct 11) — the real implementations died with that sandbox.
+- Repo hygiene before push: untracked .env (only DATABASE_URL=file:... inside, no secrets) and db/custom.db (144K dev SQLite); fixed a .gitignore glitch where an append glued onto the last line making "/skills/.env" (61MB skills/ dir had become un-ignored); re-added proper /skills/, .env, db/*.db entries.
+- Brought in GPL-3.0 LICENSE from the remote's initial commit; rebranded README.md header DocoPDF.com → "MyCloudy (mycloudy.in)".
+- Committed both (e8508bc, dc643e6), created annotated tag **checkpoint-65-tools** (65 live tools, iOS-compat round complete).
+- Push attempt: token authenticates as DKUMARGUPTA (ls-remote + fetch OK — remote main = 5bd3713 "Initial commit" with LICENSE+README only), but **git push → 403 "Permission to DKUMARGUPTA/MyCloudy.git denied"** in all 3 URL auth formats → the fine-grained PAT has Contents: READ-ONLY.
+- BLOCKED on user action. Exact fix to give the user: GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → (this token) → Repository access: Only select repositories → MyCloudy → Permissions → Repository permissions → **Contents: Read and write** → Update/Regenerate; (or a classic PAT with the `repo` scope). Then the push is exactly: `git push --force origin main && git push origin --tags` (origin is configured clean, no token stored; force needed once — remote main is just the unrelated 2-file initial commit; local main at dc643e6, 57 commits, carries the remote's LICENSE forward).
+- Rotated origin URL back to the tokenless form (token never stored on disk in any committed file).
+
+Stage Summary:
+- Local repo is 100% push-ready: 57 commits, tag checkpoint-65-tools, hygiene done (.env/db untracked, skills/ ignored, LICENSE + MyCloudy README on top).
+- Token is read-only → push blocked → told the user the exact permission to flip; one command finishes it once they regenerate.
+- SECURITY NOTE: the PAT was pasted in chat — after the first successful push the user should rotate it.
+- Disk truth for every future round: **65 live / 97 total / 32 pending**; i18n 2405=2405; next queue = create-resume (66th) → passport-photo (67th) → office-conversion batches (word/excel/ppt/odt/rtf→pdf + reverse) → e-invoice/signature/pdf-a families → P6 static + P7 PWA.
