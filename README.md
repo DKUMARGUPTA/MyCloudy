@@ -1,8 +1,8 @@
-# DocoPDF.com
+# MyCloudy (mycloudy.in)
 
 *Har PDF kaam, ek jagah. Fast, free, private.*
 
-Online PDF tools website (English + हिंदी) built from the PRD
+Online tools website (English + हिंदी) built from the PRD
 (`docs/PRD-v2.md` / `upload/DocoPDF-PRD-v2.docx`). Most tools run **entirely
 in the browser** — files stay on the user's device.
 
@@ -11,7 +11,7 @@ in the browser** — files stay on the user's device.
 | Layer     | Choice |
 |-----------|--------|
 | Framework | Next.js 16 (App Router) + TypeScript strict + Tailwind CSS 4 |
-| UI        | shadcn/ui (New York) + Lucide icons + custom DocoPDF tokens |
+| UI        | shadcn/ui (New York) + Lucide icons + custom MyCloudy tokens |
 | Database  | Sandbox: Prisma + SQLite. Production: Turso (libSQL) — metadata only |
 | Files     | User device only: OPFS / IndexedDB / File System Access / Web Share |
 | Fonts     | Self-hosted Inter + Noto Sans Devanagari (`src/fonts/`, `next/font/local`) |
