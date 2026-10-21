@@ -20,7 +20,21 @@ echo "→ pushing main (force: remote may hold unrelated initial commit)…"
 git push --force "$URL" main
 
 echo "→ pushing all tags…"
-git push --force "$URL" --tags
+# --force --tags can transiently fail with "remote rejected (failed)"
+# (observed once on a fresh tag after main already pushed); retry the
+# atomic push once, then fall back to per-tag pushes so one bad ref
+# can never block the others.
+if ! git push --force "$URL" --tags; then
+  echo "⚠ bulk tag push failed — retrying per-tag…"
+  failed=0
+  for tag in $(git tag); do
+    git push --force "$URL" "refs/tags/${tag}:refs/tags/${tag}" || {
+      echo "✗ tag ${tag} failed"
+      failed=1
+    }
+  done
+  [ "$failed" -eq 0 ] || exit 1
+fi
 
 echo "→ verifying remote…"
 git ls-remote "https://x-access-token:${TOKEN}@github.com/DKUMARGUPTA/MyCloudy.git" \
