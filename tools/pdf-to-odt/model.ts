@@ -227,35 +227,88 @@ function matchDevCluster(text: string, i: number): string | null {
   return text.slice(i, j);
 }
 
-/** Move provably-visual pre-base matras behind their cluster. */
+/** Move provably-visual pre-base matras and dangling rephs to logical order. */
 export function fixDevanagariVisual(text: string): string {
-  let needsFix = false;
-  for (const ch of text) {
-    if (DEV_PRE_MATRA.has(ch)) {
-      needsFix = true;
-      break;
-    }
+  let needsMatra = false;
+  let needsReph = false;
+  for (let i = 0; i < text.length; i += 1) {
+    if (DEV_PRE_MATRA.has(text[i] as string)) needsMatra = true;
+    if (text[i] === DEV_RA && text[i + 1] === DEV_VIRAMA) needsReph = true;
   }
-  if (!needsFix) return text;
-  let out = "";
-  let prev = "";
-  let i = 0;
-  while (i < text.length) {
-    const ch = text[i] as string;
-    if (DEV_PRE_MATRA.has(ch)) {
-      const cluster = matchDevCluster(text, i + 1);
-      const ambiguous =
-        isDevConsonant(prev) || prev === DEV_NUKTA; // logical reading exists
-      if (cluster !== null && !ambiguous) {
-        out += cluster + ch;
-        prev = cluster[cluster.length - 1] as string;
-        i += 1 + cluster.length;
-        continue;
+  if (!needsMatra && !needsReph) return text;
+
+  let out = text;
+
+  if (needsMatra) {
+    // Pre-base matras: shaping renders ि े ै BEFORE their cluster, so
+    // they extract one position early. Only provably-visual cases move
+    // (the matra starts the run or follows something that can never
+    // end a logical syllable); after a plain consonant the reading is
+    // ambiguous and is left untouched.
+    let acc = "";
+    let prev = "";
+    let i = 0;
+    while (i < out.length) {
+      const ch = out[i] as string;
+      if (DEV_PRE_MATRA.has(ch)) {
+        const cluster = matchDevCluster(out, i + 1);
+        const ambiguous =
+          isDevConsonant(prev) || prev === DEV_NUKTA; // logical reading exists
+        if (cluster !== null && !ambiguous) {
+          acc += cluster + ch;
+          prev = cluster[cluster.length - 1] as string;
+          i += 1 + cluster.length;
+          continue;
+        }
       }
+      acc += ch;
+      prev = ch;
+      i += 1;
     }
-    out += ch;
-    prev = ch;
-    i += 1;
+    out = acc;
+  }
+
+  if (needsReph) out = fixDevReph(out);
+  return out;
+}
+
+/** Post-syllable signs a visual reph may trail behind. */
+const DEV_POST_MARK = new Set([
+  "\u093E", "\u093F", "\u0940", "\u0941", "\u0942", "\u0943", "\u0944",
+  "\u0945", "\u0946", "\u0947", "\u0948", "\u0949", "\u094A", "\u094B",
+  "\u094C", "\u0901", "\u0902", "\u0903", "\u093C", "\u0962", "\u0963",
+]);
+const DEV_RA = "\u0930";
+
+/**
+ * Move a provably-visual reph back in front of its cluster. Shaping
+ * puts the syllable-final र ् AFTER the base consonant and its matras
+ * ("रिपोटर्" for रिपोर्ट) — a dead consonant that dangles before a
+ * non-consonant (end, space, punctuation, Latin, digits, signs) can
+ * never be logical, so those cases are provably visual. A र ् directly
+ * followed by a consonant is the valid logical ligature form and is
+ * never touched, so OCR-style logical text is never damaged.
+ */
+function fixDevReph(text: string): string {
+  let out = text;
+  for (let i = 0; i + 1 < out.length; i += 1) {
+    if (out[i] !== DEV_RA || out[i + 1] !== DEV_VIRAMA) continue;
+    const after = i + 2 < out.length ? (out[i + 2] as string) : undefined;
+    if (after !== undefined && (isDevConsonant(after) || after === DEV_VIRAMA)) {
+      continue;
+    }
+    // Provably visual: walk back over post-syllable signs, expect one
+    // base consonant, and splice the reph in front of it.
+    let j = i - 1;
+    while (j >= 0 && DEV_POST_MARK.has(out[j] as string)) j -= 1;
+    if (j < 0 || !isDevConsonant(out[j])) continue; // nothing to attach to
+    out =
+      out.slice(0, j) +
+      DEV_RA +
+      DEV_VIRAMA +
+      out.slice(j, i) +
+      out.slice(i + 2);
+    i = j + 1; // the moved pair now precedes a consonant — never re-fires
   }
   return out;
 }
@@ -721,29 +774,43 @@ function containerXml(): string {
   );
 }
 
-/** One run → escaped text, wrapped in a T1/T2/T3 span when styled. */
+/**
+ * One run → escaped text, wrapped in a T1/T2/T3 span when styled.
+ * Boundary whitespace never enters a span: ODF collapses spaces at
+ * span edges, so the spaces stay in the unstyled flow around it
+ * ("<span>bold words,</span> " keeps the trailing space outside).
+ */
 function runXml(run: OdtRun): string {
-  const text = xmlEscape(run.text);
-  if (run.bold && run.italic) {
-    return `<text:span text:style-name="T3">${text}</text:span>`;
+  const leading = run.text.match(/^[ \t]*/)?.[0] ?? "";
+  const trailing = run.text.match(/[ \t]*$/)?.[0] ?? "";
+  const core = run.text.slice(
+    leading.length,
+    run.text.length - trailing.length
+  );
+  const style =
+    run.bold && run.italic ? "T3" : run.bold ? "T1" : run.italic ? "T2" : "";
+  if (style === "" || core === "") {
+    return xmlEscape(run.text);
   }
-  if (run.bold) {
-    return `<text:span text:style-name="T1">${text}</text:span>`;
-  }
-  if (run.italic) {
-    return `<text:span text:style-name="T2">${text}</text:span>`;
-  }
-  return text;
+  return (
+    xmlEscape(leading) +
+    `<text:span text:style-name="${style}">${xmlEscape(core)}</text:span>` +
+    xmlEscape(trailing)
+  );
 }
 
 function blockXml(block: OdtBlock): string {
-  const inner = block.runs.map(runXml).join("");
   if (block.headingLevel !== undefined) {
+    // Headings carry their weight through the Heading_20_N style in
+    // styles.xml — runs inside are emitted PLAIN (a T1 span inside a
+    // heading is redundant markup that renders double-bold).
+    const plain = xmlEscape(block.runs.map((r) => r.text).join(""));
     return (
       `<text:h text:style-name="Heading_20_${block.headingLevel}" ` +
-      `text:outline-level="${block.headingLevel}">${inner}</text:h>`
+      `text:outline-level="${block.headingLevel}">${plain}</text:h>`
     );
   }
+  const inner = block.runs.map(runXml).join("");
   return `<text:p text:style-name="Text_20_Body">${inner}</text:p>`;
 }
 

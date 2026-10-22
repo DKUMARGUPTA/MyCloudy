@@ -530,6 +530,8 @@ function linesToBlocks(
         prevY - line.baseline <= prevSize * PARAGRAPH_GAP &&
         Math.abs(line.size - prevSize) / Math.max(prevSize, 1) <= SIZE_CHANGE
       ) {
+        const last = lastBlock.runs[lastBlock.runs.length - 1];
+        if (last && !last.text.endsWith(" ")) last.text += " ";
         lastBlock.runs.push(...line.runs.map((run) => ({ ...run })));
       } else {
         flush();
@@ -617,7 +619,7 @@ export function extractDocument(
     });
     for (const line of lines) {
       for (const run of line.runs) {
-        const key = Math.round(run.size * 2) / 2;
+        const key = Math.round(run.sizePt * 2) / 2;
         sizeWeight.set(key, (sizeWeight.get(key) ?? 0) + run.text.length);
       }
     }
@@ -746,8 +748,27 @@ const LAYOUT_CSS = `.pages{display:flex;flex-direction:column;align-items:center
 
 /** Runs → inline HTML (strong/em nesting; headings drop redundant bold). */
 function runsHtml(runs: readonly HtmlRun[], skipBold: boolean): string {
+  // Boundary whitespace never enters tags: a styled run's trailing
+  // spaces shift right into the next run's text ("</strong><em> and",
+  // "</em> for"), plain runs keep their own spacing — so tags hug their
+  // words exactly ("<strong>very important</strong>").
+  const shifted: HtmlRun[] = runs.map((run) => ({ ...run }));
+  for (let i = 0; i < shifted.length; i += 1) {
+    const run = shifted[i] as HtmlRun;
+    const styled = run.italic || (run.bold && !skipBold);
+    if (!styled) continue;
+    const trailing = run.text.match(/[ \t]*$/)?.[0] ?? "";
+    if (trailing === "") continue;
+    run.text = run.text.slice(0, run.text.length - trailing.length);
+    const next = shifted[i + 1];
+    if (next !== undefined && !/^[ \t]/.test(next.text)) {
+      (next as HtmlRun).text = trailing + next.text;
+    }
+    // otherwise the space is a doubled boundary or the paragraph's
+    // last — dropping it keeps tag/word spacing exact.
+  }
   let out = "";
-  for (const run of runs) {
+  for (const run of shifted) {
     const text = escapeHtml(run.text);
     if (run.bold && run.italic) {
       out += `<strong><em>${text}</em></strong>`;
@@ -781,12 +802,10 @@ function flowBlocksHtml(blocks: readonly HtmlBlock[]): string {
     }
     // List block — group consecutive items of the same list kind.
     const items: string[] = [];
-    while (
-      i < blocks.length &&
-      blocks[i].kind === "list" &&
-      blocks[i].list === block.list
-    ) {
-      items.push(`<li>${runsHtml(blocks[i].runs, false)}</li>`);
+    for (;;) {
+      const cur = i < blocks.length ? blocks[i] : undefined;
+      if (!cur || cur.kind !== "list" || cur.list !== block.list) break;
+      items.push(`<li>${runsHtml(cur.runs, false)}</li>`);
       i += 1;
     }
     out += `<${block.list}>${items.join("")}</${block.list}>`;
@@ -890,8 +909,8 @@ export function buildHtml(
     `<body class="${opts.mode}">\n` +
     body +
     "\n</body>\n" +
-    "</html>\n" +
-    "<!-- Converted from PDF by MyCloudy — 100% on-device -->\n"
+    "<!-- Converted from PDF by MyCloudy — 100% on-device -->\n" +
+    "</html>\n"
   );
 }
 

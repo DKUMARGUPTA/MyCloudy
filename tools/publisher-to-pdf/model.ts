@@ -327,7 +327,9 @@ function concatSectors(
   let filled = 0;
   for (const s of sectors) {
     if (filled >= out.length) break;
-    const off = HEADER_LEN + s * sectorSize;
+    // MS-CFB: sector N is at (N + 1) × sectorSize — for v3 this equals
+    // 512 + N×512, but v4 (4096) files keep 3584 bytes of header padding.
+    const off = (s + 1) * sectorSize;
     const avail = Math.max(0, Math.min(sectorSize, bytes.length - off));
     if (avail <= 0) break;
     const take = Math.min(avail, out.length - filled);
@@ -425,7 +427,7 @@ export function parseCfb(bytes: Uint8Array): CfbFile {
     ) {
       throw new PubError("errCorrupt", "DIFAT chain broken");
     }
-    const off = HEADER_LEN + nextDifat * sectorSize;
+    const off = (nextDifat + 1) * sectorSize;
     if (off + sectorSize > bytes.length) {
       throw new PubError("errCorrupt", "truncated DIFAT sector");
     }
@@ -447,7 +449,7 @@ export function parseCfb(bytes: Uint8Array): CfbFile {
     if (fs < 0 || fs >= totalSectors) {
       throw new PubError("errCorrupt", "FAT sector out of range");
     }
-    const off = HEADER_LEN + fs * sectorSize;
+    const off = (fs + 1) * sectorSize;
     const avail = Math.max(0, Math.min(sectorSize, bytes.length - off));
     const entries = Math.floor(avail / 4);
     for (let i = 0; i < entries; i += 1) {
@@ -527,7 +529,7 @@ export function parseCfb(bytes: Uint8Array): CfbFile {
   if (firstMiniFat !== ENDOFCHAIN && firstMiniFat !== FREESECT) {
     const walk = chainSectors(fat, firstMiniFat, totalSectors, totalSectors + 2);
     for (const s of walk.sectors) {
-      const off = HEADER_LEN + s * sectorSize;
+      const off = (s + 1) * sectorSize;
       const avail = Math.max(0, Math.min(sectorSize, bytes.length - off));
       const entries = Math.floor(avail / 4);
       for (let i = 0; i < entries; i += 1) {
@@ -536,7 +538,7 @@ export function parseCfb(bytes: Uint8Array): CfbFile {
     }
   }
   const rootSize = Math.min(root.size, bytes.length);
-  let miniStream = new Uint8Array(0);
+  let miniStream: Uint8Array = new Uint8Array(0);
   if (rootSize > 0) {
     const walk = chainSectors(fat, root.start, totalSectors, totalSectors + 2);
     miniStream = concatSectors(bytes, walk.sectors, sectorSize, rootSize);
@@ -665,7 +667,7 @@ export function extractStories(cfb: CfbFile): PubStories {
   const streams: PubStoryStream[] = [];
   for (const s of cfb.streams) {
     const t = extractStreamText(s.data);
-    if (t.paragraphs.length === 0) continue;
+    if (t.paragraphs.length === 0 || t.encoding === "none") continue;
     streams.push({
       id: s.id,
       name: s.name,
@@ -858,13 +860,15 @@ export function estimatePages(doc: ParsedPub, opts: PubEstimateOpts): number {
 /* Output file name (house convention + localized fallback)             */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Controls, DEL and the path-unsafe set (separators + Windows reserved
+ * `*?"<>|`) all map to "_" — the safeStampBaseName rule, so a download
+ * name can never smuggle a path segment. Unicode letters/digits survive.
+ */
+const UNSAFE_NAME_RE = /[\\/:*?"<>|\u0000-\u001f\u007f]/g;
+
 function cleanName(s: string): string {
-  let out = "";
-  for (const ch of s) {
-    const c = ch.codePointAt(0) ?? 32;
-    out += c >= 0x20 && c !== 0x7f ? ch : "_";
-  }
-  return out;
+  return s.replace(UNSAFE_NAME_RE, "_");
 }
 
 /**

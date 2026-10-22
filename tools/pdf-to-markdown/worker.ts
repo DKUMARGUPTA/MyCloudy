@@ -184,12 +184,17 @@ function baseFontName(doc: PDFDocument, value: unknown): string {
 
 /**
  * Maps pdf.js internal font ids → {bold, italic} for the whole document,
- * by correlating each page's distinct ids (item order) with that page's
- * distinct Tf-used resource keys (content-stream order). Exported for
- * the smoke, which drives the same enrichment on real fixtures.
+ * by correlating each selected page's distinct ids (item order) with that
+ * page's distinct Tf-used resource keys (content-stream order).
+ * `pageIndexes` holds each entry's ORIGINAL 0-based pdf.js page index —
+ * page ranges keep the correlation true (a subset's pages[] entry is NOT
+ * pdf page entry; the smoke proves this with a two-font mini fixture).
+ * Exported for the smoke, which drives the same enrichment on real
+ * fixtures.
  */
 export async function buildFontStyleMap(
   bytes: Uint8Array,
+  pageIndexes: readonly number[],
   pages: readonly PdfTextItemInput[][]
 ): Promise<Map<string, MdFontStyle>> {
   const result = new Map<string, MdFontStyle>();
@@ -205,23 +210,49 @@ export async function buildFontStyleMap(
   }
   try {
     const pageCount = Math.min(pages.length, pdf.getPageCount());
-    for (let index = 0; index < pageCount; index += 1) {
+    for (let entry = 0; entry < pageCount; entry += 1) {
+      const pageIndex = pageIndexes[entry] ?? entry;
+      if (pageIndex < 0 || pageIndex >= pdf.getPageCount()) continue;
+
       // Distinct pdf.js font ids on this page, in first-appearance order.
       const ids: string[] = [];
-      for (const item of pages[index]) {
+      for (const item of pages[entry]) {
         const fn = typeof item?.fontName === "string" ? item.fontName : "";
         if (fn.length > 0 && !ids.includes(fn)) ids.push(fn);
       }
       if (ids.length === 0) continue;
 
-      const node = pdf.getPage(index).node;
+      const node = pdf.getPage(pageIndex).node;
       const keys = tfOrderForPage(pdf, node);
       const fonts = fontResourcesFor(pdf, node);
-      if (!fonts || keys.length !== ids.length) {
+      if (!fonts) continue;
+      // pdf.js assigns one id per distinct FONT OBJECT, while pdf-lib
+      // writes a fresh resource key per drawText call — dedupe the keys
+      // by the object they resolve to (first key per object wins) so
+      // both sides count the same things before correlating.
+      const seenRefs = new Set<string>();
+      const seenDicts = new WeakSet<PDFDict>();
+      const distinctKeys: string[] = [];
+      for (const key of keys) {
+        const value = fonts.get(PDFName.of(key));
+        if (value === undefined) continue; // dangling key
+        if (value instanceof PDFRef) {
+          const objectId = value.toString();
+          if (seenRefs.has(objectId)) continue;
+          seenRefs.add(objectId);
+        } else if (value instanceof PDFDict) {
+          if (seenDicts.has(value)) continue;
+          seenDicts.add(value);
+        } else {
+          continue; // not a font dict/ref — skip, honest
+        }
+        distinctKeys.push(key);
+      }
+      if (distinctKeys.length !== ids.length) {
         continue; // mismatch (forms / weird streams) → skip, stay honest
       }
       for (let i = 0; i < ids.length; i += 1) {
-        const value = fonts.get(PDFName.of(keys[i] as string));
+        const value = fonts.get(PDFName.of(distinctKeys[i] as string));
         const name = value === undefined ? "" : baseFontName(pdf, value);
         result.set(ids[i] as string, {
           bold: BOLD_BASEFONT_RE.test(name),
@@ -239,7 +270,10 @@ export async function buildFontStyleMap(
 /* Link annotations (pdf.js display intent)                              */
 /* ------------------------------------------------------------------ */
 
-interface RawAnnotation {
+/** Link-annotation data shape pdf.js getAnnotations reports (loose on
+ * purpose — unknown fields ignored). Exported with linkRectsFor so the
+ * smoke drives the REAL coercion on real fixtures. */
+export interface RawAnnotation {
   subtype?: unknown;
   url?: unknown;
   unsafeUrl?: unknown;
@@ -249,8 +283,10 @@ interface RawAnnotation {
 /** The URL schemes we are honest about (javascript: never passes). */
 const URL_RE = /^(https?|mailto|ftp):/i;
 
-/** Link rects with a usable URL for one page (empty on any damage). */
-function linkRectsFor(annots: readonly RawAnnotation[]): MdLinkRect[] {
+/** Link rects with a usable URL for one page (empty on any damage).
+ * Exported for the smoke, which drives the same coercion on real
+ * fixtures. */
+export function linkRectsFor(annots: readonly RawAnnotation[]): MdLinkRect[] {
   const out: MdLinkRect[] = [];
   for (const annotation of annots) {
     if (annotation?.subtype !== "Link") continue;
@@ -356,7 +392,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
     post({ type: "progress", runId, pct: 75, stage: "processing" });
 
-    const styleMap = await buildFontStyleMap(bytes, pages);
+    const styleMap = await buildFontStyleMap(bytes, pageNumbers, pages);
     const model = extractMarkdownModel(pages, { styleMap, links });
     const stats = markdownStats(model);
     const base = outputBaseName(file.name, opts.locale);

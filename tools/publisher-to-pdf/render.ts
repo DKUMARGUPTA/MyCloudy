@@ -152,19 +152,30 @@ function splitWords(text: string): string[] {
   return out;
 }
 
-/** Greedy wrap; overlong single words hard-split cluster-safely. */
-function wrapText(p: Painter, text: string, width: number, size: number): string[] {
+/**
+ * Greedy wrap; overlong single words hard-split cluster-safely. All
+ * width probes use the DRAWING face (`bold`) — a bold heading measured
+ * with the regular face wraps late and overflows the content width
+ * (HelveticaBold runs ~5-8% wider per glyph).
+ */
+function wrapText(
+  p: Painter,
+  text: string,
+  width: number,
+  size: number,
+  bold: boolean
+): string[] {
   const lines: string[] = [];
-  const spaceW = p.width(" ", size, false);
+  const spaceW = p.width(" ", size, bold);
   let cur = "";
   let curW = 0;
   for (const word of splitWords(text)) {
     let piece = word;
-    while (p.width(piece, size, false) > width && piece.length > 1) {
+    while (p.width(piece, size, bold) > width && piece.length > 1) {
       let cut = piece.length;
       while (
         cut > 1 &&
-        p.width(piece.slice(0, cut - 1), size, false) > width
+        p.width(piece.slice(0, cut - 1), size, bold) > width
       ) {
         cut -= 1;
       }
@@ -178,7 +189,7 @@ function wrapText(p: Painter, text: string, width: number, size: number): string
       lines.push(piece.slice(0, cut));
       piece = piece.slice(cut);
     }
-    const w = p.width(piece, size, false);
+    const w = p.width(piece, size, bold);
     const add = cur.length > 0 ? spaceW + w : w;
     if (cur.length > 0 && curW + add > width) {
       lines.push(cur);
@@ -210,7 +221,7 @@ function drawPara(p: Painter, para: PubPara, baseSize: number): void {
   }
 
   const width = Math.max(MIN_LINE, p.contentW);
-  const lines = wrapText(p, para.text, width, size);
+  const lines = wrapText(p, para.text, width, size, bold);
   for (const ln of lines) {
     p.ensure(lh);
     p.text(ln, p.margin, p.y, size, bold, size);

@@ -1,0 +1,1123 @@
+     1→import type { RunDetail } from "@/lib/workers/protocol";
+     2→
+     3→/**
+     4→ * PDF → Markdown model (RB4-c) — 100% pure TypeScript: no DOM, no pdf.js,
+     5→ * no pdf-lib. The extraction takes PLAIN text-item arrays (the shape pdf.js
+     6→ * getTextContent emits) plus optional link-annotation rects, so the smoke
+     7→ * can drive it headless, and the emitter produces clean Markdown that the
+     8→ * house's own markdown-to-pdf parser understands (the mirror rule: write
+     9→ * what it reads — headings #..######, **bold**, *italic*, - bullets,
+    10→ * 1. ordered items, > quotes, [text](url) links, --- thematic breaks).
+    11→ *
+    12→ * Pipeline (adapted from pdf-to-word, the extraction layer of record):
+    13→ *  1. collectPieces — coerce + position-tag the raw pdf.js items; bold /
+    14→ *     italic resolved from the item, the worker's font-table enrichment
+    15→ *     (pdf.js 4.x reports internal ids like "g_d0_f3") or the font name;
+    16→ *     pieces covered by a link-annotation rect carry that URL.
+    17→ *  2. buildLines — group by y-proximity (half a font height), order by x,
+    18→ *     insert spaces at horizontal gaps (pdf.js emits one item per Tj
+    19→ *     operator without carrying spaces — the pinned pdf-to-word lesson:
+    20→ *     a whitespace-only item is EXACTLY ONE space, never two glued).
+    21→ *  3. Lines → blocks — a line starting with a bullet glyph (•, -, …) or
+    22→ *     a "1." / "2)" number becomes a LIST ITEM (never merged with the
+    23→ *     previous block); tight non-marker lines continue an item or soft-
+    24→ *     wrap-join a paragraph (a baseline gap noticeably larger than one
+    25→ *     line height, or a font-size change, starts a new block; hyphenated
+    26→ *     line endings merge back before a lowercase letter).
+    27→ *  4. Headings — font-size clusters: the document's body size is the
+    28→ *     char-weighted mode; sizes clearly above it form tiers, largest
+    29→ *     first; tier i becomes heading level i+1, capped at ######. Heading
+    30→ *     text is emitted PLAIN (no bold or italic markers inside —
+    31→ *     anchor-friendly).
+    32→ *  5. Block quotes — only when visually distinct: the block starts
+    33→ *     ≥ QUOTE_INDENT_PT right of the document's modal left edge AND is
+    34→ *     italic-dominant. Honest: no indent/italics → plain paragraph.
+    35→ *  6. Emission — blocks joined with \n\n; consecutive same-kind list
+    36→ *     items share a single \n; optional "---" between PDF pages; optional
+    37→ *     "<!-- converted by MyCloudy -->" comment; optional YAML front
+    38→ *     matter. Literal line-start markdown (* # _ [ + > - and ordered
+    39→ *     markers) is backslash-escaped; HTML entities are NEVER used (raw
+    40→ *     UTF-8 — Hindi passes through, with the visual→logical Devanagari
+    41→ *     matra repair from pdf-to-powerpoint).
+    42→ *
+    43→ * HONEST limits (mirrored in the FAQ copy): text + structure only.
+    44→ * Tables are NOT converted (point at pdf-to-excel), images are skipped,
+    45→ * two-column pages come out as a line-by-line text flow (rows of both
+    46→ * columns may join), scanned pages need the OCR tool first (the worker
+    47→ * fails with tool.errorNoText).
+    48→ */
+    49→
+    50→/* ------------------------------------------------------------------ */
+    51→/* Types                                                               */
+    52→/* ------------------------------------------------------------------ */
+    53→
+    54→/**
+    55→ * One raw pdf.js text item — deliberately loose (unknown fields) so the
+    56→ * same coercion runs at the worker boundary and in headless tests.
+    57→ */
+    58→export interface PdfTextItemInput {
+    59→  str?: unknown;
+    60→  transform?: unknown;
+    61→  width?: unknown;
+    62→  fontName?: unknown;
+    63→  /** Worker enrichment: bold flag resolved from the PDF's font table. */
+    64→  bold?: unknown;
+    65→  /** Worker enrichment: italic flag resolved from the PDF's font table. */
+    66→  italic?: unknown;
+    67→}
+    68→
+    69→/** A link annotation rect on one page (PDF user space, y bottom-up). */
+    70→export interface MdLinkRect {
+    71→  x1: number;
+    72→  y1: number;
+    73→  x2: number;
+    74→  y2: number;
+    75→  url: string;
+    76→}
+    77→
+    78→/** The style enrichment the worker resolves per pdf.js internal font id. */
+    79→export interface MdFontStyle {
+    80→  bold: boolean;
+    81→  italic: boolean;
+    82→}
+    83→
+    84→/** One styled run inside a paragraph/list item. */
+    85→export interface MdRun {
+    86→  text: string;
+    87→  bold: boolean;
+    88→  italic: boolean;
+    89→  /** Set when a link-annotation rect covers this run's text. */
+    90→  link?: string;
+    91→}
+    92→
+    93→/** One output block. */
+    94→export type MdBlock =
+    95→  | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; text: string }
+    96→  | { kind: "para"; runs: MdRun[] }
+    97→  | { kind: "quote"; runs: MdRun[] }
+    98→  | { kind: "bullet"; runs: MdRun[] }
+    99→  | { kind: "ordered"; number: number; runs: MdRun[] };
+   100→
+   101→/** The document model the Markdown builder consumes. */
+   102→export interface MdDocModel {
+   103→  blocks: MdBlock[];
+   104→  /** Block index each PDF page starts at (length == page count; an
+   105→   * empty page repeats the next page's mark). */
+   106→  pageMarks: number[];
+   107→}
+   108→
+   109→/** Run summary the surface shows (reuses the shared protocol detail). */
+   110→export interface PdfToMarkdownDetail extends RunDetail {
+   111→  paragraphs?: number;
+   112→  headings?: number;
+   113→}
+   114→
+   115→/** Extraction options (worker boundary + headless tests). */
+   116→export interface ExtractOptions {
+   117→  styleMap?: ReadonlyMap<string, MdFontStyle>;
+   118→  /** Link rects per page, aligned with the pages array. */
+   119→  links?: readonly MdLinkRect[][];
+   120→  /** Heading detection (switch off = everything stays a paragraph). */
+   121→  headings?: boolean;
+   122→}
+   123→
+   124→/** Clamps — docstring promises, enforced in code. */
+   125→export const MAX_BLOCKS = 3000;
+   126→export const MAX_RUN_CHARS = 500;
+   127→/** Heading tiers need at least this many chars to count as a real tier. */
+   128→const TIER_MIN_CHARS = 6;
+   129→/** A size must exceed the body size by this ratio AND this many points. */
+   130→const HEADING_RATIO = 1.18;
+   131→const HEADING_ABS_PT = 1.5;
+   132→/** Line-grouping + paragraph-gap tolerances (fractions of font size). */
+   133→const LINE_Y_TOL = 0.5;
+   134→const SPACE_GAP = 0.25;
+   135→const PARAGRAPH_GAP = 1.7;
+   136→/** Relative size change that always starts a new block. */
+   137→const SIZE_CHANGE = 0.15;
+   138→/** A quote must start this far right of the body's left edge. */
+   139→const QUOTE_INDENT_PT = 18;
+   140→/** Share of italic chars for a block to read as a quote (with the indent). */
+   141→const QUOTE_ITALIC_SHARE = 0.6;
+   142→/** Link-rect hit slack (pt) around a piece's centre. */
+   143→const LINK_SLACK = 1.5;
+   144→
+   145→export const MD_MIME = "text/markdown";
+   146→/** The optional provenance comment (exact task copy). */
+   147→export const MD_META_COMMENT = "<!-- converted by MyCloudy -->";
+   148→
+   149→/** Letter class that keeps its script intact across a line break
+   150→ * (no regex property escapes — the house iOS-safe rule). */
+   151→const SCRIPT = "A-Za-z\\u0900-\\u097F\\u00C0-\\u024F";
+   152→const SCRIPT_END_RE = new RegExp(`[${SCRIPT}]-$`);
+   153→const LOWER_START_RE = new RegExp("^[a-z\\u0900-\\u097F\\u00DF-\\u00FF]");
+   154→
+   155→/** Font names that read as bold (real names only — "Helvetica-Bold"). */
+   156→const BOLD_NAME_RE = /(bold|black|heavy|demi|semib)/i;
+   157→/** Font names that read as italic ("Helvetica-Oblique", "Times-Italic"). */
+   158→const ITALIC_NAME_RE = /(italic|oblique|kursiv)/i;
+   159→
+   160→/** Bullet glyphs a PDF line may start with (marker + whitespace). */
+   161→const BULLET_FIRST_RE = /^[•▪◦●‣·○∙▸]\s+/;
+   162→/** ASCII hyphen / en dash as a bullet (em-dash excluded: dialogue). */
+   163→const BULLET_DASH_RE = /^[-–]\s+/;
+   164→/** "1." / "2)" ordered markers (1-9 digits — CommonMark's own limit). */
+   165→const ORDERED_RE = /^(\d{1,9})[.)]\s+/;
+   166→
+   167→/* ------------------------------------------------------------------ */
+   168→/* Text hygiene                                                        */
+   169→/* ------------------------------------------------------------------ */
+   170→
+   171→/**
+   172→ * Strips C0/C1 control characters (whitespace controls normalise to a
+   173→ * plain space) — every run text passes through here before the model.
+   174→ */
+   175→export function sanitizeRunText(text: string): string {
+   176→  let out = "";
+   177→  for (const ch of text) {
+   178→    const code = ch.codePointAt(0) ?? 0;
+   179→    if (code === 9 || code === 10 || code === 13 || (code >= 28 && code <= 32)) {
+   180→      out += " ";
+   181→    } else if (code < 32 || (code >= 127 && code <= 159)) {
+   182→      continue; // pure control noise — dropped
+   183→    } else {
+   184→      out += ch;
+   185→    }
+   186→  }
+   187→  return out.replace(/\s+/g, " ").trim();
+   188→}
+   189→
+   190→/* ------------------------------------------------------------------ */
+   191→/* Devanagari visual→logical repair (pdf-to-powerpoint copy)           */
+   192→/* ------------------------------------------------------------------ */
+   193→
+   194→/* pdf.js concatenates per-glyph ToUnicode in stream order, and shaping
+   195→ * puts the three PRE-base matras (ि े ै) BEFORE their base cluster —
+   196→ * so text drawn from shaped glyph streams (pdf-lib/Noto, many cheap
+   197→ * generators) extracts with "िप्रया" instead of "प्रिया". The inverse
+   198→ * move is only applied where it is PROVABLY visual: the matra starts
+   199→ * the run, or follows anything that can never end a logical syllable
+   200→ * (space, vowel, another sign, virama, Latin…). After a plain
+   201→ * CONSONANT the reading is ambiguous and is left untouched — OCR-style
+   202→ * logical text is never damaged. */
+   203→
+   204→const DEV_PRE_MATRA = new Set(["\u093F", "\u0947", "\u0948"]); // ि े ै
+   205→const DEV_VIRAMA = "\u094D";
+   206→const DEV_NUKTA = "\u093C";
+   207→
+   208→function isDevConsonant(ch: string | undefined): boolean {
+   209→  if (ch === undefined) return false;
+   210→  const c = ch.charCodeAt(0);
+   211→  return (
+   212→    (c >= 0x0915 && c <= 0x0939) || (c >= 0x0958 && c <= 0x095f) ||
+   213→    c === 0x0979 || c === 0x097a
+   214→  );
+   215→}
+   216→
+   217→/** Greedy match of a base/conjunct cluster: C (nukta?) (virama C (nukta?))*. */
+   218→function matchDevCluster(text: string, i: number): string | null {
+   219→  let j = i;
+   220→  if (!isDevConsonant(text[j])) return null;
+   221→  j += 1;
+   222→  if (text[j] === DEV_NUKTA) j += 1;
+   223→  for (;;) {
+   224→    if (text[j] !== DEV_VIRAMA || !isDevConsonant(text[j + 1])) break;
+   225→    j += 2;
+   226→    if (text[j] === DEV_NUKTA) j += 1;
+   227→  }
+   228→  return text.slice(i, j);
+   229→}
+   230→
+   231→/** Move provably-visual pre-base matras and dangling rephs to logical order. */
+   232→export function fixDevanagariVisual(text: string): string {
+   233→  let needsMatra = false;
+   234→  let needsReph = false;
+   235→  for (let i = 0; i < text.length; i += 1) {
+   236→    if (DEV_PRE_MATRA.has(text[i] as string)) needsMatra = true;
+   237→    if (text[i] === DEV_RA && text[i + 1] === DEV_VIRAMA) needsReph = true;
+   238→  }
+   239→  if (!needsMatra && !needsReph) return text;
+   240→
+   241→  let out = text;
+   242→
+   243→  if (needsMatra) {
+   244→    // Pre-base matras: shaping renders ि े ै BEFORE their cluster, so
+   245→    // they extract one position early. Only provably-visual cases move
+   246→    // (the matra starts the run or follows something that can never
+   247→    // end a logical syllable); after a plain consonant the reading is
+   248→    // ambiguous and is left untouched.
+   249→    let acc = "";
+   250→    let prev = "";
+   251→    let i = 0;
+   252→    while (i < out.length) {
+   253→      const ch = out[i] as string;
+   254→      if (DEV_PRE_MATRA.has(ch)) {
+   255→        const cluster = matchDevCluster(out, i + 1);
+   256→        const ambiguous =
+   257→          isDevConsonant(prev) || prev === DEV_NUKTA; // logical reading exists
+   258→        if (cluster !== null && !ambiguous) {
+   259→          acc += cluster + ch;
+   260→          prev = cluster[cluster.length - 1] as string;
+   261→          i += 1 + cluster.length;
+   262→          continue;
+   263→        }
+   264→      }
+   265→      acc += ch;
+   266→      prev = ch;
+   267→      i += 1;
+   268→    }
+   269→    out = acc;
+   270→  }
+   271→
+   272→  if (needsReph) out = fixDevReph(out);
+   273→  return out;
+   274→}
+   275→
+   276→/** Post-syllable signs a visual reph may trail behind. */
+   277→const DEV_POST_MARK = new Set([
+   278→  "\u093E", "\u093F", "\u0940", "\u0941", "\u0942", "\u0943", "\u0944",
+   279→  "\u0945", "\u0946", "\u0947", "\u0948", "\u0949", "\u094A", "\u094B",
+   280→  "\u094C", "\u0901", "\u0902", "\u0903", "\u093C", "\u0962", "\u0963",
+   281→]);
+   282→const DEV_RA = "\u0930";
+   283→
+   284→/**
+   285→ * Move a provably-visual reph back in front of its cluster. Shaping
+   286→ * puts the syllable-final र ् AFTER the base consonant and its matras
+   287→ * ("रिपोटर्" for रिपोर्ट) — a dead consonant that dangles before a
+   288→ * non-consonant (end, space, punctuation, Latin, digits, signs) can
+   289→ * never be logical, so those cases are provably visual. A र ् directly
+   290→ * followed by a consonant is the valid logical ligature form and is
+   291→ * never touched, so OCR-style logical text is never damaged.
+   292→ */
+   293→function fixDevReph(text: string): string {
+   294→  let out = text;
+   295→  for (let i = 0; i + 1 < out.length; i += 1) {
+   296→    if (out[i] !== DEV_RA || out[i + 1] !== DEV_VIRAMA) continue;
+   297→    const after = i + 2 < out.length ? (out[i + 2] as string) : undefined;
+   298→    if (after !== undefined && (isDevConsonant(after) || after === DEV_VIRAMA)) {
+   299→      continue;
+   300→    }
+   301→    // Provably visual: walk back over post-syllable signs, expect one
+   302→    // base consonant, and splice the reph in front of it.
+   303→    let j = i - 1;
+   304→    while (j >= 0 && DEV_POST_MARK.has(out[j] as string)) j -= 1;
+   305→    if (j < 0 || !isDevConsonant(out[j])) continue; // nothing to attach to
+   306→    out =
+   307→      out.slice(0, j) +
+   308→      DEV_RA +
+   309→      DEV_VIRAMA +
+   310→      out.slice(j, i) +
+   311→      out.slice(i + 2);
+   312→    i = j + 1; // the moved pair now precedes a consonant — never re-fires
+   313→  }
+   314→  return out;
+   315→}
+   316→
+   317→/* ------------------------------------------------------------------ */
+   318→/* 1-2. Pieces and lines                                               */
+   319→/* ------------------------------------------------------------------ */
+   320→
+   321→interface Piece {
+   322→  text: string;
+   323→  x: number;
+   324→  y: number;
+   325→  w: number;
+   326→  size: number;
+   327→  bold: boolean;
+   328→  italic: boolean;
+   329→  link?: string;
+   330→}
+   331→
+   332→interface LineRun {
+   333→  text: string;
+   334→  bold: boolean;
+   335→  italic: boolean;
+   336→  size: number;
+   337→  link?: string;
+   338→}
+   339→
+   340→interface LineMarker {
+   341→  kind: "bullet" | "ordered";
+   342→  number?: number;
+   343→}
+   344→
+   345→interface Line {
+   346→  runs: LineRun[];
+   347→  y: number;
+   348→  size: number;
+   349→  /** Left edge of the line's first piece (quote detection). */
+   350→  x0: number;
+   351→  /** Char share of italic runs (quote detection). */
+   352→  italicShare: number;
+   353→  marker: LineMarker | null;
+   354→}
+   355→
+   356→/** Rounded font size (0.5 pt buckets) for stable run comparisons. */
+   357→function roundSize(size: number): number {
+   358→  return Math.round(size * 2) / 2;
+   359→}
+   360→
+   361→/** The link whose rect covers a piece's centre (1.5 pt slack). */
+   362→function linkForPiece(
+   363→  x: number,
+   364→  y: number,
+   365→  w: number,
+   366→  size: number,
+   367→  links: readonly MdLinkRect[] | undefined
+   368→): string | undefined {
+   369→  if (links === undefined || links.length === 0) return undefined;
+   370→  const cx = x + w / 2;
+   371→  const cy = y + size * 0.45;
+   372→  for (const link of links) {
+   373→    if (
+   374→      cx >= link.x1 - LINK_SLACK &&
+   375→      cx <= link.x2 + LINK_SLACK &&
+   376→      cy >= link.y1 - LINK_SLACK &&
+   377→      cy <= link.y2 + LINK_SLACK
+   378→    ) {
+   379→      return link.url;
+   380→    }
+   381→  }
+   382→  return undefined;
+   383→}
+   384→
+   385→/** Coerces one page of raw pdf.js items into position-tagged pieces. */
+   386→function collectPieces(
+   387→  items: readonly PdfTextItemInput[],
+   388→  styleMap: ReadonlyMap<string, MdFontStyle> | undefined,
+   389→  links: readonly MdLinkRect[] | undefined
+   390→): Piece[] {
+   391→  const pieces: Piece[] = [];
+   392→  for (const item of items) {
+   393→    if (typeof item !== "object" || item === null) continue;
+   394→    const str = typeof item.str === "string" ? item.str : "";
+   395→    if (str.length === 0) continue;
+   396→    const transform = item.transform;
+   397→    if (!Array.isArray(transform) || transform.length < 6) continue;
+   398→    const x = Number(transform[4]);
+   399→    const y = Number(transform[5]);
+   400→    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+   401→    const size = Math.hypot(
+   402→      Number(transform[1]) || 0,
+   403→      Number(transform[3]) || 0
+   404→    );
+   405→    const w = Number(item.width) || 0;
+   406→    const fontName = typeof item.fontName === "string" ? item.fontName : "";
+   407→    const enriched = fontName.length > 0 ? styleMap?.get(fontName) : undefined;
+   408→    const bold =
+   409→      item.bold === true ||
+   410→      enriched?.bold === true ||
+   411→      (fontName.length > 0 && BOLD_NAME_RE.test(fontName));
+   412→    const italic =
+   413→      item.italic === true ||
+   414→      enriched?.italic === true ||
+   415→      (fontName.length > 0 && ITALIC_NAME_RE.test(fontName));
+   416→    // sanitizeRunText trims the ends — but pdf.js drops its own split
+   417→    // items exactly there (it also emits whitespace-ONLY items for the
+   418→    // visual spaces it splits away). The raw item's leading/trailing
+   419→    // whitespace is restored as a single space; a whitespace-only item
+   420→    // becomes exactly ONE space piece (the pinned pdf-to-word lesson:
+   421→    // " " + "" + " " would double every visual space).
+   422→    const text = sanitizeRunText(str);
+   423→    const glued =
+   424→      text.length > 0
+   425→        ? (/^\s/.test(str) ? " " : "") +
+   426→          text +
+   427→          (/\s$/.test(str) ? " " : "")
+   428→        : " ";
+   429→    if (glued.length === 0) continue;
+   430→    pieces.push({
+   431→      text: glued,
+   432→      x,
+   433→      y,
+   434→      w,
+   435→      size: size > 0 ? size : 10,
+   436→      bold,
+   437→      italic,
+   438→      link: linkForPiece(x, y, w, size > 0 ? size : 10, links),
+   439→    });
+   440→  }
+   441→  return pieces;
+   442→}
+   443→
+   444→/** Detects and strips a leading list marker from a line's runs. */
+   445→function stripListMarker(runs: LineRun[]): LineMarker | null {
+   446→  const joined = runs.map((run) => run.text).join("");
+   447→  let length = 0;
+   448→  let marker: LineMarker | null = null;
+   449→  const ordered = ORDERED_RE.exec(joined);
+   450→  if (ordered !== null) {
+   451→    marker = { kind: "ordered", number: Number.parseInt(ordered[1], 10) };
+   452→    length = ordered[0].length;
+   453→  } else {
+   454→    const bullet = BULLET_FIRST_RE.exec(joined) ?? BULLET_DASH_RE.exec(joined);
+   455→    if (bullet !== null) {
+   456→      marker = { kind: "bullet" };
+   457→      length = bullet[0].length;
+   458→    }
+   459→  }
+   460→  if (marker === null) return null;
+   461→  // Remove the marker's chars from the head of the runs.
+   462→  let remaining = length;
+   463→  for (const run of runs) {
+   464→    if (remaining <= 0) break;
+   465→    if (run.text.length <= remaining) {
+   466→      remaining -= run.text.length;
+   467→      run.text = "";
+   468→    } else {
+   469→      run.text = run.text.slice(remaining);
+   470→      remaining = 0;
+   471→    }
+   472→  }
+   473→  return marker;
+   474→}
+   475→
+   476→/** Groups pieces into visual lines with style- and link-aware runs. */
+   477→function buildLines(pieces: Piece[]): Line[] {
+   478→  if (pieces.length === 0) return [];
+   479→  const sorted = [...pieces].sort((a, b) => b.y - a.y || a.x - b.x);
+   480→
+   481→  const groups: Piece[][] = [];
+   482→  let current: Piece[] = [sorted[0] as Piece];
+   483→  let groupY = (sorted[0] as Piece).y;
+   484→  let groupTol = Math.max(1.5, (sorted[0] as Piece).size * LINE_Y_TOL);
+   485→
+   486→  for (let i = 1; i < sorted.length; i += 1) {
+   487→    const piece = sorted[i] as Piece;
+   488→    if (Math.abs(piece.y - groupY) <= groupTol) {
+   489→      current.push(piece);
+   490→    } else {
+   491→      groups.push(current);
+   492→      current = [piece];
+   493→      groupY = piece.y;
+   494→      groupTol = Math.max(1.5, piece.size * LINE_Y_TOL);
+   495→    }
+   496→  }
+   497→  groups.push(current);
+   498→
+   499→  return groups.map((group) => {
+   500→    const ordered = [...group].sort((a, b) => a.x - b.x);
+   501→    const size = group[0]?.size ?? 10;
+   502→    const runs: LineRun[] = [];
+   503→    let endX: number | null = null;
+   504→    for (const piece of ordered) {
+   505→      const last = runs[runs.length - 1];
+   506→      if (
+   507→        endX !== null &&
+   508→        piece.x - endX > size * SPACE_GAP &&
+   509→        !last?.text.endsWith(" ")
+   510→      ) {
+   511→        // pdf.js items carry no spaces — a real gap becomes one.
+   512→        if (last) last.text += " ";
+   513→        else {
+   514→          runs.push({
+   515→            text: " ",
+   516→            bold: piece.bold,
+   517→            italic: piece.italic,
+   518→            size: roundSize(piece.size),
+   519→            link: piece.link,
+   520→          });
+   521→        }
+   522→      }
+   523→      const sameStyle =
+   524→        last !== undefined &&
+   525→        last.bold === piece.bold &&
+   526→        last.italic === piece.italic &&
+   527→        last.size === roundSize(piece.size) &&
+   528→        last.link === piece.link;
+   529→      if (sameStyle) {
+   530→        last.text += piece.text;
+   531→      } else {
+   532→        runs.push({
+   533→          text: piece.text,
+   534→          bold: piece.bold,
+   535→          italic: piece.italic,
+   536→          size: roundSize(piece.size),
+   537→          link: piece.link,
+   538→        });
+   539→      }
+   540→      endX = Math.max(endX ?? 0, piece.x + piece.w);
+   541→    }
+   542→    // Merge identical-style neighbours created by the space glue above.
+   543→    const merged: LineRun[] = [];
+   544→    for (const run of runs) {
+   545→      const prev = merged[merged.length - 1];
+   546→      if (
+   547→        prev &&
+   548→        prev.bold === run.bold &&
+   549→        prev.italic === run.italic &&
+   550→        prev.size === run.size &&
+   551→        prev.link === run.link
+   552→      ) {
+   553→        prev.text += run.text;
+   554→      } else {
+   555→        merged.push({ ...run });
+   556→      }
+   557→    }
+   558→    const totalChars = merged.reduce(
+   559→      (sum, run) => sum + run.text.replace(/\s/g, "").length,
+   560→      0
+   561→    );
+   562→    const italicChars = merged.reduce(
+   563→      (sum, run) =>
+   564→        run.italic ? sum + run.text.replace(/\s/g, "").length : sum,
+   565→      0
+   566→    );
+   567→    const marker = stripListMarker(merged);
+   568→    return {
+   569→      runs: merged.filter((run) => run.text.length > 0),
+   570→      y: group[0]?.y ?? 0,
+   571→      size,
+   572→      x0: ordered[0]?.x ?? 0,
+   573→      italicShare: totalChars > 0 ? italicChars / totalChars : 0,
+   574→      marker,
+   575→    };
+   576→  });
+   577→}
+   578→
+   579→/* ------------------------------------------------------------------ */
+   580→/* 3. Lines → blocks                                                   */
+   581→/* ------------------------------------------------------------------ */
+   582→
+   583→/** Char-weighted dominant size of a run list (rounded to 0.5 pt). */
+   584→function dominantSize(runs: readonly LineRun[]): number {
+   585→  let weighted = 0;
+   586→  let total = 0;
+   587→  for (const run of runs) {
+   588→    weighted += run.size * run.text.length;
+   589→    total += run.text.length;
+   590→  }
+   591→  if (total === 0) return 10;
+   592→  return Math.round((weighted / total) * 2) / 2;
+   593→}
+   594→
+   595→/** Appends one line's runs to a growing block (dehyphenation aware). */
+   596→function appendLine(target: LineRun[], line: Line): void {
+   597→  if (target.length === 0) {
+   598→    target.push(...line.runs.map((run) => ({ ...run })));
+   599→    return;
+   600→  }
+   601→  if (
+   602→    SCRIPT_END_RE.test(target[target.length - 1]?.text ?? "") &&
+   603→    LOWER_START_RE.test(line.runs[0]?.text ?? "")
+   604→  ) {
+   605→    // Dehyphenate: "exam-" + "ple" → "example".
+   606→    const last = target[target.length - 1] as LineRun;
+   607→    const first = line.runs[0] as LineRun;
+   608→    last.text = last.text.slice(0, -1);
+   609→    if (
+   610→      first.bold === last.bold &&
+   611→      first.italic === last.italic &&
+   612→      first.size === last.size &&
+   613→      first.link === last.link
+   614→    ) {
+   615→      last.text += first.text;
+   616→      target.push(...line.runs.slice(1).map((run) => ({ ...run })));
+   617→    } else {
+   618→      target.push(...line.runs.map((run) => ({ ...run })));
+   619→    }
+   620→    return;
+   621→  }
+   622→  const last = target[target.length - 1];
+   623→  if (last && !last.text.endsWith(" ")) last.text += " ";
+   624→  target.push(...line.runs.map((run) => ({ ...run })));
+   625→}
+   626→
+   627→interface RawBlock {
+   628→  runs: LineRun[];
+   629→  x0: number;
+   630→  italicShare: number;
+   631→  marker: LineMarker | null;
+   632→}
+   633→
+   634→/** Merges one page's lines into blocks (paragraphs + list items). */
+   635→function linesToBlocks(lines: readonly Line[]): RawBlock[] {
+   636→  const blocks: RawBlock[] = [];
+   637→  let runs: LineRun[] = [];
+   638→  let x0 = 0;
+   639→  let italicChars = 0;
+   640→  let plainChars = 0;
+   641→  let marker: LineMarker | null = null;
+   642→  let prevY: number | null = null;
+   643→  let prevSize = 10;
+   644→
+   645→  const flush = (): void => {
+   646→    if (runs.length === 0) return;
+   647→    const totalChars = italicChars + plainChars;
+   648→    blocks.push({
+   649→      runs: runs
+   650→        .map((run) => ({ ...run, text: run.text.slice(0, MAX_RUN_CHARS) }))
+   651→        .filter((run) => run.text.trim().length > 0),
+   652→      x0,
+   653→      italicShare: totalChars > 0 ? italicChars / totalChars : 0,
+   654→      marker,
+   655→    });
+   656→    runs = [];
+   657→    italicChars = 0;
+   658→    plainChars = 0;
+   659→    marker = null;
+   660→  };
+   661→
+   662→  const start = (line: Line): void => {
+   663→    runs = line.runs.map((run) => ({ ...run }));
+   664→    x0 = line.x0;
+   665→    marker = line.marker;
+   666→    for (const run of runs) {
+   667→      const chars = run.text.replace(/\s/g, "").length;
+   668→      if (run.italic) italicChars += chars;
+   669→      else plainChars += chars;
+   670→    }
+   671→  };
+   672→
+   673→  for (const line of lines) {
+   674→    if (line.runs.length === 0) continue;
+   675→    if (line.marker !== null) {
+   676→      // A marked line ALWAYS starts its own item — never merges with
+   677→      // the previous paragraph or item.
+   678→      flush();
+   679→      start(line);
+   680→    } else if (runs.length === 0) {
+   681→      start(line);
+   682→    } else {
+   683→      const gap = prevY !== null ? prevY - line.y : 0;
+   684→      const tight =
+   685→        gap <= prevSize * PARAGRAPH_GAP &&
+   686→        Math.abs(line.size - prevSize) / Math.max(prevSize, 1) <= SIZE_CHANGE;
+   687→      if (tight) {
+   688→        // Soft-wrap continuation: joins the paragraph or list item.
+   689→        appendLine(runs, line);
+   690→        for (const run of line.runs) {
+   691→          const chars = run.text.replace(/\s/g, "").length;
+   692→          if (run.italic) italicChars += chars;
+   693→          else plainChars += chars;
+   694→        }
+   695→      } else {
+   696→        flush();
+   697→        start(line);
+   698→      }
+   699→    }
+   700→    prevY = line.y;
+   701→    prevSize = line.size;
+   702→  }
+   703→  flush();
+   704→  return blocks;
+   705→}
+   706→
+   707→/* ------------------------------------------------------------------ */
+   708→/* 4-5. extractMarkdownModel                                            */
+   709→/* ------------------------------------------------------------------ */
+   710→
+   711→export function extractMarkdownModel(
+   712→  pages: readonly PdfTextItemInput[][],
+   713→  opts: ExtractOptions = {}
+   714→): MdDocModel {
+   715→  const headingsOn = opts.headings !== false;
+   716→
+   717→  // Pass 1 — everything as lines, plus the char-weighted body size and
+   718→  // the document's modal left edge (quote detection).
+   719→  const pageLines: Line[][] = [];
+   720→  const sizeWeight = new Map<number, number>();
+   721→  const leftWeight = new Map<number, number>();
+   722→  for (let index = 0; index < pages.length; index += 1) {
+   723→    const links = opts.links?.[index];
+   724→    const lines = buildLines(
+   725→      collectPieces(pages[index], opts.styleMap, links)
+   726→    ).filter((line) => line.runs.length > 0);
+   727→    pageLines.push(lines);
+   728→    for (const line of lines) {
+   729→      for (const run of line.runs) {
+   730→        const sizeKey = Math.round(run.size * 2) / 2;
+   731→        sizeWeight.set(sizeKey, (sizeWeight.get(sizeKey) ?? 0) + run.text.length);
+   732→      }
+   733→      const leftKey = Math.round(line.x0 * 2) / 2;
+   734→      leftWeight.set(
+   735→        leftKey,
+   736→        (leftWeight.get(leftKey) ?? 0) +
+   737→          line.runs.reduce((sum, run) => sum + run.text.trim().length, 0)
+   738→      );
+   739→    }
+   740→  }
+   741→
+   742→  let bodySize = 11;
+   743→  let bestWeight = -1;
+   744→  for (const [size, weight] of sizeWeight) {
+   745→    if (weight > bestWeight) {
+   746→      bestWeight = weight;
+   747→      bodySize = size;
+   748→    }
+   749→  }
+   750→  let bodyLeft = Number.NaN;
+   751→  let bestLeftWeight = -1;
+   752→  for (const [left, weight] of leftWeight) {
+   753→    if (weight > bestLeftWeight) {
+   754→      bestLeftWeight = weight;
+   755→      bodyLeft = left;
+   756→    }
+   757→  }
+   758→
+   759→  // Heading tiers: distinct sizes clearly above the body size, largest
+   760→  // first. Tier i becomes level i+1, capped at 6 (######).
+   761→  const tierMin = Math.max(
+   762→    bodySize * HEADING_RATIO,
+   763→    bodySize + HEADING_ABS_PT
+   764→  );
+   765→  const tiers: number[] = [];
+   766→  for (const size of sizeWeight.keys()) {
+   767→    if (size >= tierMin && (sizeWeight.get(size) ?? 0) >= TIER_MIN_CHARS) {
+   768→      tiers.push(size);
+   769→    }
+   770→  }
+   771→  tiers.sort((a, b) => b - a);
+   772→  const headingSize =
+   773→    headingsOn && tiers.length > 0
+   774→      ? new Map<number, 1 | 2 | 3 | 4 | 5 | 6>()
+   775→      : null;
+   776→  if (headingSize) {
+   777→    tiers.forEach((size, index) => {
+   778→      const level = Math.min(index + 1, 6) as 1 | 2 | 3 | 4 | 5 | 6;
+   779→      headingSize.set(size, level);
+   780→    });
+   781→  }
+   782→
+   783→  // Pass 2 — blocks + page marks + classification. The mark is pushed
+   784→  // BEFORE the page's blocks, so every page (empty ones included) owns
+   785→  // the index its content starts at — pageSlice depends on that.
+   786→  const blocks: MdBlock[] = [];
+   787→  const pageMarks: number[] = [];
+   788→  for (const lines of pageLines) {
+   789→    pageMarks.push(blocks.length);
+   790→    const pageBlocks = linesToBlocks(lines);
+   791→    for (const raw of pageBlocks) {
+   792→      const level = headingSize?.get(dominantSize(raw.runs));
+   793→      if (level !== undefined) {
+   794→        // Heading: plain, anchor-friendly text (inline markers dropped).
+   795→        blocks.push({
+   796→          kind: "heading",
+   797→          level,
+   798→          text: fixDevanagariVisual(
+   799→            raw.runs.map((run) => run.text).join("").replace(/\s+/g, " ").trim()
+   800→          ),
+   801→        });
+   802→      } else if (
+   803→        raw.marker === null &&
+   804→        Number.isFinite(bodyLeft) &&
+   805→        raw.x0 >= bodyLeft + QUOTE_INDENT_PT &&
+   806→        raw.italicShare >= QUOTE_ITALIC_SHARE
+   807→      ) {
+   808→        blocks.push({ kind: "quote", runs: runsOut(raw.runs) });
+   809→      } else if (raw.marker?.kind === "bullet") {
+   810→        blocks.push({ kind: "bullet", runs: runsOut(raw.runs) });
+   811→      } else if (raw.marker?.kind === "ordered") {
+   812→        blocks.push({
+   813→          kind: "ordered",
+   814→          number: Math.max(1, Math.min(9999, raw.marker.number ?? 1)),
+   815→          runs: runsOut(raw.runs),
+   816→        });
+   817→      } else {
+   818→        blocks.push({ kind: "para", runs: runsOut(raw.runs) });
+   819→      }
+   820→    }
+   821→  }
+   822→
+   823→  return {
+   824→    blocks: blocks.slice(0, MAX_BLOCKS),
+   825→    pageMarks,
+   826→  };
+   827→}
+   828→
+   829→/** Internal LineRun list → the exported MdRun shape (Devanagari repaired). */
+   830→function runsOut(runs: readonly LineRun[]): MdRun[] {
+   831→  const out: MdRun[] = [];
+   832→  for (const run of runs) {
+   833→    const text = fixDevanagariVisual(run.text);
+   834→    if (text.trim().length === 0) continue;
+   835→    const last = out[out.length - 1];
+   836→    if (
+   837→      last &&
+   838→      last.bold === run.bold &&
+   839→      last.italic === run.italic &&
+   840→      last.link === run.link
+   841→    ) {
+   842→      last.text += text;
+   843→    } else {
+   844→      out.push({ text, bold: run.bold, italic: run.italic, link: run.link });
+   845→    }
+   846→  }
+   847→  return out;
+   848→}
+   849→
+   850→/* ------------------------------------------------------------------ */
+   851→/* Markdown emitter                                                    */
+   852→/* ------------------------------------------------------------------ */
+   853→
+   854→export interface BuildMarkdownOptions {
+   855→  /** "---" thematic breaks between PDF pages (single-output mode). */
+   856→  pageRules?: boolean;
+   857→  /** "<!-- converted by MyCloudy -->" at the very top. */
+   858→  metaComment?: boolean;
+   859→  /** YAML front matter block at the very top (before the comment). */
+   860→  frontMatter?: boolean;
+   861→  /** Front-matter title (plain, already extracted). */
+   862→  title?: string;
+   863→  /** Front-matter source file name. */
+   864→  sourceName?: string;
+   865→  /** Front-matter page count. */
+   866→  pages?: number;
+   867→}
+   868→
+   869→/**
+   870→ * Escapes a literal markdown-significant start: the task's * # _ [ set
+   871→ * plus + > - and ordered-list markers ("2023. Year" → "2023\. Year").
+   872→ * Mid-text characters are left alone — CommonMark needs marker chars to
+   873→ * be line-initial (and followed by space) to mean anything.
+   874→ */
+   875→function escapeLeading(text: string): string {
+   876→  if (text.length === 0) return text;
+   877→  const first = text[0] as string;
+   878→  if ("#*_+[>-".includes(first)) return `\\${text}`;
+   879→  const ordered = /^(\d{1,9})([.)])(\s|$)/.exec(text);
+   880→  if (ordered !== null) {
+   881→    const digits = ordered[1] as string;
+   882→    return `${digits}\\${text.slice(digits.length)}`;
+   883→  }
+   884→  return text;
+   885→}
+   886→
+   887→/** Makes a URL safe for the (...) part of [text](url). */
+   888→function safeUrl(url: string): string {
+   889→  return url
+   890→    .replace(/\\/g, "%5C")
+   891→    .replace(/\(/g, "%28")
+   892→    .replace(/\)/g, "%29")
+   893→    .replace(/\s/g, "%20");
+   894→}
+   895→
+   896→/** YAML double-quoted scalar. */
+   897→function yamlQuote(value: string): string {
+   898→  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').slice(0, 200)}"`;
+   899→}
+   900→
+   901→/** Renders a run list as one inline Markdown string. */
+   902→function inlineRuns(runs: readonly MdRun[]): string {
+   903→  let out = "";
+   904→  let pendingSpace = false;
+   905→  let emitted = false;
+   906→  let firstCore = true;
+   907→  for (const run of runs) {
+   908→    const core = run.text.replace(/\s+/g, " ").trim();
+   909→    if (core.length === 0) {
+   910→      if (emitted) pendingSpace = true;
+   911→      continue;
+   912→    }
+   913→    const leadSpace = /^\s/.test(run.text);
+   914→    const trailSpace = /\s$/.test(run.text);
+   915→    if (emitted && (pendingSpace || leadSpace)) out += " ";
+   916→    let body: string;
+   917→    if (run.link !== undefined) {
+   918→      // Our own [..](..) markup: escape the brackets inside the label.
+   919→      body = `[${core.replace(/([[\]])/g, "\\$1")}](${safeUrl(run.link)})`;
+   920→    } else {
+   921→      // Line-start escaping applies only to the first visible core —
+   922→      // our own emphasis/link markers wrap later ones anyway.
+   923→      body = firstCore ? escapeLeading(core) : core;
+   924→    }
+   925→    firstCore = false;
+   926→    const emphasis =
+   927→      run.bold && run.italic ? "***" : run.bold ? "**" : run.italic ? "*" : "";
+   928→    out += emphasis + body + emphasis;
+   929→    pendingSpace = trailSpace;
+   930→    emitted = true;
+   931→  }
+   932→  return out;
+   933→}
+   934→
+   935→/** One block → its Markdown line. */
+   936→function blockLine(block: MdBlock): string {
+   937→  switch (block.kind) {
+   938→    case "heading":
+   939→      return `${"#".repeat(block.level)} ${escapeLeading(block.text)}`;
+   940→    case "quote":
+   941→      return `> ${inlineRuns(block.runs)}`;
+   942→    case "bullet":
+   943→      return `- ${inlineRuns(block.runs)}`;
+   944→    case "ordered":
+   945→      return `${block.number}. ${inlineRuns(block.runs)}`;
+   946→    case "para":
+   947→      return inlineRuns(block.runs);
+   948→  }
+   949→}
+   950→
+   951→/** True when two consecutive blocks belong to ONE list (single \n join). */
+   952→function sameList(a: MdBlock, b: MdBlock): boolean {
+   953→  if (a.kind === "bullet" && b.kind === "bullet") return true;
+   954→  if (a.kind === "ordered" && b.kind === "ordered") return true;
+   955→  return false;
+   956→}
+   957→
+   958→/**
+   959→ * Builds the final Markdown document:
+   960→ *  - blocks joined with blank lines; consecutive same-kind list items
+   961→ *    share single newlines (a tight list);
+   962→ *  - optional "---" between PDF pages (single-output mode);
+   963→ *  - optional YAML front matter and provenance comment on top.
+   964→ */
+   965→export function buildMarkdown(
+   966→  doc: MdDocModel,
+   967→  opts: BuildMarkdownOptions = {}
+   968→): string {
+   969→  const groups: string[] = [];
+   970→  let current: string[] = [];
+   971→  let openBlock: MdBlock | null = null;
+   972→
+   973→  const flushGroup = (): void => {
+   974→    if (current.length > 0) groups.push(current.join("\n"));
+   975→    current = [];
+   976→    openBlock = null;
+   977→  };
+   978→
+   979→  const pageStarts = new Set(doc.pageMarks.slice(1));
+   980→  doc.blocks.forEach((block, index) => {
+   981→    if (opts.pageRules === true && pageStarts.has(index)) {
+   982→      flushGroup();
+   983→      groups.push("---");
+   984→    }
+   985→    if (openBlock !== null && sameList(openBlock, block)) {
+   986→      current.push(blockLine(block));
+   987→    } else {
+   988→      flushGroup();
+   989→      current.push(blockLine(block));
+   990→      openBlock = block;
+   991→    }
+   992→  });
+   993→  flushGroup();
+   994→
+   995→  const body = groups.join("\n\n");
+   996→
+   997→  let head = "";
+   998→  if (opts.frontMatter === true) {
+   999→    const title = (opts.title ?? "").replace(/\s+/g, " ").trim();
+  1000→    const source = (opts.sourceName ?? "").replace(/\s+/g, " ").trim();
+  1001→    head += "---\n";
+  1002→    if (title.length > 0) head += `title: ${yamlQuote(title)}\n`;
+  1003→    if (source.length > 0) head += `source: ${yamlQuote(source)}\n`;
+  1004→    head += `pages: ${Math.max(1, opts.pages ?? doc.pageMarks.length)}\n`;
+  1005→    head += "converted_by: MyCloudy\n---\n\n";
+  1006→  }
+  1007→  if (opts.metaComment === true) {
+  1008→    head += `${MD_META_COMMENT}\n\n`;
+  1009→  }
+  1010→
+  1011→  if (body.length === 0) {
+  1012→    return head.length > 0 ? `${head.trimEnd()}\n` : "";
+  1013→  }
+  1014→  return `${head}${body}\n`;
+  1015→}
+  1016→
+  1017→/**
+  1018→ * Slices the model to a single page's blocks (per-page output mode).
+  1019→ * Heading tiers stay document-wide — only the emitted blocks narrow.
+  1020→ */
+  1021→export function pageSlice(doc: MdDocModel, pageIndex: number): MdDocModel {
+  1022→  const start = doc.pageMarks[pageIndex] ?? doc.blocks.length;
+  1023→  const end =
+  1024→    pageIndex + 1 < doc.pageMarks.length
+  1025→      ? (doc.pageMarks[pageIndex + 1] as number)
+  1026→      : doc.blocks.length;
+  1027→  return {
+  1028→    blocks: doc.blocks.slice(start, Math.max(start, end)),
+  1029→    pageMarks: start < end ? [0] : [],
+  1030→  };
+  1031→}
+  1032→
+  1033→/* ------------------------------------------------------------------ */
+  1034→/* Worker-boundary coercion                                            */
+  1035→/* ------------------------------------------------------------------ */
+  1036→
+  1037→/** Options the surface sends (option panel values + locale extras). */
+  1038→export interface PdfToMarkdownRunOptions {
+  1039→  pages: string;
+  1040→  perPage: boolean;
+  1041→  pageRules: boolean;
+  1042→  metaComment: boolean;
+  1043→  frontMatter: boolean;
+  1044→  locale: "en" | "hi";
+  1045→  /** Localized fallback word for the output name. */
+  1046→  fileWord: string;
+  1047→}
+  1048→
+  1049→/**
+  1050→ * coerceRunOptions — the options payload the surface/shell sends.
+  1051→ * Garbage degrades to the defaults; only an explicit true enables a
+  1052→ * switch; the locale must be exactly "hi"; the page spec is sanitized
+  1053→ * and clamped; the file word is sanitized + clamped.
+  1054→ */
+  1055→export function coerceRunOptions(
+  1056→  raw: Record<string, unknown>
+  1057→): PdfToMarkdownRunOptions {
+  1058→  const str = (v: unknown, max: number): string =>
+  1059→    typeof v === "string"
+  1060→      ? v.replace(/[\u0000-\u001f]/g, "").trim().slice(0, max)
+  1061→      : "";
+  1062→  return {
+  1063→    pages: str(raw.pages, 200) || "all",
+  1064→    perPage: raw.perPage === true,
+  1065→    pageRules: raw.pageRules === true,
+  1066→    metaComment: raw.metaComment === true,
+  1067→    frontMatter: raw.frontMatter === true,
+  1068→    locale: raw.locale === "hi" ? "hi" : "en",
+  1069→    fileWord: str(raw.fileWord, 40),
+  1070→  };
+  1071→}
+  1072→
+  1073→/* ------------------------------------------------------------------ */
+  1074→/* Error mapping + output naming + stats                                */
+  1075→/* ------------------------------------------------------------------ */
+  1076→
+  1077→/**
+  1078→ * pdf.js failure message → honest i18n error code. Encrypted PDFs ask
+  1079→ * for a password (PasswordException); everything unreadable is corrupt.
+  1080→ */
+  1081→export function pdfErrorMessageToCode(message: string): string {
+  1082→  if (/password/i.test(message)) return "tool.errorEncrypted";
+  1083→  return "tool.errorCorrupt";
+  1084→}
+  1085→
+  1086→/**
+  1087→ * "My Notes.pdf" → "My-Notes" (spaces collapse to hyphens, path-unsafe
+  1088→ * chars stripped, Devanagari survives); a nameless file falls back to
+  1089→ * the localized word. The caller appends ".md".
+  1090→ */
+  1091→export function outputBaseName(fileName: string, lang: string): string {
+  1092→  const base = fileName
+  1093→    .replace(/\.pdf$/i, "")
+  1094→    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "")
+  1095→    .replace(/\s+/g, "-")
+  1096→    .replace(/-{2,}/g, "-")
+  1097→    .replace(/^[-.]+|[-.]+$/g, "")
+  1098→    .slice(0, 120);
+  1099→  return base || (lang === "hi" ? "दस्तावेज़" : "document");
+  1100→}
+  1101→
+  1102→/** Run summary for the surface result card (protocol-reusing). */
+  1103→export function markdownStats(doc: MdDocModel): PdfToMarkdownDetail {
+  1104→  let paragraphs = 0;
+  1105→  let headings = 0;
+  1106→  for (const block of doc.blocks) {
+  1107→    paragraphs += 1;
+  1108→    if (block.kind === "heading") headings += 1;
+  1109→  }
+  1110→  return { paragraphs, headings, pages: doc.pageMarks.length };
+  1111→}
+  1112→
+  1113→/** The best front-matter title: the first H1, else the first heading. */
+  1114→export function firstHeadingText(doc: MdDocModel): string {
+  1115→  let found: string = "";
+  1116→  for (const block of doc.blocks) {
+  1117→    if (block.kind !== "heading") continue;
+  1118→    if (found.length === 0) found = block.text;
+  1119→    if (block.level === 1) return block.text;
+  1120→  }
+  1121→  return found;
+  1122→}
+  1123→

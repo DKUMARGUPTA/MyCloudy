@@ -185,9 +185,15 @@ export function PublisherToPdfSurface({
   const parsedDoc =
     summary && summary.key === fileKey && file ? summary.doc : null;
   const docOk = parsedDoc !== null && parsedDoc.paras.length > 0;
+  // The honest verdict mirrors the WORKER exactly: a container that parsed
+  // but yielded no text says errNoText, unless its stream chains broke —
+  // then errStreamRead (the same streamsFailed>0 rule the worker posts).
   const errorCode =
     summary !== null && summary.key === fileKey && !docOk
-      ? (summary.errorCode ?? "errNoText")
+      ? (summary.errorCode ??
+        (parsedDoc !== null && parsedDoc.streamsFailed > 0
+          ? "errStreamRead"
+          : "errNoText"))
       : null;
 
   /* ---------- input pipeline (magic bytes + size limit) ---------- */

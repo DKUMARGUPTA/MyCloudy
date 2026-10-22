@@ -232,11 +232,34 @@ export async function buildFontStyleMap(
       const node = pdf.getPage(pageIndex).node;
       const keys = tfOrderForPage(pdf, node);
       const fonts = fontResourcesFor(pdf, node);
-      if (!fonts || keys.length !== ids.length) {
+      if (!fonts) continue;
+      // pdf.js assigns one id per distinct FONT OBJECT, while pdf-lib
+      // writes a fresh resource key per drawText call — dedupe the keys
+      // by the object they resolve to (first key per object wins) so
+      // both sides count the same things before correlating.
+      const seenRefs = new Set<string>();
+      const seenDicts = new WeakSet<PDFDict>();
+      const distinctKeys: string[] = [];
+      for (const key of keys) {
+        const value = fonts.get(PDFName.of(key));
+        if (value === undefined) continue; // dangling key
+        if (value instanceof PDFRef) {
+          const objectId = value.toString();
+          if (seenRefs.has(objectId)) continue;
+          seenRefs.add(objectId);
+        } else if (value instanceof PDFDict) {
+          if (seenDicts.has(value)) continue;
+          seenDicts.add(value);
+        } else {
+          continue; // not a font dict/ref — skip, honest
+        }
+        distinctKeys.push(key);
+      }
+      if (distinctKeys.length !== ids.length) {
         continue; // mismatch (forms / weird streams) → skip, stay honest
       }
       for (let i = 0; i < ids.length; i += 1) {
-        const value = fonts.get(PDFName.of(keys[i]));
+        const value = fonts.get(PDFName.of(distinctKeys[i]));
         result.set(
           ids[i],
           value === undefined ? { bold: false, italic: false } : fontDictStyle(pdf, value)

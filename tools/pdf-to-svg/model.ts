@@ -38,6 +38,11 @@ import { pngEncode } from "../imgconv/png-encode";
  * modes render filled, image masks are skipped, fonts are substituted by
  * family name — so text stays selectable but the page is not
  * pixel-identical to the PDF.
+ *
+ * Devanagari runs are repaired from visual to logical order (the
+ * fixDevanagariVisual copy from pdf-to-odt — shaped glyph streams from
+ * pdf-lib/Noto extract with pre-base matras before their cluster and a
+ * dangling reph after the syllable).
  */
 
 /* ------------------------------------------------------------------ */
@@ -380,6 +385,133 @@ export function toFontInfo(raw: unknown): SvgFontInfo | null {
 }
 
 /* ------------------------------------------------------------------ */
+/* Devanagari visual→logical repair (pdf-to-odt copy)                   */
+/* ------------------------------------------------------------------ */
+
+/* pdf.js concatenates per-glyph ToUnicode in stream order, and shaping
+ * puts the three PRE-base matras (ि े ै) BEFORE their base cluster —
+ * so text drawn from shaped glyph streams (pdf-lib/Noto, many cheap
+ * generators) extracts with "िप्रया" instead of "प्रिया". The inverse
+ * move is only applied where it is PROVABLY visual: the matra starts
+ * the run, or follows anything that can never end a logical syllable
+ * (space, vowel, another sign, virama, Latin…). After a plain
+ * CONSONANT the reading is ambiguous and is left untouched — OCR-style
+ * logical text is never damaged. */
+
+const DEV_PRE_MATRA = new Set(["\u093F", "\u0947", "\u0948"]); // ि े ै
+const DEV_VIRAMA = "\u094D";
+const DEV_NUKTA = "\u093C";
+
+function isDevConsonant(ch: string | undefined): boolean {
+  if (ch === undefined) return false;
+  const c = ch.charCodeAt(0);
+  return (
+    (c >= 0x0915 && c <= 0x0939) || (c >= 0x0958 && c <= 0x095f) ||
+    c === 0x0979 || c === 0x097a
+  );
+}
+
+/** Greedy match of a base/conjunct cluster: C (nukta?) (virama C (nukta?))*. */
+function matchDevCluster(text: string, i: number): string | null {
+  let j = i;
+  if (!isDevConsonant(text[j])) return null;
+  j += 1;
+  if (text[j] === DEV_NUKTA) j += 1;
+  for (;;) {
+    if (text[j] !== DEV_VIRAMA || !isDevConsonant(text[j + 1])) break;
+    j += 2;
+    if (text[j] === DEV_NUKTA) j += 1;
+  }
+  return text.slice(i, j);
+}
+
+/** Move provably-visual pre-base matras and dangling rephs to logical order. */
+export function fixDevanagariVisual(text: string): string {
+  let needsMatra = false;
+  let needsReph = false;
+  for (let i = 0; i < text.length; i += 1) {
+    if (DEV_PRE_MATRA.has(text[i] as string)) needsMatra = true;
+    if (text[i] === DEV_RA && text[i + 1] === DEV_VIRAMA) needsReph = true;
+  }
+  if (!needsMatra && !needsReph) return text;
+
+  let out = text;
+
+  if (needsMatra) {
+    // Pre-base matras: shaping renders ि े ै BEFORE their cluster, so
+    // they extract one position early. Only provably-visual cases move
+    // (the matra starts the run or follows something that can never
+    // end a logical syllable); after a plain consonant the reading is
+    // ambiguous and is left untouched.
+    let acc = "";
+    let prev = "";
+    let i = 0;
+    while (i < out.length) {
+      const ch = out[i] as string;
+      if (DEV_PRE_MATRA.has(ch)) {
+        const cluster = matchDevCluster(out, i + 1);
+        const ambiguous =
+          isDevConsonant(prev) || prev === DEV_NUKTA; // logical reading exists
+        if (cluster !== null && !ambiguous) {
+          acc += cluster + ch;
+          prev = cluster[cluster.length - 1] as string;
+          i += 1 + cluster.length;
+          continue;
+        }
+      }
+      acc += ch;
+      prev = ch;
+      i += 1;
+    }
+    out = acc;
+  }
+
+  if (needsReph) out = fixDevReph(out);
+  return out;
+}
+
+/** Post-syllable signs a visual reph may trail behind. */
+const DEV_POST_MARK = new Set([
+  "\u093E", "\u093F", "\u0940", "\u0941", "\u0942", "\u0943", "\u0944",
+  "\u0945", "\u0946", "\u0947", "\u0948", "\u0949", "\u094A", "\u094B",
+  "\u094C", "\u0901", "\u0902", "\u0903", "\u093C", "\u0962", "\u0963",
+]);
+const DEV_RA = "\u0930";
+
+/**
+ * Move a provably-visual reph back in front of its cluster. Shaping
+ * puts the syllable-final र ् AFTER the base consonant and its matras
+ * ("रिपोटर्" for रिपोर्ट) — a dead consonant that dangles before a
+ * non-consonant (end, space, punctuation, Latin, digits, signs) can
+ * never be logical, so those cases are provably visual. A र ् directly
+ * followed by a consonant is the valid logical ligature form and is
+ * never touched, so OCR-style logical text is never damaged.
+ */
+function fixDevReph(text: string): string {
+  let out = text;
+  for (let i = 0; i + 1 < out.length; i += 1) {
+    if (out[i] !== DEV_RA || out[i + 1] !== DEV_VIRAMA) continue;
+    const after = i + 2 < out.length ? (out[i + 2] as string) : undefined;
+    if (after !== undefined && (isDevConsonant(after) || after === DEV_VIRAMA)) {
+      continue;
+    }
+    // Provably visual: walk back over post-syllable signs, expect one
+    // base consonant, and splice the reph in front of it.
+    let j = i - 1;
+    while (j >= 0 && DEV_POST_MARK.has(out[j] as string)) j -= 1;
+    if (j < 0 || !isDevConsonant(out[j])) continue; // nothing to attach to
+    out =
+      out.slice(0, j) +
+      DEV_RA +
+      DEV_VIRAMA +
+      out.slice(j, i) +
+      out.slice(i + 2);
+    i = j + 1; // the moved pair now precedes a consonant — never re-fires
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* Data URI embedding (worker + smoke share the same encoder path)     */
 /* ------------------------------------------------------------------ */
 
@@ -653,7 +785,11 @@ function glyphUnicode(glyph: GlyphObject): string {
 /**
  * Serializes one <text> element — one per showText run ("group runs into
  * <text> elements"). Kerning numbers inside the glyph array split
- * tspans so explicit x positions stay faithful.
+ * tspans so explicit x positions stay faithful. When a residual
+ * transform is carried, the pieces' device-space origins are converted
+ * into the transform's LOCAL frame (the first piece lands at 0,0) —
+ * the matrix already includes the translation, so baked device
+ * coordinates would apply it twice.
  */
 function textToSvg(el: TextElement): string {
   const attrs: string[] = [
@@ -667,16 +803,25 @@ function textToSvg(el: TextElement): string {
   if (el.transform !== null) {
     attrs.unshift(`transform="matrix(${el.transform.map((v) => fmt(v)).join(" ")})"`);
   }
+  const localPos = (p: { x: number; y: number }): { x: number; y: number } => {
+    if (el.transform === null) return { x: p.x, y: p.y };
+    const [a, b, c, d, e, f] = el.transform;
+    const det = a * d - b * c;
+    if (Math.abs(det) < 1e-12) return { x: 0, y: 0 }; // degenerate squeeze
+    const dx = p.x - e;
+    const dy = p.y - f;
+    return { x: (d * dx - c * dy) / det, y: (a * dy - b * dx) / det };
+  };
   const live = el.pieces.filter((p) => p.text.length > 0);
   if (live.length === 0) return "";
   if (live.length === 1 && el.transform === null) {
     return `<text x="${fmt(live[0].x)}" y="${fmt(live[0].y)}" ${attrs.join(" ")}>${xmlEscape(live[0].text)}</text>`;
   }
   const tspans = live
-    .map(
-      (p) =>
-        `<tspan x="${fmt(p.x)}" y="${fmt(p.y)}">${xmlEscape(p.text)}</tspan>`
-    )
+    .map((p) => {
+      const at = localPos(p);
+      return `<tspan x="${fmt(at.x)}" y="${fmt(at.y)}">${xmlEscape(p.text)}</tspan>`;
+    })
     .join("");
   return `<text ${attrs.join(" ")}>${tspans}</text>`;
 }
@@ -687,12 +832,31 @@ function textToSvg(el: TextElement): string {
 
 /**
  * Stroke width in viewBox units for baked coordinates — lineWidth scaled
- * by the average axis scale (exact when |a| = |d|; an approximation that
- * matches how the canvas pen distorts under non-uniform scales).
+ * by the average singular value of the device matrix's 2×2 (exact for
+ * uniform scales and pure rotations; matches how the pdf.js canvas pen
+ * distorts under non-uniform scales). The old |a|+|d| average gave 0
+ * on /Rotate 90 pages, where a and d are both 0.
  */
 function strokeWidthFor(state: GState, device: Mat): number {
   if (state.lineWidth <= 0) return 0;
-  return (state.lineWidth * (Math.abs(device[0]) + Math.abs(device[3]))) / 2;
+  const [a, b, c, d] = device;
+  const t = a * a + b * b + c * c + d * d;
+  const det = Math.abs(a * d - b * c);
+  const disc = Math.sqrt(Math.max(0, t * t - 4 * det * det));
+  const s1 = Math.sqrt(Math.max(0, (t + disc) / 2));
+  const s2 = Math.sqrt(Math.max(0, (t - disc) / 2));
+  return (state.lineWidth * (s1 + s2)) / 2;
+}
+
+/** Dash scale for baked coordinates — the same pen approximation. */
+function dashScaleFor(device: Mat): number {
+  const [a, b, c, d] = device;
+  const t = a * a + b * b + c * c + d * d;
+  const det = Math.abs(a * d - b * c);
+  const disc = Math.sqrt(Math.max(0, t * t - 4 * det * det));
+  const s1 = Math.sqrt(Math.max(0, (t + disc) / 2));
+  const s2 = Math.sqrt(Math.max(0, (t - disc) / 2));
+  return (s1 + s2) / 2;
 }
 
 /* ------------------------------------------------------------------ */
@@ -768,10 +932,11 @@ async function showTextRun(
   let piece: TextPiece | null = null;
   for (const entry of glyphs as SvgGlyph[]) {
     if (typeof entry === "number") {
-      // TJ adjustment: the pen moves by -n/1000 × fontSize (pdf.js keeps
-      // spacingDir at -1 for horizontal fonts). Breaks the piece.
+      // TJ adjustment: the pen moves by -n/1000 × fontSize × hScale
+      // (pdf.js accumulates the unscaled value and multiplies the
+      // total by textHScale — canvas.js showText). Breaks the piece.
       piece = null;
-      state.penX += (-entry * size) / 1000;
+      state.penX += (-entry * size * state.hScale) / 1000;
       continue;
     }
     if (entry === null || entry === undefined) continue;
@@ -780,13 +945,30 @@ async function showTextRun(
     const width = num(glyph.width, 0);
 
     if (piece === null) {
-      const originDevice = mul(ctx.baseTransform, base);
+      // The glyph origin is the Tm frame at the CURRENT pen — pdf.js
+      // composes Tm × translate(current.x, current.y + rise) when the run
+      // starts and again after every TJ adjustment splits it, so this
+      // MUST be recomputed per piece (a run-start snapshot would drop
+      // every kerned piece back onto the first glyph).
+      const originDevice = mul(
+        ctx.baseTransform,
+        mul(
+          mul(state.ctm, state.tm),
+          [1, 0, 0, 1, state.penX, state.penY + state.rise]
+        )
+      );
       piece = { x: originDevice[4], y: originDevice[5], text: "" };
       el.pieces.push(piece);
     }
     piece.text += text;
 
     state.penX += advance(width, glyph.isSpace === true);
+  }
+
+  // Shaped Devanagari extracts in visual order — repair each piece to
+  // logical order before it reaches the XML (pdf-to-odt rule).
+  for (const p of el.pieces) {
+    p.text = fixDevanagariVisual(p.text);
   }
 
   const svg = textToSvg(el);
@@ -826,15 +1008,27 @@ function paintPath(
   const device = mul(ctx.baseTransform, state.ctm);
   if (!finiteMat(device)) return;
 
+  // Coordinates are BAKED to viewBox units in the two fast paths, so
+  // stroke attrs must be scaled to device units there. In the carried
+  // -transform path the matrix does the scaling, so the RAW PDF values
+  // must be used — scaling them there would apply the scale twice.
+  const baked = isAxisAligned(device);
   const attrs: string[] = [];
   if (mode !== "stroke") attrs.push(`fill="${state.fill}"`);
   else attrs.push('fill="none"');
   if (mode !== "fill") {
     attrs.push(`stroke="${state.stroke}"`);
-    attrs.push(`stroke-width="${fmt(strokeWidthFor(state, device))}"`);
+    attrs.push(
+      `stroke-width="${fmt(
+        baked ? strokeWidthFor(state, device) : state.lineWidth
+      )}"`
+    );
     if (state.dash.length > 0) {
+      const scale = baked ? dashScaleFor(device) : 1;
       attrs.push(
-        `stroke-dasharray="${state.dash.map((v) => fmt(v)).join(" ")}"`
+        `stroke-dasharray="${state.dash
+          .map((v) => fmt(v * scale))
+          .join(" ")}"`
       );
     }
   }

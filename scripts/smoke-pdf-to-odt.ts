@@ -65,7 +65,7 @@ import {
   type OdtBlock,
   type PdfTextItemInput,
 } from "../tools/pdf-to-odt/model";
-import { parseOdt } from "../tools/odt-to-pdf/model";
+import { parseOdt, type OdfTextBlock } from "../tools/odt-to-pdf/model";
 import { parsePageSpec } from "../src/lib/workers/protocol";
 
 let pass = 0;
@@ -174,8 +174,18 @@ function item(
   };
 }
 
-const joined = (blocks: readonly { runs?: readonly { text: string }[] }[]): string =>
-  blocks.map((b) => (b.runs ?? []).map((r) => r.text).join("")).join(" ");
+/** Table blocks carry rows, not runs — runtime-safe mirror accessors. */
+const runsOf = (
+  b: OdfTextBlock | undefined
+): readonly { text: string; bold: boolean; italic: boolean }[] =>
+  b && b.kind !== "table" ? b.runs : [];
+const textOf = (b: OdfTextBlock | undefined): string =>
+  runsOf(b)
+    .map((r) => r.text)
+    .join("");
+
+const joined = (blocks: readonly OdfTextBlock[]): string =>
+  blocks.map((b) => textOf(b)).join(" ");
 
 /* ================================================================== */
 console.log("── 1. pure helpers ──────────────────────────────────────");
@@ -336,7 +346,7 @@ console.log("── 2. synthetic extraction (heading ladder / runs / marks) ─"
     levels.slice(0, 6).join(",") === "1,2,3,4,5,6",
     levels
   );
-  check("body stays body (no heading on 10pt)", levels.slice(6).join(",") === "0,0,0", levels);
+  check("body stays body (no heading on 10pt)", levels.slice(6).join(",") === "0,0", levels);
   check(
     "two tight body lines merge into one paragraph",
     model.blocks.length === 8,
@@ -876,27 +886,27 @@ console.log("── 5. THE ROUND-TRIP (odt-to-pdf parseOdt reads it) ───�
     );
     check(
       "mirror reads the merged paragraph text",
-      (mb[3]?.runs ?? []).map((r) => r.text).join("") ===
+      textOf(mb[3]) ===
         "This report covers the first quarter. Numbers improved across every region.",
       mb[3]
     );
     const styled = mb[5];
     check(
       "mirror resolves bold through the T1 parent chain",
-      styled?.runs.some((r) => r.text.includes("bold words,") && r.bold === true) === true,
-      styled?.runs.map((r) => ({ t: r.text, b: r.bold, i: r.italic }))
+      runsOf(styled).some((r) => r.text.includes("bold words,") && r.bold === true) === true,
+      runsOf(styled).map((r) => ({ t: r.text, b: r.bold, i: r.italic }))
     );
     check(
       "mirror resolves italic through the T2 parent chain",
-      styled?.runs.some((r) => r.text.includes("italic tail") && r.italic === true) === true
+      runsOf(styled).some((r) => r.text.includes("italic tail") && r.italic === true) === true
     );
     check(
       "plain run stays unstyled in the mirror",
-      styled?.runs.some((r) => r.text.includes("Plain start") && r.bold === false && r.italic === false) === true
+      runsOf(styled).some((r) => r.text.includes("Plain start") && r.bold === false && r.italic === false) === true
     );
     check(
       "mirror decodes the XML-hostile text",
-      (mb[6]?.runs ?? []).map((r) => r.text).join("") ===
+      textOf(mb[6]) ===
         "Notes: revenue & costs, Q1 < Q2 > targets.",
       mb[6]
     );
@@ -910,7 +920,7 @@ console.log("── 5. THE ROUND-TRIP (odt-to-pdf parseOdt reads it) ───�
       "mirror reads the Hindi H3 + body",
       mb[10]?.kind === "heading" && mb[10]?.level === 3 &&
         mb[10]?.runs.map((r) => r.text).join("").includes("प्रिया शर्मा की टीम") &&
-        (mb[11]?.runs ?? []).map((r) => r.text).join("").includes("यह रिपोर्ट आपके डिवाइस पर बनती है।"),
+        textOf(mb[11]).includes("यह रिपोर्ट आपके डिवाइस पर बनती है।"),
       [mb[10], mb[11]]
     );
     check(

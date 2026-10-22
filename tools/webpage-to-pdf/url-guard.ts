@@ -114,17 +114,29 @@ function parseIpv6Core(text: string, v4tail: number[]): number[] | null {
     if (text.indexOf("::", doubleColon + 1) >= 0) return null; // only one "::"
     const headText = text.slice(0, doubleColon);
     const tailText = text.slice(doubleColon + 2);
-    const head = headText === "" ? [] : headText.split(":").map(hexGroup);
-    const tail = tailText === "" ? [] : tailText.split(":").map(hexGroup);
-    if (head.some((g) => g === null) || tail.some((g) => g === null)) return null;
+    const head = headText === "" ? [] : hexGroups(headText);
+    const tail = tailText === "" ? [] : hexGroups(tailText);
+    if (head === null || tail === null) return null;
     const fill = 8 - head.length - tail.length - v4tail.length;
     if (fill < 1) return null; // "::" must stand for at least one zero group
     return [...head, ...new Array<number>(fill).fill(0), ...tail, ...v4tail];
   }
-  const groups = text.split(":").map(hexGroup);
-  if (groups.some((g) => g === null)) return null;
+  const groups = hexGroups(text);
+  if (groups === null) return null;
   if (groups.length + v4tail.length !== 8) return null;
   return [...groups, ...v4tail];
+}
+
+/** Split on ":" and parse every group; null if ANY group is invalid. */
+function hexGroups(rawText: string): number[] | null {
+  const parts = rawText.split(":");
+  const out: number[] = [];
+  for (const p of parts) {
+    const g = hexGroup(p);
+    if (g === null) return null;
+    out.push(g);
+  }
+  return out;
 }
 
 function hexGroup(raw: string): number | null {

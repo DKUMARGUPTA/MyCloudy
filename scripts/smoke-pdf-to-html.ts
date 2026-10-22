@@ -328,7 +328,7 @@ console.log("── 3. headings, bold/italic, lists ─────────�
     ) as { headingLevel?: number }).headingLevel === undefined
   );
   check("docStats counts headings", docStats(doc).headings === 2, docStats(doc));
-  check("docStats counts paragraphs + pages", docStats(doc).paragraphs === 5 && docStats(doc).pages === 1);
+  check("docStats counts paragraphs + pages", docStats(doc).paragraphs === 4 && docStats(doc).pages === 1);
 
   const flat = extractDocument(
     [
@@ -923,14 +923,14 @@ check(
   /<div class="ln" style="left:96\.00px;top:72\.53px;font-size:29\.33px"><strong>Quarterly Report<\/strong><\/div>/.test(
     layout
   ),
-  (layout.match(/.{0,120}Quarterly Report.{0,40}/s) ?? [""])[0]
+  (layout.match(/[\s\S]{0,120}Quarterly Report[\s\S]{0,40}/) ?? [""])[0]
 );
 check(
   "body line at exact left/top/font-size",
   /<div class="ln" style="left:96\.00px;top:137\.60px;font-size:14\.67px">This report covers/.test(
     layout
   ),
-  (layout.match(/.{0,120}This report covers.{0,40}/s) ?? [""])[0]
+  (layout.match(/[\s\S]{0,120}This report covers[\s\S]{0,40}/) ?? [""])[0]
 );
 check(
   "layout keeps bold + italic inline",
@@ -1127,7 +1127,7 @@ console.log("── 11. wiring + i18n ──────────────
 /* ================================================================== */
 
 console.log(`\n${passed} passed, ${failed} failed`);
-if (fail > 0) {
+if (failed > 0) {
   console.error("failing:", failures.slice(0, 25).join(" | "));
   process.exit(1);
 }
