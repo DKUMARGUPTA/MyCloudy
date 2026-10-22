@@ -1,0 +1,908 @@
+     1→"use client";
+     2→
+     3→import {
+     4→  useCallback,
+     5→  useEffect,
+     6→  useMemo,
+     7→  useRef,
+     8→  useState,
+     9→} from "react";
+    10→import {
+    11→  ArrowLeft,
+    12→  ArrowRight,
+    13→  CircleHelp,
+    14→  FilePlus2,
+    15→  Home,
+    16→  ListChecks,
+    17→  Lock,
+    18→  Sparkles,
+    19→  Trash2,
+    20→  TriangleAlert,
+    21→} from "lucide-react";
+    22→
+    23→import {
+    24→  Accordion,
+    25→  AccordionContent,
+    26→  AccordionItem,
+    27→  AccordionTrigger,
+    28→} from "@/components/ui/accordion";
+    29→import { Badge } from "@/components/ui/badge";
+    30→import { Button } from "@/components/ui/button";
+    31→import { Modal } from "@/components/doco/modal";
+    32→import { BottomSheet } from "@/components/doco/bottom-sheet";
+    33→import { useToast } from "@/hooks/use-toast";
+    34→import { useI18n } from "@/components/providers/locale-provider";
+    35→import { ROUTES, navigateToHash } from "@/hooks/use-hash-route";
+    36→import {
+    37→  getCategory,
+    38→  getTool,
+    39→  toolsByCategory,
+    40→  type ToolDef,
+    41→} from "@/lib/tools/registry";
+    42→import type { ToolConfig, OptionValues } from "@/lib/tools/config-types";
+    43→import { defaultOptionValues } from "@/lib/tools/config-types";
+    44→import {
+    45→  clearChainHandoff,
+    46→  peekChainHandoff,
+    47→  setChainHandoff,
+    48→} from "@/lib/tools/chain";
+    49→import { trackToolUse } from "@/lib/tools/favorites";
+    50→import {
+    51→  addRecentFile,
+    52→  removeRecentFilesByMeta,
+    53→} from "@/lib/storage/recent-files";
+    54→import {
+    55→  clearWorkingFiles,
+    56→  writeWorkingFile,
+    57→} from "@/lib/storage/opfs";
+    58→import { makeFileThumbnail } from "@/lib/files/thumbnail";
+    59→import { formatBytes } from "@/lib/storage/recent-files";
+    60→import {
+    61→  toolRunner,
+    62→  RunCancelledError,
+    63→  ToolRunError,
+    64→  type RunDetail,
+    65→  type RunHandle,
+    66→  type RunProgress,
+    67→} from "@/lib/workers/pool";
+    68→import type { ToolOutput } from "@/lib/workers/protocol";
+    69→import { DropZone } from "./drop-zone";
+    70→import { FileList } from "./file-list";
+    71→import type { WorkspaceFile } from "./file-card";
+    72→import { OptionsPanel } from "./options-panel";
+    73→import { ProcessingView } from "./processing-view";
+    74→import { ResultView } from "./result-view";
+    75→import { TOOL_PANELS } from "@/lib/tools/panels";
+    76→import { TOOL_SURFACES } from "@/lib/tools/surfaces";
+    77→import { cn } from "@/lib/utils";
+    78→
+    79→/**
+    80→ * ToolShell (PRD §6.3): the universal 4-state tool template.
+    81→ * Landing (upload + SEO copy) → Workspace (preview + options) →
+    82→ * Processing (real worker progress) → Result (download/share/chain).
+    83→ * Every enabled tool renders from its registry entry + config — this
+    84→ * component is the ONLY tool page in the app.
+    85→ */
+    86→
+    87→type ShellPhase = "landing" | "workspace" | "processing" | "result";
+    88→
+    89→let fileSeq = 0;
+    90→function nextFileId(): string {
+    91→  fileSeq += 1;
+    92→  return `wf-${Date.now().toString(36)}-${fileSeq}`;
+    93→}
+    94→
+    95→export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig }) {
+    96→  const { t, locale } = useI18n();
+    97→  const { toast } = useToast();
+    98→  const category = getCategory(tool.category);
+    99→  // Viewer tools (PRD §6.5) never process anything: no run CTA, no options
+   100→  // aside, no processing/result phases — the workspace surface IS the tool.
+   101→  const viewerOnly = config.viewerOnly === true;
+   102→  // Full-width surfaces (Edit PDF editor) keep the run pipeline but own
+   103→  // their whole layout — no options aside / sheet, CTA stays.
+   104→  const fullWidth = config.fullWidthSurface === true;
+   105→  // No-file tools (Generate Password family) render their surface directly
+   106→  // on the landing in place of the DropZone — nothing is ever uploaded.
+   107→  const noFile = config.noFile === true;
+   108→  const surfaceOnly = viewerOnly || noFile;
+   109→
+   110→  // One-time chain handoff peek — set by a previous tool's result view or
+   111→  // the home Smart Drop Zone right before navigating here. Consumed via
+   112→  // the lazy initializer (pure read); cleared in the effect below.
+   113→  const [chainIn] = useState<{
+   114→    fromToolId: string;
+   115→    items: WorkspaceFile[];
+   116→  } | null>(() => {
+   117→    const handoff = peekChainHandoff();
+   118→    if (!handoff || handoff.items.length === 0) return null;
+   119→    return {
+   120→      fromToolId: handoff.fromToolId,
+   121→      items: handoff.items.map((item) => ({
+   122→        id: item.id,
+   123→        file: item.file,
+   124→      })),
+   125→    };
+   126→  });
+   127→
+   128→  const [phase, setPhase] = useState<ShellPhase>(() => (chainIn ? "workspace" : "landing"));
+   129→  const [files, setFiles] = useState<WorkspaceFile[]>(() => chainIn?.items ?? []);
+   130→  const [options, setOptions] = useState<OptionValues>(() =>
+   131→    defaultOptionValues(config.options)
+   132→  );
+   133→  const [progress, setProgress] = useState<RunProgress>({
+   134→    pct: 0,
+   135→    stage: "reading",
+   136→  });
+   137→  const [outputs, setOutputs] = useState<ToolOutput[]>([]);
+   138→  const [inputBytes, setInputBytes] = useState(0);
+   139→  const [runSummary, setRunSummary] = useState<RunDetail | null>(null);
+   140→  const [optionsOpen, setOptionsOpen] = useState(false);
+   141→  const [helpOpen, setHelpOpen] = useState(false);
+   142→
+   143→  // Chain handoff consumed once at mount (lazy initializer = pure read);
+   144→  // clearing the module store is an external-system sync in this effect.
+   145→  const chainFrom: ToolDef | null = chainIn
+   146→    ? (getTool(chainIn.fromToolId) ?? null)
+   147→    : null;
+   148→  useEffect(() => {
+   149→    if (chainIn) clearChainHandoff();
+   150→  }, [chainIn]);
+   151→
+   152→  // Input kind drives the DropZone sniffing + accept filter + labels.
+   153→  const acceptKind =
+   154→    tool.accepts === "image" ? "image" : tool.accepts === "pdf" ? "pdf" : "any";
+   155→  const selectLabelKey =
+   156→    tool.accepts === "image" ? "tool.selectImageFiles" : "tool.selectPdfFiles";
+   157→  const addMoreLabelKey =
+   158→    tool.accepts === "image" ? "tool.addMoreImages" : "tool.addMoreFiles";
+   159→  const recentKind = tool.accepts === "image" ? "image" : "pdf";
+   160→
+   161→  // Chain/SmartDrop files get the same treatment as dropped files (PRD
+   162→  // §6.1): OPFS working copy + a metadata-only recent entry with thumbnail.
+   163→  // External-system sync only — no React state is touched here.
+   164→  useEffect(() => {
+   165→    if (!chainIn) return;
+   166→    for (const item of chainIn.items) {
+   167→      void writeWorkingFile(item.id, item.file).catch(() => undefined);
+   168→      void makeFileThumbnail(item.file, 160)
+   169→        .then((blob) =>
+   170→          addRecentFile({
+   171→            id: item.id,
+   172→            kind: recentKind as "pdf" | "image",
+   173→            label: item.file.name,
+   174→            size: item.file.size,
+   175→            toolId: tool.id,
+   176→            thumbnail: blob ?? undefined,
+   177→          })
+   178→        )
+   179→        .catch(() => undefined);
+   180→    }
+   181→  }, [chainIn, recentKind, tool.id]);
+   182→
+   183→  const runHandleRef = useRef<RunHandle | null>(null);
+   184→
+   185→  // Optional custom options panel (PRD §2.6 Panel.tsx pattern). Direct
+   186→  // map lookup — a stable module-level reference, never created in render.
+   187→  const CustomPanel = TOOL_PANELS[tool.id];
+   188→
+   189→  // Optional workspace surface (PageGrid family): rendered in the main
+   190→  // column instead of the FileList; can gate the CTA via runBlocked.
+   191→  const WorkspaceSurface = TOOL_SURFACES[tool.id];
+   192→
+   193→  // Surface-driven CTA gating (PRD §8.1 safety: "sab pages delete ho to
+   194→  // Apply disabled" / extract needs a selection). Event-context only —
+   195→  // surfaces call this from their action handlers, never during render.
+   196→  const [runBlockedKey, setRunBlockedKey] = useState<string | null>(null);
+   197→  const handleRunBlocked = useCallback((reasonKey: string | null) => {
+   198→    setRunBlockedKey(reasonKey);
+   199→  }, []);
+   200→  const runDisabled =
+   201→    files.length < config.minFiles || runBlockedKey !== null;
+   202→
+   203→  const handleOptionChange = useCallback(
+   204→    (id: string, value: string | number | boolean) => {
+   205→      setOptions((prev) => ({ ...prev, [id]: value }));
+   206→    },
+   207→    []
+   208→  );
+   209→
+   210→  const relatedTools = useMemo(
+   211→    () =>
+   212→      toolsByCategory(tool.category)
+   213→        .filter((item) => item.id !== tool.id)
+   214→        .slice(0, 6),
+   215→    [tool.category, tool.id]
+   216→  );
+   217→
+   218→  const chainTargets = useMemo(() => {
+   219→    // PRD §6.4 "Ab aage kya?" — natural next steps. Image outputs chain
+   220→    // to image-accepting tools (the PDF default set would be a type lie);
+   221→    // configs can override with their own curated list.
+   222→    const suggestionIds =
+   223→      config.chainToolIds ?? [
+   224→        "compress-pdf",
+   225→        "protect-pdf",
+   226→        "sign-pdf",
+   227→        "split-pdf",
+   228→        "edit-pdf",
+   229→      ];
+   230→    const resolved = suggestionIds
+   231→      .map((id) => getTool(id))
+   232→      .filter((item): item is ToolDef => item !== undefined && item.id !== tool.id);
+   233→    return resolved.slice(0, 5);
+   234→  }, [config.chainToolIds, tool.id]);
+   235→
+   236→  // Working copies are cleared when the tool session ends (PRD §2.4).
+   237→  useEffect(
+   238→    () => () => {
+   239→      void clearWorkingFiles().catch(() => undefined);
+   240→    },
+   241→    []
+   242→  );
+   243→
+   244→  const addFiles = useCallback(
+   245→    (incoming: File[]) => {
+   246→      if (incoming.length === 0) return;
+   247→      const room = config.maxFiles - files.length;
+   248→      if (room <= 0) {
+   249→        toast({
+   250→          title: t("dropzone.errTooManyTitle"),
+   251→          description: t("dropzone.errTooManyDesc", {
+   252→            count: config.maxFiles,
+   253→          }),
+   254→          variant: "destructive",
+   255→        });
+   256→        return;
+   257→      }
+   258→      const accepted = incoming.slice(0, room);
+   259→      const items = accepted.map((file) => ({ id: nextFileId(), file }));
+   260→
+   261→      // Side effects run ONCE here — never inside the setFiles updater
+   262→      // (React StrictMode double-invokes updaters; they must stay pure).
+   263→      for (const item of items) {
+   264→        void writeWorkingFile(item.id, item.file).catch(() => undefined);
+   265→        // Recent entry: metadata + thumbnail only, never the bytes.
+   266→        void makeFileThumbnail(item.file, 160)
+   267→          .then(async (blob) => {
+   268→            await addRecentFile({
+   269→              id: item.id,
+   270→              kind: recentKind as "pdf" | "image",
+   271→              label: item.file.name,
+   272→              size: item.file.size,
+   273→              toolId: tool.id,
+   274→              thumbnail: blob ?? undefined,
+   275→            });
+   276→          })
+   277→          .catch(() => undefined);
+   278→      }
+   279→
+   280→      setFiles((prev) => [...prev, ...items]);
+   281→      setPhase("workspace");
+   282→    },
+   283→    [config.maxFiles, files.length, recentKind, t, toast, tool.id]
+   284→  );
+   285→
+   286→  const removeFile = useCallback((id: string) => {
+   287→    setFiles((prev) => prev.filter((item) => item.id !== id));
+   288→  }, []);
+   289→
+   290→  const moveFile = useCallback((from: number, to: number) => {
+   291→    setFiles((prev) => {
+   292→      if (to < 0 || to >= prev.length) return prev;
+   293→      const next = [...prev];
+   294→      const [moved] = next.splice(from, 1);
+   295→      next.splice(to, 0, moved);
+   296→      return next;
+   297→    });
+   298→  }, []);
+   299→
+   300→  const clearAll = useCallback(() => {
+   301→    setFiles([]);
+   302→    void clearWorkingFiles().catch(() => undefined);
+   303→    setPhase("landing");
+   304→  }, []);
+   305→
+   306→  // Stable function ref from the config (module constant) — keeps the
+   307→  // React Compiler's dependency inference happy.
+   308→  const collectAssets = config.collectAssets;
+   309→
+   310→  const startRun = useCallback(() => {
+   311→    if (files.length < config.minFiles || runBlockedKey !== null) return;
+   312→    trackToolUse(tool.id);
+   313→    setInputBytes(files.reduce((sum, item) => sum + item.file.size, 0));
+   314→    setProgress({ pct: 0, stage: "reading" });
+   315→    setPhase("processing");
+   316→    // Extra in-memory assets (watermark logo etc.) ride the worker message.
+   317→    const assets = collectAssets?.() ?? undefined;
+   318→    runHandleRef.current = toolRunner.run(
+   319→      tool.id,
+   320→      options,
+   321→      files.map((item) => item.file),
+   322→      setProgress,
+   323→      files.map((item) => item.id),
+   324→      assets
+   325→    );
+   326→    runHandleRef.current.promise
+   327→      .then((result) => {
+   328→        runHandleRef.current = null;
+   329→        // Working copies of the INPUTS die with the run (PRD §2.4);
+   330→        // results live in memory + can chain into the next tool.
+   331→        setOutputs(result.outputs);
+   332→        setRunSummary(result.detail ?? null);
+   333→        setPhase("result");
+   334→        void clearWorkingFiles().catch(() => undefined);
+   335→      })
+   336→      .catch((error: unknown) => {
+   337→        runHandleRef.current = null;
+   338→        if (error instanceof RunCancelledError) {
+   339→          setPhase("workspace");
+   340→          toast({ title: t("tool.cancelledToast") });
+   341→          return;
+   342→        }
+   343→        setPhase("workspace");
+   344→        const code =
+   345→          error instanceof ToolRunError ? error.code : "tool.errorGeneric";
+   346→        toast({
+   347→          title: t("tool.errorTitle"),
+   348→          description: t(code, {
+   349→            detail: error instanceof ToolRunError ? error.detail ?? "" : "",
+   350→          }),
+   351→          variant: "destructive",
+   352→        });
+   353→      });
+   354→  }, [collectAssets, config.minFiles, files, options, runBlockedKey, t, toast, tool.id]);
+   355→
+   356→  const cancelRun = useCallback(() => {
+   357→    runHandleRef.current?.cancel();
+   358→  }, []);
+   359→
+   360→  const handleChain = useCallback(
+   361→    (target: ToolDef, resultFiles: File[]) => {
+   362→      if (!target.enabled) {
+   363→        toast({
+   364→          title: t("tools.comingToastTitle", { tool: target.name[locale] }),
+   365→          description: t("tools.comingToastDesc", {
+   366→            phase: target.phase,
+   367→          }),
+   368→        });
+   369→        return;
+   370→      }
+   371→      setChainHandoff({
+   372→        fromToolId: tool.id,
+   373→        items: resultFiles.map((file) => ({ id: nextFileId(), file })),
+   374→      });
+   375→      navigateToHash(ROUTES.tool(target.id));
+   376→    },
+   377→    [locale, t, toast, tool.id]
+   378→  );
+   379→
+   380→  // Viewer surfaces chain the current file straight into another tool
+   381→  // (they have no result phase of their own). Same enabled/coming-soon
+   382→  // behavior as result-view chains.
+   383→  const surfaceChain = useCallback(
+   384→    (targetId: string) => {
+   385→      const target = getTool(targetId);
+   386→      if (!target) return;
+   387→      handleChain(target, files.map((item) => item.file));
+   388→    },
+   389→    [files, handleChain]
+   390→  );
+   391→
+   392→  const removeFromDevice = useCallback(() => {
+   393→    void clearWorkingFiles().catch(() => undefined);
+   394→    // Remove this run's recent entries by their file metadata (label+size).
+   395→    void removeRecentFilesByMeta(
+   396→      files.map((item) => ({ label: item.file.name, size: item.file.size }))
+   397→    ).catch(() => undefined);
+   398→    setOutputs([]);
+   399→    setFiles([]);
+   400→    setPhase("landing");
+   401→    toast({ title: t("result.removedToast") });
+   402→  }, [files, t, toast]);
+   403→
+   404→  /**
+   405→   * "Start over with a new file" (result view): a clean slate — outputs,
+   406→   * workspace files AND options (per-file marks, placements, per-file
+   407→   * ranges) all go, so nothing from the previous document can leak into
+   408→   * the next one. Stays on this tool's page.
+   409→   */
+   410→  const startOver = useCallback(() => {
+   411→    setOutputs([]);
+   412→    setRunSummary(null);
+   413→    setFiles([]);
+   414→    setOptions(defaultOptionValues(config.options));
+   415→    setRunBlockedKey(null);
+   416→    void clearWorkingFiles().catch(() => undefined);
+   417→    setPhase("landing");
+   418→  }, [config.options]);
+   419→
+   420→  const totalSize = files.reduce((sum, item) => sum + item.file.size, 0);
+   421→  const ctaLabel = `${tool.name[locale]} ${t("tool.ctaArrow")}`;
+   422→  const Icon = tool.icon;
+   423→
+   424→  return (
+   425→    <div className="mx-auto w-full max-w-6xl px-4 pb-28 sm:pb-24">
+   426→      {/* Breadcrumb (PRD §6.3): Home > Category > Tool */}
+   427→      <nav aria-label={t("a11y.breadcrumb")} className="pt-4">
+   428→        <ol className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+   429→          <li>
+   430→            <a
+   431→              href={ROUTES.home}
+   432→              className="inline-flex items-center gap-1 rounded-btn outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+   433→            >
+   434→              <Home className="size-3" aria-hidden="true" />
+   435→              {t("nav.home")}
+   436→            </a>
+   437→          </li>
+   438→          <li aria-hidden="true">/</li>
+   439→          <li>
+   440→            <a
+   441→              href={ROUTES.category(tool.category)}
+   442→              className="rounded-btn outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+   443→            >
+   444→              {category.name[locale]}
+   445→            </a>
+   446→          </li>
+   447→          <li aria-hidden="true">/</li>
+   448→          <li aria-current="page" className="font-medium text-foreground">
+   449→            {tool.name[locale]}
+   450→          </li>
+   451→        </ol>
+   452→      </nav>
+   453→
+   454→      {phase === "landing" ? (
+   455→        <section className="flex flex-col gap-8 pt-6">
+   456→          <header className="flex flex-col gap-3">
+   457→            <div className="flex items-center gap-3">
+   458→              <span
+   459→                className={cn(
+   460→                  "flex size-11 items-center justify-center rounded-btn",
+   461→                  "bg-cat-organize/10 text-cat-organize"
+   462→                )}
+   463→                aria-hidden="true"
+   464→              >
+   465→                <Icon className="size-5" />
+   466→              </span>
+   467→              <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+   468→                {tool.name[locale]}
+   469→              </h1>
+   470→            </div>
+   471→            <p className="max-w-2xl text-sm text-muted-foreground sm:text-base">
+   472→              {tool.description[locale]}
+   473→            </p>
+   474→            <div className="flex flex-wrap gap-2">
+   475→              <Badge variant={tool.mode === "D" ? "private" : "server"} className="rounded-chip">
+   476→                <Lock className="size-3" aria-hidden="true" />
+   477→                {tool.mode === "D"
+   478→                  ? t("tools.privateBadge")
+   479→                  : t("tools.serverBadge")}
+   480→              </Badge>
+   481→              <Badge variant="outline" className="rounded-chip">
+   482→                {t("tool.freeBadge")}
+   483→              </Badge>
+   484→            </div>
+   485→          </header>
+   486→
+   487→          {noFile && WorkspaceSurface ? (
+   488→            <div className="pt-2">
+   489→              <WorkspaceSurface
+   490→                files={[]}
+   491→                values={options}
+   492→                onChange={handleOptionChange}
+   493→                setFileOrder={setFiles}
+   494→                setRunBlocked={handleRunBlocked}
+   495→                addFiles={addFiles}
+   496→                onChain={surfaceChain}
+   497→              />
+   498→            </div>
+   499→          ) : config.landingSurface === true && WorkspaceSurface ? (
+   500→            // Camera-first tools (Scan to PDF): the surface owns the
+   501→            // landing inputs (camera + gallery via addFiles) but keeps
+   502→            // the full run/result pipeline below.
+   503→            <div className="pt-2">
+   504→              <WorkspaceSurface
+   505→                files={[]}
+   506→                values={options}
+   507→                onChange={handleOptionChange}
+   508→                setFileOrder={setFiles}
+   509→                setRunBlocked={handleRunBlocked}
+   510→                addFiles={addFiles}
+   511→                onChain={surfaceChain}
+   512→              />
+   513→            </div>
+   514→          ) : (
+   515→            <DropZone
+   516→              labelKey={selectLabelKey}
+   517→              multiple={config.maxFiles > 1}
+   518→              maxFiles={config.maxFiles}
+   519→              acceptKind={acceptKind}
+   520→              onAccept={addFiles}
+   521→              currentCount={files.length}
+   522→            />
+   523→          )}
+   524→
+   525→          <div className="grid gap-8 lg:grid-cols-[2fr_1fr]">
+   526→            <div className="flex flex-col gap-8">
+   527→              {/* How it works */}
+   528→              <section aria-labelledby="how-heading">
+   529→                <h2 id="how-heading" className="flex items-center gap-2 text-sm font-semibold text-foreground">
+   530→                  <ListChecks className="size-4 text-primary" aria-hidden="true" />
+   531→                  {t("tool.howTitle")}
+   532→                </h2>
+   533→                <ol className="mt-3 grid gap-3 sm:grid-cols-3">
+   534→                  {(config.howKeys ??
+   535→                    (viewerOnly
+   536→                      ? ["view.how1", "view.how2", "view.how3"]
+   537→                      : ["tool.how1", "tool.how2", "tool.how3"]
+   538→                    )
+   539→                  ).map((key, index) => (
+   540→                    <li
+   541→                      key={key}
+   542→                      className="rounded-card border border-border bg-card p-4"
+   543→                    >
+   544→                      <span className="flex size-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+   545→                        {index + 1}
+   546→                      </span>
+   547→                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+   548→                        {t(key)}
+   549→                      </p>
+   550→                    </li>
+   551→                  ))}
+   552→                </ol>
+   553→              </section>
+   554→
+   555→              {/* FAQ */}
+   556→              <section aria-labelledby="faq-heading">
+   557→                <h2 id="faq-heading" className="text-sm font-semibold text-foreground">
+   558→                  {t("tool.faqTitle")}
+   559→                </h2>
+   560→                <Accordion type="single" collapsible className="mt-3">
+   561→                  {config.faq.map((item, index) => (
+   562→                    <AccordionItem key={index} value={`faq-${index}`}>
+   563→                      <AccordionTrigger className="text-left text-sm">
+   564→                        {item.q[locale]}
+   565→                      </AccordionTrigger>
+   566→                      <AccordionContent className="text-xs leading-relaxed text-muted-foreground">
+   567→                        {item.a[locale]}
+   568→                      </AccordionContent>
+   569→                    </AccordionItem>
+   570→                  ))}
+   571→                </Accordion>
+   572→              </section>
+   573→            </div>
+   574→
+   575→            <aside className="flex flex-col gap-8">
+   576→              {/* Features */}
+   577→              <section aria-labelledby="features-heading">
+   578→                <h2 id="features-heading" className="flex items-center gap-2 text-sm font-semibold text-foreground">
+   579→                  <Sparkles className="size-4 text-primary" aria-hidden="true" />
+   580→                  {t("tool.featuresTitle")}
+   581→                </h2>
+   582→                <ul className="mt-3 flex flex-col gap-2.5">
+   583→                  {config.features.map((feature, index) => (
+   584→                    <li
+   585→                      key={index}
+   586→                      className="flex gap-2 rounded-card border border-border bg-card p-3 text-xs leading-relaxed text-muted-foreground"
+   587→                    >
+   588→                      <span
+   589→                        aria-hidden="true"
+   590→                        className="mt-0.5 size-1.5 shrink-0 rounded-full bg-primary"
+   591→                      />
+   592→                      {feature[locale]}
+   593→                    </li>
+   594→                  ))}
+   595→                </ul>
+   596→              </section>
+   597→
+   598→              {/* Related */}
+   599→              <section aria-labelledby="related-heading">
+   600→                <h2 id="related-heading" className="text-sm font-semibold text-foreground">
+   601→                  {t("tool.relatedTitle")}
+   602→                </h2>
+   603→                <ul className="mt-3 flex flex-col gap-1.5">
+   604→                  {relatedTools.map((item) => {
+   605→                    const RelatedIcon = item.icon;
+   606→                    return (
+   607→                      <li key={item.id}>
+   608→                        <a
+   609→                          href={item.enabled ? ROUTES.tool(item.id) : ROUTES.category(item.category)}
+   610→                          className="flex min-h-11 items-center gap-2.5 rounded-btn px-2 text-sm outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
+   611→                        >
+   612→                          <RelatedIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+   613→                          <span className="truncate text-foreground">
+   614→                            {item.name[locale]}
+   615→                          </span>
+   616→                          {!item.enabled ? (
+   617→                            <Badge variant="outline" className="ml-auto rounded-chip text-[10px] text-muted-foreground">
+   618→                              {t("tools.soonBadge")}
+   619→                            </Badge>
+   620→                          ) : null}
+   621→                        </a>
+   622→                      </li>
+   623→                    );
+   624→                  })}
+   625→                </ul>
+   626→              </section>
+   627→            </aside>
+   628→          </div>
+   629→        </section>
+   630→      ) : null}
+   631→
+   632→      {phase === "workspace" ? (
+   633→        <section className="pt-6">
+   634→          {/* Workspace toolbar (PRD §6.3 state 2) */}
+   635→          <div className="flex flex-wrap items-center gap-2">
+   636→            <Button
+   637→              type="button"
+   638→              variant="ghost"
+   639→              size="sm"
+   640→              onClick={() => setPhase("landing")}
+   641→              className="rounded-btn"
+   642→            >
+   643→              <ArrowLeft className="size-4" aria-hidden="true" />
+   644→              {t("tool.back")}
+   645→            </Button>
+   646→            <span className="ml-auto flex items-center gap-2">
+   647→              <Button
+   648→                type="button"
+   649→                variant="outline"
+   650→                size="sm"
+   651→                className="rounded-btn"
+   652→                onClick={() => setHelpOpen(true)}
+   653→                aria-label={t("tool.helpLabel")}
+   654→              >
+   655→                <CircleHelp className="size-4" aria-hidden="true" />
+   656→                <span className="hidden sm:inline">{t("tool.helpLabel")}</span>
+   657→              </Button>
+   658→              <Button
+   659→                type="button"
+   660→                variant="outline"
+   661→                size="sm"
+   662→                className="rounded-btn"
+   663→                onClick={clearAll}
+   664→              >
+   665→                <Trash2 className="size-4" aria-hidden="true" />
+   666→                {t("tool.clearAll")}
+   667→              </Button>
+   668→            </span>
+   669→          </div>
+   670→
+   671→          <div
+   672→            className={cn(
+   673→              "mt-4 grid grid-cols-1 gap-6",
+   674→              !surfaceOnly && !fullWidth && "lg:grid-cols-[minmax(0,1fr)_320px]"
+   675→            )}
+   676→          >
+   677→            {/* Main column: the surface owns file presentation when one is
+   678→                registered (PageGrid family); otherwise the classic
+   679→                FileList + add-more DropZone (PRD §6.3). Viewer tools go
+   680→                full-width — their surface is the entire product (§6.5). */}
+   681→            <div className="flex flex-col gap-3">
+   682→              {WorkspaceSurface && files.length > 0 ? (
+   683→                <WorkspaceSurface
+   684→                  files={files}
+   685→                  values={options}
+   686→                  onChange={handleOptionChange}
+   687→                  setFileOrder={setFiles}
+   688→                  setRunBlocked={handleRunBlocked}
+   689→                  addFiles={addFiles}
+   690→                  onChain={surfaceChain}
+   691→                />
+   692→              ) : (
+   693→                <>
+   694→                  <FileList
+   695→                    items={files}
+   696→                    onMove={moveFile}
+   697→                    onRemove={removeFile}
+   698→                  />
+   699→                  <DropZone
+   700→                    labelKey={addMoreLabelKey}
+   701→                    multiple={config.maxFiles > 1}
+   702→                    maxFiles={config.maxFiles}
+   703→                    acceptKind={acceptKind}
+   704→                    onAccept={addFiles}
+   705→                    currentCount={files.length}
+   706→                    className="border-dashed py-4"
+   707→                  />
+   708→                </>
+   709→              )}
+   710→            </div>
+   711→
+   712→            {/* Options: desktop side panel / mobile bottom sheet.
+   713→                Height budget: sticky header (top-20) + sticky CTA bar at the
+   714→                bottom — so the panel never slides under the CTA bar.
+   715→                Viewer tools have no options panel — full-width surface. */}
+   716→            {!surfaceOnly && !fullWidth ? (
+   717→            <aside className="hidden lg:block">
+   718→              <div className="sticky top-20 mb-20 flex max-h-[calc(100vh-11.5rem)] flex-col gap-5 overflow-y-auto scrollbar-thin rounded-card border border-border bg-card p-5">
+   719→                <div>
+   720→                  <h2 className="text-sm font-semibold text-foreground">
+   721→                    {t("tool.optionsTitle")}
+   722→                  </h2>
+   723→                  {CustomPanel ? (
+   724→                    <div className="mt-4">
+   725→                      <CustomPanel
+   726→                        files={files}
+   727→                        values={options}
+   728→                        onChange={handleOptionChange}
+   729→                        setFileOrder={setFiles}
+   730→                      />
+   731→                    </div>
+   732→                  ) : null}
+   733→                  <OptionsPanel
+   734→                    fields={config.options}
+   735→                    values={options}
+   736→                    onChange={handleOptionChange}
+   737→                    className="mt-4"
+   738→                  />
+   739→                </div>
+   740→                <p className="border-t border-border pt-3 text-[11px] text-muted-foreground">
+   741→                  {files.length > 0 && files.length < config.minFiles
+   742→                    ? t("tool.summaryMinFiles", { count: config.minFiles })
+   743→                    : t("tool.summary", {
+   744→                        count: files.length,
+   745→                        size: formatBytes(totalSize),
+   746→                      })}
+   747→                </p>
+   748→              </div>
+   749→            </aside>
+   750→            ) : null}
+   751→          </div>
+   752→
+   753→          {/* Sticky CTA (PRD §6.3): count + estimated size + action.
+   754→              Hidden for viewer tools — the surface owns its actions. */}
+   755→          {!surfaceOnly ? (
+   756→          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85">
+   757→            <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
+   758→              <div className="min-w-0 flex-1">
+   759→                <p
+   760→                  className={cn(
+   761→                    "flex items-center gap-1.5 truncate text-xs",
+   762→                    runBlockedKey !== null
+   763→                      ? "font-medium text-amber-600 dark:text-amber-400"
+   764→                      : files.length > 0 && files.length < config.minFiles
+   765→                        ? "font-medium text-primary"
+   766→                        : "text-muted-foreground"
+   767→                  )}
+   768→                >
+   769→                  {runBlockedKey !== null ? (
+   770→                    <TriangleAlert
+   771→                      className="size-3.5 shrink-0"
+   772→                      aria-hidden="true"
+   773→                    />
+   774→                  ) : null}
+   775→                  <span className="truncate">
+   776→                    {runBlockedKey !== null
+   777→                      ? t(runBlockedKey)
+   778→                      : files.length > 0 && files.length < config.minFiles
+   779→                        ? t("tool.summaryMinFiles", { count: config.minFiles })
+   780→                        : t("tool.summary", {
+   781→                            count: files.length,
+   782→                            size: formatBytes(totalSize),
+   783→                          })}
+   784→                  </span>
+   785→                </p>
+   786→                {chainFrom ? (
+   787→                  <p className="truncate text-[11px] text-primary">
+   788→                    {t("tool.chainFrom", { tool: chainFrom.name[locale] })}
+   789→                  </p>
+   790→                ) : null}
+   791→              </div>
+   792→              <Button
+   793→                type="button"
+   794→                variant="outline"
+   795→                size="touch"
+   796→                className="rounded-btn lg:hidden"
+   797→                onClick={() => setOptionsOpen(true)}
+   798→                hidden={fullWidth}
+   799→              >
+   800→                {t("tool.optionsButton")}
+   801→              </Button>
+   802→              <Button
+   803→                type="button"
+   804→                size="touch"
+   805→                className="rounded-btn font-semibold"
+   806→                onClick={startRun}
+   807→                disabled={runDisabled}
+   808→              >
+   809→                {ctaLabel}
+   810→                <ArrowRight className="size-4" aria-hidden="true" />
+   811→              </Button>
+   812→            </div>
+   813→          </div>
+   814→          ) : null}
+   815→
+   816→          {!surfaceOnly && !fullWidth ? (
+   817→          <BottomSheet
+   818→            open={optionsOpen}
+   819→            onOpenChange={setOptionsOpen}
+   820→            title={t("tool.optionsTitle")}
+   821→            description={tool.description[locale]}
+   822→            footer={
+   823→              <Button
+   824→                type="button"
+   825→                size="touch"
+   826→                className="w-full rounded-btn font-semibold"
+   827→                onClick={() => {
+   828→                  setOptionsOpen(false);
+   829→                  startRun();
+   830→                }}
+   831→                disabled={runDisabled}
+   832→              >
+   833→                {ctaLabel}
+   834→                <ArrowRight className="size-4" aria-hidden="true" />
+   835→              </Button>
+   836→            }
+   837→          >
+   838→            {CustomPanel ? (
+   839→              <div className="mb-4">
+   840→                <CustomPanel
+   841→                  files={files}
+   842→                  values={options}
+   843→                  onChange={handleOptionChange}
+   844→                  setFileOrder={setFiles}
+   845→                />
+   846→              </div>
+   847→            ) : null}
+   848→            <OptionsPanel
+   849→              fields={config.options}
+   850→              values={options}
+   851→              onChange={handleOptionChange}
+   852→            />
+   853→          </BottomSheet>
+   854→          ) : null}
+   855→        </section>
+   856→      ) : null}
+   857→
+   858→      {phase === "processing" ? (
+   859→        <ProcessingView
+   860→          toolName={tool.name[locale]}
+   861→          progress={progress}
+   862→          onCancel={cancelRun}
+   863→        />
+   864→      ) : null}
+   865→
+   866→      {phase === "result" ? (
+   867→        <ResultView
+   868→          tool={tool}
+   869→          outputs={outputs}
+   870→          inputBytes={inputBytes}
+   871→          runSummary={runSummary}
+   872→          chainFromName={chainFrom ? chainFrom.name[locale] : undefined}
+   873→          chainTargets={chainTargets}
+   874→          onChain={handleChain}
+   875→          onRemoveFromDevice={removeFromDevice}
+   876→          onStartOver={startOver}
+   877→        />
+   878→      ) : null}
+   879→
+   880→      {/* Help dialog */}
+   881→      <Modal
+   882→        open={helpOpen}
+   883→        onOpenChange={setHelpOpen}
+   884→        title={t("tool.helpTitle")}
+   885→        footer={
+   886→          <Button
+   887→            type="button"
+   888→            variant="default"
+   889→            size="touch"
+   890→            className="w-full rounded-btn sm:w-auto"
+   891→            onClick={() => setHelpOpen(false)}
+   892→          >
+   893→            {t("pro.action")}
+   894→          </Button>
+   895→        }
+   896→      >
+   897→        <div className="flex flex-col gap-3 text-sm text-muted-foreground">
+   898→          <p className="flex gap-2">
+   899→            <FilePlus2 className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+   900→            {t("tool.how2")}
+   901→          </p>
+   902→          <p>{t("tool.helpPrivacy")}</p>
+   903→        </div>
+   904→      </Modal>
+   905→    </div>
+   906→  );
+   907→}
+   908→

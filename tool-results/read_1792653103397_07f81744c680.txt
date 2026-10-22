@@ -1,0 +1,912 @@
+     1→/**
+     2→ * HTML to PDF renderer (RB2-d — the 74th tool) — the vector page
+     3→ * painter. Extracted so the worker and the smoke script drive the
+     4→ * EXACT drawing code headless in bun (word-to-pdf precedent): same
+     5→ * geometry, same wrap math, same pagination.
+     6→ *
+     7→ *  - A4 595.28×841.89 (or US Letter 612×792), 56 pt margins (28 pt
+     8→ *    narrow option), base font size option (small 10 / normal 11 /
+     9→ *    large 12.5 pt).
+    10→ *  - Headings scaled h1 22 pt → h6 12 pt at the 11 pt default
+    11→ *    (multiplied by base/11), bold when a bold face exists.
+    12→ *  - Paragraphs re-wrapped with mixed bold/italic/underline/mono runs;
+    13→ *    <br> is a hard break; over-long words char-break.
+    14→ *  - Lists: "•" bullets or "1." numbers, 14 pt hanging indent per depth.
+    15→ *  - Blockquotes: 18 pt indent + a vertical accent bar beside the text.
+    16→ *  - <hr>: a thin rule across the content width.
+    17→ *  - <pre>: Courier with a light-gray background rectangle, whitespace
+    18→ *    preserved line-for-line.
+    19→ *  - Tables: the excel-to-pdf grid pattern — measured column widths
+    20→ *    fit to the printable width, hairline borders, wrapped top-aligned
+    21→ *    cells, bold header row on a light fill, row-wise pagination.
+    22→ *  - Links: real underlined text; with showLinks on, the href is
+    23→ *    appended footnote-style (" (https://…)") after the link text.
+    24→ *  - Every glyph is drawText — REAL selectable vector text only.
+    25→ *
+    26→ * Fonts arrive already embedded (worker): `fonts` is either the
+    27→ * base-14 Helvetica/Courier set (pure-WinAnsi docs — no FontFile2) or
+    28→ * the Noto Devanagari subset for EVERYTHING (Regular only — bold,
+    29→ * italic and mono honestly fall back to the one face, hierarchy comes
+    30→ * from size alone).
+    31→ */
+    32→
+    33→import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
+    34→import { rgb, type RGB } from "pdf-lib";
+    35→
+    36→import { HEADING_SIZES, type HtmlBlock, type HtmlRun, type ParsedHtml } from "./model";
+    37→
+    38→/* ------------------------------------------------------------------ */
+    39→/* Geometry + palette                                                    */
+    40→/* ------------------------------------------------------------------ */
+    41→
+    42→const PAGE_SIZES: Record<"a4" | "letter", [number, number]> = {
+    43→  a4: [595.28, 841.89],
+    44→  letter: [612, 792],
+    45→};
+    46→
+    47→const MARGIN_PT: Record<"normal" | "narrow", number> = {
+    48→  normal: 56,
+    49→  narrow: 28,
+    50→};
+    51→
+    52→const PARA_AFTER = 4;
+    53→const HEADING_AFTER = 3;
+    54→const BULLET_AFTER = 2;
+    55→const LIST_STEP = 14; // indent per list depth level
+    56→const MARKER_GAP = 6; // marker to text
+    57→const QUOTE_INDENT = 18;
+    58→const QUOTE_BAR_X = 6; // bar offset inside the margin
+    59→const QUOTE_BAR_W = 2.4;
+    60→const RULE_GAP = 7;
+    61→const MIN_LINE = 40; // never wrap into a sliver
+    62→
+    63→const PRE_PAD = 8;
+    64→const PRE_AFTER = 8;
+    65→
+    66→const TABLE_PAD = 4;
+    67→const TABLE_MIN_COL = 32;
+    68→const TABLE_AFTER = 8;
+    69→
+    70→const COL_TEXT: RGB = rgb(0.09, 0.09, 0.09);
+    71→const COL_MUTED: RGB = rgb(0.3, 0.3, 0.3);
+    72→const COL_BORDER: RGB = rgb(0.62, 0.62, 0.62);
+    73→const COL_BAR: RGB = rgb(0.45, 0.45, 0.48);
+    74→const COL_PRE_BG: RGB = rgb(0.945, 0.945, 0.95);
+    75→const COL_HEADER_FILL: RGB = rgb(0.9, 0.91, 0.92);
+    76→
+    77→/** mono runs render a touch smaller — Courier's em box is wider. */
+    78→function monoSize(base: number): number {
+    79→  return base * 0.92;
+    80→}
+    81→
+    82→interface HeadingSpec {
+    83→  size: number;
+    84→  before: number;
+    85→  after: number;
+    86→  lh: number;
+    87→}
+    88→
+    89→function headingSpec(level: number, base: number): HeadingSpec {
+    90→  const size = (HEADING_SIZES[Math.min(6, Math.max(1, level)) - 1] ?? 12) * (base / 11);
+    91→  return {
+    92→    size,
+    93→    before: size * 0.55,
+    94→    after: Math.max(HEADING_AFTER, size * 0.3),
+    95→    lh: size * 1.28,
+    96→  };
+    97→}
+    98→
+    99→/* ------------------------------------------------------------------ */
+   100→/* Font set (worker embeds; render resolves)                            */
+   101→/* ------------------------------------------------------------------ */
+   102→
+   103→export interface HtmlFontSet {
+   104→  /** true when every string goes to the single Noto Devanagari face. */
+   105→  isNoto: boolean;
+   106→  resolve(bold: boolean, italic: boolean, mono: boolean): PDFFont;
+   107→}
+   108→
+   109→/* ------------------------------------------------------------------ */
+   110→/* Painter                                                              */
+   111→/* ------------------------------------------------------------------ */
+   112→
+   113→class Painter {
+   114→  readonly pdfDoc: PDFDocument;
+   115→  readonly fonts: HtmlFontSet;
+   116→  readonly pages: PDFPage[] = [];
+   117→  readonly pageW: number;
+   118→  readonly pageH: number;
+   119→  readonly margin: number;
+   120→  readonly contentW: number;
+   121→  readonly base: number;
+   122→  page: PDFPage;
+   123→  y!: number;
+   124→
+   125→  constructor(
+   126→    pdfDoc: PDFDocument,
+   127→    fonts: HtmlFontSet,
+   128→    pageSize: "a4" | "letter",
+   129→    marginKind: "normal" | "narrow",
+   130→    baseFontSize: number
+   131→  ) {
+   132→    this.pdfDoc = pdfDoc;
+   133→    this.fonts = fonts;
+   134→    this.base = baseFontSize;
+   135→    const [w, h] = PAGE_SIZES[pageSize];
+   136→    this.pageW = w;
+   137→    this.pageH = h;
+   138→    this.margin = MARGIN_PT[marginKind];
+   139→    this.contentW = w - this.margin * 2;
+   140→    this.page = this.newPage();
+   141→  }
+   142→
+   143→  newPage(): PDFPage {
+   144→    this.page = this.pdfDoc.addPage([this.pageW, this.pageH]);
+   145→    this.pages.push(this.page);
+   146→    this.y = this.pageH - this.margin;
+   147→    return this.page;
+   148→  }
+   149→
+   150→  /** Page-break unless `need` points fit above the bottom margin. */
+   151→  ensure(need: number): void {
+   152→    if (this.y - need < this.margin) this.newPage();
+   153→  }
+   154→
+   155→  font(bold: boolean, italic: boolean, m: boolean): PDFFont {
+   156→    return this.fonts.resolve(bold, italic, m);
+   157→  }
+   158→
+   159→  width(text: string, size: number, bold: boolean, italic: boolean, m: boolean): number {
+   160→    if (!text) return 0;
+   161→    return this.font(bold, italic, m).widthOfTextAtSize(text, size);
+   162→  }
+   163→
+   164→  /** Baseline-aligned draw at (x, yTop) — the house text() convention. */
+   165→  text(
+   166→    s: string,
+   167→    x: number,
+   168→    yTop: number,
+   169→    size: number,
+   170→    bold: boolean,
+   171→    italic: boolean,
+   172→    m: boolean,
+   173→    baseline: number,
+   174→    color: RGB = COL_TEXT
+   175→  ): void {
+   176→    if (!s) return;
+   177→    this.page.drawText(s, {
+   178→      x,
+   179→      y: yTop - baseline,
+   180→      size,
+   181→      font: this.font(bold, italic, m),
+   182→      color,
+   183→    });
+   184→  }
+   185→
+   186→  /** The underline stroke for <u> and links — a real vector line. */
+   187→  underline(x: number, yTop: number, w: number, baseline: number): void {
+   188→    if (w <= 0) return;
+   189→    const y = yTop - baseline - 1.4;
+   190→    this.page.drawLine({
+   191→      start: { x, y },
+   192→      end: { x: x + w, y },
+   193→      thickness: 0.6,
+   194→      color: COL_TEXT,
+   195→    });
+   196→  }
+   197→}
+   198→
+   199→/* ------------------------------------------------------------------ */
+   200→/* Styled line layout (mixed bold/italic/underline/mono runs)           */
+   201→/* ------------------------------------------------------------------ */
+   202→
+   203→interface Seg {
+   204→  text: string;
+   205→  bold: boolean;
+   206→  italic: boolean;
+   207→  underline: boolean;
+   208→  mono: boolean;
+   209→  size: number;
+   210→}
+   211→
+   212→interface Line {
+   213→  segs: Seg[];
+   214→  width: number;
+   215→  lh: number;
+   216→  /** baseline offset = the largest seg size in the line. */
+   217→  maxSeg: number;
+   218→}
+   219→
+   220→interface CharStyle {
+   221→  bold: boolean;
+   222→  italic: boolean;
+   223→  underline: boolean;
+   224→  mono: boolean;
+   225→}
+   226→
+   227→function sameSegStyle(a: Seg, b: CharStyle): boolean {
+   228→  return (
+   229→    a.bold === b.bold &&
+   230→    a.italic === b.italic &&
+   231→    a.underline === b.underline &&
+   232→    a.mono === b.mono
+   233→  );
+   234→}
+   235→
+   236→/**
+   237→ * Runs are split on whitespace — the only true word boundary — and each
+   238→ * word carries its per-segment styles. "\n" (from <br>) is a hard break
+   239→ * item. Link text is underlined; with showLinks the href is appended as
+   240→ * a plain-style footnote suffix.
+   241→ */
+   242→function paraItems(
+   243→  runs: HtmlRun[],
+   244→  base: number,
+   245→  showLinks: boolean,
+   246→  forceBold: boolean
+   247→): Item[] {
+   248→  let merged = "";
+   249→  const styles: CharStyle[] = [];
+   250→  for (const r of runs) {
+   251→    if (!r.text) continue;
+   252→    const isLink = r.link !== undefined && r.link !== "";
+   253→    for (const ch of r.text) {
+   254→      merged += ch;
+   255→      styles.push({
+   256→        bold: r.bold || forceBold,
+   257→        italic: r.italic,
+   258→        underline: r.underline || isLink,
+   259→        mono: r.mono,
+   260→      });
+   261→    }
+   262→    if (isLink && showLinks) {
+   263→      for (const ch of ` (${r.link})`) {
+   264→        merged += ch;
+   265→        styles.push({ bold: false, italic: false, underline: false, mono: false });
+   266→      }
+   267→    }
+   268→  }
+   269→  const sizeOf = (st: CharStyle): number => (st.mono ? monoSize(base) : base);
+   270→
+   271→  const items: Item[] = [];
+   272→  const n = merged.length;
+   273→  let i = 0;
+   274→  while (i < n) {
+   275→    const ch = merged[i];
+   276→    if (ch === "\n") {
+   277→      items.push({ kind: "break" });
+   278→      i += 1;
+   279→      continue;
+   280→    }
+   281→    if (ch === " " || ch === "\t") {
+   282→      i += 1;
+   283→      continue;
+   284→    }
+   285→    const start = i;
+   286→    while (i < n) {
+   287→      const c = merged[i];
+   288→      if (c === " " || c === "\t" || c === "\n") break;
+   289→      // \u00A0 renders as a space but never breaks a word
+   290→      i += 1;
+   291→    }
+   292→    const segs: Seg[] = [];
+   293→    let s = start;
+   294→    while (s < i) {
+   295→      let e = s + 1;
+   296→      while (
+   297→        e < i &&
+   298→        styles[e].bold === styles[s].bold &&
+   299→        styles[e].italic === styles[s].italic &&
+   300→        styles[e].underline === styles[s].underline &&
+   301→        styles[e].mono === styles[s].mono
+   302→      ) {
+   303→        e += 1;
+   304→      }
+   305→      segs.push({
+   306→        text: merged.slice(s, e),
+   307→        bold: styles[s].bold,
+   308→        italic: styles[s].italic,
+   309→        underline: styles[s].underline,
+   310→        mono: styles[s].mono,
+   311→        size: sizeOf(styles[s]),
+   312→      });
+   313→      s = e;
+   314→    }
+   315→    items.push({ kind: "word", segs });
+   316→  }
+   317→  return items;
+   318→}
+   319→
+   320→type Item = { kind: "word"; segs: Seg[] } | { kind: "break" };
+   321→
+   322→const segW = (p: Painter, seg: Seg): number =>
+   323→  p.width(seg.text, seg.size, seg.bold, seg.italic, seg.mono);
+   324→const wordW = (p: Painter, segs: Seg[]): number =>
+   325→  segs.reduce((sum, seg) => sum + segW(p, seg), 0);
+   326→
+   327→/** Over-wide word → char-level pieces that each fit (styles preserved). */
+   328→function hardBreak(p: Painter, segs: Seg[], width: number): Seg[][] {
+   329→  const pieces: Seg[][] = [];
+   330→  let cur: Seg[] = [];
+   331→  let curW = 0;
+   332→  for (const seg of segs) {
+   333→    let text = seg.text;
+   334→    let off = 0;
+   335→    while (off < text.length) {
+   336→      let take = text.length - off;
+   337→      while (
+   338→        take > 1 &&
+   339→        curW + p.width(text.slice(off, off + take), seg.size, seg.bold, seg.italic, seg.mono) > width
+   340→      ) {
+   341→        take -= 1;
+   342→      }
+   343→      const piece = text.slice(off, off + take);
+   344→      const pieceW = p.width(piece, seg.size, seg.bold, seg.italic, seg.mono);
+   345→      if (curW > 0 && curW + pieceW > width) {
+   346→        pieces.push(cur);
+   347→        cur = [];
+   348→        curW = 0;
+   349→        continue; // retry the same piece on an empty line
+   350→      }
+   351→      const last = cur[cur.length - 1];
+   352→      if (last && sameSegStyle(last, seg)) {
+   353→        last.text += piece;
+   354→      } else {
+   355→        cur.push({ ...seg, text: piece });
+   356→      }
+   357→      curW += pieceW;
+   358→      off += take;
+   359→    }
+   360→  }
+   361→  if (cur.length > 0) pieces.push(cur);
+   362→  return pieces;
+   363→}
+   364→
+   365→/** Greedy fill of styled words; always returns at least one line. */
+   366→function layoutLines(
+   367→  p: Painter,
+   368→  runs: HtmlRun[],
+   369→  width: number,
+   370→  base: number,
+   371→  showLinks: boolean,
+   372→  forceBold: boolean,
+   373→  baseLH: number
+   374→): Line[] {
+   375→  const items = paraItems(runs, base, showLinks, forceBold);
+   376→  const lines: Line[] = [];
+   377→  let segs: Seg[] = [];
+   378→  let lineW = 0;
+   379→  let maxSeg = 0;
+   380→
+   381→  const flush = (): void => {
+   382→    lines.push({
+   383→      segs,
+   384→      width: lineW,
+   385→      lh: Math.max(baseLH, maxSeg * 1.32),
+   386→      maxSeg: Math.max(maxSeg, 1),
+   387→    });
+   388→    segs = [];
+   389→    lineW = 0;
+   390→    maxSeg = 0;
+   391→  };
+   392→
+   393→  const addWord = (segsIn: Seg[], spaceBefore: boolean): void => {
+   394→    const w = wordW(p, segsIn);
+   395→    const spaceW = spaceBefore
+   396→      ? p.width(" ", segsIn[0].size, false, false, false)
+   397→      : 0;
+   398→    if (w + spaceW > width && width > 0) {
+   399→      // pathological single word — hard-break it first (pieces join
+   400→      // without spaces; only the first can carry the preceding space)
+   401→      const pieces = hardBreak(p, segsIn, width);
+   402→      pieces.forEach((piece, idx) => {
+   403→        addWord(piece, idx === 0 ? spaceBefore && lineW > 0 : false);
+   404→      });
+   405→      return;
+   406→    }
+   407→    if (lineW > 0 && lineW + spaceW + w > width) flush();
+   408→    const needSpace = lineW > 0 && spaceBefore;
+   409→    let first = true;
+   410→    for (const seg of segsIn) {
+   411→      if (first && needSpace) {
+   412→        const last = segs[segs.length - 1];
+   413→        if (last && sameSegStyle(last, seg)) {
+   414→          last.text += " " + seg.text;
+   415→        } else {
+   416→          segs.push({ ...seg, text: " " + seg.text });
+   417→        }
+   418→      } else {
+   419→        const last = segs[segs.length - 1];
+   420→        if (!first && last && sameSegStyle(last, seg)) {
+   421→          last.text += seg.text;
+   422→        } else {
+   423→          segs.push({ ...seg });
+   424→        }
+   425→      }
+   426→      first = false;
+   427→    }
+   428→    lineW += spaceW + w;
+   429→    for (const seg of segsIn) maxSeg = Math.max(maxSeg, seg.size);
+   430→  };
+   431→
+   432→  let haveWord = false;
+   433→  for (const item of items) {
+   434→    if (item.kind === "break") {
+   435→      flush();
+   436→      continue;
+   437→    }
+   438→    addWord(item.segs, haveWord);
+   439→    haveWord = true;
+   440→  }
+   441→  if (segs.length > 0 || lines.length === 0) flush();
+   442→  return lines;
+   443→}
+   444→
+   445→/** Plain (unstyled) wrap for table cells. */
+   446→function layoutPlain(
+   447→  p: Painter,
+   448→  text: string,
+   449→  width: number,
+   450→  size: number,
+   451→  bold: boolean
+   452→): string[] {
+   453→  const out: string[] = [];
+   454→  for (const para of text.split("\n")) {
+   455→    if (para === "") {
+   456→      out.push("");
+   457→      continue;
+   458→    }
+   459→    let line = "";
+   460→    let lineW = 0;
+   461→    for (const word of para.split(" ")) {
+   462→      if (word === "") continue;
+   463→      let piece = word;
+   464→      while (p.width(piece, size, bold, false, false) > width && piece.length > 1) {
+   465→        let cut = piece.length;
+   466→        while (cut > 1 && p.width(piece.slice(0, cut - 1), size, bold, false, false) > width) {
+   467→          cut -= 1;
+   468→        }
+   469→        out.push((line ? line + " " : "") + piece.slice(0, Math.max(1, cut - 1)));
+   470→        line = "";
+   471→        lineW = 0;
+   472→        piece = piece.slice(Math.max(1, cut - 1));
+   473→      }
+   474→      const w = p.width(piece, size, bold, false, false);
+   475→      const space = lineW > 0 ? p.width(" ", size, bold, false, false) : 0;
+   476→      if (lineW > 0 && lineW + space + w > width) {
+   477→        out.push(line);
+   478→        line = piece;
+   479→        lineW = w;
+   480→      } else {
+   481→        line = line ? line + " " + piece : piece;
+   482→        lineW += space + w;
+   483→      }
+   484→    }
+   485→    if (line) out.push(line);
+   486→  }
+   487→  return out;
+   488→}
+   489→
+   490→/* ------------------------------------------------------------------ */
+   491→/* Block renderers                                                      */
+   492→/* ------------------------------------------------------------------ */
+   493→
+   494→function drawTextLines(
+   495→  p: Painter,
+   496→  runs: HtmlRun[],
+   497→  x: number,
+   498→  width: number,
+   499→  baseLH: number,
+   500→  forceBold: boolean,
+   501→  opts: RenderOpts,
+   502→  color: RGB
+   503→): number {
+   504→  const lines = layoutLines(
+   505→    p,
+   506→    runs,
+   507→    width,
+   508→    opts.baseFontSize,
+   509→    opts.showLinks,
+   510→    forceBold,
+   511→    baseLH
+   512→  );
+   513→  for (const ln of lines) {
+   514→    p.ensure(ln.lh);
+   515→    let cx = x;
+   516→    for (const seg of ln.segs) {
+   517→      if (seg.text) {
+   518→        p.text(
+   519→          seg.text,
+   520→          cx,
+   521→          p.y,
+   522→          seg.size,
+   523→          seg.bold,
+   524→          seg.italic,
+   525→          seg.mono,
+   526→          ln.maxSeg,
+   527→          color
+   528→        );
+   529→        if (seg.underline) {
+   530→          p.underline(
+   531→            cx,
+   532→            p.y,
+   533→            p.width(seg.text, seg.size, seg.bold, seg.italic, seg.mono),
+   534→            ln.maxSeg
+   535→          );
+   536→        }
+   537→      }
+   538→      cx += p.width(seg.text, seg.size, seg.bold, seg.italic, seg.mono);
+   539→    }
+   540→    p.y -= ln.lh;
+   541→  }
+   542→  return lines.length;
+   543→}
+   544→
+   545→type RenderOpts = HtmlRenderOpts;
+   546→
+   547→function drawHeading(
+   548→  p: Painter,
+   549→  blk: Extract<HtmlBlock, { kind: "heading" }>,
+   550→  opts: RenderOpts
+   551→): void {
+   552→  const spec = headingSpec(blk.level, opts.baseFontSize);
+   553→  // keep the heading with at least its first content line
+   554→  p.ensure(spec.lh + spec.after + opts.baseFontSize * 1.36);
+   555→  p.y -= spec.before;
+   556→  drawTextLines(
+   557→    p,
+   558→    blk.runs,
+   559→    p.margin,
+   560→    Math.max(MIN_LINE, p.contentW),
+   561→    spec.lh,
+   562→    true,
+   563→    opts,
+   564→    COL_TEXT
+   565→  );
+   566→  p.y -= spec.after;
+   567→}
+   568→
+   569→function drawPara(
+   570→  p: Painter,
+   571→  blk: Extract<HtmlBlock, { kind: "para" }>,
+   572→  opts: RenderOpts
+   573→): void {
+   574→  drawTextLines(
+   575→    p,
+   576→    blk.runs,
+   577→    p.margin,
+   578→    Math.max(MIN_LINE, p.contentW),
+   579→    opts.baseFontSize * 1.36,
+   580→    false,
+   581→    opts,
+   582→    COL_TEXT
+   583→  );
+   584→  p.y -= PARA_AFTER;
+   585→}
+   586→
+   587→function drawListItem(
+   588→  p: Painter,
+   589→  blk: Extract<HtmlBlock, { kind: "list-item" }>,
+   590→  opts: RenderOpts
+   591→): void {
+   592→  const level = Math.min(8, Math.max(0, blk.depth));
+   593→  const markerX = p.margin + 4 + LIST_STEP * level;
+   594→  const marker = blk.ordered && blk.number > 0 ? `${blk.number}.` : "\u2022";
+   595→  const markerSize = opts.baseFontSize;
+   596→  const markerW = p.width(marker, markerSize, false, false, false);
+   597→  const textX = markerX + markerW + MARKER_GAP;
+   598→  const avail = Math.max(MIN_LINE, p.margin + p.contentW - textX);
+   599→
+   600→  const lines = layoutLines(
+   601→    p,
+   602→    blk.runs,
+   603→    avail,
+   604→    opts.baseFontSize,
+   605→    opts.showLinks,
+   606→    false,
+   607→    opts.baseFontSize * 1.36
+   608→  );
+   609→  let first = true;
+   610→  for (const ln of lines) {
+   611→    p.ensure(ln.lh);
+   612→    if (first) {
+   613→      p.text(marker, markerX, p.y, markerSize, false, false, false, ln.maxSeg);
+   614→    }
+   615→    let cx = textX;
+   616→    for (const seg of ln.segs) {
+   617→      if (seg.text) {
+   618→        p.text(seg.text, cx, p.y, seg.size, seg.bold, seg.italic, seg.mono, ln.maxSeg);
+   619→        if (seg.underline) {
+   620→          p.underline(
+   621→            cx,
+   622→            p.y,
+   623→            p.width(seg.text, seg.size, seg.bold, seg.italic, seg.mono),
+   624→            ln.maxSeg
+   625→          );
+   626→        }
+   627→      }
+   628→      cx += p.width(seg.text, seg.size, seg.bold, seg.italic, seg.mono);
+   629→    }
+   630→    p.y -= ln.lh;
+   631→    first = false;
+   632→  }
+   633→  p.y -= BULLET_AFTER;
+   634→}
+   635→
+   636→function drawQuote(
+   637→  p: Painter,
+   638→  blk: Extract<HtmlBlock, { kind: "quote" }>,
+   639→  opts: RenderOpts
+   640→): void {
+   641→  const textX = p.margin + QUOTE_INDENT;
+   642→  const avail = Math.max(MIN_LINE, p.contentW - QUOTE_INDENT);
+   643→  const lines = layoutLines(
+   644→    p,
+   645→    blk.runs,
+   646→    avail,
+   647→    opts.baseFontSize,
+   648→    opts.showLinks,
+   649→    false,
+   650→    opts.baseFontSize * 1.36
+   651→  );
+   652→  const barX = p.margin + QUOTE_BAR_X;
+   653→  for (const ln of lines) {
+   654→    p.ensure(ln.lh);
+   655→    // one accent-bar piece per line — pieces stack seamlessly and
+   656→    // restart correctly on continuation pages
+   657→    p.page.drawLine({
+   658→      start: { x: barX, y: p.y - ln.lh },
+   659→      end: { x: barX, y: p.y },
+   660→      thickness: QUOTE_BAR_W,
+   661→      color: COL_BAR,
+   662→    });
+   663→    let cx = textX;
+   664→    for (const seg of ln.segs) {
+   665→      if (seg.text) {
+   666→        p.text(
+   667→          seg.text,
+   668→          cx,
+   669→          p.y,
+   670→          seg.size,
+   671→          seg.bold,
+   672→          seg.italic,
+   673→          seg.mono,
+   674→          ln.maxSeg,
+   675→          COL_MUTED
+   676→        );
+   677→        if (seg.underline) {
+   678→          p.underline(
+   679→            cx,
+   680→            p.y,
+   681→            p.width(seg.text, seg.size, seg.bold, seg.italic, seg.mono),
+   682→            ln.maxSeg
+   683→          );
+   684→        }
+   685→      }
+   686→      cx += p.width(seg.text, seg.size, seg.bold, seg.italic, seg.mono);
+   687→    }
+   688→    p.y -= ln.lh;
+   689→  }
+   690→  p.y -= PARA_AFTER;
+   691→}
+   692→
+   693→function drawRule(p: Painter): void {
+   694→  p.ensure(RULE_GAP * 2 + 1);
+   695→  const y = p.y - RULE_GAP;
+   696→  p.page.drawLine({
+   697→    start: { x: p.margin, y },
+   698→    end: { x: p.margin + p.contentW, y },
+   699→    thickness: 0.8,
+   700→    color: COL_BORDER,
+   701→  });
+   702→  p.y = y - RULE_GAP;
+   703→}
+   704→
+   705→function drawPre(
+   706→  p: Painter,
+   707→  blk: Extract<HtmlBlock, { kind: "pre" }>,
+   708→  opts: RenderOpts
+   709→): void {
+   710→  const size = monoSize(opts.baseFontSize * 0.96);
+   711→  const lh = size * 1.35;
+   712→  const inner = Math.max(MIN_LINE, p.contentW - PRE_PAD * 2);
+   713→  const lines: string[] = [];
+   714→  for (const raw of blk.text.split("\n")) {
+   715→    if (raw === "") {
+   716→      lines.push("");
+   717→      continue;
+   718→    }
+   719→    if (p.width(raw, size, false, false, true) <= inner) {
+   720→      lines.push(raw);
+   721→      continue;
+   722→    }
+   723→    // char-break over-long pre lines
+   724→    let cur = "";
+   725→    for (const ch of raw) {
+   726→      const cand = cur + ch;
+   727→      if (p.width(cand, size, false, false, true) > inner) {
+   728→        lines.push(cur);
+   729→        cur = ch;
+   730→      } else {
+   731→        cur = cand;
+   732→      }
+   733→    }
+   734→    if (cur) lines.push(cur);
+   735→  }
+   736→  p.ensure(lh + PRE_PAD);
+   737→  p.y -= PRE_PAD;
+   738→  for (const line of lines) {
+   739→    p.ensure(lh);
+   740→    // the background rect follows its line onto continuation pages
+   741→    p.page.drawRectangle({
+   742→      x: p.margin,
+   743→      y: p.y - lh,
+   744→      width: p.contentW,
+   745→      height: lh,
+   746→      color: COL_PRE_BG,
+   747→    });
+   748→    if (line) {
+   749→      p.text(line, p.margin + PRE_PAD, p.y, size, false, false, true, size);
+   750→    }
+   751→    p.y -= lh;
+   752→  }
+   753→  p.y -= PRE_PAD + PRE_AFTER;
+   754→}
+   755→
+   756→function columnWidths(p: Painter, rows: string[][], ncols: number, size: number): number[] {
+   757→  const natural = new Array<number>(ncols).fill(0);
+   758→  const minWord = new Array<number>(ncols).fill(TABLE_MIN_COL);
+   759→  for (const row of rows) {
+   760→    for (let c = 0; c < ncols; c++) {
+   761→      const cell = row[c] ?? "";
+   762→      const full = p.width(cell, size, false, false, false);
+   763→      if (full > natural[c]) natural[c] = Math.min(full, p.contentW);
+   764→      for (const word of cell.split(/\s+/)) {
+   765→        const w = p.width(word, size, false, false, false) + TABLE_PAD * 2;
+   766→        if (w > minWord[c]) minWord[c] = Math.min(w, p.contentW);
+   767→      }
+   768→    }
+   769→  }
+   770→  const ideal = natural.map((n, c) =>
+   771→    Math.max(Math.min(n, p.contentW), minWord[c], TABLE_MIN_COL)
+   772→  );
+   773→  const sum = ideal.reduce((a, b) => a + b, 0);
+   774→  // fit to the printable width (the excel-to-pdf pattern)
+   775→  if (sum <= 0) return ideal;
+   776→  const scale = p.contentW / sum;
+   777→  return ideal.map((w) => Math.max(w * scale, 24));
+   778→}
+   779→
+   780→function drawTable(
+   781→  p: Painter,
+   782→  blk: Extract<HtmlBlock, { kind: "table" }>,
+   783→  opts: RenderOpts
+   784→): void {
+   785→  const rows = blk.grid;
+   786→  if (rows.length === 0) return;
+   787→  const ncols = Math.max(1, ...rows.map((r) => r.length));
+   788→  const size = opts.baseFontSize * 0.82;
+   789→  const lh = size * 1.35;
+   790→  const widths = columnWidths(p, rows, ncols, size);
+   791→  const boldRow = blk.headerRow === true;
+   792→
+   793→  // keep the first row + one more line together on a page
+   794→  let firstRowLines = 1;
+   795→  rows[0].forEach((cell, c) => {
+   796→    firstRowLines = Math.max(
+   797→      firstRowLines,
+   798→      layoutPlain(p, cell, widths[c] - TABLE_PAD * 2, size, boldRow).length
+   799→    );
+   800→  });
+   801→  p.ensure(firstRowLines * lh + TABLE_PAD * 2 + lh);
+   802→
+   803→  for (let ri = 0; ri < rows.length; ri++) {
+   804→    const row = rows[ri];
+   805→    const isHeader = boldRow && ri === 0;
+   806→    const cellLines = row.map(
+   807→      (cell, c) =>
+   808→        layoutPlain(p, cell, widths[c] - TABLE_PAD * 2, size, isHeader).slice(0, 60)
+   809→    );
+   810→    let rowLines = 1;
+   811→    for (const lines of cellLines) rowLines = Math.max(rowLines, lines.length);
+   812→    const rowH = rowLines * lh + TABLE_PAD * 2;
+   813→    p.ensure(rowH);
+   814→    let x = p.margin;
+   815→    for (let c = 0; c < ncols; c++) {
+   816→      const w = widths[c];
+   817→      if (isHeader) {
+   818→        p.page.drawRectangle({
+   819→          x,
+   820→          y: p.y - rowH,
+   821→          width: w,
+   822→          height: rowH,
+   823→          color: COL_HEADER_FILL,
+   824→        });
+   825→      }
+   826→      p.page.drawRectangle({
+   827→        x,
+   828→        y: p.y - rowH,
+   829→        width: w,
+   830→        height: rowH,
+   831→        borderColor: COL_BORDER,
+   832→        borderWidth: 0.5,
+   833→      });
+   834→      const lines = cellLines[c] ?? [];
+   835→      let ty = p.y - TABLE_PAD;
+   836→      for (const line of lines) {
+   837→        if (line) p.text(line, x + TABLE_PAD, ty, size, isHeader, false, false, size);
+   838→        ty -= lh;
+   839→      }
+   840→      x += w;
+   841→    }
+   842→    p.y -= rowH;
+   843→  }
+   844→  p.y -= TABLE_AFTER;
+   845→}
+   846→
+   847→/* ------------------------------------------------------------------ */
+   848→/* Entry point                                                          */
+   849→/* ------------------------------------------------------------------ */
+   850→
+   851→export interface HtmlRenderOpts {
+   852→  pageSize: "a4" | "letter";
+   853→  margin: "normal" | "narrow";
+   854→  /** body pt (small 10 / normal 11 / large 12.5). */
+   855→  baseFontSize: number;
+   856→  /** append link hrefs footnote-style after their text. */
+   857→  showLinks: boolean;
+   858→}
+   859→
+   860→export interface HtmlRenderReport {
+   861→  pages: number;
+   862→}
+   863→
+   864→/**
+   865→ * Paint the whole document into `pdfDoc` (pages added as needed).
+   866→ * `fonts` must already be embedded (the base-14 set OR the Noto
+   867→ * subset); bold/italic/mono honestly fall back to the single face in
+   868→ * Noto mode.
+   869→ */
+   870→export function drawHtmlPdf(
+   871→  pdfDoc: PDFDocument,
+   872→  fonts: HtmlFontSet,
+   873→  doc: ParsedHtml,
+   874→  opts: HtmlRenderOpts
+   875→): HtmlRenderReport {
+   876→  const p = new Painter(
+   877→    pdfDoc,
+   878→    fonts,
+   879→    opts.pageSize === "letter" ? "letter" : "a4",
+   880→    opts.margin === "narrow" ? "narrow" : "normal",
+   881→    Math.min(14, Math.max(8, opts.baseFontSize))
+   882→  );
+   883→  for (const blk of doc.blocks) {
+   884→    switch (blk.kind) {
+   885→      case "heading":
+   886→        drawHeading(p, blk, opts);
+   887→        break;
+   888→      case "para":
+   889→        drawPara(p, blk, opts);
+   890→        break;
+   891→      case "list-item":
+   892→        drawListItem(p, blk, opts);
+   893→        break;
+   894→      case "quote":
+   895→        drawQuote(p, blk, opts);
+   896→        break;
+   897→      case "rule":
+   898→        drawRule(p);
+   899→        break;
+   900→      case "pre":
+   901→        drawPre(p, blk, opts);
+   902→        break;
+   903→      case "table":
+   904→        drawTable(p, blk, opts);
+   905→        break;
+   906→      default:
+   907→        break;
+   908→    }
+   909→  }
+   910→  return { pages: p.pages.length };
+   911→}
+   912→

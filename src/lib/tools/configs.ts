@@ -79,6 +79,12 @@ import { config as epubToPdf } from "../../../tools/epub-to-pdf/config";
 import { config as pdfToPowerpoint } from "../../../tools/pdf-to-powerpoint/config";
 import { config as webOptimizePdf } from "../../../tools/web-optimize-pdf/config";
 import { config as repairPdf } from "../../../tools/repair-pdf/config";
+import { config as pdfToSvg } from "../../../tools/pdf-to-svg/config";
+import { config as pdfToMarkdown } from "../../../tools/pdf-to-markdown/config";
+import { config as pdfToHtml } from "../../../tools/pdf-to-html/config";
+import { config as pdfToOdt } from "../../../tools/pdf-to-odt/config";
+import { config as publisherToPdf } from "../../../tools/publisher-to-pdf/config";
+import { config as webpageToPdf } from "../../../tools/webpage-to-pdf/config";
 
 
 /**
@@ -169,6 +175,12 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [pdfToPowerpoint.toolId]: pdfToPowerpoint,
   [webOptimizePdf.toolId]: webOptimizePdf,
   [repairPdf.toolId]: repairPdf,
+  [pdfToSvg.toolId]: pdfToSvg,
+  [pdfToOdt.toolId]: pdfToOdt,
+  [publisherToPdf.toolId]: publisherToPdf,
+  [pdfToHtml.toolId]: pdfToHtml,
+  [pdfToMarkdown.toolId]: pdfToMarkdown,
+  [webpageToPdf.toolId]: webpageToPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

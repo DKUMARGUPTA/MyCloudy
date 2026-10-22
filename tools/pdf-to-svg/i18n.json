@@ -1,0 +1,56 @@
+{
+  "en": {
+    "psvg": {
+      "how1": "Drop a PDF — its drawing operators are read on your device, nothing is uploaded.",
+      "how2": "Check the page count, the exact point size every SVG will carry, and the honest element map.",
+      "how3": "Press the convert button — each page downloads as a standalone vector .svg (ZIP for the whole set).",
+      "loading": "Reading the page geometry…",
+      "readError": "This PDF could not be read — it may be damaged or password-protected.",
+      "ctaReading": "Reading the file…",
+      "reportTitle": "Your file",
+      "statPages": "Pages",
+      "pagesSpec": "exporting range: {spec}",
+      "statSize": "Page size",
+      "statSizeNote": "the viewBox of every exported SVG — DPI-independent vector",
+      "statImages": "Images",
+      "imagesOn": "Embedded photos become base64 PNG inside the SVG",
+      "imagesOff": "Skipped — lean text-and-shapes vector output",
+      "elementsTitle": "What converts",
+      "elementText": "Text → selectable, searchable <text> elements with their exact size, position, colour and bold/italic style.",
+      "elementShapes": "Rectangles, lines and curves → <rect>/<path> with the page transform applied — fills, strokes and dash patterns included.",
+      "elementImagesOn": "Embedded images → base64 PNG placed at their exact page geometry.",
+      "elementImagesOff": "Images → skipped by your switch.",
+      "honestTitle": "Vector, honestly",
+      "honestBody": "This is a real vector conversion of the PDF's own drawing operators — not a screenshot. Text stays selectable and the file scales losslessly at any zoom. Gradients and patterns are omitted, clipping is approximated, and image masks are skipped; everything else converts at full fidelity.",
+      "honestFonts": "Fonts are substituted by family name, so glyph widths and complex-script shaping (Devanagari conjuncts, for example) can differ slightly from the PDF's embedded fonts. Text may not be pixel-identical — but it stays real, selectable text.",
+      "honestRaster": "Need pixels instead? PDF to JPG, PNG, WebP or TIFF rasterize pages at your chosen DPI — those tools are the right fit for photos and scans."
+    }
+  },
+  "hi": {
+    "psvg": {
+      "how1": "PDF डालें — उसके ड्रॉइंग ऑपरेटर आपके डिवाइस पर पढ़े जाते हैं, कुछ भी अपलोड नहीं होता।",
+      "how2": "पेज गिनती, हर SVG का पक्का पॉइंट साइज़ और ईमानदार एलिमेंट मैप देखें।",
+      "how3": "कन्वर्ट बटन दबाएँ — हर पेज अपनी अलग वेक्टर .svg फ़ाइल बनता है (पूरे सेट के लिए ZIP)।",
+      "loading": "पेज ज्यामिति पढ़ी जा रही है…",
+      "readError": "यह PDF पढ़ी नहीं जा सकी — शायद ख़राब है या पासवर्ड से सुरक्षित है।",
+      "ctaReading": "फ़ाइल पढ़ी जा रही है…",
+      "reportTitle": "आपकी फ़ाइल",
+      "statPages": "पेज",
+      "pagesSpec": "एक्सपोर्ट रेंज: {spec}",
+      "statSize": "पेज साइज़",
+      "statSizeNote": "हर एक्सपोर्ट हुई SVG का viewBox — DPI से आज़ाद वेक्टर",
+      "statImages": "इमेज",
+      "imagesOn": "एम्बेड तस्वीरें SVG के अंदर base64 PNG बनती हैं",
+      "imagesOff": "छोड़ी जाती हैं — हल्की टेक्स्ट-आकृति वेक्टर फ़ाइल",
+      "elementsTitle": "क्या बदलता है",
+      "elementText": "टेक्स्ट → चुनने योग्य, खोजने योग्य <text> एलिमेंट — सटीक साइज़, जगह, रंग और बोल्ड/इटैलिक के साथ।",
+      "elementShapes": "आयत, लाइनें और कर्व → <rect>/<path>, पेज ट्रांसफ़ॉर्म लगाकर — भराव, स्ट्रोक और डैश पैटर्न समेत।",
+      "elementImagesOn": "एम्बेड इमेज → base64 PNG, अपनी पक्की पेज जगह पर।",
+      "elementImagesOff": "इमेज → आपके स्विच के कारण छोड़ी गईं।",
+      "honestTitle": "वेक्टर, ईमानदारी से",
+      "honestBody": "यह PDF के अपने ड्रॉइंग ऑपरेटरों का असली वेक्टर रूपांतरण है — स्क्रीनशॉट नहीं। टेक्स्ट चुनने योग्य रहता है और फ़ाइल किसी भी ज़ूम पर बिना नुकसान बड़ी होती है। ग्रेडिएंट और पैटर्न हटाए जाते हैं, क्लिपिंग का अनुमान लगाया जाता है, इमेज मास्क छोड़े जाते हैं; बाकी सब पूरी बेफ़िक्री बदलता है।",
+      "honestFonts": "फ़ॉन्ट नाम से बदले जाते हैं, इसलिए ग्लिफ़ चौड़ाई और जुड़ी लिपि (जैसे देवनागरी संयुक्ताक्षर) PDF के एम्बेड फ़ॉन्ट से थोड़ी अलग दिख सकती है। टेक्स्ट पिक्सेल-दर-पिक्सेल नहीं भी हो सकता — लेकिन असली, चुनने योग्य टेक्स्ट ही रहता है।",
+      "honestRaster": "पिक्सल चाहिए? PDF to JPG, PNG, WebP या TIFF आपकी चुनी DPI पर पेज रास्टर करते हैं — तस्वीरों और स्कैन के लिए वही टूल सही हैं।"
+    }
+  }
+}

@@ -47,6 +47,12 @@ export interface RunDetail {
   notes?: number;
   /** Words of text written into the output (write-pdf). */
   words?: number;
+  /** Characters of salvaged story text (publisher-to-pdf). */
+  chars?: number;
+  /** Text-bearing streams found in the input (publisher-to-pdf). */
+  streams?: number;
+  /** Streams whose sector chain broke before their size (publisher-to-pdf). */
+  streamsFailed?: number;
   /** Paragraphs extracted into the output (pdf-to-word). */
   paragraphs?: number;
   /** Headings detected in the output (pdf-to-word). */

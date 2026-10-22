@@ -1,0 +1,952 @@
+     1→import type { OptionValues } from "@/lib/tools/config-types";
+     2→import type {
+     3→  List,
+     4→  ListItem,
+     5→  PhrasingContent,
+     6→  Root,
+     7→  RootContent,
+     8→} from "mdast";
+     9→
+    10→/**
+    11→ * Markdown → PDF engine (PRD §8.6) — PURE. `parseMarkdown` walks the mdast
+    12→ * (mdast-util-from-markdown@2.0.2, MIT — chosen over "marked" because our
+    13→ * layout engine needs the AST, not HTML) into a small document model;
+    14→ * `layoutMd` wraps + paginates it into draw-ready runs and rects. The worker
+    15→ * only maps fonts/colors and paints. Everything here is verifiable
+    16→ * headlessly with bun (scripts/smoke-md2pdf.ts).
+    17→ *
+    18→ * Shared wrap/flow/script machinery lives in ../txt-to-pdf/text-layout.ts
+    19→ * (file ownership keeps it there — imported here with permission).
+    20→ *
+    21→ * Supported mdast nodes: heading (1-6), paragraph, list (ordered/unordered,
+    22→ * nested via listItem depth), listItem, code, inlineCode, strong, emphasis,
+    23→ * link (blue text + numbered footnote + "Links" section at the end), break,
+    24→ * blockquote (indent + bar + muted text), thematicBreak, text,
+    25→ * linkReference/imageReference (resolved when a matching definition exists,
+    26→ * literal "[label]" otherwise), image (honest "[alt]" text — no raster
+    27→ * embedding in v1). Omissions documented in the tool FAQ + code: html
+    28→ * nodes skipped, GFM tables not parsed by core mdast (they surface as
+    29→ * plain paragraph text), no syntax coloring in code blocks.
+    30→ *
+    31→ * Honest v1 font limits: Devanagari (or any non-WinAnsi block) renders in
+    32→ * the regular embedded Noto — no bold/italic/mono variants exist for it
+    33→ * yet; links are footnote-style, not clickable annotations (pdf-lib has
+    34→ * no high-level link annotation API on drawText — a v2 candidate).
+    35→ *
+    36→ * Known upstream parser quirk (micromark@4.0.2, verified against its own
+    37→ * HTML output): an UNRESOLVED reference whose label starts with a
+    38→ * lowercase "m" (≥2 chars) loses its first two literal chars ("[m") —
+    39→ * e.g. "![m..][undef]" renders one "m" short. Resolved references are
+    40→ * unaffected. Pinned dependency; documented, not worked around.
+    41→ */
+    42→
+    43→import {
+    44→  blockScript,
+    45→  MM_TO_PT,
+    46→  PAGE_SIZES,
+    47→  PageFlow,
+    48→  planLineGroup,
+    49→  positionRuns,
+    50→  splitRunsAtBreaks,
+    51→  wrapRuns,
+    52→  type FontSpec,
+    53→  type MeasureRun,
+    54→  type PageGeometry,
+    55→  type PageSizeId,
+    56→  type PositionedTextRun,
+    57→  type ScriptFont,
+    58→  type WrapRun,
+    59→} from "../txt-to-pdf/text-layout";
+    60→
+    61→/* ------------------------------------------------------------------ */
+    62→/* Options                                                             */
+    63→/* ------------------------------------------------------------------ */
+    64→
+    65→export interface MdOptions {
+    66→  pageSize: PageSizeId;
+    67→  /** Page margin in mm (10–40). */
+    68→  margin: number;
+    69→  /** Body font size in pt (10/11/12). */
+    70→  bodySize: number;
+    71→  /** Code font size in pt (8/9/10). */
+    72→  monoSize: number;
+    73→  theme: "clean" | "warm";
+    74→}
+    75→
+    76→function pickNumber(
+    77→  value: unknown,
+    78→  allowed: number[],
+    79→  fallback: number
+    80→): number {
+    81→  const n = typeof value === "number" ? value : Number(value);
+    82→  return allowed.includes(n) ? n : fallback;
+    83→}
+    84→
+    85→/** Coerces raw panel values into typed options. */
+    86→export function resolveMdOptions(values: OptionValues): MdOptions {
+    87→  const margin = Number(values.margin);
+    88→  return {
+    89→    pageSize: values.pageSize === "letter" ? "letter" : "a4",
+    90→    margin: Number.isFinite(margin)
+    91→      ? Math.min(40, Math.max(10, margin))
+    92→      : 20,
+    93→    bodySize: pickNumber(values.bodySize, [10, 11, 12], 11),
+    94→    monoSize: pickNumber(values.monoSize, [8, 9, 10], 9),
+    95→    theme: values.theme === "warm" ? "warm" : "clean",
+    96→  };
+    97→}
+    98→
+    99→/* ------------------------------------------------------------------ */
+   100→/* Document model (mdast → blocks)                                     */
+   101→/* ------------------------------------------------------------------ */
+   102→
+   103→export interface MdInlineRun {
+   104→  text: string;
+   105→  bold: boolean;
+   106→  italic: boolean;
+   107→  /** Inline code → mono family. */
+   108→  code: boolean;
+   109→  /** Link text → blue + numbered footnote marker after it. */
+   110→  link: boolean;
+   111→  /** The [n] marker itself — superscript-ish. */
+   112→  sup: boolean;
+   113→}
+   114→
+   115→export type MdBlock =
+   116→  | { kind: "heading"; level: number; runs: MdInlineRun[] }
+   117→  | { kind: "paragraph"; runs: MdInlineRun[] }
+   118→  | { kind: "code"; lines: string[] }
+   119→  | { kind: "rule" }
+   120→  | { kind: "quote"; children: MdBlock[] }
+   121→  | {
+   122→      kind: "listItem";
+   123→      depth: number;
+   124→      ordered: boolean;
+   125→      number: number;
+   126→      runs: MdInlineRun[];
+   127→    };
+   128→
+   129→export interface ParsedMarkdown {
+   130→  blocks: MdBlock[];
+   131→  /** Numbered link targets, in marker order (1-based index + 1). */
+   132→  links: string[];
+   133→}
+   134→
+   135→interface ParseCtx {
+   136→  links: string[];
+   137→  defs: Map<string, string>;
+   138→}
+   139→
+   140→function baseRun(text: string): MdInlineRun {
+   141→  return {
+   142→    text,
+   143→    bold: false,
+   144→    italic: false,
+   145→    code: false,
+   146→    link: false,
+   147→    sup: false,
+   148→  };
+   149→}
+   150→
+   151→function sameStyle(a: MdInlineRun, b: MdInlineRun): boolean {
+   152→  return (
+   153→    a.bold === b.bold &&
+   154→    a.italic === b.italic &&
+   155→    a.code === b.code &&
+   156→    a.link === b.link &&
+   157→    a.sup === b.sup
+   158→  );
+   159→}
+   160→
+   161→/** Merges adjacent runs with identical style (fewer draw calls). */
+   162→function mergeRuns(runs: MdInlineRun[]): MdInlineRun[] {
+   163→  const out: MdInlineRun[] = [];
+   164→  for (const run of runs) {
+   165→    if (run.text.length === 0) continue;
+   166→    const last = out[out.length - 1];
+   167→    if (
+   168→      last &&
+   169→      sameStyle(last, run) &&
+   170→      last.text !== "\n" &&
+   171→      run.text !== "\n"
+   172→    ) {
+   173→      last.text += run.text;
+   174→    } else {
+   175→      out.push({ ...run });
+   176→    }
+   177→  }
+   178→  return out;
+   179→}
+   180→
+   181→interface InlineStyle {
+   182→  bold: boolean;
+   183→  italic: boolean;
+   184→  link: boolean;
+   185→}
+   186→
+   187→function walkPhrasing(
+   188→  nodes: readonly PhrasingContent[],
+   189→  style: InlineStyle,
+   190→  ctx: ParseCtx,
+   191→  out: MdInlineRun[]
+   192→): void {
+   193→  for (const node of nodes) {
+   194→    switch (node.type) {
+   195→      case "text":
+   196→        out.push({
+   197→          ...baseRun(node.value),
+   198→          bold: style.bold,
+   199→          italic: style.italic,
+   200→          link: style.link,
+   201→        });
+   202→        break;
+   203→      case "emphasis":
+   204→        walkPhrasing(
+   205→          node.children,
+   206→          { ...style, italic: true },
+   207→          ctx,
+   208→          out
+   209→        );
+   210→        break;
+   211→      case "strong":
+   212→        walkPhrasing(node.children, { ...style, bold: true }, ctx, out);
+   213→        break;
+   214→      case "inlineCode":
+   215→        out.push({ ...baseRun(node.value), code: true });
+   216→        break;
+   217→      case "break":
+   218→        out.push(baseRun("\n"));
+   219→        break;
+   220→      case "link": {
+   221→        walkPhrasing(node.children, { ...style, link: true }, ctx, out);
+   222→        const n = ctx.links.push(node.url);
+   223→        out.push({
+   224→          ...baseRun(` [${n}]`),
+   225→          link: true,
+   226→          sup: true,
+   227→        });
+   228→        break;
+   229→      }
+   230→      case "linkReference": {
+   231→        const url = ctx.defs.get(node.identifier);
+   232→        if (url !== undefined) {
+   233→          walkPhrasing(node.children, { ...style, link: true }, ctx, out);
+   234→          const n = ctx.links.push(url);
+   235→          out.push({ ...baseRun(` [${n}]`), link: true, sup: true });
+   236→        } else {
+   237→          out.push(baseRun(`[${node.label ?? node.identifier}]`));
+   238→        }
+   239→        break;
+   240→      }
+   241→      case "image":
+   242→        out.push({ ...baseRun(`[${node.alt ?? ""}]`), italic: true });
+   243→        break;
+   244→      case "imageReference": {
+   245→        const url = ctx.defs.get(node.identifier);
+   246→        const alt = `[${node.alt ?? ""}]`;
+   247→        if (url !== undefined) {
+   248→          const n = ctx.links.push(url);
+   249→          out.push({ ...baseRun(`${alt} [${n}]`), link: true, sup: true });
+   250→        } else {
+   251→          out.push({ ...baseRun(alt), italic: true });
+   252→        }
+   253→        break;
+   254→      }
+   255→      case "html":
+   256→        // inline raw HTML — skipped (honest omission, see FAQ)
+   257→        break;
+   258→      default:
+   259→        break;
+   260→    }
+   261→  }
+   262→}
+   263→
+   264→function inlineRuns(
+   265→  nodes: readonly PhrasingContent[],
+   266→  ctx: ParseCtx
+   267→): MdInlineRun[] {
+   268→  const out: MdInlineRun[] = [];
+   269→  walkPhrasing(nodes, { bold: false, italic: false, link: false }, ctx, out);
+   270→  return mergeRuns(out);
+   271→}
+   272→
+   273→/** Collects reference definitions anywhere in the document (label → url). */
+   274→function collectDefinitions(
+   275→  nodes: readonly RootContent[],
+   276→  into: Map<string, string>
+   277→): void {
+   278→  for (const node of nodes) {
+   279→    if (node.type === "definition") {
+   280→      into.set(node.identifier, node.url);
+   281→    } else if ("children" in node && Array.isArray(node.children)) {
+   282→      collectDefinitions(
+   283→        node.children as RootContent[],
+   284→        into
+   285→      );
+   286→    }
+   287→  }
+   288→}
+   289→
+   290→function codeLines(value: string): string[] {
+   291→  const cleaned = value.replace(/\r\n?/g, "\n").replace(/\t/g, "    ");
+   292→  const lines = cleaned.split("\n");
+   293→  // fenced blocks implicitly end with a newline — drop that phantom line
+   294→  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+   295→  return lines;
+   296→}
+   297→
+   298→function walkBlocks(
+   299→  nodes: readonly RootContent[],
+   300→  ctx: ParseCtx,
+   301→  out: MdBlock[],
+   302→  depth: number
+   303→): void {
+   304→  for (const node of nodes) {
+   305→    switch (node.type) {
+   306→      case "heading":
+   307→        out.push({
+   308→          kind: "heading",
+   309→          level: node.depth,
+   310→          runs: inlineRuns(node.children, ctx),
+   311→        });
+   312→        break;
+   313→      case "paragraph":
+   314→        out.push({
+   315→          kind: "paragraph",
+   316→          runs: inlineRuns(node.children, ctx),
+   317→        });
+   318→        break;
+   319→      case "code":
+   320→        out.push({ kind: "code", lines: codeLines(node.value) });
+   321→        break;
+   322→      case "thematicBreak":
+   323→        out.push({ kind: "rule" });
+   324→        break;
+   325→      case "blockquote":
+   326→        out.push({
+   327→          kind: "quote",
+   328→          children: walkBlocksInto(node.children, ctx),
+   329→        });
+   330→        break;
+   331→      case "list": {
+   332→        const list = node as List;
+   333→        const start = typeof list.start === "number" ? list.start : 1;
+   334→        const hoisted: MdBlock[] = [];
+   335→        list.children.forEach((item, index) => {
+   336→          hoisted.push(...listItemBlocks(item, ctx, depth, list.ordered === true, start + index));
+   337→        });
+   338→        out.push(...hoisted);
+   339→        break;
+   340→      }
+   341→      case "html":
+   342→      case "definition":
+   343→        // block raw HTML / reference definitions — skipped (see FAQ)
+   344→        break;
+   345→      default:
+   346→        break;
+   347→    }
+   348→  }
+   349→}
+   350→
+   351→/**
+   352→ * One mdast listItem → its own block (phrasing content merged with hard
+   353→ * breaks) + nested lists flattened as deeper item blocks. Block-level
+   354→ * code/quote/heading inside an item is hoisted as a top-level block right
+   355→ * after the list (a documented v1 simplification — rare in the wild).
+   356→ */
+   357→function listItemBlocks(
+   358→  item: ListItem,
+   359→  ctx: ParseCtx,
+   360→  depth: number,
+   361→  ordered: boolean,
+   362→  number: number
+   363→): MdBlock[] {
+   364→  const out: MdBlock[] = [];
+   365→  const runs: MdInlineRun[] = [];
+   366→  const after: MdBlock[] = [];
+   367→  for (const child of item.children) {
+   368→    if (child.type === "paragraph") {
+   369→      if (runs.length > 0) runs.push(baseRun("\n"));
+   370→      runs.push(...inlineRuns(child.children, ctx));
+   371→    } else if (child.type === "list") {
+   372→      const list = child as List;
+   373→      const start = typeof list.start === "number" ? list.start : 1;
+   374→      list.children.forEach((nested, index) => {
+   375→        after.push(
+   376→          ...listItemBlocks(
+   377→            nested,
+   378→            ctx,
+   379→            depth + 1,
+   380→            list.ordered === true,
+   381→            start + index
+   382→          )
+   383→        );
+   384→      });
+   385→    } else if (child.type === "blockquote") {
+   386→      after.push({
+   387→        kind: "quote",
+   388→        children: walkBlocksInto(child.children, ctx),
+   389→      });
+   390→    } else if (child.type === "code") {
+   391→      after.push({ kind: "code", lines: codeLines(child.value) });
+   392→    } else if (child.type === "heading") {
+   393→      after.push({
+   394→        kind: "heading",
+   395→        level: child.depth,
+   396→        runs: inlineRuns(child.children, ctx),
+   397→      });
+   398→    } else if (child.type === "thematicBreak") {
+   399→      after.push({ kind: "rule" });
+   400→    }
+   401→    // html/definition inside items: skipped like everywhere else
+   402→  }
+   403→  if (runs.length > 0) {
+   404→    out.push({ kind: "listItem", depth, ordered, number, runs: mergeRuns(runs) });
+   405→  }
+   406→  out.push(...after);
+   407→  return out;
+   408→}
+   409→
+   410→function walkBlocksInto(
+   411→  nodes: readonly RootContent[],
+   412→  ctx: ParseCtx
+   413→): MdBlock[] {
+   414→  const out: MdBlock[] = [];
+   415→  walkBlocks(nodes, ctx, out, 0);
+   416→  return out;
+   417→}
+   418→
+   419→/** Parses markdown source into the document model + numbered links.
+   420→ *
+   421→ * The mdast parser is INJECTED (not imported): Turbopack's dev worker
+   422→ * loader compiles workers to classic blob scripts where the ESM-only
+   423→ * mdast-util-from-markdown graph cannot be imported (SyntaxError with no
+   424→ * message — found in P4.1 browser QA). The worker loads the precompiled
+   425→ * classic bundle public/md/md-parser.js instead; smokes running under bun
+   426→ * pass the ESM `fromMarkdown` directly. mdast type-only imports are erased
+   427→ * at compile time, so this file stays out of the worker's chunk graph.
+   428→ */
+   429→export function parseMarkdown(
+   430→  source: string,
+   431→  parse: (source: string) => Root
+   432→): ParsedMarkdown {
+   433→  const root = parse(source);
+   434→  const ctx: ParseCtx = { links: [], defs: new Map() };
+   435→  collectDefinitions(root.children, ctx.defs);
+   436→  const blocks: MdBlock[] = [];
+   437→  walkBlocks(root.children, ctx, blocks, 0);
+   438→  return { blocks, links: ctx.links };
+   439→}
+   440→
+   441→
+   442→/* ------------------------------------------------------------------ */
+   443→/* Layout                                                              */
+   444→/* ------------------------------------------------------------------ */
+   445→
+   446→export type RunColor = "text" | "muted" | "link";
+   447→export type RectKind = "codeBg" | "quoteBar" | "rule";
+   448→
+   449→export interface MdRectDraw {
+   450→  x: number;
+   451→  y: number;
+   452→  w: number;
+   453→  h: number;
+   454→  kind: RectKind;
+   455→}
+   456→
+   457→export interface MdPageDraw {
+   458→  runs: PositionedTextRun[];
+   459→  rects: MdRectDraw[];
+   460→  /** Warm paper theme paints a cream page background first. */
+   461→  warm: boolean;
+   462→}
+   463→
+   464→export interface MdLayoutResult {
+   465→  pages: MdPageDraw[];
+   466→  linkCount: number;
+   467→}
+   468→
+   469→/** h1…h6 sizes in pt. */
+   470→const HEADING_SIZES = [22, 18, 15, 13, 12, 11];
+   471→/** h1…h6 [spaceBefore, spaceAfter] in pt. */
+   472→const HEADING_SPACING: [number, number][] = [
+   473→  [16, 8],
+   474→  [14, 7],
+   475→  [12, 6],
+   476→  [10, 5],
+   477→  [9, 5],
+   478→  [8, 4],
+   479→];
+   480→const HEADING_LINE_HEIGHT = 1.3;
+   481→const BODY_LINE_HEIGHT = 1.5;
+   482→const MONO_LINE_HEIGHT = 1.35;
+   483→const CODE_PAD = 6;
+   484→const LIST_INDENT = 18;
+   485→const MARKER_GAP = 6;
+   486→const QUOTE_INDENT = 12;
+   487→const QUOTE_BAR_WIDTH = 3;
+   488→const QUOTE_BAR_OVERHANG = 2;
+   489→const RULE_THICKNESS = 0.75;
+   490→/** Gap before a paragraph-ish block, in body advances. */
+   491→const BLOCK_GAP = 0.45;
+   492→const ITEM_GAP = 0.25;
+   493→
+   494→const MARKERS = ["•", "–", "·"];
+   495→
+   496→function fontSpecFor(run: MdInlineRun): FontSpec {
+   497→  if (run.code) return { family: "mono", bold: false, italic: false };
+   498→  return { family: "sans", bold: run.bold, italic: run.italic };
+   499→}
+   500→
+   501→function runsText(runs: readonly MdInlineRun[]): string {
+   502→  return runs.map((run) => run.text).join("");
+   503→}
+   504→
+   505→/** Rough advance of a block's first line — heading keep-with-next math. */
+   506→function firstLineAdvance(
+   507→  block: MdBlock,
+   508→  bodyAdvance: number,
+   509→  monoAdvance: number
+   510→): number {
+   511→  switch (block.kind) {
+   512→    case "heading":
+   513→      return (
+   514→        HEADING_SIZES[Math.min(6, Math.max(1, block.level)) - 1] *
+   515→        HEADING_LINE_HEIGHT
+   516→      );
+   517→    case "code":
+   518→      return monoAdvance;
+   519→    case "quote":
+   520→    case "paragraph":
+   521→    case "listItem":
+   522→    case "rule":
+   523→      return bodyAdvance;
+   524→  }
+   525→}
+   526→
+   527→export function layoutMd(
+   528→  parsed: ParsedMarkdown,
+   529→  options: MdOptions,
+   530→  measure: MeasureRun
+   531→): MdLayoutResult {
+   532→  const { blocks, links } = parsed;
+   533→  const size = PAGE_SIZES[options.pageSize];
+   534→  const marginPt = options.margin * MM_TO_PT;
+   535→  const geometry: PageGeometry = {
+   536→    pageW: size.width,
+   537→    pageH: size.height,
+   538→    marginLeft: marginPt,
+   539→    marginRight: marginPt,
+   540→    marginTop: marginPt,
+   541→    marginBottom: marginPt,
+   542→  };
+   543→  const flow = new PageFlow(geometry);
+   544→  const pages: MdPageDraw[] = [
+   545→    { runs: [], rects: [], warm: options.theme === "warm" },
+   546→  ];
+   547→  const ensurePage = (index: number): MdPageDraw => {
+   548→    while (pages.length <= index) {
+   549→      pages.push({ runs: [], rects: [], warm: options.theme === "warm" });
+   550→    }
+   551→    return pages[index];
+   552→  };
+   553→
+   554→  const bodyAdvance = options.bodySize * BODY_LINE_HEIGHT;
+   555→  const monoAdvance = options.monoSize * MONO_LINE_HEIGHT;
+   556→  const monoSpec: FontSpec = { family: "mono", bold: false, italic: false };
+   557→  const sansSpec: FontSpec = { family: "sans", bold: false, italic: false };
+   558→
+   559→  /** Open quote extents, innermost last: per-page line extents. */
+   560→  const quoteStack: {
+   561→    extents: { page: number; top: number; bottom: number }[];
+   562→  }[] = [];
+   563→
+   564→  let indent = 0;
+   565→  let muted = false;
+   566→  let gapScale = 1;
+   567→  let placedAny = false;
+   568→  /** Open-quote nesting (muted stays on when an INNER quote closes). */
+   569→  let quoteDepth = 0;
+   570→
+   571→  const contentLeft = (): number => geometry.marginLeft + indent;
+   572→
+   573→  const toWrapRuns = (runs: readonly MdInlineRun[]): WrapRun[] => {
+   574→    const out: WrapRun[] = [];
+   575→    for (const run of runs) {
+   576→      const color: RunColor = run.link
+   577→        ? "link"
+   578→        : muted
+   579→          ? "muted"
+   580→          : "text";
+   581→      out.push({
+   582→        text: run.text,
+   583→        spec: fontSpecFor(run),
+   584→        color,
+   585→        sup: run.sup,
+   586→      });
+   587→    }
+   588→    return out;
+   589→  };
+   590→
+   591→  /**
+   592→   * Wraps one run group (hard-break segments flow without extra gaps) and
+   593→   * places it with orphan/widow protection. Registers extents with every
+   594→   * open quote so their bars size correctly across page breaks.
+   595→   */
+   596→  const placeRuns = (
+   597→    runs: readonly MdInlineRun[],
+   598→    x: number,
+   599→    maxWidth: number,
+   600→    fontSize: number,
+   601→    advance: number
+   602→  ): { page: number; top: number; bottom: number; baseline: number }[] => {
+   603→    const script = blockScript(runsText(runs));
+   604→    const segments = splitRunsAtBreaks(toWrapRuns(runs));
+   605→    const allLines: WrapRun[][] = [];
+   606→    for (const segment of segments) {
+   607→      if (segment.length === 0) {
+   608→        allLines.push([]);
+   609→        continue;
+   610→      }
+   611→      allLines.push(
+   612→        ...wrapRuns(segment, { maxWidth, size: fontSize, script, measure })
+   613→      );
+   614→    }
+   615→    const placements = planLineGroup(flow, allLines.length, advance, fontSize);
+   616→    const extents: {
+   617→      page: number;
+   618→      top: number;
+   619→      bottom: number;
+   620→      baseline: number;
+   621→    }[] = [];
+   622→    for (let i = 0; i < placements.length; i += 1) {
+   623→      const place = placements[i];
+   624→      const page = ensurePage(place.pageIndex);
+   625→      page.runs.push(
+   626→        ...positionRuns(allLines[i], x, place.baseline, fontSize, script, measure)
+   627→      );
+   628→      const extent = {
+   629→        page: place.pageIndex,
+   630→        top: place.top,
+   631→        bottom: place.top + advance,
+   632→        baseline: place.baseline,
+   633→      };
+   634→      extents.push(extent);
+   635→      for (const open of quoteStack) open.extents.push(extent);
+   636→    }
+   637→    return extents;
+   638→  };
+   639→
+   640→  const gapBefore = (gap: number): void => {
+   641→    if (!placedAny) return;
+   642→    flow.consumeGap(gap * gapScale);
+   643→  };
+   644→
+   645→  const placeCodeBlock = (lines: string[]): void => {
+   646→    if (lines.length === 0) return;
+   647→    const blockX = contentLeft();
+   648→    // Wrapped + positioned per VISUAL line — a source line wider than the
+   649→    // block wraps into continuation lines (never truncated; indentation is
+   650→    // preserved as an x offset per line)
+   651→    const indentWidths = lines.map((line) => {
+   652→      const indentMatch = /^[ ]*/.exec(line);
+   653→      const indentText = indentMatch ? indentMatch[0] : "";
+   654→      return {
+   655→        text: indentText,
+   656→        width: measure(indentText, monoSpec, options.monoSize, "std"),
+   657→        body: line.slice(indentText.length).replace(/[ ]+$/, ""),
+   658→      };
+   659→    });
+   660→    const maxIndent = indentWidths.reduce(
+   661→      (max, entry) => Math.max(max, entry.width),
+   662→      0
+   663→    );
+   664→    const wrapWidth = Math.max(
+   665→      24,
+   666→      flow.contentWidth - indent - 2 * CODE_PAD - maxIndent
+   667→    );
+   668→    const wrappedLines: {
+   669→      runs: WrapRun[];
+   670→      script: ScriptFont;
+   671→      indent: number;
+   672→    }[] = [];
+   673→    for (const entry of indentWidths) {
+   674→      const script = blockScript(entry.text + entry.body || " ");
+   675→      const wrapped = wrapRuns([{ text: entry.body, spec: monoSpec }], {
+   676→        maxWidth: wrapWidth,
+   677→        size: options.monoSize,
+   678→        script,
+   679→        measure,
+   680→      });
+   681→      for (const lineRuns of wrapped) {
+   682→        wrappedLines.push({ runs: lineRuns, script, indent: entry.width });
+   683→      }
+   684→    }
+   685→    const height = wrappedLines.length * monoAdvance + 2 * CODE_PAD;
+   686→    // ≤3-line blocks never split across pages (when a full page could hold
+   687→    // them); longer blocks split without 1-line fragments (strictSingle)
+   688→    if (
+   689→      lines.length <= 3 &&
+   690→      flow.pageHasContent &&
+   691→      !flow.fits(height) &&
+   692→      height <= flow.contentHeight
+   693→    ) {
+   694→      flow.breakPage();
+   695→    }
+   696→    gapBefore(bodyAdvance * BLOCK_GAP);
+   697→
+   698→    const placements = planLineGroup(
+   699→      flow,
+   700→      wrappedLines.length,
+   701→      monoAdvance,
+   702→      options.monoSize,
+   703→      true,
+   704→      CODE_PAD
+   705→    );
+   706→    const fragmentByPage = new Map<number, { top: number; count: number }>();
+   707→    for (let i = 0; i < placements.length; i += 1) {
+   708→      const place = placements[i];
+   709→      const fragment = fragmentByPage.get(place.pageIndex);
+   710→      if (fragment) {
+   711→        fragment.count += 1;
+   712→      } else {
+   713→        fragmentByPage.set(place.pageIndex, { top: place.top, count: 1 });
+   714→      }
+   715→      const line = wrappedLines[i];
+   716→      const page = ensurePage(place.pageIndex);
+   717→      page.runs.push(
+   718→        ...positionRuns(
+   719→          line.runs,
+   720→          blockX + CODE_PAD + line.indent,
+   721→          place.baseline,
+   722→          options.monoSize,
+   723→          line.script,
+   724→          measure
+   725→        )
+   726→      );
+   727→      const extent = {
+   728→        page: place.pageIndex,
+   729→        top: place.top,
+   730→        bottom: place.top + monoAdvance,
+   731→      };
+   732→      for (const open of quoteStack) open.extents.push(extent);
+   733→    }
+   734→    for (const [pageIndex, fragment] of fragmentByPage) {
+   735→      const page = ensurePage(pageIndex);
+   736→      // no top padding when the fragment starts at the content top — the
+   737→      // page margin already provides the gap there
+   738→      const topPad = fragment.top > 0 ? CODE_PAD : 0;
+   739→      const topY =
+   740→        geometry.pageH - geometry.marginTop - fragment.top + topPad;
+   741→      page.rects.push({
+   742→        x: blockX,
+   743→        y: topY - fragment.count * monoAdvance - topPad - CODE_PAD,
+   744→        w: flow.contentWidth - indent,
+   745→        h: fragment.count * monoAdvance + topPad + CODE_PAD,
+   746→        kind: "codeBg",
+   747→      });
+   748→    }
+   749→  };
+   750→
+   751→  const placeBlock = (
+   752→    block: MdBlock,
+   753→    next: MdBlock | null
+   754→  ): void => {
+   755→    const bodyGap = bodyAdvance * BLOCK_GAP;
+   756→    switch (block.kind) {
+   757→      case "heading": {
+   758→        const level = Math.min(6, Math.max(1, block.level));
+   759→        const fontSize = HEADING_SIZES[level - 1];
+   760→        const advance = fontSize * HEADING_LINE_HEIGHT;
+   761→        // keep-with-next: the heading + its spacing + ~2 lines of the
+   762→        // following block, else the heading never dangles at a page bottom
+   763→        // (the gaps count too — they are consumed after this check)
+   764→        const [spaceBefore, spaceAfter] = HEADING_SPACING[level - 1];
+   765→        const nextAdvance = next
+   766→          ? firstLineAdvance(next, bodyAdvance, monoAdvance)
+   767→          : bodyAdvance;
+   768→        const needed =
+   769→          spaceBefore * gapScale +
+   770→          advance +
+   771→          spaceAfter * gapScale +
+   772→          bodyAdvance * BLOCK_GAP * gapScale +
+   773→          2 * nextAdvance;
+   774→        if (flow.pageHasContent && !flow.fits(needed)) flow.breakPage();
+   775→        gapBefore(spaceBefore);
+   776→        const headingRuns: MdInlineRun[] = block.runs.map((run) => ({
+   777→          ...run,
+   778→          bold: true,
+   779→          italic: level === 6,
+   780→          code: false,
+   781→        }));
+   782→        placeRuns(
+   783→          headingRuns,
+   784→          contentLeft(),
+   785→          flow.contentWidth - indent,
+   786→          fontSize,
+   787→          advance
+   788→        );
+   789→        gapBefore(spaceAfter);
+   790→        break;
+   791→      }
+   792→      case "paragraph": {
+   793→        if (block.runs.length === 0) return;
+   794→        gapBefore(bodyGap);
+   795→        placeRuns(
+   796→          block.runs,
+   797→          contentLeft(),
+   798→          flow.contentWidth - indent,
+   799→          options.bodySize,
+   800→          bodyAdvance
+   801→        );
+   802→        break;
+   803→      }
+   804→      case "code": {
+   805→        placeCodeBlock(block.lines);
+   806→        break;
+   807→      }
+   808→      case "rule": {
+   809→        gapBefore(bodyGap);
+   810→        if (flow.pageHasContent && !flow.fits(RULE_THICKNESS * 2)) {
+   811→          flow.breakPage();
+   812→        }
+   813→        const page = ensurePage(flow.pageIndex);
+   814→        const y = flow.contentTopY() - RULE_THICKNESS;
+   815→        page.rects.push({
+   816→          x: contentLeft(),
+   817→          y,
+   818→          w: flow.contentWidth - indent,
+   819→          h: RULE_THICKNESS * 2,
+   820→          kind: "rule",
+   821→        });
+   822→        flow.consume(RULE_THICKNESS * 2);
+   823→        gapBefore(bodyGap * 0.5);
+   824→        break;
+   825→      }
+   826→      case "quote": {
+   827→        gapBefore(bodyGap);
+   828→        indent += QUOTE_INDENT;
+   829→        quoteDepth += 1;
+   830→        muted = true;
+   831→        gapScale *= 0.7;
+   832→        quoteStack.push({ extents: [] });
+   833→        for (let i = 0; i < block.children.length; i += 1) {
+   834→          placeBlock(
+   835→            block.children[i],
+   836→            block.children[i + 1] ?? null
+   837→          );
+   838→        }
+   839→        const open = quoteStack.pop();
+   840→        quoteDepth -= 1;
+   841→        indent -= QUOTE_INDENT;
+   842→        muted = quoteDepth > 0;
+   843→        gapScale /= 0.7;
+   844→        if (open && open.extents.length > 0) {
+   845→          const byPage = new Map<number, { top: number; bottom: number }>();
+   846→          for (const extent of open.extents) {
+   847→            const span = byPage.get(extent.page);
+   848→            if (span) {
+   849→              span.top = Math.min(span.top, extent.top);
+   850→              span.bottom = Math.max(span.bottom, extent.bottom);
+   851→            } else {
+   852→              byPage.set(extent.page, {
+   853→                top: extent.top,
+   854→                bottom: extent.bottom,
+   855→              });
+   856→            }
+   857→          }
+   858→          for (const [pageIndex, span] of byPage) {
+   859→            const page = ensurePage(pageIndex);
+   860→            const topY = geometry.pageH - geometry.marginTop - span.top;
+   861→            page.rects.push({
+   862→              x: contentLeft(),
+   863→              y: topY - span.bottom - QUOTE_BAR_OVERHANG,
+   864→              w: QUOTE_BAR_WIDTH,
+   865→              h: span.bottom - span.top + 2 * QUOTE_BAR_OVERHANG,
+   866→              kind: "quoteBar",
+   867→            });
+   868→          }
+   869→        }
+   870→        break;
+   871→      }
+   872→      case "listItem": {
+   873→        gapBefore(bodyAdvance * ITEM_GAP);
+   874→        const markerX = contentLeft() + block.depth * LIST_INDENT;
+   875→        const marker = block.ordered
+   876→          ? `${block.number}.`
+   877→          : MARKERS[Math.min(MARKERS.length - 1, block.depth)];
+   878→        const markerWidth = measure(
+   879→          marker,
+   880→          sansSpec,
+   881→          options.bodySize,
+   882→          "std"
+   883→        );
+   884→        const textX = markerX + markerWidth + MARKER_GAP;
+   885→        const maxWidth = Math.max(
+   886→          24,
+   887→          geometry.marginLeft + flow.contentWidth - textX
+   888→        );
+   889→        const extents = placeRuns(
+   890→          block.runs,
+   891→          textX,
+   892→          maxWidth,
+   893→          options.bodySize,
+   894→          bodyAdvance
+   895→        );
+   896→        if (extents.length > 0) {
+   897→          const page = ensurePage(extents[0].page);
+   898→          page.runs.push({
+   899→            text: marker,
+   900→            x: markerX,
+   901→            baseline: extents[0].baseline,
+   902→            size: options.bodySize,
+   903→            spec: sansSpec,
+   904→            script: "std",
+   905→            color: muted ? "muted" : "text",
+   906→          });
+   907→        }
+   908→        break;
+   909→      }
+   910→    }
+   911→    if (block.kind !== "paragraph" || block.runs.length > 0) {
+   912→      placedAny = true;
+   913→    }
+   914→  };
+   915→
+   916→  for (let i = 0; i < blocks.length; i += 1) {
+   917→    placeBlock(blocks[i], blocks[i + 1] ?? null);
+   918→  }
+   919→
+   920→  // Links section: bold "Links" heading + one numbered line per URL. The
+   921→  // heading gets the same keep-with-next guarantee as document headings —
+   922→  // never the very last line of a page.
+   923→  if (links.length > 0) {
+   924→    gapBefore(bodyAdvance * BLOCK_GAP);
+   925→    const linksAdvance = 12 * HEADING_LINE_HEIGHT;
+   926→    if (
+   927→      flow.pageHasContent &&
+   928→      !flow.fits(linksAdvance + bodyAdvance)
+   929→    ) {
+   930→      flow.breakPage();
+   931→    }
+   932→    placeRuns(
+   933→      [{ ...baseRun("Links"), bold: true }],
+   934→      contentLeft(),
+   935→      flow.contentWidth - indent,
+   936→      12,
+   937→      linksAdvance
+   938→    );
+   939→    for (let n = 1; n <= links.length; n += 1) {
+   940→      placeRuns(
+   941→        [baseRun(`${n}. `), { ...baseRun(links[n - 1]), link: true }],
+   942→        contentLeft(),
+   943→        flow.contentWidth - indent,
+   944→        options.bodySize,
+   945→        bodyAdvance
+   946→      );
+   947→    }
+   948→  }
+   949→
+   950→  return { pages, linkCount: links.length };
+   951→}
+   952→

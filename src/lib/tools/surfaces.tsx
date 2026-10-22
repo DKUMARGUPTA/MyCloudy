@@ -50,6 +50,12 @@ import { EpubToPdfSurface } from "../../../tools/epub-to-pdf/surface";
 import { PdfToPowerpointSurface } from "../../../tools/pdf-to-powerpoint/surface";
 import { WebOptimizeSurface } from "../../../tools/web-optimize-pdf/surface";
 import { RepairSurface } from "../../../tools/repair-pdf/surface";
+import { PdfToSvgSurface } from "../../../tools/pdf-to-svg/surface";
+import { PdfToOdtSurface } from "../../../tools/pdf-to-odt/surface";
+import { PdfToHtmlSurface } from "../../../tools/pdf-to-html/surface";
+import { PdfToMarkdownSurface } from "../../../tools/pdf-to-markdown/surface";
+import { PublisherToPdfSurface } from "../../../tools/publisher-to-pdf/surface";
+import { WebpageToPdfSurface } from "../../../tools/webpage-to-pdf/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -147,6 +153,12 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "pdf-to-powerpoint": PdfToPowerpointSurface,
   "web-optimize-pdf": WebOptimizeSurface,
   "repair-pdf": RepairSurface,
+  "pdf-to-svg": PdfToSvgSurface,
+  "pdf-to-odt": PdfToOdtSurface,
+  "pdf-to-html": PdfToHtmlSurface,
+  "pdf-to-markdown": PdfToMarkdownSurface,
+  "publisher-to-pdf": PublisherToPdfSurface,
+  "webpage-to-pdf": WebpageToPdfSurface,
 };
 
 export function getToolSurface(
