@@ -3695,3 +3695,24 @@ Stage Summary:
 - 74 live / 97 total / 23 pending. RB2 complete: pptx/odt/rtf/html → PDF, all 100% on-device (mode D), EN+हिंदी, 403 smoke checks, browser QA green in both languages. Durable on GitHub at tag checkpoint-74-tools.
 - Remaining rebuild queue (23 pending): epub-to-pdf, web-optimize-pdf, repair-pdf, pdf-to-tiff, pdf-to-svg, pdf-to-odt, pdf-to-powerpoint, publisher-to-pdf, webpage-to-pdf, pdf-to-html, pdf-to-markdown, pdf-to-webp, passport-photo + e-invoice family (5) + signature family (3) + pdf-a family (2). Next batch (RB3): epub-to-pdf + web-optimize-pdf + repair-pdf + pdf-to-powerpoint.
 - Known debt: site chrome still says DocoPDF (71 mentions vs 0 mycloudy in src/) — a dedicated MyCloudy rebrand round is queued after the conversion families are restored; also .zscripts/dev.pid is tracked (noise in git status).
+
+---
+Task ID: PLAN-ALL
+Agent: orchestrator (main session)
+Task: Push verification + phase-wise plan for ALL 23 pending tools ("fix all" mandate)
+
+Work Log:
+- PUSH VERIFIED with new classic PAT: `git ls-remote origin` shows main=485d94f (== local HEAD, 0 unpushed commits after fetch), tags checkpoint-65/66/70/74 ALL on GitHub. Working tree had only file-mode noise (100644→100755 from disk snapshot restore) → `git config core.fileMode false` normalized; tree clean.
+- Exact pending list extracted from src/lib/tools/registry.ts via def() block scan: 74 enabled / 23 pending (webpage-to-pdf, create-invoice-visually, create-electronic-invoice, pdf-to-e-invoice, xml-invoice-to-pdf, validate-e-invoice, web-optimize-pdf, repair-pdf, pdf-to-pdfa, digital-signature, request-signature, validate-pdfa, verify-pdf-signatures, publisher-to-pdf, epub-to-pdf, pdf-to-powerpoint, pdf-to-webp, pdf-to-tiff, pdf-to-svg, pdf-to-html, pdf-to-markdown, pdf-to-odt, passport-photo).
+- Dev server healthy at session start (HTTP 200, pid 1109).
+
+Stage Summary:
+PHASE-WISE PLAN — all 23 pending tools, each batch ends with commit + tag checkpoint-NN-tools + PUSH (never lose work again):
+- RB3 (74→78) doc-conversion restore: epub-to-pdf, pdf-to-powerpoint, web-optimize-pdf, repair-pdf
+- RB4 (79→82) image/vector export: pdf-to-tiff, pdf-to-svg, pdf-to-webp, pdf-to-odt
+- RB5 (83→86) text-extraction + publisher: pdf-to-html, pdf-to-markdown, publisher-to-pdf, webpage-to-pdf
+- RB6 (87→91) e-invoice family (5): create-invoice-visually, create-electronic-invoice, pdf-to-e-invoice, xml-invoice-to-pdf, validate-e-invoice
+- RB7 (92→96) signature + photo: digital-signature, request-signature, verify-pdf-signatures, passport-photo
+- RB8 (96→97→COMPLETE) PDF/A family: pdf-to-pdfa, validate-pdfa → 97/97 ALL LIVE
+- Post-completion: MyCloudy rebrand round (site chrome still says DocoPDF, 71 mentions) + user rotates the chat-pasted PAT.
+Execution pattern per batch: 4 parallel full-stack-developer subagents (one tool each: model/render/worker/surface/config/i18n/smoke/wiring) → orchestrator verifies tsc+lint+smokes, merges i18n centrally (merge guard script), browser QA (EN+HI, mobile 390px, console clean, cookie-banner-dismiss-first rule) → commit + annotated tag + push (per-tag fallback script).
