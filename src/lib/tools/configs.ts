@@ -12,6 +12,8 @@ import { config as pngToPdf } from "../../../tools/png-to-pdf/config";
 import { config as webpToPdf } from "../../../tools/webp-to-pdf/config";
 import { config as pdfToJpg } from "../../../tools/pdf-to-jpg/config";
 import { config as pdfToPng } from "../../../tools/pdf-to-png/config";
+import { config as pdfToWebp } from "../../../tools/pdf-to-webp/config";
+import { config as pdfToTiff } from "../../../tools/pdf-to-tiff/config";
 import { config as pdfToTxt } from "../../../tools/pdf-to-txt/config";
 import { config as addWatermark } from "../../../tools/add-watermark/config";
 import { config as addPageNumbers } from "../../../tools/add-page-numbers/config";
@@ -73,6 +75,10 @@ import { config as powerpointToPdf } from "../../../tools/powerpoint-to-pdf/conf
 import { config as rtfToPdf } from "../../../tools/rtf-to-pdf/config";
 import { config as odtToPdf } from "../../../tools/odt-to-pdf/config";
 import { config as htmlToPdf } from "../../../tools/html-to-pdf/config";
+import { config as epubToPdf } from "../../../tools/epub-to-pdf/config";
+import { config as pdfToPowerpoint } from "../../../tools/pdf-to-powerpoint/config";
+import { config as webOptimizePdf } from "../../../tools/web-optimize-pdf/config";
+import { config as repairPdf } from "../../../tools/repair-pdf/config";
 
 
 /**
@@ -96,6 +102,8 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [webpToPdf.toolId]: webpToPdf,
   [pdfToJpg.toolId]: pdfToJpg,
   [pdfToPng.toolId]: pdfToPng,
+  [pdfToWebp.toolId]: pdfToWebp,
+  [pdfToTiff.toolId]: pdfToTiff,
   [pdfToTxt.toolId]: pdfToTxt,
   [addWatermark.toolId]: addWatermark,
   [addPageNumbers.toolId]: addPageNumbers,
@@ -157,6 +165,10 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [rtfToPdf.toolId]: rtfToPdf,
   [odtToPdf.toolId]: odtToPdf,
   [htmlToPdf.toolId]: htmlToPdf,
+  [epubToPdf.toolId]: epubToPdf,
+  [pdfToPowerpoint.toolId]: pdfToPowerpoint,
+  [webOptimizePdf.toolId]: webOptimizePdf,
+  [repairPdf.toolId]: repairPdf,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

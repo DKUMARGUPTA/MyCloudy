@@ -55,6 +55,8 @@ export const TOOL_PANELS: Record<string, ComponentType<ToolPanelProps>> = {
   "extract-pdf-pages": ExtractSummaryPanel,
   "pdf-to-jpg": PdfToImagesPanel,
   "pdf-to-png": PdfToImagesPanel,
+  "pdf-to-webp": PdfToImagesPanel,
+  "pdf-to-tiff": PdfToImagesPanel,
   "pdf-to-txt": PdfToTxtPanel,
   "add-watermark": WatermarkPanel,
   "add-page-numbers": PageNumbersPanel,

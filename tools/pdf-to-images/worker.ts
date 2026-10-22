@@ -8,9 +8,11 @@ import {
   loadPdfjsInWorker,
   workerDocumentShim,
 } from "../pdfjs-common/worker-lib";
+import { TiffBuilder } from "./tiff-writer";
 
 /**
- * PDF → images worker (PRD §8.6) — shared by pdf-to-jpg and pdf-to-png.
+ * PDF → images worker (PRD §8.6) — shared by pdf-to-jpg, pdf-to-png,
+ * pdf-to-webp (canvas encodes) and pdf-to-tiff (clean-room TIFF writer).
  *
  * pdf.js runs IN THIS WORKER: we pre-import the self-hosted worker module
  * (/pdfjs/pdf.worker.min.mjs), which sets `globalThis.pdfjsWorker` — pdf.js
@@ -28,19 +30,29 @@ function post(response: WorkerResponse): void {
 }
 
 /** Output format per tool — fixed by the tool identity, not an option. */
-const FORMAT: Record<string, { mime: string; ext: string; alpha: boolean }> = {
-  "pdf-to-jpg": { mime: "image/jpeg", ext: "jpg", alpha: false },
-  "pdf-to-png": { mime: "image/png", ext: "png", alpha: true },
+const FORMAT: Record<
+  string,
+  { mime: string; ext: string; alpha: boolean; lossy: boolean }
+> = {
+  "pdf-to-jpg": { mime: "image/jpeg", ext: "jpg", alpha: false, lossy: true },
+  "pdf-to-png": { mime: "image/png", ext: "png", alpha: true, lossy: false },
+  "pdf-to-webp": { mime: "image/webp", ext: "webp", alpha: true, lossy: true },
 };
 
 async function run(request: WorkerRunRequest): Promise<void> {
   const { runId, toolId, options, files } = request;
   const format = FORMAT[toolId] ?? FORMAT["pdf-to-jpg"];
+  const isTiff = toolId === "pdf-to-tiff";
 
   const dpi = Number(options.dpi ?? 150);
   const scale = Math.max(0.5, Math.min(8, dpi / 72));
   const quality = Math.max(0.4, Math.min(1, Number(options.quality ?? 85) / 100));
-  const transparent = options.transparent === true && format.alpha;
+  const transparent = options.transparent === true && format.alpha && !isTiff;
+  // TIFF is written by the clean-room writer (RGB, no alpha) — always a
+  // solid white base, and the "transparent" switch isn't offered there.
+  const multipageTiff = isTiff && options.multipage !== false;
+  const tiffCompression =
+    options.compression === "none" ? "none" : ("lzw" as const);
 
   const pdfjs = await loadPdfjsInWorker();
   const outputs: { name: string; mime: string; blob: Blob }[] = [];
@@ -52,6 +64,11 @@ async function run(request: WorkerRunRequest): Promise<void> {
       .replace(/\.(pdf)$/i, "")
       .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
       .slice(0, 120);
+
+    // One chained multi-page TIFF per input file (fresh builder per file —
+    // finish() is one-shot). Emitted after the file's page loop ends.
+    let tiffBuilder: TiffBuilder | null = null;
+    let tiffBuilderPageCount = 0;
 
     const data = new Uint8Array(await file.arrayBuffer());
     const doc = await pdfjs.getDocument({
@@ -97,10 +114,55 @@ async function run(request: WorkerRunRequest): Promise<void> {
       }).promise;
       page.cleanup();
 
+      // TIFF pages flow through the clean-room writer instead of a canvas
+      // encode: raw ImageData pixels, LZW (or none), every page of the file
+      // chained into one multi-page .tiff (the scanner convention).
+      if (isTiff) {
+        const rgba = context.getImageData(0, 0, width, height).data;
+        if (multipageTiff) {
+          tiffBuilder ??= new TiffBuilder({
+            compression: tiffCompression,
+            dpi,
+          });
+          tiffBuilder.addPage({ width, height, rgba });
+          tiffBuilderPageCount += 1;
+        } else {
+          const single = new TiffBuilder({
+            compression: tiffCompression,
+            dpi,
+          });
+          single.addPage({ width, height, rgba });
+          outputs.push({
+            name: `${base}_page${pageNumber}.tiff`,
+            mime: "image/tiff",
+            blob: new Blob([single.finish() as BlobPart], {
+              type: "image/tiff",
+            }),
+          });
+        }
+        renderedPages += 1;
+        post({
+          type: "progress",
+          runId,
+          pct: Math.round(
+            ((fileIndex + (i + 1) / pageNumbers.length) / files.length) * 95
+          ),
+          stage: "processing",
+          detail: { page: i + 1, pages: pageNumbers.length },
+        });
+        continue;
+      }
+
       const blob = await canvas.convertToBlob({
         type: format.mime,
-        quality: format.alpha ? undefined : quality,
+        quality: format.lossy ? quality : undefined,
       });
+      // Honesty guard: browsers without a WEBP encoder (older Safari) hand
+      // back PNG bytes silently — refuse before a misnamed file downloads.
+      if (toolId === "pdf-to-webp" && blob.type !== format.mime) {
+        post({ type: "error", runId, code: "tool.errorWebpUnsupported" });
+        return;
+      }
       renderedPages += 1;
       outputs.push({
         name:
@@ -123,6 +185,17 @@ async function run(request: WorkerRunRequest): Promise<void> {
     }
 
     doc.cleanup();
+
+    // The file's pages finish → emit the chained multi-page TIFF now.
+    if (isTiff && multipageTiff && tiffBuilderPageCount > 0 && tiffBuilder) {
+      outputs.push({
+        name: `${base}.tiff`,
+        mime: "image/tiff",
+        blob: new Blob([tiffBuilder.finish() as BlobPart], {
+          type: "image/tiff",
+        }),
+      });
+    }
   }
 
   post({ type: "progress", runId, pct: 97, stage: "saving" });

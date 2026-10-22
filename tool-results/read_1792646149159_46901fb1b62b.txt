@@ -1,0 +1,1668 @@
+     1→/**
+     2→ * PowerPoint to PDF (RB2-a — the 71st tool) — pure model. No DOM, no
+     3→ * pdf-lib, no worker APIs: the same parsePptx feeds the surface's live
+     4→ * deck summary AND the worker's render path, so the preview numbers can
+     5→ * never disagree with the output.
+     6→ *
+     7→ *  - parsePptx: fflate unzipSync of the OOXML ZIP →
+     8→ *    ppt/presentation.xml (sldSz cx/cy EMU + sldIdLst r:id order) →
+     9→ *    ppt/_rels/presentation.xml.rels (rId → slide part) → each
+    10→ *    ppt/slides/slideN.xml parsed with a dependency-free SAX-ish
+    11→ *    tokenizer (no DOMParser — workers). Shapes (p:sp) carry their box
+    12→ *    (a:xfrm a:off/a:ext, EMU → pt via /12700) and paragraphs/runs with
+    13→ *    a:rPr attrs (sz hundredths of a point, b, i, solidFill/srgbClr
+    14→ *    hex). Groups (p:grpSp) recurse with the chOff/chExt child-space
+    15→ *    transform composed inner→outer. Title placeholders (p:ph
+    16→ *    type="title"/"ctrTitle") are marked so the renderer can bold them.
+    17→ *    Speaker notes come from ppt/notesSlides/notesSlideN.xml via each
+    18→ *    slide's .rels (plain text runs, optional include).
+    19→ *  - parsePptxRun: the worker-boundary coercion (parseWordRun pattern)
+    20→ *    — clamp arrays, strip control chars, cap every length. A tampered
+    21→ *    payload can never reach the renderer as a wrong type.
+    22→ *  - needsNoto / isWinAnsiText: pure-WinAnsi decks → non-embedded
+    23→ *    base-14 Helvetica; ANY non-WinAnsi char (Devanagari, ₹ …) → the
+    24→ *    self-hosted Noto Sans Devanagari subset (fontkit).
+    25→ *  - buildSamplePptx: a REAL minimal 2-slide deck (master/layout/theme
+    26→ *    chain, 1 notes slide) used by the smoke script.
+    27→ *
+    28→ * Honest limits (mirrored in config.ts): .pptx only — the legacy
+    29→ * binary .ppt is an OLE2 compound file, not a ZIP, and is rejected
+    30→ * up front; pictures, charts, SmartArt and graphicFrame tables are
+    31→ * not carried over.
+    32→ */
+    33→
+    34→import { strToU8, unzipSync, zipSync, type Unzipped } from "fflate";
+    35→
+    36→/* ------------------------------------------------------------------ */
+    37→/* Hard caps (mirrored by the boundary parser)                          */
+    38→/* ------------------------------------------------------------------ */
+    39→
+    40→export const MAX_SLIDES = 100;
+    41→export const MAX_SHAPES_PER_SLIDE = 300;
+    42→export const MAX_PARAS_PER_SHAPE = 200;
+    43→export const MAX_RUNS_PER_PARA = 100;
+    44→export const MAX_RUN_TEXT = 2_000;
+    45→export const MAX_NOTES_CHARS = 4_000;
+    46→/** hard byte ceiling (the surface shows 50 MB on coarse-pointer devices) */
+    47→export const MAX_PPTX_BYTES = 200 * 1024 * 1024;
+    48→
+    49→const EMU_PER_PT = 12700;
+    50→/** PowerPoint defaults when sldSz is missing/invalid (16:9). */
+    51→const DEFAULT_SLIDE_CX = 12192000;
+    52→const DEFAULT_SLIDE_CY = 6858000;
+    53→
+    54→/* ------------------------------------------------------------------ */
+    55→/* Slide IR                                                             */
+    56→/* ------------------------------------------------------------------ */
+    57→
+    58→export interface PptRun {
+    59→  text: string;
+    60→  bold: boolean;
+    61→  italic: boolean;
+    62→  /** explicit a:rPr @sz (hundredths of a pt) → pt, clamped 4–144. */
+    63→  sizePt?: number;
+    64→  /** a:rPr solidFill/srgbClr @val hex (RRGGBB, uppercase). */
+    65→  color?: string;
+    66→}
+    67→
+    68→export interface PptPara {
+    69→  runs: PptRun[];
+    70→  /** a:pPr @algn (justify flattens to left — honest). */
+    71→  align?: "left" | "center" | "right";
+    72→  /** true when the paragraph carries a:buChar/a:buAutoNum (numbers print as bullets). */
+    73→  bullet?: boolean;
+    74→}
+    75→
+    76→export interface PptShape {
+    77→  /** box in pt (EMU / 12700), after the group transform composition. */
+    78→  x: number;
+    79→  y: number;
+    80→  w: number;
+    81→  h: number;
+    82→  paras: PptPara[];
+    83→  /** title placeholder (ph type="title"/"ctrTitle") → renderer bolds it. */
+    84→  isTitle: boolean;
+    85→}
+    86→
+    87→export interface PptSlide {
+    88→  shapes: PptShape[];
+    89→  /** speaker-notes text ("" when the slide has no notes part). */
+    90→  notes: string;
+    91→}
+    92→
+    93→export interface ParsedPptx {
+    94→  slides: PptSlide[];
+    95→  /** slide size in pt (sldSz / 12700; 16:9 default 960 × 540). */
+    96→  slideW: number;
+    97→  slideH: number;
+    98→  /** true when a hard cap was hit — the surface shows an honest note. */
+    99→  truncated: boolean;
+   100→}
+   101→
+   102→export interface PptStats {
+   103→  slides: number;
+   104→  shapes: number;
+   105→  words: number;
+   106→  chars: number;
+   107→  /** slides that carry non-empty speaker notes. */
+   108→  notesSlides: number;
+   109→}
+   110→
+   111→/** Honest stats derived from the slides alone (parse + coercion agree). */
+   112→export function statsSlides(slides: PptSlide[]): PptStats {
+   113→  let shapes = 0;
+   114→  let words = 0;
+   115→  let chars = 0;
+   116→  let notesSlides = 0;
+   117→  const count = (s: string): void => {
+   118→    chars += s.length;
+   119→    words += s.split(/\s+/).filter(Boolean).length;
+   120→  };
+   121→  for (const slide of slides) {
+   122→    if (slide.notes.trim()) {
+   123→      notesSlides += 1;
+   124→      count(slide.notes);
+   125→    }
+   126→    for (const sh of slide.shapes) {
+   127→      shapes += 1;
+   128→      for (const para of sh.paras) {
+   129→        for (const r of para.runs) count(r.text);
+   130→      }
+   131→    }
+   132→  }
+   133→  return { slides: slides.length, shapes, words, chars, notesSlides };
+   134→}
+   135→
+   136→/** Estimated output pages: one per slide, plus one notes page per slide. */
+   137→export function estimatePages(slides: PptSlide[], withNotes: boolean): number {
+   138→  return slides.length * (withNotes ? 2 : 1);
+   139→}
+   140→
+   141→/* ------------------------------------------------------------------ */
+   142→/* Error codes thrown by parsePptx (mapped to i18n keys in the worker)  */
+   143→/* ------------------------------------------------------------------ */
+   144→
+   145→export type PptxErrorCode =
+   146→  | "pptx-legacy"
+   147→  | "pptx-not-zip"
+   148→  | "pptx-corrupt"
+   149→  | "pptx-empty"
+   150→  | "pptx-too-large";
+   151→
+   152→export class PptxParseError extends Error {
+   153→  readonly code: PptxErrorCode;
+   154→  constructor(code: PptxErrorCode) {
+   155→    super(code);
+   156→    this.code = code;
+   157→    this.name = "PptxParseError";
+   158→  }
+   159→}
+   160→
+   161→/* ------------------------------------------------------------------ */
+   162→/* Magic sniffing (shared by the surface drop zone + the worker)        */
+   163→/* ------------------------------------------------------------------ */
+   164→
+   165→/** Legacy .ppt (OLE2 compound document) — the honest "convert first" case. */
+   166→export function isLegacyPptBytes(head: Uint8Array): boolean {
+   167→  return (
+   168→    head.length >= 8 &&
+   169→    head[0] === 0xd0 &&
+   170→    head[1] === 0xcf &&
+   171→    head[2] === 0x11 &&
+   172→    head[3] === 0xe0 &&
+   173→    head[4] === 0xa1 &&
+   174→    head[5] === 0xb1 &&
+   175→    head[6] === 0x1a &&
+   176→    head[7] === 0xe1
+   177→  );
+   178→}
+   179→
+   180→/** ZIP magic: PK\x03\x04 (local file) or PK\x05\x06 (empty archive). */
+   181→export function isZipBytes(head: Uint8Array): boolean {
+   182→  return (
+   183→    head.length >= 4 &&
+   184→    head[0] === 0x50 &&
+   185→    head[1] === 0x4b &&
+   186→    ((head[2] === 0x03 && head[3] === 0x04) ||
+   187→      (head[2] === 0x05 && head[3] === 0x06) ||
+   188→      (head[2] === 0x07 && head[3] === 0x08))
+   189→  );
+   190→}
+   191→
+   192→/* ------------------------------------------------------------------ */
+   193→/* WinAnsi detection → Helvetica vs embedded Noto (create-resume copy)  */
+   194→/* ------------------------------------------------------------------ */
+   195→
+   196→const WINANSI_EXTRA = new Set([
+   197→  0x20ac, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030,
+   198→  0x0160, 0x2039, 0x0152, 0x017d, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022,
+   199→  0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x017e, 0x0178,
+   200→]);
+   201→
+   202→/** true when every char is encodable in WinAnsi (CP1252) minus controls.
+   203→ * \n and \t pass — the layout consumes them (hard breaks), they never
+   204→ * reach font encoding. */
+   205→export function isWinAnsiText(s: string): boolean {
+   206→  for (let i = 0; i < s.length; i++) {
+   207→    const c = s.charCodeAt(i);
+   208→    if (c === 0x0a || c === 0x09) continue;
+   209→    if (c >= 0x20 && c <= 0x7e) continue;
+   210→    if (c >= 0xa0 && c <= 0xff) continue;
+   211→    if (WINANSI_EXTRA.has(c)) continue;
+   212→    return false;
+   213→  }
+   214→  return true;
+   215→}
+   216→
+   217→/**
+   218→ * true → the renderer must embed the self-hosted Noto Sans Devanagari
+   219→ * (fontkit subset); false → pure-WinAnsi decks stay on base-14 Helvetica.
+   220→ * `extra` covers localized strings drawn by the renderer itself (the
+   221→ * notes-page heading template), which flip the font decision too.
+   222→ */
+   223→export function needsNoto(ppt: ParsedPptx, extra = ""): boolean {
+   224→  if (extra && !isWinAnsiText(extra)) return true;
+   225→  for (const slide of ppt.slides) {
+   226→    if (!isWinAnsiText(slide.notes)) return true;
+   227→    for (const sh of slide.shapes) {
+   228→      for (const para of sh.paras) {
+   229→        for (const r of para.runs) {
+   230→          if (!isWinAnsiText(r.text)) return true;
+   231→        }
+   232→      }
+   233→    }
+   234→  }
+   235→  return false;
+   236→}
+   237→
+   238→/* ------------------------------------------------------------------ */
+   239→/* hindiNorm — the pinned lost-session lesson                           */
+   240→/* ------------------------------------------------------------------ */
+   241→
+   242→const DEVA_RE = /[\u0900-\u097F]/;
+   243→
+   244→/**
+   245→ * Noto subset CMaps can inject stray ASCII quotes (") between Devanagari
+   246→ * words. Strip `"` — but ONLY from strings that actually contain
+   247→ * Devanagari; English quotes are left completely alone.
+   248→ */
+   249→export function hindiNorm(s: string): string {
+   250→  return DEVA_RE.test(s) ? s.split('"').join("") : s;
+   251→}
+   252→
+   253→/* ------------------------------------------------------------------ */
+   254→/* XML entities                                                         */
+   255→/* ------------------------------------------------------------------ */
+   256→
+   257→const NAMED_ENTITIES: Record<string, string> = {
+   258→  amp: "&",
+   259→  lt: "<",
+   260→  gt: ">",
+   261→  quot: '"',
+   262→  apos: "'",
+   263→  nbsp: "\u00a0",
+   264→  tab: "\t",
+   265→  newline: "\n",
+   266→};
+   267→
+   268→const ENTITY_RE = /&(#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z][a-zA-Z0-9]*);/g;
+   269→
+   270→function decodeEntities(s: string): string {
+   271→  if (!s.includes("&")) return s;
+   272→  return s.replace(ENTITY_RE, (match, body: string) => {
+   273→    if (body.charCodeAt(0) === 35 /* # */) {
+   274→      const hex = body[1] === "x" || body[1] === "X";
+   275→      const code = Number.parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10);
+   276→      if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return match;
+   277→      try {
+   278→        return String.fromCodePoint(code);
+   279→      } catch {
+   280→        return match;
+   281→      }
+   282→    }
+   283→    return NAMED_ENTITIES[body] ?? match;
+   284→  });
+   285→}
+   286→
+   287→/* ------------------------------------------------------------------ */
+   288→/* prefix / local-name helpers                                          */
+   289→/* ------------------------------------------------------------------ */
+   290→
+   291→function prefixOf(name: string): string {
+   292→  const colon = name.indexOf(":");
+   293→  return colon < 0 ? "" : name.slice(0, colon);
+   294→}
+   295→
+   296→function localName(name: string): string {
+   297→  const colon = name.indexOf(":");
+   298→  return colon < 0 ? name : name.slice(colon + 1);
+   299→}
+   300→
+   301→/* ------------------------------------------------------------------ */
+   302→/* Dependency-free XML tokenizer (SAX events; no DOMParser in workers)  */
+   303→/* ------------------------------------------------------------------ */
+   304→
+   305→export interface SaxHandlers {
+   306→  open(name: string, attrs: Record<string, string>): void;
+   307→  text(value: string): void;
+   308→  close(name: string): void;
+   309→}
+   310→
+   311→const WS_RE = /[\s]/;
+   312→const NAME_STOP_RE = /[\s/>]/;
+   313→const ATTR_NAME_STOP_RE = /[\s=/>]/;
+   314→
+   315→/**
+   316→ * Tolerant linear tokenizer for well-formed Office XML: real elements
+   317→ * emit open/close (self-closing emits both), <?…?> / <!--…--> /
+   318→ * <![CDATA[…]]> are skipped (CDATA becomes raw text), everything else
+   319→ * between tags is text with entity decoding. Malformed input degrades
+   320→ * instead of throwing. (word-to-pdf tokenizer, verbatim.)
+   321→ */
+   322→export function parseXmlSax(xml: string, h: SaxHandlers): void {
+   323→  const n = xml.length;
+   324→  let i = 0;
+   325→  while (i < n) {
+   326→    const lt = xml.indexOf("<", i);
+   327→    if (lt < 0) {
+   328→      if (i < n) h.text(decodeEntities(xml.slice(i)));
+   329→      break;
+   330→    }
+   331→    if (lt > i) h.text(decodeEntities(xml.slice(i, lt)));
+   332→
+   333→    if (xml.startsWith("<?", lt)) {
+   334→      const end = xml.indexOf("?>", lt);
+   335→      i = end < 0 ? n : end + 2;
+   336→      continue;
+   337→    }
+   338→    if (xml.startsWith("<!--", lt)) {
+   339→      const end = xml.indexOf("-->", lt);
+   340→      i = end < 0 ? n : end + 3;
+   341→      continue;
+   342→    }
+   343→    if (xml.startsWith("<![CDATA[", lt)) {
+   344→      const end = xml.indexOf("]]>", lt);
+   345→      h.text(xml.slice(lt + 9, end < 0 ? n : end)); // raw — no entities
+   346→      i = end < 0 ? n : end + 3;
+   347→      continue;
+   348→    }
+   349→    if (xml.charCodeAt(lt + 1) === 33 /* ! */) {
+   350→      const end = xml.indexOf(">", lt);
+   351→      i = end < 0 ? n : end + 1;
+   352→      continue;
+   353→    }
+   354→
+   355→    let j = lt + 1;
+   356→    let closing = false;
+   357→    if (xml.charCodeAt(j) === 47 /* / */) {
+   358→      closing = true;
+   359→      j += 1;
+   360→    }
+   361→    const nameStart = j;
+   362→    while (j < n && !NAME_STOP_RE.test(xml[j])) j += 1;
+   363→    const name = xml.slice(nameStart, j);
+   364→    if (name === "") {
+   365→      // "<" that isn't a tag at all — emit it as text and move on.
+   366→      h.text("<");
+   367→      i = lt + 1;
+   368→      continue;
+   369→    }
+   370→
+   371→    const attrs: Record<string, string> = {};
+   372→    let selfClosing = false;
+   373→    while (j < n) {
+   374→      while (j < n && WS_RE.test(xml[j])) j += 1;
+   375→      const c = xml.charCodeAt(j);
+   376→      if (c === 47 /* / */) {
+   377→        selfClosing = true;
+   378→        j += 1;
+   379→        continue;
+   380→      }
+   381→      if (c === 62 /* > */) {
+   382→        j += 1;
+   383→        break;
+   384→      }
+   385→      const aStart = j;
+   386→      while (j < n && !ATTR_NAME_STOP_RE.test(xml[j])) j += 1;
+   387→      const aName = xml.slice(aStart, j);
+   388→      while (j < n && WS_RE.test(xml[j])) j += 1;
+   389→      let aVal = "";
+   390→      if (xml.charCodeAt(j) === 61 /* = */) {
+   391→        j += 1;
+   392→        while (j < n && WS_RE.test(xml[j])) j += 1;
+   393→        const q = xml.charCodeAt(j);
+   394→        if (q === 34 /* " */ || q === 39 /* ' */) {
+   395→          j += 1;
+   396→          const vStart = j;
+   397→          while (j < n && xml.charCodeAt(j) !== q) j += 1;
+   398→          aVal = xml.slice(vStart, j);
+   399→          j += 1;
+   400→        } else {
+   401→          const vStart = j;
+   402→          while (j < n && !WS_RE.test(xml[j]) && xml.charCodeAt(j) !== 62) {
+   403→            j += 1;
+   404→          }
+   405→          aVal = xml.slice(vStart, j);
+   406→        }
+   407→      }
+   408→      if (aName) attrs[aName] = decodeEntities(aVal);
+   409→      if (j >= n) break;
+   410→    }
+   411→
+   412→    if (closing) {
+   413→      h.close(name);
+   414→    } else {
+   415→      h.open(name, attrs);
+   416→      if (selfClosing) h.close(name);
+   417→    }
+   418→    i = j;
+   419→  }
+   420→}
+   421→
+   422→/* ------------------------------------------------------------------ */
+   423→/* numeric helpers                                                      */
+   424→/* ------------------------------------------------------------------ */
+   425→
+   426→function emuToPt(v: number): number {
+   427→  return v / EMU_PER_PT;
+   428→}
+   429→
+   430→/** finite integer attribute → number, else null. */
+   431→function attrNum(attrs: Record<string, string>, key: string): number | null {
+   432→  const v = Number.parseInt(attrs[key] ?? "", 10);
+   433→  return Number.isFinite(v) ? v : null;
+   434→}
+   435→
+   436→/** a:rPr @sz — hundredths of a point → pt (4–144). */
+   437→function szToPt(val: string | undefined): number | undefined {
+   438→  if (val === undefined) return undefined;
+   439→  const v = Number.parseInt(val, 10);
+   440→  if (!Number.isFinite(v)) return undefined;
+   441→  const pt = v / 100;
+   442→  return pt >= 4 && pt <= 144 ? pt : undefined;
+   443→}
+   444→
+   445→function boolAttr(attrs: Record<string, string>, key: string): boolean {
+   446→  const v = attrs[key];
+   447→  return v !== undefined && v !== "0" && v !== "false" && v !== "none";
+   448→}
+   449→
+   450→const COLOR_RE = /^[0-9A-Fa-f]{6}$/;
+   451→
+   452→/* ------------------------------------------------------------------ */
+   453→/* presentation.xml + rels                                              */
+   454→/* ------------------------------------------------------------------ */
+   455→
+   456→interface PresentationInfo {
+   457→  cx: number;
+   458→  cy: number;
+   459→  rIds: string[];
+   460→}
+   461→
+   462→function parsePresentationXml(xml: string): PresentationInfo {
+   463→  let cx = DEFAULT_SLIDE_CX;
+   464→  let cy = DEFAULT_SLIDE_CY;
+   465→  const rIds: string[] = [];
+   466→  parseXmlSax(xml, {
+   467→    open(name, attrs) {
+   468→      if (prefixOf(name) !== "p") return;
+   469→      const local = localName(name);
+   470→      if (local === "sldSz") {
+   471→        const x = attrNum(attrs, "cx");
+   472→        const y = attrNum(attrs, "cy");
+   473→        if (x !== null && x >= 100000 && x <= 51206400) cx = x;
+   474→        if (y !== null && y >= 100000 && y <= 51206400) cy = y;
+   475→      } else if (local === "sldId") {
+   476→        const rid = attrs["r:id"] ?? "";
+   477→        if (rid) rIds.push(rid);
+   478→      }
+   479→    },
+   480→    text() {
+   481→      /* everything lives in attributes */
+   482→    },
+   483→    close() {
+   484→      /* nothing */
+   485→    },
+   486→  });
+   487→  return { cx, cy, rIds };
+   488→}
+   489→
+   490→interface RelInfo {
+   491→  target: string;
+   492→  type: string;
+   493→}
+   494→
+   495→function parseRelsXml(xml: string): Record<string, RelInfo> {
+   496→  const map: Record<string, RelInfo> = {};
+   497→  parseXmlSax(xml, {
+   498→    open(name, attrs) {
+   499→      if (localName(name) !== "Relationship") return;
+   500→      const id = attrs.Id ?? "";
+   501→      const target = attrs.Target ?? "";
+   502→      const type = attrs.Type ?? "";
+   503→      if (id && target) map[id] = { target, type };
+   504→    },
+   505→    text() {
+   506→      /* attributes only */
+   507→    },
+   508→    close() {
+   509→      /* nothing */
+   510→    },
+   511→  });
+   512→  return map;
+   513→}
+   514→
+   515→/** Resolve an OPC part target against its owner's directory. */
+   516→function resolvePart(baseDir: string, target: string): string {
+   517→  if (target.startsWith("/")) return target.slice(1);
+   518→  const stack = baseDir === "" ? [] : baseDir.split("/");
+   519→  for (const part of target.split("/")) {
+   520→    if (part === "." || part === "") continue;
+   521→    if (part === "..") {
+   522→      stack.pop();
+   523→      continue;
+   524→    }
+   525→    stack.push(part);
+   526→  }
+   527→  return stack.join("/");
+   528→}
+   529→
+   530→/* ------------------------------------------------------------------ */
+   531→/* Slide assembler (flat SAX state machine)                             */
+   532→/* ------------------------------------------------------------------ */
+   533→
+   534→interface XfrmData {
+   535→  offX: number;
+   536→  offY: number;
+   537→  extX: number;
+   538→  extY: number;
+   539→  chOffX: number;
+   540→  chOffY: number;
+   541→  chExtX: number;
+   542→  chExtY: number;
+   543→}
+   544→
+   545→function newXfrm(): XfrmData {
+   546→  return {
+   547→    offX: 0,
+   548→    offY: 0,
+   549→    extX: 0,
+   550→    extY: 0,
+   551→    chOffX: 0,
+   552→    chOffY: 0,
+   553→    chExtX: 0,
+   554→    chExtY: 0,
+   555→  };
+   556→}
+   557→
+   558→interface ParaState {
+   559→  runs: PptRun[];
+   560→  run: RunState | null;
+   561→  align: "left" | "center" | "right" | undefined;
+   562→  bullet: boolean;
+   563→  textLen: number;
+   564→}
+   565→
+   566→interface RunState {
+   567→  text: string;
+   568→  bold: boolean;
+   569→  italic: boolean;
+   570→  sizePt: number | undefined;
+   571→  color: string | undefined;
+   572→}
+   573→
+   574→interface SpFrame {
+   575→  kind: "sp";
+   576→  xfrm: XfrmData | null;
+   577→  isTitle: boolean;
+   578→  paras: PptPara[];
+   579→  para: ParaState | null;
+   580→  run: RunState | null;
+   581→  inRPr: boolean;
+   582→  inTxBody: boolean;
+   583→}
+   584→
+   585→type Frame =
+   586→  | { kind: "grp"; xfrm: XfrmData; children: PptShape[] }
+   587→  | SpFrame
+   588→  | { kind: "skip" };
+   589→
+   590→/**
+   591→ * Streams tokenizer events into one slide's shapes. Group transforms
+   592→ * compose inner→outer at shape-close time (every ancestor's raw xfrm
+   593→ * is complete by then — xfrm always precedes children in OOXML).
+   594→ */
+   595→class SlideAssembler {
+   596→  readonly shapes: PptShape[] = [];
+   597→  truncated = false;
+   598→
+   599→  private stack: Frame[] = [];
+   600→  private xfrmData: XfrmData | null = null;
+   601→  private textTarget = false;
+   602→  private shapeCount = 0;
+   603→  /** flow cursor (pt) for shapes with no xfrm (rare, malformed decks). */
+   604→  private autoY = 36;
+   605→
+   606→  constructor(
+   607→    private readonly slideW: number,
+   608→    private readonly slideH: number
+   609→  ) {}
+   610→
+   611→  private topSp(): SpFrame | null {
+   612→    const f = this.stack[this.stack.length - 1];
+   613→    return f && f.kind === "sp" ? f : null;
+   614→  }
+   615→
+   616→  private newPara(): ParaState {
+   617→    return {
+   618→      runs: [],
+   619→      run: null,
+   620→      align: undefined,
+   621→      bullet: false,
+   622→      textLen: 0,
+   623→    };
+   624→  }
+   625→
+   626→  private endRun(): void {
+   627→    const sp = this.topSp();
+   628→    const para = sp?.para ?? null;
+   629→    if (!sp || !para) {
+   630→      if (sp) sp.run = null;
+   631→      return;
+   632→    }
+   633→    const run = sp.run;
+   634→    sp.run = null;
+   635→    sp.inRPr = false;
+   636→    if (!run || run.text === "") return;
+   637→    if (para.runs.length >= MAX_RUNS_PER_PARA || para.textLen >= MAX_RUN_TEXT) {
+   638→      this.truncated = true;
+   639→      return;
+   640→    }
+   641→    const text = run.text.slice(0, MAX_RUN_TEXT);
+   642→    para.textLen += text.length;
+   643→    para.runs.push({
+   644→      text,
+   645→      bold: run.bold,
+   646→      italic: run.italic,
+   647→      sizePt: run.sizePt,
+   648→      color: run.color,
+   649→    });
+   650→  }
+   651→
+   652→  private endPara(): void {
+   653→    const sp = this.topSp();
+   654→    if (!sp) return;
+   655→    const para = sp.para;
+   656→    sp.para = null;
+   657→    sp.run = null;
+   658→    if (!para) return;
+   659→    if (sp.paras.length >= MAX_PARAS_PER_SHAPE) {
+   660→      this.truncated = true;
+   661→      return;
+   662→    }
+   663→    sp.paras.push({
+   664→      runs: para.runs,
+   665→      align: para.align,
+   666→      bullet: para.bullet || undefined,
+   667→    });
+   668→  }
+   669→
+   670→  /** Compose the ancestor group transforms (inner→outer) over the raw box. */
+   671→  private absoluteBox(
+   672→    raw: XfrmData
+   673→  ): { x: number; y: number; w: number; h: number } {
+   674→    let x = raw.offX;
+   675→    let y = raw.offY;
+   676→    let w = raw.extX;
+   677→    let h = raw.extY;
+   678→    for (let i = this.stack.length - 1; i >= 0; i -= 1) {
+   679→      const f = this.stack[i];
+   680→      if (f.kind !== "grp") continue;
+   681→      const g = f.xfrm;
+   682→      const sx = g.chExtX > 0 ? g.extX / g.chExtX : 1;
+   683→      const sy = g.chExtY > 0 ? g.extY / g.chExtY : 1;
+   684→      x = g.offX + (x - g.chOffX) * sx;
+   685→      y = g.offY + (y - g.chOffY) * sy;
+   686→      w *= sx;
+   687→      h *= sy;
+   688→    }
+   689→    return { x: emuToPt(x), y: emuToPt(y), w: emuToPt(w), h: emuToPt(h) };
+   690→  }
+   691→
+   692→  private endShape(): void {
+   693→    const top = this.stack[this.stack.length - 1];
+   694→    if (!top || top.kind !== "sp") {
+   695→      this.stack.pop(); // skip frame or stray close — drop it
+   696→      return;
+   697→    }
+   698→    // finalize the pending paragraph while the sp frame is still on the
+   699→    // stack (endPara reads the stack top).
+   700→    if (top.para) this.endPara();
+   701→    const sp = this.stack.pop();
+   702→    if (!sp || sp.kind !== "sp") return;
+   703→    const shape: PptShape = sp.xfrm
+   704→      ? { ...this.absoluteBox(sp.xfrm), paras: sp.paras, isTitle: sp.isTitle }
+   705→      : {
+   706→          // honest flow fallback for shapes without a box: stack them
+   707→          // down the slide at full width minus a 36 pt gutter.
+   708→          x: 36,
+   709→          y: this.autoY,
+   710→          w: Math.max(72, this.slideW - 72),
+   711→          h: Math.max(48, 18 * Math.max(1, sp.paras.length)),
+   712→          paras: sp.paras,
+   713→          isTitle: sp.isTitle,
+   714→        };
+   715→    if (!sp.xfrm) {
+   716→      this.autoY += shape.h + 12;
+   717→    }
+   718→    const parent = this.stack[this.stack.length - 1];
+   719→    if (parent && parent.kind === "grp") {
+   720→      if (parent.children.length >= MAX_SHAPES_PER_SLIDE) {
+   721→        this.truncated = true;
+   722→        return;
+   723→      }
+   724→      parent.children.push(shape);
+   725→      return;
+   726→    }
+   727→    this.pushTop(shape);
+   728→  }
+   729→
+   730→  private pushTop(shape: PptShape): void {
+   731→    if (this.shapes.length >= MAX_SHAPES_PER_SLIDE) {
+   732→      this.truncated = true;
+   733→      return;
+   734→    }
+   735→    this.shapeCount += 1;
+   736→    this.shapes.push(shape);
+   737→  }
+   738→
+   739→  private endGroup(): void {
+   740→    const g = this.stack.pop();
+   741→    if (!g || g.kind !== "grp") return;
+   742→    const parent = this.stack[this.stack.length - 1];
+   743→    for (const child of g.children) {
+   744→      if (parent && parent.kind === "grp") {
+   745→        if (parent.children.length >= MAX_SHAPES_PER_SLIDE) {
+   746→          this.truncated = true;
+   747→          break;
+   748→        }
+   749→        parent.children.push(child);
+   750→      } else {
+   751→        this.pushTop(child);
+   752→      }
+   753→    }
+   754→  }
+   755→
+   756→  readonly handlers: SaxHandlers = {
+   757→    open: (name, attrs) => {
+   758→      const pre = prefixOf(name);
+   759→      const local = localName(name);
+   760→
+   761→      if (pre === "p") {
+   762→        switch (local) {
+   763→          case "sp":
+   764→            if (this.shapeCount >= MAX_SHAPES_PER_SLIDE) {
+   765→              this.truncated = true;
+   766→              this.stack.push({ kind: "skip" });
+   767→              return;
+   768→            }
+   769→            this.stack.push({
+   770→              kind: "sp",
+   771→              xfrm: null,
+   772→              isTitle: false,
+   773→              paras: [],
+   774→              para: null,
+   775→              run: null,
+   776→              inRPr: false,
+   777→              inTxBody: false,
+   778→            });
+   779→            return;
+   780→          case "grpSp":
+   781→          case "spTree": {
+   782→            // the tree itself is a (usually identity) group — its xfrm
+   783→            // events land on it while it is the stack top.
+   784→            const frame: Frame = { kind: "grp", xfrm: newXfrm(), children: [] };
+   785→            this.stack.push(frame);
+   786→            this.xfrmData = frame.xfrm;
+   787→            return;
+   788→          }
+   789→          case "pic":
+   790→          case "graphicFrame":
+   791→          case "contentPart":
+   792→            // pictures / charts / SmartArt / tables are not carried —
+   793→            // absorb their subtrees so their xfrm can't corrupt frames.
+   794→            this.stack.push({ kind: "skip" });
+   795→            return;
+   796→          case "ph": {
+   797→            const sp = this.topSp();
+   798→            if (sp) {
+   799→              const type = attrs.type ?? "";
+   800→              sp.isTitle = type === "title" || type === "ctrTitle";
+   801→            }
+   802→            return;
+   803→          }
+   804→          case "txBody": {
+   805→            // PresentationML puts the shape text body in the p: namespace
+   806→            // (<p:txBody>); DrawingML uses a:txBody — accept both.
+   807→            const sp = this.topSp();
+   808→            if (sp) sp.inTxBody = true;
+   809→            return;
+   810→          }
+   811→          default:
+   812→            return;
+   813→        }
+   814→      }
+   815→
+   816→      if (pre !== "a") return;
+   817→      switch (local) {
+   818→        case "xfrm": {
+   819→          const top = this.stack[this.stack.length - 1];
+   820→          if (top && (top.kind === "sp" || top.kind === "grp")) {
+   821→            if (top.kind === "sp" && top.xfrm === null) top.xfrm = newXfrm();
+   822→            this.xfrmData = top.kind === "sp" ? (top.xfrm as XfrmData) : top.xfrm;
+   823→          }
+   824→          return;
+   825→        }
+   826→        case "off": {
+   827→          const d = this.xfrmData;
+   828→          if (d) {
+   829→            const x = attrNum(attrs, "x");
+   830→            const y = attrNum(attrs, "y");
+   831→            d.offX = x ?? 0;
+   832→            d.offY = y ?? 0;
+   833→          }
+   834→          return;
+   835→        }
+   836→        case "ext": {
+   837→          const d = this.xfrmData;
+   838→          if (d) {
+   839→            const cx = attrNum(attrs, "cx");
+   840→            const cy = attrNum(attrs, "cy");
+   841→            d.extX = cx ?? 0;
+   842→            d.extY = cy ?? 0;
+   843→          }
+   844→          return;
+   845→        }
+   846→        case "chOff": {
+   847→          const d = this.xfrmData;
+   848→          if (d) {
+   849→            const x = attrNum(attrs, "x");
+   850→            const y = attrNum(attrs, "y");
+   851→            d.chOffX = x ?? 0;
+   852→            d.chOffY = y ?? 0;
+   853→          }
+   854→          return;
+   855→        }
+   856→        case "chExt": {
+   857→          const d = this.xfrmData;
+   858→          if (d) {
+   859→            const cx = attrNum(attrs, "cx");
+   860→            const cy = attrNum(attrs, "cy");
+   861→            d.chExtX = cx ?? 0;
+   862→            d.chExtY = cy ?? 0;
+   863→          }
+   864→          return;
+   865→        }
+   866→        case "txBody": {
+   867→          const sp = this.topSp();
+   868→          if (sp) sp.inTxBody = true;
+   869→          return;
+   870→        }
+   871→        case "p": {
+   872→          const sp = this.topSp();
+   873→          if (sp && sp.inTxBody) sp.para = this.newPara();
+   874→          return;
+   875→        }
+   876→        case "pPr": {
+   877→          const para = this.topSp()?.para ?? null;
+   878→          if (para) {
+   879→            const algn = attrs.algn ?? "";
+   880→            if (algn === "ctr") para.align = "center";
+   881→            else if (algn === "r" || algn === "end") para.align = "right";
+   882→            else if (algn === "l" || algn === "start") para.align = "left";
+   883→          }
+   884→          return;
+   885→        }
+   886→        case "buChar":
+   887→        case "buAutoNum": {
+   888→          const para = this.topSp()?.para ?? null;
+   889→          if (para) para.bullet = true;
+   890→          return;
+   891→        }
+   892→        case "buNone": {
+   893→          const para = this.topSp()?.para ?? null;
+   894→          if (para) para.bullet = false;
+   895→          return;
+   896→        }
+   897→        case "r":
+   898→        case "fld": {
+   899→          const sp = this.topSp();
+   900→          if (sp && sp.para) {
+   901→            sp.run = {
+   902→              text: "",
+   903→              bold: false,
+   904→              italic: false,
+   905→              sizePt: undefined,
+   906→              color: undefined,
+   907→            };
+   908→          }
+   909→          return;
+   910→        }
+   911→        case "rPr": {
+   912→          const sp = this.topSp();
+   913→          const run = sp?.run ?? null;
+   914→          if (run) {
+   915→            if (sp) sp.inRPr = true;
+   916→            if (run.sizePt === undefined) run.sizePt = szToPt(attrs.sz);
+   917→            if (boolAttr(attrs, "b")) run.bold = true;
+   918→            if (boolAttr(attrs, "i")) run.italic = true;
+   919→          }
+   920→          return;
+   921→        }
+   922→        case "srgbClr": {
+   923→          const sp = this.topSp();
+   924→          const run = sp?.run ?? null;
+   925→          const val = attrs.val ?? "";
+   926→          if (sp && sp.inRPr && run && COLOR_RE.test(val)) {
+   927→            run.color = val.toUpperCase();
+   928→          }
+   929→          return;
+   930→        }
+   931→        case "br": {
+   932→          const sp = this.topSp();
+   933→          const para = sp?.para ?? null;
+   934→          if (sp && para) {
+   935→            if (sp.run) sp.run.text += "\n";
+   936→            else
+   937→              sp.run = {
+   938→                text: "\n",
+   939→                bold: false,
+   940→                italic: false,
+   941→                sizePt: undefined,
+   942→                color: undefined,
+   943→              };
+   944→          }
+   945→          return;
+   946→        }
+   947→        case "t": {
+   948→          const sp = this.topSp();
+   949→          if (sp && sp.run) this.textTarget = true;
+   950→          return;
+   951→        }
+   952→        default:
+   953→          return;
+   954→      }
+   955→    },
+   956→
+   957→    text: (value) => {
+   958→      if (!this.textTarget) return;
+   959→      const run = this.topSp()?.run ?? null;
+   960→      if (run) run.text += hindiNorm(value);
+   961→    },
+   962→
+   963→    close: (name) => {
+   964→      const pre = prefixOf(name);
+   965→      const local = localName(name);
+   966→
+   967→      if (pre === "p") {
+   968→        if (local === "sp") {
+   969→          this.endShape();
+   970→        } else if (local === "grpSp" || local === "spTree") {
+   971→          this.endGroup();
+   972→        } else if (local === "txBody") {
+   973→          const sp = this.topSp();
+   974→          if (sp) {
+   975→            if (sp.para) this.endPara();
+   976→            sp.inTxBody = false;
+   977→          }
+   978→        } else if (
+   979→          local === "pic" ||
+   980→          local === "graphicFrame" ||
+   981→          local === "contentPart"
+   982→        ) {
+   983→          this.stack.pop();
+   984→        }
+   985→        return;
+   986→      }
+   987→
+   988→      if (pre !== "a") return;
+   989→      switch (local) {
+   990→        case "xfrm":
+   991→          this.xfrmData = null;
+   992→          return;
+   993→        case "txBody": {
+   994→          const sp = this.topSp();
+   995→          if (sp) {
+   996→            if (sp.para) this.endPara();
+   997→            sp.inTxBody = false;
+   998→          }
+   999→          return;
+  1000→        }
+  1001→        case "p":
+  1002→          this.endPara();
+  1003→          return;
+  1004→        case "r":
+  1005→        case "fld":
+  1006→          this.endRun();
+  1007→          return;
+  1008→        case "rPr": {
+  1009→          const sp = this.topSp();
+  1010→          if (sp) sp.inRPr = false;
+  1011→          return;
+  1012→        }
+  1013→        case "t":
+  1014→          this.textTarget = false;
+  1015→          return;
+  1016→        default:
+  1017→          return;
+  1018→      }
+  1019→    },
+  1020→  };
+  1021→
+  1022→  finish(): PptSlide {
+  1023→    return { shapes: this.shapes, notes: "" };
+  1024→  }
+  1025→}
+  1026→
+  1027→/* ------------------------------------------------------------------ */
+  1028→/* notesSlides → plain text                                             */
+  1029→/* ------------------------------------------------------------------ */
+  1030→
+  1031→function parseNotesText(xml: string): string {
+  1032→  let out = "";
+  1033→  let inT = false;
+  1034→  parseXmlSax(xml, {
+  1035→    open(name) {
+  1036→      if (prefixOf(name) === "a" && localName(name) === "t") inT = true;
+  1037→    },
+  1038→    text(value) {
+  1039→      if (inT) out += hindiNorm(value);
+  1040→    },
+  1041→    close(name) {
+  1042→      if (prefixOf(name) === "a" && localName(name) === "t") inT = false;
+  1043→      else if (prefixOf(name) === "a" && localName(name) === "p") out += "\n";
+  1044→    },
+  1045→  });
+  1046→  return out
+  1047→    .replace(/\r/g, "")
+  1048→    .replace(/\n{3,}/g, "\n\n")
+  1049→    .trim()
+  1050→    .slice(0, MAX_NOTES_CHARS);
+  1051→}
+  1052→
+  1053→/* ------------------------------------------------------------------ */
+  1054→/* parsePptx                                                            */
+  1055→/* ------------------------------------------------------------------ */
+  1056→
+  1057→function decodeUtf8(b: Uint8Array): string {
+  1058→  let s = new TextDecoder("utf-8", { fatal: false }).decode(b);
+  1059→  if (s.charCodeAt(0) === 0xfeff) s = s.slice(1);
+  1060→  return s;
+  1061→}
+  1062→
+  1063→/**
+  1064→ * Unzips a .pptx (OOXML ZIP) and extracts the slide IR. Throws
+  1065→ * PptxParseError with an honest code for everything the renderer can't
+  1066→ * consume (legacy .ppt, non-ZIP, no presentation part, no slides).
+  1067→ */
+  1068→export function parsePptx(bytes: Uint8Array): ParsedPptx {
+  1069→  if (bytes.length > MAX_PPTX_BYTES) throw new PptxParseError("pptx-too-large");
+  1070→  if (isLegacyPptBytes(bytes.slice(0, 8))) {
+  1071→    throw new PptxParseError("pptx-legacy");
+  1072→  }
+  1073→  if (!isZipBytes(bytes.slice(0, 4))) throw new PptxParseError("pptx-not-zip");
+  1074→
+  1075→  let entries: Unzipped;
+  1076→  try {
+  1077→    entries = unzipSync(bytes);
+  1078→  } catch {
+  1079→    throw new PptxParseError("pptx-not-zip");
+  1080→  }
+  1081→
+  1082→  const presBytes = entries["ppt/presentation.xml"];
+  1083→  if (!presBytes || presBytes.length === 0) {
+  1084→    throw new PptxParseError("pptx-corrupt");
+  1085→  }
+  1086→  const pres = parsePresentationXml(decodeUtf8(presBytes));
+  1087→
+  1088→  const relsBytes = entries["ppt/_rels/presentation.xml.rels"];
+  1089→  const rels = relsBytes ? parseRelsXml(decodeUtf8(relsBytes)) : {};
+  1090→
+  1091→  const seen = new Set<string>();
+  1092→  const slideParts: string[] = [];
+  1093→  for (const rid of pres.rIds) {
+  1094→    const rel = rels[rid];
+  1095→    if (!rel || !rel.type.endsWith("/slide")) continue;
+  1096→    const part = resolvePart("ppt", rel.target);
+  1097→    const data = entries[part];
+  1098→    if (!data || data.length === 0 || seen.has(part)) continue;
+  1099→    seen.add(part);
+  1100→    slideParts.push(part);
+  1101→  }
+  1102→  if (slideParts.length === 0) throw new PptxParseError("pptx-empty");
+  1103→
+  1104→  const truncated = slideParts.length > MAX_SLIDES;
+  1105→  const parts = slideParts.slice(0, MAX_SLIDES);
+  1106→  const slideW = emuToPt(pres.cx);
+  1107→  const slideH = emuToPt(pres.cy);
+  1108→
+  1109→  const slides: PptSlide[] = [];
+  1110→  for (const part of parts) {
+  1111→    const asm = new SlideAssembler(slideW, slideH);
+  1112→    try {
+  1113→      parseXmlSax(decodeUtf8(entries[part] as Uint8Array), asm.handlers);
+  1114→    } catch {
+  1115→      /* a damaged slide degrades to empty — the deck keeps going */
+  1116→    }
+  1117→    asm.truncated = asm.truncated || truncated;
+  1118→    const slide = asm.finish();
+  1119→
+  1120→    // speaker notes: this slide's .rels → notesSlide part
+  1121→    const slash = part.lastIndexOf("/");
+  1122→    const dir = slash >= 0 ? part.slice(0, slash) : "";
+  1123→    const file = slash >= 0 ? part.slice(slash + 1) : part;
+  1124→    const notesRelsBytes = entries[`${dir}/_rels/${file}.rels`];
+  1125→    if (notesRelsBytes) {
+  1126→      const nrels = parseRelsXml(decodeUtf8(notesRelsBytes));
+  1127→      for (const rel of Object.values(nrels)) {
+  1128→        if (!rel.type.endsWith("/notesSlide")) continue;
+  1129→        const notesPart = resolvePart(dir, rel.target);
+  1130→        const notesBytes = entries[notesPart];
+  1131→        if (notesBytes && notesBytes.length > 0) {
+  1132→          try {
+  1133→            slide.notes = parseNotesText(decodeUtf8(notesBytes));
+  1134→          } catch {
+  1135→            slide.notes = "";
+  1136→          }
+  1137→          break;
+  1138→        }
+  1139→      }
+  1140→    }
+  1141→    slides.push(slide);
+  1142→  }
+  1143→
+  1144→  return { slides, slideW, slideH, truncated };
+  1145→}
+  1146→
+  1147→/* ------------------------------------------------------------------ */
+  1148→/* parsePptxRun — worker-boundary coercion (parseWordRun pattern)       */
+  1149→/* ------------------------------------------------------------------ */
+  1150→
+  1151→function cleanText(v: unknown, max: number): string {
+  1152→  if (typeof v !== "string") return "";
+  1153→  return v
+  1154→    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+  1155→    .slice(0, max);
+  1156→}
+  1157→
+  1158→function coercePt(v: unknown, lo: number, hi: number): number {
+  1159→  const n = typeof v === "number" ? v : Number.parseFloat(String(v));
+  1160→  if (!Number.isFinite(n)) return 0;
+  1161→  return Math.min(hi, Math.max(lo, n));
+  1162→}
+  1163→
+  1164→function coerceSize(v: unknown): number | undefined {
+  1165→  const n = typeof v === "number" ? v : Number.NaN;
+  1166→  if (!Number.isFinite(n)) return undefined;
+  1167→  return n >= 4 && n <= 144 ? n : undefined;
+  1168→}
+  1169→
+  1170→function coerceColor(v: unknown): string | undefined {
+  1171→  return typeof v === "string" && COLOR_RE.test(v) ? v.toUpperCase() : undefined;
+  1172→}
+  1173→
+  1174→function coerceAlign(v: unknown): "left" | "center" | "right" | undefined {
+  1175→  return v === "left" || v === "center" || v === "right" ? v : undefined;
+  1176→}
+  1177→
+  1178→function coerceNotes(v: unknown): string {
+  1179→  return cleanText(hindiNorm(typeof v === "string" ? v : ""), MAX_NOTES_CHARS)
+  1180→    .replace(/\r/g, "")
+  1181→    .replace(/\n{3,}/g, "\n\n")
+  1182→    .trim();
+  1183→}
+  1184→
+  1185→/**
+  1186→ * Full defensive coercion of a serialized ParsedPptx at the worker
+  1187→ * boundary: garbage → empty deck, arrays clamped, every text capped,
+  1188→ * unknown enum values dropped.
+  1189→ */
+  1190→export function parsePptxRun(raw: string): ParsedPptx {
+  1191→  let parsed: unknown;
+  1192→  try {
+  1193→    parsed = JSON.parse(raw);
+  1194→  } catch {
+  1195→    return { slides: [], slideW: 960, slideH: 540, truncated: false };
+  1196→  }
+  1197→  const o = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Record<
+  1198→    string,
+  1199→    unknown
+  1200→  >;
+  1201→  const rawSlides = Array.isArray(o.slides) ? o.slides : [];
+  1202→  // ECMA-376 caps a slide at 51206400 EMU = 4032 pt; ±20 in slack on x/y.
+  1203→  const slideW = coercePt(o.slideW, 32, 4032) || 960;
+  1204→  const slideH = coercePt(o.slideH, 32, 4032) || 540;
+  1205→  let truncated = o.truncated === true || rawSlides.length > MAX_SLIDES;
+  1206→
+  1207→  const slides: PptSlide[] = [];
+  1208→  for (const so of rawSlides.slice(0, MAX_SLIDES)) {
+  1209→    if (typeof so !== "object" || so === null) continue;
+  1210→    const s = so as Record<string, unknown>;
+  1211→    const rawShapes = Array.isArray(s.shapes) ? s.shapes : [];
+  1212→    const shapes: PptShape[] = [];
+  1213→    for (const ho of rawShapes.slice(0, MAX_SHAPES_PER_SLIDE)) {
+  1214→      if (typeof ho !== "object" || ho === null) continue;
+  1215→      const h = ho as Record<string, unknown>;
+  1216→      const rawParas = Array.isArray(h.paras) ? h.paras : [];
+  1217→      const paras: PptPara[] = [];
+  1218→      for (const po of rawParas.slice(0, MAX_PARAS_PER_SHAPE)) {
+  1219→        if (typeof po !== "object" || po === null) continue;
+  1220→        const p = po as Record<string, unknown>;
+  1221→        const rawRuns = Array.isArray(p.runs) ? p.runs : [];
+  1222→        const runs: PptRun[] = [];
+  1223→        for (const ro of rawRuns.slice(0, MAX_RUNS_PER_PARA)) {
+  1224→          if (typeof ro !== "object" || ro === null) continue;
+  1225→          const r = ro as Record<string, unknown>;
+  1226→          const text = hindiNorm(cleanText(r.text, MAX_RUN_TEXT));
+  1227→          if (text === "") continue;
+  1228→          runs.push({
+  1229→            text,
+  1230→            bold: r.bold === true,
+  1231→            italic: r.italic === true,
+  1232→            sizePt: coerceSize(r.sizePt),
+  1233→            color: coerceColor(r.color),
+  1234→          });
+  1235→        }
+  1236→        paras.push({
+  1237→          runs,
+  1238→          align: coerceAlign(p.align),
+  1239→          bullet: p.bullet === true || undefined,
+  1240→        });
+  1241→      }
+  1242→      shapes.push({
+  1243→        x: coercePt(h.x, -1440, 4032),
+  1244→        y: coercePt(h.y, -1440, 4032),
+  1245→        w: coercePt(h.w, 0, 4032),
+  1246→        h: coercePt(h.h, 0, 4032),
+  1247→        paras,
+  1248→        isTitle: h.isTitle === true,
+  1249→      });
+  1250→    }
+  1251→    if (rawShapes.length > MAX_SHAPES_PER_SLIDE) truncated = true;
+  1252→    slides.push({ shapes, notes: coerceNotes(s.notes) });
+  1253→  }
+  1254→
+  1255→  return { slides, slideW, slideH, truncated };
+  1256→}
+  1257→
+  1258→/* ------------------------------------------------------------------ */
+  1259→/* Output file name (localized fallback, house conventions)             */
+  1260→/* ------------------------------------------------------------------ */
+  1261→
+  1262→/**
+  1263→ * "My Deck.pptx" → "My-Deck" (spaces collapse to hyphens, path-unsafe
+  1264→ * chars stripped, Devanagari survives); a nameless file falls back to
+  1265→ * the localized word ("Presentation" / "प्रेज़ेंटेशन"). The caller
+  1266→ * appends the extension.
+  1267→ */
+  1268→export function outputBaseName(fileName: string, lang: string): string {
+  1269→  const base = fileName
+  1270→    .replace(/\.(pptx|pptm|ppt)$/i, "")
+  1271→    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "")
+  1272→    .replace(/\s+/g, "-")
+  1273→    .replace(/-{2,}/g, "-")
+  1274→    .replace(/^[-.]+|[-.]+$/g, "")
+  1275→    .slice(0, 120);
+  1276→  return base || (lang === "hi" ? "प्रेज़ेंटेशन" : "Presentation");
+  1277→}
+  1278→
+  1279→/* ------------------------------------------------------------------ */
+  1280→/* Sample deck builder (smoke fixture — a REAL minimal OOXML chain)     */
+  1281→/* ------------------------------------------------------------------ */
+  1282→
+  1283→const XMLNS =
+  1284→  'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+  1285→  'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ' +
+  1286→  'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"';
+  1287→
+  1288→const RT_SLIDE =
+  1289→  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+  1290→const RT_SLIDE_LAYOUT =
+  1291→  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
+  1292→const RT_SLIDE_MASTER =
+  1293→  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster";
+  1294→const RT_NOTES_SLIDE =
+  1295→  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
+  1296→const RT_NOTES_MASTER =
+  1297→  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster";
+  1298→const RT_THEME =
+  1299→  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
+  1300→const RT_OFFICE_DOCUMENT =
+  1301→  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+  1302→
+  1303→export interface SamplePptxOpts {
+  1304→  /** Devanagari content (the Hindi smoke render). */
+  1305→  hindi?: boolean;
+  1306→  /** add a tiny overflowing text box to slide 1 (overflow honesty vector). */
+  1307→  overflow?: boolean;
+  1308→}
+  1309→
+  1310→interface RunSpec {
+  1311→  t: string;
+  1312→  sz?: number;
+  1313→  b?: boolean;
+  1314→  i?: boolean;
+  1315→  color?: string;
+  1316→}
+  1317→
+  1318→function sRun(r: RunSpec): string {
+  1319→  const fill = r.color
+  1320→    ? `<a:solidFill><a:srgbClr val="${r.color}"/></a:solidFill>`
+  1321→    : "";
+  1322→  const rPr =
+  1323→    `<a:rPr lang="en-US" dirty="0"${r.b ? ' b="1"' : ""}${r.i ? ' i="1"' : ""}` +
+  1324→    (r.sz ? ` sz="${Math.round(r.sz * 100)}"` : "") +
+  1325→    `>${fill}</a:rPr>`;
+  1326→  const esc = r.t
+  1327→    .replace(/&/g, "&amp;")
+  1328→    .replace(/</g, "&lt;")
+  1329→    .replace(/>/g, "&gt;");
+  1330→  return `<a:r>${rPr}<a:t>${esc}</a:t></a:r>`;
+  1331→}
+  1332→
+  1333→interface ParaSpec {
+  1334→  runs: RunSpec[];
+  1335→  bullet?: boolean;
+  1336→  algn?: string;
+  1337→}
+  1338→
+  1339→function sPara(p: ParaSpec): string {
+  1340→  const pPr =
+  1341→    `<a:pPr${p.algn ? ` algn="${p.algn}"` : ""}>` +
+  1342→    (p.bullet === true
+  1343→      ? '<a:buFont typeface="Arial"/><a:buChar char="•"/>'
+  1344→      : "<a:buNone/>") +
+  1345→    "</a:pPr>";
+  1346→  return `<a:p>${pPr}${p.runs.map(sRun).join("")}</a:p>`;
+  1347→}
+  1348→
+  1349→interface SpSpec {
+  1350→  name: string;
+  1351→  ph?: string;
+  1352→  idx?: number;
+  1353→  off: [number, number];
+  1354→  ext: [number, number];
+  1355→  paras: ParaSpec[];
+  1356→}
+  1357→
+  1358→function sSp(s: SpSpec): string {
+  1359→  const nv =
+  1360→    `<p:nvSpPr><p:cNvPr id="0" name="${s.name}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>` +
+  1361→    (s.ph
+  1362→      ? `<p:nvPr><p:ph type="${s.ph}"${s.idx !== undefined ? ` idx="${s.idx}"` : ""}/></p:nvPr>`
+  1363→      : "<p:nvPr/>") +
+  1364→    "</p:nvSpPr>";
+  1365→  const spPr =
+  1366→    `<p:spPr><a:xfrm><a:off x="${s.off[0]}" y="${s.off[1]}"/><a:ext cx="${s.ext[0]}" cy="${s.ext[1]}"/></a:xfrm>` +
+  1367→    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>';
+  1368→  return `<p:sp>${nv}${spPr}<p:txBody><a:bodyPr/><a:lstStyle/>${s.paras
+  1369→    .map(sPara)
+  1370→    .join("")}</p:txBody></p:sp>`;
+  1371→}
+  1372→
+  1373→/** Group with a 2× child coordinate space (chExt = ext/2) — transform proof. */
+  1374→function sGroup(
+  1375→  off: [number, number],
+  1376→  ext: [number, number],
+  1377→  children: string[]
+  1378→): string {
+  1379→  const nv =
+  1380→    '<p:nvGrpSpPr><p:cNvPr id="0" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>';
+  1381→  const chExt: [number, number] = [
+  1382→    Math.round(ext[0] / 2),
+  1383→    Math.round(ext[1] / 2),
+  1384→  ];
+  1385→  const grpSpPr =
+  1386→    `<p:grpSpPr><a:xfrm><a:off x="${off[0]}" y="${off[1]}"/><a:ext cx="${ext[0]}" cy="${ext[1]}"/>` +
+  1387→    `<a:chOff x="0" y="0"/><a:chExt cx="${chExt[0]}" cy="${chExt[1]}"/></a:xfrm></p:grpSpPr>`;
+  1388→  return `<p:grpSp>${nv}${grpSpPr}${children.join("")}</p:grpSp>`;
+  1389→}
+  1390→
+  1391→/**
+  1392→ * Builds a REAL minimal 2-slide .pptx (16:9) with fflate zipSync:
+  1393→ * master → layout → theme chain, a title + bullet body, a 2×-scaled
+  1394→ * group on slide 2, and speaker notes on slide 1. Used by the smoke.
+  1395→ */
+  1396→export function buildSamplePptx(opts: SamplePptxOpts = {}): Uint8Array {
+  1397→  const hi = opts.hindi === true;
+  1398→  const title1 = hi ? "त्रैमासिक रिपोर्ट" : "Quarterly Report";
+  1399→  const body1: ParaSpec[] = [
+  1400→    {
+  1401→      runs: hi
+  1402→        ? [
+  1403→            { t: "राजस्व ", sz: 20 },
+  1404→            { t: "24% बढ़ा", sz: 20, b: true },
+  1405→          ]
+  1406→        : [
+  1407→            { t: "Revenue ", sz: 20 },
+  1408→            { t: "grew 24%", sz: 20, b: true },
+  1409→            { t: " this quarter.", sz: 20 },
+  1410→          ],
+  1411→      bullet: true,
+  1412→    },
+  1413→    {
+  1414→      runs: hi
+  1415→        ? [{ t: "डिलीवरी अब समय पर है।", sz: 20, i: true, color: "C0392B" }]
+  1416→        : [
+  1417→            {
+  1418→              t: "Delivery slipped — now back on schedule.",
+  1419→              sz: 20,
+  1420→              i: true,
+  1421→              color: "C0392B",
+  1422→            },
+  1423→          ],
+  1424→      bullet: true,
+  1425→    },
+  1426→    {
+  1427→      runs: hi
+  1428→        ? [{ t: "अगली तिमाही के लक्ष्य तय।", sz: 18 }]
+  1429→        : [{ t: "Next quarter targets are set.", sz: 18 }],
+  1430→    },
+  1431→  ];
+  1432→  const notes1 = hi
+  1433→    ? "वक्ता नोट्स: राजस्व वृद्धि पर ज़ोर दें।"
+  1434→    : "Speaker notes: highlight the 24% revenue growth.";
+  1435→
+  1436→  const slide1Shapes: string[] = [
+  1437→    sSp({
+  1438→      name: "Title 1",
+  1439→      ph: "title",
+  1440→      off: [914400, 457200],
+  1441→      ext: [10363200, 1371600],
+  1442→      paras: [{ runs: [{ t: title1, sz: 44, b: true, color: "1F2937" }] }],
+  1443→    }),
+  1444→    sSp({
+  1445→      name: "Content 2",
+  1446→      ph: "body",
+  1447→      idx: 1,
+  1448→      off: [914400, 1828800],
+  1449→      ext: [10363200, 4572000],
+  1450→      paras: body1,
+  1451→    }),
+  1452→  ];
+  1453→  if (opts.overflow) {
+  1454→    const filler = hi
+  1455→      ? "यह पाठ अपने बॉक्स से कहीं अधिक लंबा है और ईमानदारी से ओवरफ़्लो गिना जाएगा।"
+  1456→      : "This long paragraph is far taller than its tiny box on purpose so the renderer must honestly count it as overflowing text.";
+  1457→    slide1Shapes.push(
+  1458→      sSp({
+  1459→        name: "Tiny 3",
+  1460→        off: [914400, 6400800],
+  1461→        ext: [1828800, 254000],
+  1462→        paras: [
+  1463→          { runs: [{ t: filler, sz: 14 }] },
+  1464→          { runs: [{ t: filler, sz: 14 }] },
+  1465→          { runs: [{ t: filler, sz: 14 }] },
+  1466→        ],
+  1467→      })
+  1468→    );
+  1469→  }
+  1470→
+  1471→  const slide1 =
+  1472→    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1473→    `<p:sld ${XMLNS}><p:cSld><p:spTree>` +
+  1474→    '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>' +
+  1475→    '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="12192000" cy="6858000"/>' +
+  1476→    '<a:chOff x="0" y="0"/><a:chExt cx="12192000" cy="6858000"/></a:xfrm></p:grpSpPr>' +
+  1477→    slide1Shapes.join("") +
+  1478→    "</p:spTree></p:cSld></p:sld>";
+  1479→
+  1480→  // group: child space is HALF the real size (2× scale-up)
+  1481→  const stepOne = hi ? "पहला कदम" : "Step one";
+  1482→  const stepTwo = hi ? "दूसरा कदम" : "Step two";
+  1483→  const slide2 =
+  1484→    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1485→    `<p:sld ${XMLNS}><p:cSld><p:spTree>` +
+  1486→    '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>' +
+  1487→    '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="12192000" cy="6858000"/>' +
+  1488→    '<a:chOff x="0" y="0"/><a:chExt cx="12192000" cy="6858000"/></a:xfrm></p:grpSpPr>' +
+  1489→    sSp({
+  1490→      name: "Title 1",
+  1491→      ph: "title",
+  1492→      off: [914400, 457200],
+  1493→      ext: [10363200, 1371600],
+  1494→      paras: [
+  1495→        {
+  1496→          runs: [
+  1497→            { t: hi ? "आगे के कदम" : "Next Steps", sz: 44, b: true, color: "1F2937" },
+  1498→          ],
+  1499→        },
+  1500→      ],
+  1501→    }) +
+  1502→    sGroup(
+  1503→      [914400, 1828800],
+  1504→      [9144000, 4572000],
+  1505→      [
+  1506→        sSp({
+  1507→          name: "Step 1",
+  1508→          off: [0, 0],
+  1509→          ext: [4572000, 1143000],
+  1510→          paras: [{ runs: [{ t: stepOne, sz: 20 }] }],
+  1511→        }),
+  1512→        sSp({
+  1513→          name: "Step 2",
+  1514→          off: [0, 1143000],
+  1515→          ext: [4572000, 1143000],
+  1516→          paras: [{ runs: [{ t: stepTwo, sz: 20 }] }],
+  1517→        }),
+  1518→      ]
+  1519→    ) +
+  1520→    "</p:spTree></p:cSld></p:sld>";
+  1521→
+  1522→  const notes1Xml =
+  1523→    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1524→    `<p:notes ${XMLNS}><p:cSld><p:spTree>` +
+  1525→    '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>' +
+  1526→    "<p:grpSpPr/>" +
+  1527→    sSp({
+  1528→      name: "Notes Placeholder 2",
+  1529→      ph: "body",
+  1530→      idx: 1,
+  1531→      off: [685800, 914400],
+  1532→      ext: [5486400, 5029200],
+  1533→      paras: [
+  1534→        { runs: [{ t: notes1, sz: 12 }] },
+  1535→        {
+  1536→          runs: hi
+  1537→            ? [{ t: "समाप्त।", sz: 12 }]
+  1538→            : [{ t: "Wrap up on time.", sz: 12 }],
+  1539→        },
+  1540→      ],
+  1541→    }) +
+  1542→    "</p:spTree></p:cSld></p:notes>";
+  1543→
+  1544→  const theme =
+  1545→    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1546→    '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="M">' +
+  1547→    '<a:themeElements><a:clrScheme name="M"><a:dk1><a:sysClr val="windowText"/></a:dk1>' +
+  1548→    '<a:lt1><a:sysClr val="window"/></a:lt1><a:dk2><a:srgbClr val="44546A"/></a:dk2>' +
+  1549→    '<a:lt2><a:srgbClr val="E7E6E6"/></a:lt2><a:accent1><a:srgbClr val="4472C4"/></a:accent1>' +
+  1550→    '<a:accent2><a:srgbClr val="ED7D31"/></a:accent2><a:accent3><a:srgbClr val="A5A5A5"/></a:accent3>' +
+  1551→    '<a:accent4><a:srgbClr val="FFC000"/></a:accent4><a:accent5><a:srgbClr val="5B9BD5"/></a:accent5>' +
+  1552→    '<a:accent6><a:srgbClr val="70AD47"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink>' +
+  1553→    '<a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme>' +
+  1554→    '<a:fontScheme name="M"><a:majorFont><a:latin typeface=""/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>' +
+  1555→    '<a:minorFont><a:latin typeface=""/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme></a:themeElements></a:theme>';
+  1556→
+  1557→  const spTreeEmpty =
+  1558→    '<p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree>';
+  1559→  const slideMaster =
+  1560→    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1561→    `<p:sldMaster ${XMLNS}><p:cSld>${spTreeEmpty}</p:cSld>` +
+  1562→    '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>' +
+  1563→    '<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst></p:sldMaster>';
+  1564→  const slideLayout =
+  1565→    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1566→    `<p:sldLayout ${XMLNS}><p:cSld name="Blank">${spTreeEmpty}</p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`;
+  1567→  const notesMaster =
+  1568→    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1569→    `<p:notesMaster ${XMLNS}><p:cSld>${spTreeEmpty}</p:cSld>` +
+  1570→    '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>' +
+  1571→    "</p:notesMaster>";
+  1572→
+  1573→  const presentation =
+  1574→    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1575→    `<p:presentation ${XMLNS}>` +
+  1576→    '<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId3"/></p:sldMasterIdLst>' +
+  1577→    '<p:notesMasterIdLst><p:notesMasterId r:id="rId4"/></p:notesMasterIdLst>' +
+  1578→    '<p:sldIdLst><p:sldId id="256" r:id="rId1"/><p:sldId id="257" r:id="rId2"/></p:sldIdLst>' +
+  1579→    '<p:sldSz cx="12192000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/>' +
+  1580→    "</p:presentation>";
+  1581→
+  1582→  const ct =
+  1583→    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1584→    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+  1585→    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+  1586→    '<Default Extension="xml" ContentType="application/xml"/>' +
+  1587→    '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>' +
+  1588→    '<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>' +
+  1589→    '<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>' +
+  1590→    '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>' +
+  1591→    '<Override PartName="/ppt/slides/slide2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>' +
+  1592→    '<Override PartName="/ppt/notesSlides/notesSlide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>' +
+  1593→    '<Override PartName="/ppt/notesMasters/notesMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml"/>' +
+  1594→    '<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>' +
+  1595→    "</Types>";
+  1596→
+  1597→  const rel = (id: string, type: string, target: string): string =>
+  1598→    `<Relationship Id="${id}" Type="${type}" Target="${target}"/>`;
+  1599→
+  1600→  const files: Record<string, Uint8Array> = {
+  1601→    "[Content_Types].xml": strToU8(ct),
+  1602→    "_rels/.rels": strToU8(
+  1603→      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1604→        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+  1605→        rel("rId1", RT_OFFICE_DOCUMENT, "ppt/presentation.xml") +
+  1606→        "</Relationships>"
+  1607→    ),
+  1608→    "ppt/presentation.xml": strToU8(presentation),
+  1609→    "ppt/_rels/presentation.xml.rels": strToU8(
+  1610→      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1611→        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+  1612→        rel("rId1", RT_SLIDE, "slides/slide1.xml") +
+  1613→        rel("rId2", RT_SLIDE, "slides/slide2.xml") +
+  1614→        rel("rId3", RT_SLIDE_MASTER, "slideMasters/slideMaster1.xml") +
+  1615→        rel("rId4", RT_NOTES_MASTER, "notesMasters/notesMaster1.xml") +
+  1616→        "</Relationships>"
+  1617→    ),
+  1618→    "ppt/slides/slide1.xml": strToU8(slide1),
+  1619→    "ppt/slides/slide2.xml": strToU8(slide2),
+  1620→    "ppt/slides/_rels/slide1.xml.rels": strToU8(
+  1621→      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1622→        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+  1623→        rel("rId1", RT_NOTES_SLIDE, "../notesSlides/notesSlide1.xml") +
+  1624→        rel("rId2", RT_SLIDE_LAYOUT, "../slideLayouts/slideLayout1.xml") +
+  1625→        "</Relationships>"
+  1626→    ),
+  1627→    "ppt/slides/_rels/slide2.xml.rels": strToU8(
+  1628→      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1629→        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+  1630→        rel("rId1", RT_SLIDE_LAYOUT, "../slideLayouts/slideLayout1.xml") +
+  1631→        "</Relationships>"
+  1632→    ),
+  1633→    "ppt/notesSlides/notesSlide1.xml": strToU8(notes1Xml),
+  1634→    "ppt/notesSlides/_rels/notesSlide1.xml.rels": strToU8(
+  1635→      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1636→        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+  1637→        rel("rId1", RT_NOTES_MASTER, "../notesMasters/notesMaster1.xml") +
+  1638→        rel("rId2", RT_SLIDE, "../slides/slide1.xml") +
+  1639→        "</Relationships>"
+  1640→    ),
+  1641→    "ppt/slideMasters/slideMaster1.xml": strToU8(slideMaster),
+  1642→    "ppt/slideMasters/_rels/slideMaster1.xml.rels": strToU8(
+  1643→      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1644→        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+  1645→        rel("rId1", RT_SLIDE_LAYOUT, "../slideLayouts/slideLayout1.xml") +
+  1646→        rel("rId2", RT_THEME, "../theme/theme1.xml") +
+  1647→        "</Relationships>"
+  1648→    ),
+  1649→    "ppt/slideLayouts/slideLayout1.xml": strToU8(slideLayout),
+  1650→    "ppt/slideLayouts/_rels/slideLayout1.xml.rels": strToU8(
+  1651→      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1652→        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+  1653→        rel("rId1", RT_SLIDE_MASTER, "../slideMasters/slideMaster1.xml") +
+  1654→        "</Relationships>"
+  1655→    ),
+  1656→    "ppt/notesMasters/notesMaster1.xml": strToU8(notesMaster),
+  1657→    "ppt/notesMasters/_rels/notesMaster1.xml.rels": strToU8(
+  1658→      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  1659→        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+  1660→        rel("rId1", RT_THEME, "../theme/theme1.xml") +
+  1661→        "</Relationships>"
+  1662→    ),
+  1663→    "ppt/theme/theme1.xml": strToU8(theme),
+  1664→  };
+  1665→
+  1666→  return zipSync(files as Parameters<typeof zipSync>[0]);
+  1667→}
+  1668→

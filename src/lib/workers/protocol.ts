@@ -55,6 +55,45 @@ export interface RunDetail {
   slides?: number;
   /** Text boxes that overflowed their slide box (powerpoint-to-pdf). */
   overflowed?: number;
+  /** Chapters rendered into the output (epub-to-pdf). */
+  chapters?: number;
+  /** Slides with no selectable text — honest empty-slide count
+   *  (pdf-to-powerpoint text mode). */
+  emptySlides?: number;
+  /** Input size in bytes (web-optimize-pdf). */
+  beforeBytes?: number;
+  /** Output size in bytes (web-optimize-pdf). */
+  afterBytes?: number;
+  /** Percent saved, one decimal (web-optimize-pdf). */
+  savedPct?: number;
+  /** FlateDecode streams re-deflated smaller (web-optimize-pdf). */
+  streamsRecompressed?: number;
+  /** /ObjStm containers in the output (web-optimize-pdf). */
+  objectStreamsCount?: number;
+  /** Whether XMP/producer metadata was stripped (web-optimize-pdf). */
+  metadataStripped?: boolean;
+  /** Unreferenced objects found + dropped (web-optimize-pdf). */
+  unreferencedObjects?: number;
+  /** Structure check fully passed on the input (repair-pdf). */
+  structureWasValid?: boolean;
+  /** Valid input returned byte-for-byte unchanged (repair-pdf). */
+  unchanged?: boolean;
+  /** pdf-lib's strict load threw on the input (repair-pdf). */
+  loadFailed?: boolean;
+  /** xref/startxref missing or unusable — rebuilt (repair-pdf). */
+  xrefRebuilt?: boolean;
+  /** %PDF- header re-anchored to offset 0 (repair-pdf). */
+  headerFixed?: boolean;
+  /** %%EOF marker absent from the input (repair-pdf). */
+  eofMissing?: boolean;
+  /** File tail cut mid-object — content after the cut is lost (repair-pdf). */
+  truncationDetected?: boolean;
+  /** Objects recovered into the rebuilt output (repair-pdf). */
+  objectsRecovered?: number;
+  /** Duplicate object numbers resolved, last-wins (repair-pdf). */
+  duplicatesResolved?: number;
+  /** Stream /Length entries corrected (repair-pdf). */
+  streamLengthsFixed?: number;
 }
 
 export interface ToolOutput {

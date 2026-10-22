@@ -1,0 +1,717 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * HTML to PDF surface (RB2-d — the 74th tool). HTML → PDF, 100%
+     5→ * on-device, EN + हिंदी.
+     6→ *
+     7→ * Landing (landingSurface — word-to-pdf pattern): a .html/.htm drop
+     8→ * zone that sniffs the tag/doctype shape itself (decode + looksLikeHtml
+     9→ * from the SAME model the worker uses), so a renamed text file or a
+    10→ * binary can never enter the pipeline.
+    11→ *
+    12→ * Workspace: the file card, a LIVE summary (detected title / blocks /
+    13→ * words / ≈pages) from the exact same parseHtml the worker runs (so
+    14→ * the numbers can never disagree with the output), A4/Letter +
+    15→ * normal/narrow + font size + show-links toggles bound to the shared
+    16→ * option values (the aside/bottom-sheet selects and these chips write
+    17→ * through one source of truth), and the Convert button that spawns
+    18→ * the worker (create-invoice pattern) → download + toast. The shell
+    19→ * CTA runs the same worker through the standard pipeline — gated via
+    20→ * setRunBlocked while no file is present.
+    21→ *
+    22→ * Mobile-safe: min-w-0 on every grid/text wrapper (the pinned
+    23→ * grid-blowout lesson). Everything is real DOM text — no canvas.
+    24→ */
+    25→
+    26→import {
+    27→  useCallback,
+    28→  useEffect,
+    29→  useId,
+    30→  useRef,
+    31→  useState,
+    32→  type ChangeEvent,
+    33→  type DragEvent,
+    34→} from "react";
+    35→import {
+    36→  Code2,
+    37→  FileDown,
+    38→  FileUp,
+    39→  FolderOpen,
+    40→  Loader2,
+    41→  TriangleAlert,
+    42→  X,
+    43→} from "lucide-react";
+    44→
+    45→import { Button } from "@/components/ui/button";
+    46→import { useI18n } from "@/components/providers/locale-provider";
+    47→import { useToast } from "@/hooks/use-toast";
+    48→import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
+    49→import { downloadBlob } from "@/lib/files/output";
+    50→import { formatBytes } from "@/lib/storage/recent-files";
+    51→import type { WorkerResponse } from "@/lib/workers/protocol";
+    52→import { cn } from "@/lib/utils";
+    53→import {
+    54→  decodeHtmlBytes,
+    55→  estimatePages,
+    56→  inputTooLarge,
+    57→  looksLikeHtml,
+    58→  parseHtml,
+    59→  stats,
+    60→  type ParsedHtml,
+    61→} from "./model";
+    62→
+    63→/* ------------------------------------------------------------------ */
+    64→/* Local input validation (tag sniff, size limit)                       */
+    65→/* ------------------------------------------------------------------ */
+    66→
+    67→const SIZE_LIMIT = 20 * 1024 * 1024;
+    68→const SIZE_LABEL = "20 MB";
+    69→
+    70→interface SummaryState {
+    71→  /** staleness tag: the file identity the doc belongs to. */
+    72→  key: string;
+    73→  doc: ParsedHtml | null;
+    74→}
+    75→
+    76→/* ------------------------------------------------------------------ */
+    77→/* Surface                                                              */
+    78→/* ------------------------------------------------------------------ */
+    79→
+    80→export function HtmlToPdfSurface({
+    81→  files,
+    82→  values,
+    83→  onChange,
+    84→  setFileOrder,
+    85→  setRunBlocked,
+    86→  addFiles,
+    87→}: ToolSurfaceProps): React.JSX.Element {
+    88→  const { t, locale } = useI18n();
+    89→  const { toast } = useToast();
+    90→
+    91→  const file = files.length > 0 ? (files[files.length - 1]?.file ?? null) : null;
+    92→  const fileKey = file ? `${file.name}:${file.size}:${file.lastModified}` : "";
+    93→
+    94→  const [dragOver, setDragOver] = useState(false);
+    95→  const dragCounter = useRef(0);
+    96→  const inputRef = useRef<HTMLInputElement>(null);
+    97→  const inputId = useId();
+    98→
+    99→  const [summary, setSummary] = useState<SummaryState | null>(null);
+   100→  const [pct, setPct] = useState<number | null>(null);
+   101→  const workerRef = useRef<Worker | null>(null);
+   102→
+   103→  /* ---------- CTA gate: no file → blocked (scan-pdf pattern) ---------- */
+   104→  useEffect(() => {
+   105→    let cancelled = false;
+   106→    void Promise.resolve().then(() => {
+   107→      if (cancelled) return;
+   108→      setRunBlocked(files.length === 0 ? "html.ctaNoFile" : null);
+   109→    });
+   110→    return () => {
+   111→      cancelled = true;
+   112→    };
+   113→  }, [files.length, setRunBlocked]);
+   114→
+   115→  /* ---------- localized lang hint for the worker's name fallback ---------- */
+   116→  useEffect(() => {
+   117→    let cancelled = false;
+   118→    void Promise.resolve().then(() => {
+   119→      if (cancelled) return;
+   120→      onChange("lang", locale === "hi" ? "hi" : "en");
+   121→    });
+   122→    return () => {
+   123→      cancelled = true;
+   124→    };
+   125→  }, [locale, onChange]);
+   126→
+   127→  /* ---------- live summary: the SAME parser the worker uses ---------- */
+   128→  useEffect(() => {
+   129→    let cancelled = false;
+   130→    if (!file) {
+   131→      void Promise.resolve().then(() => {
+   132→        if (!cancelled) setSummary(null);
+   133→      });
+   134→      return () => {
+   135→        cancelled = true;
+   136→      };
+   137→    }
+   138→    void (async () => {
+   139→      try {
+   140→        const bytes = new Uint8Array(await file.arrayBuffer());
+   141→        const doc = parseHtml(decodeHtmlBytes(bytes));
+   142→        if (!cancelled) setSummary({ key: fileKey, doc });
+   143→      } catch {
+   144→        if (!cancelled) setSummary({ key: fileKey, doc: null });
+   145→      }
+   146→    })();
+   147→    return () => {
+   148→      cancelled = true;
+   149→    };
+   150→  }, [file, fileKey]);
+   151→
+   152→  const parsedDoc =
+   153→    summary && summary.key === fileKey && file ? summary.doc : null;
+   154→  const docOk = parsedDoc !== null && parsedDoc.blocks.length > 0;
+   155→  const docStats = parsedDoc ? stats(parsedDoc) : null;
+   156→
+   157→  /* ---------- input pipeline (tag sniff + size limit) ---------- */
+   158→
+   159→  const acceptFile = useCallback(
+   160→    (incoming: File[]): void => {
+   161→      if (incoming.length === 0 || files.length > 0) return;
+   162→      const f = incoming[0];
+   163→      if (!f) return;
+   164→      if (inputTooLarge(f.size)) {
+   165→        toast({
+   166→          title: t("html.errTooLargeTitle"),
+   167→          description: t("html.errTooLargeDesc"),
+   168→          variant: "destructive",
+   169→        });
+   170→        return;
+   171→      }
+   172→      void (async () => {
+   173→        try {
+   174→          const bytes = new Uint8Array(await f.slice(0, 64 * 1024).arrayBuffer());
+   175→          const head = decodeHtmlBytes(bytes);
+   176→          if (!looksLikeHtml(head)) {
+   177→            toast({
+   178→              title: t("html.errNotHtmlTitle"),
+   179→              description: t("html.errNotHtmlDesc"),
+   180→              variant: "destructive",
+   181→            });
+   182→            return;
+   183→          }
+   184→          addFiles([f]);
+   185→        } catch {
+   186→          toast({
+   187→            title: t("html.errNotHtmlTitle"),
+   188→            description: t("html.errNotHtmlDesc"),
+   189→            variant: "destructive",
+   190→          });
+   191→        }
+   192→      })();
+   193→    },
+   194→    [addFiles, files.length, t, toast]
+   195→  );
+   196→
+   197→  const handleInputChange = useCallback(
+   198→    (event: ChangeEvent<HTMLInputElement>): void => {
+   199→      acceptFile([...(event.target.files ?? [])]);
+   200→      event.target.value = ""; // allow re-selecting the same file
+   201→    },
+   202→    [acceptFile]
+   203→  );
+   204→
+   205→  const handleDrop = useCallback(
+   206→    (event: DragEvent<HTMLDivElement>): void => {
+   207→      event.preventDefault();
+   208→      dragCounter.current = 0;
+   209→      setDragOver(false);
+   210→      acceptFile([...event.dataTransfer.files]);
+   211→    },
+   212→    [acceptFile]
+   213→  );
+   214→
+   215→  // Ctrl+V of a file from the desktop (house DropZone behaviour).
+   216→  useEffect(() => {
+   217→    const onPaste = (event: globalThis.ClipboardEvent): void => {
+   218→      const pasted = [...(event.clipboardData?.files ?? [])];
+   219→      if (pasted.length === 0) return;
+   220→      event.preventDefault();
+   221→      acceptFile(pasted);
+   222→    };
+   223→    document.addEventListener("paste", onPaste);
+   224→    return () => document.removeEventListener("paste", onPaste);
+   225→  }, [acceptFile]);
+   226→
+   227→  /* ---------- Convert → worker spawn (create-invoice pattern) ---------- */
+   228→
+   229→  const pageSize = String(values.pageSize ?? "a4") === "letter" ? "letter" : "a4";
+   230→  const margin = String(values.margin ?? "normal") === "narrow" ? "narrow" : "normal";
+   231→  const baseFontSizeRaw = String(values.baseFontSize ?? "normal");
+   232→  const baseFontSize = baseFontSizeRaw === "small" || baseFontSizeRaw === "large"
+   233→    ? baseFontSizeRaw
+   234→    : "normal";
+   235→  const showLinks = values.showLinks === true;
+   236→
+   237→  const convert = useCallback((): void => {
+   238→    if (!file || workerRef.current || !docOk) return;
+   239→    setPct(0);
+   240→    const worker = new Worker(new URL("./worker.ts", import.meta.url), {
+   241→      type: "module",
+   242→    });
+   243→    workerRef.current = worker;
+   244→    const runId = Date.now();
+   245→    const cleanup = (): void => {
+   246→      worker.terminate();
+   247→      if (workerRef.current === worker) workerRef.current = null;
+   248→    };
+   249→    worker.addEventListener(
+   250→      "message",
+   251→      (event: MessageEvent<WorkerResponse>) => {
+   252→        const data = event.data;
+   253→        if (!data || data.runId !== runId) return;
+   254→        if (data.type === "progress") {
+   255→          setPct(data.pct);
+   256→          return;
+   257→        }
+   258→        if (data.type === "result") {
+   259→          setPct(null);
+   260→          const output = data.outputs[0];
+   261→          if (output) {
+   262→            downloadBlob(output.blob, output.name);
+   263→            toast({
+   264→              title: t("html.doneTitle"),
+   265→              description: t("html.doneDesc", {
+   266→                name: output.name,
+   267→                pages: data.detail?.pages ?? 1,
+   268→              }),
+   269→            });
+   270→          }
+   271→          cleanup();
+   272→          return;
+   273→        }
+   274→        if (data.type === "error") {
+   275→          setPct(null);
+   276→          toast({
+   277→            title: t("tool.errorTitle"),
+   278→            description: data.code.startsWith("html.")
+   279→              ? t(data.code)
+   280→              : t("tool.errorGeneric"),
+   281→            variant: "destructive",
+   282→          });
+   283→          cleanup();
+   284→        }
+   285→      }
+   286→    );
+   287→    worker.addEventListener("error", () => {
+   288→      setPct(null);
+   289→      toast({
+   290→        title: t("tool.errorTitle"),
+   291→        description: t("tool.errorGeneric"),
+   292→        variant: "destructive",
+   293→      });
+   294→      cleanup();
+   295→    });
+   296→    worker.postMessage({
+   297→      type: "run",
+   298→      runId,
+   299→      toolId: "html-to-pdf",
+   300→      options: {
+   301→        pageSize,
+   302→        margin,
+   303→        baseFontSize,
+   304→        showLinks,
+   305→        lang: locale === "hi" ? "hi" : "en",
+   306→      },
+   307→      files: [file],
+   308→    });
+   309→  }, [baseFontSize, docOk, file, locale, margin, pageSize, showLinks, t, toast]);
+   310→
+   311→  // Kill a stuck worker if the surface unmounts mid-run.
+   312→  useEffect(() => {
+   313→    return () => {
+   314→      workerRef.current?.terminate();
+   315→    };
+   316→  }, []);
+   317→
+   318→  const removeFile = useCallback((): void => {
+   319→    setFileOrder([]);
+   320→  }, [setFileOrder]);
+   321→
+   322→  const countFmt = useCallback(
+   323→    (n: number): string => n.toLocaleString(locale === "hi" ? "hi-IN" : "en-IN"),
+   324→    [locale]
+   325→  );
+   326→
+   327→  const estPages = parsedDoc
+   328→    ? estimatePages(
+   329→        parsedDoc,
+   330→        baseFontSize === "small" ? 10 : baseFontSize === "large" ? 12.5 : 11
+   331→      )
+   332→    : 0;
+   333→
+   334→  /* ---------------------------------------------------------------- */
+   335→
+   336→  return (
+   337→    <div className="flex flex-col gap-4 sm:gap-6">
+   338→      {/* ---------------- file input / file card ---------------- */}
+   339→      {!file ? (
+   340→        <section aria-label={t("html.selectFile")}>
+   341→          <div
+   342→            onDragEnter={(event) => {
+   343→              event.preventDefault();
+   344→              dragCounter.current += 1;
+   345→              setDragOver(true);
+   346→            }}
+   347→            onDragOver={(event) => event.preventDefault()}
+   348→            onDragLeave={(event) => {
+   349→              event.preventDefault();
+   350→              dragCounter.current = Math.max(0, dragCounter.current - 1);
+   351→              if (dragCounter.current === 0) setDragOver(false);
+   352→            }}
+   353→            onDrop={handleDrop}
+   354→            className={cn(
+   355→              "relative rounded-card border-2 border-dashed transition-all duration-200",
+   356→              dragOver
+   357→                ? "scale-[1.01] border-primary bg-primary/5 ring-4 ring-primary/10"
+   358→                : "border-border bg-card hover:border-primary/40"
+   359→            )}
+   360→          >
+   361→            <label
+   362→              htmlFor={inputId}
+   363→              className="flex min-h-44 cursor-pointer flex-col items-center justify-center gap-3 px-6 py-8 text-center"
+   364→            >
+   365→              <span
+   366→                aria-hidden="true"
+   367→                className={cn(
+   368→                  "flex size-14 items-center justify-center rounded-full border transition-all duration-200",
+   369→                  dragOver
+   370→                    ? "scale-110 border-primary bg-primary/10 text-primary"
+   371→                    : "border-border bg-muted/50 text-muted-foreground"
+   372→                )}
+   373→              >
+   374→                {dragOver ? (
+   375→                  <FileUp className="size-6 animate-in fade-in-50 zoom-in-75" />
+   376→                ) : (
+   377→                  <FolderOpen className="size-6" />
+   378→                )}
+   379→              </span>
+   380→              <span className="text-sm font-semibold text-foreground">
+   381→                {t("html.selectFile")}
+   382→              </span>
+   383→              <span className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+   384→                <span>{t("html.dropHint")}</span>
+   385→                <span aria-hidden="true">·</span>
+   386→                <span className="font-medium">
+   387→                  <kbd className="rounded border border-border bg-muted px-1 py-0.5 font-sans text-[10px]">
+   388→                    Ctrl
+   389→                  </kbd>
+   390→                  <span> + </span>
+   391→                  <kbd className="rounded border border-border bg-muted px-1 py-0.5 font-sans text-[10px]">
+   392→                    V
+   393→                  </kbd>
+   394→                  <span className="sr-only"> </span>
+   395→                  <span> {t("html.pasteHint")}</span>
+   396→                </span>
+   397→              </span>
+   398→              <span className="text-[11px] text-muted-foreground">
+   399→                {t("html.limits", { size: SIZE_LABEL })}
+   400→              </span>
+   401→            </label>
+   402→            <input
+   403→              ref={inputRef}
+   404→              id={inputId}
+   405→              type="file"
+   406→              accept=".html,.htm,text/html,application/xhtml+xml"
+   407→              className="sr-only"
+   408→              onChange={handleInputChange}
+   409→              aria-label={t("html.selectFile")}
+   410→            />
+   411→          </div>
+   412→        </section>
+   413→      ) : (
+   414→        <section aria-label={file.name}>
+   415→          <div className="rounded-card border border-border bg-card p-4 sm:p-5">
+   416→            <div className="flex flex-wrap items-center gap-3">
+   417→              <span
+   418→                className="flex size-11 shrink-0 items-center justify-center rounded-btn bg-primary/10 text-primary"
+   419→                aria-hidden="true"
+   420→              >
+   421→                <Code2 className="size-5" />
+   422→              </span>
+   423→              <div className="min-w-0 flex-1">
+   424→                <p
+   425→                  className="truncate text-sm font-semibold text-foreground"
+   426→                  title={file.name}
+   427→                >
+   428→                  {file.name}
+   429→                </p>
+   430→                <p className="text-xs text-muted-foreground">
+   431→                  {formatBytes(file.size)}
+   432→                </p>
+   433→              </div>
+   434→              <span className="shrink-0 rounded-chip bg-muted px-2.5 py-1 text-xs font-medium text-foreground">
+   435→                {t("html.htmlChip")}
+   436→              </span>
+   437→              <Button
+   438→                type="button"
+   439→                variant="outline"
+   440→                size="sm"
+   441→                className="rounded-btn"
+   442→                onClick={removeFile}
+   443→                aria-label={t("html.removeFile")}
+   444→              >
+   445→                <X className="size-4" aria-hidden="true" />
+   446→                <span className="hidden sm:inline">{t("html.removeFile")}</span>
+   447→              </Button>
+   448→            </div>
+   449→          </div>
+   450→        </section>
+   451→      )}
+   452→
+   453→      {/* ---------------- live summary ---------------- */}
+   454→      {file ? (
+   455→        <section aria-labelledby="html-summary-heading">
+   456→          <h2
+   457→            id="html-summary-heading"
+   458→            className="text-sm font-semibold text-foreground"
+   459→          >
+   460→            {t("html.summaryTitle")}
+   461→          </h2>
+   462→          {parsedDoc === null ? (
+   463→            <div
+   464→              className="mt-3 flex items-center gap-2 rounded-card border border-border bg-card px-4 py-3 text-sm text-muted-foreground"
+   465→              aria-live="polite"
+   466→            >
+   467→              <Loader2
+   468→                className="size-4 shrink-0 animate-spin text-primary"
+   469→                aria-hidden="true"
+   470→              />
+   471→              {t("conv.reading")}
+   472→            </div>
+   473→          ) : (
+   474→            <div className="mt-3">
+   475→              <div className="min-w-0 rounded-card border border-border bg-card p-3">
+   476→                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+   477→                  {t("html.statTitle")}
+   478→                </p>
+   479→                <p
+   480→                  className="mt-1 truncate text-sm font-semibold text-foreground"
+   481→                  title={parsedDoc.title || file.name}
+   482→                >
+   483→                  {parsedDoc.title || t("html.noTitle")}
+   484→                </p>
+   485→              </div>
+   486→              <dl className="mt-3 grid grid-cols-3 gap-3">
+   487→                {(
+   488→                  [
+   489→                    ["html.statBlocks", docStats ? docStats.blockCount : 0],
+   490→                    ["html.statWords", docStats ? docStats.wordCount : 0],
+   491→                    ["html.statPages", estPages],
+   492→                  ] as const
+   493→                ).map(([key, n]) => (
+   494→                  <div
+   495→                    key={key}
+   496→                    className="min-w-0 rounded-card border border-border bg-card p-3 text-center"
+   497→                  >
+   498→                    <dt className="order-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+   499→                      {t(key)}
+   500→                    </dt>
+   501→                    <dd className="order-1 text-lg font-bold tabular-nums text-foreground">
+   502→                      {countFmt(n)}
+   503→                    </dd>
+   504→                  </div>
+   505→                ))}
+   506→              </dl>
+   507→              {!docOk ? (
+   508→                <div
+   509→                  role="status"
+   510→                  className="mt-3 flex items-start gap-2 rounded-btn border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs leading-relaxed text-amber-900 dark:text-amber-200"
+   511→                >
+   512→                  <TriangleAlert
+   513→                    className="mt-0.5 size-3.5 shrink-0"
+   514→                    aria-hidden="true"
+   515→                  />
+   516→                  {t("html.errNoDoc")}
+   517→                </div>
+   518→              ) : null}
+   519→              {docOk && parsedDoc.truncated ? (
+   520→                <div
+   521→                  role="status"
+   522→                  className="mt-3 flex items-start gap-2 rounded-btn border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs leading-relaxed text-amber-900 dark:text-amber-200"
+   523→                >
+   524→                  <TriangleAlert
+   525→                    className="mt-0.5 size-3.5 shrink-0"
+   526→                    aria-hidden="true"
+   527→                  />
+   528→                  {t("html.truncatedNote")}
+   529→                </div>
+   530→              ) : null}
+   531→            </div>
+   532→          )}
+   533→        </section>
+   534→      ) : null}
+   535→
+   536→      {/* ---------------- layout toggles + convert ---------------- */}
+   537→      <section aria-labelledby="html-layout-heading">
+   538→        <h2
+   539→          id="html-layout-heading"
+   540→          className="text-sm font-semibold text-foreground"
+   541→        >
+   542→          {t("html.layoutTitle")}
+   543→        </h2>
+   544→        <div className="mt-3 flex flex-col gap-4 rounded-card border border-border bg-card p-4 sm:p-5">
+   545→          <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+   546→            <div className="min-w-0">
+   547→              <p className="text-xs font-medium text-muted-foreground">
+   548→                {t("html.pageSizeLbl")}
+   549→              </p>
+   550→              <div
+   551→                role="group"
+   552→                aria-label={t("html.pageSizeLbl")}
+   553→                className="mt-2 flex flex-wrap gap-2"
+   554→              >
+   555→                {(
+   556→                  [
+   557→                    ["a4", "html.pageA4"],
+   558→                    ["letter", "html.pageLetter"],
+   559→                  ] as const
+   560→                ).map(([value, key]) => (
+   561→                  <button
+   562→                    key={value}
+   563→                    type="button"
+   564→                    aria-pressed={pageSize === value}
+   565→                    onClick={() => onChange("pageSize", value)}
+   566→                    className={cn(
+   567→                      "h-9 rounded-btn px-4 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+   568→                      pageSize === value
+   569→                        ? "bg-primary text-primary-foreground"
+   570→                        : "bg-muted text-foreground hover:bg-muted/80"
+   571→                    )}
+   572→                  >
+   573→                    {t(key)}
+   574→                  </button>
+   575→                ))}
+   576→              </div>
+   577→            </div>
+   578→            <div className="min-w-0">
+   579→              <p className="text-xs font-medium text-muted-foreground">
+   580→                {t("html.marginLbl")}
+   581→              </p>
+   582→              <div
+   583→                role="group"
+   584→                aria-label={t("html.marginLbl")}
+   585→                className="mt-2 flex flex-wrap gap-2"
+   586→              >
+   587→                {(
+   588→                  [
+   589→                    ["normal", "html.marginNormal"],
+   590→                    ["narrow", "html.marginNarrow"],
+   591→                  ] as const
+   592→                ).map(([value, key]) => (
+   593→                  <button
+   594→                    key={value}
+   595→                    type="button"
+   596→                    aria-pressed={margin === value}
+   597→                    onClick={() => onChange("margin", value)}
+   598→                    className={cn(
+   599→                      "h-9 rounded-btn px-4 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+   600→                      margin === value
+   601→                        ? "bg-primary text-primary-foreground"
+   602→                        : "bg-muted text-foreground hover:bg-muted/80"
+   603→                    )}
+   604→                  >
+   605→                    {t(key)}
+   606→                  </button>
+   607→                ))}
+   608→              </div>
+   609→            </div>
+   610→            <div className="min-w-0">
+   611→              <p className="text-xs font-medium text-muted-foreground">
+   612→                {t("html.fontSizeLbl")}
+   613→              </p>
+   614→              <div
+   615→                role="group"
+   616→                aria-label={t("html.fontSizeLbl")}
+   617→                className="mt-2 flex flex-wrap gap-2"
+   618→              >
+   619→                {(
+   620→                  [
+   621→                    ["small", "html.fontSmall"],
+   622→                    ["normal", "html.fontNormal"],
+   623→                    ["large", "html.fontLarge"],
+   624→                  ] as const
+   625→                ).map(([value, key]) => (
+   626→                  <button
+   627→                    key={value}
+   628→                    type="button"
+   629→                    aria-pressed={baseFontSize === value}
+   630→                    onClick={() => onChange("baseFontSize", value)}
+   631→                    className={cn(
+   632→                      "h-9 rounded-btn px-4 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+   633→                      baseFontSize === value
+   634→                        ? "bg-primary text-primary-foreground"
+   635→                        : "bg-muted text-foreground hover:bg-muted/80"
+   636→                    )}
+   637→                  >
+   638→                    {t(key)}
+   639→                  </button>
+   640→                ))}
+   641→              </div>
+   642→            </div>
+   643→            <div className="min-w-0">
+   644→              <p className="text-xs font-medium text-muted-foreground">
+   645→                {t("html.linksLbl")}
+   646→              </p>
+   647→              <div
+   648→                role="group"
+   649→                aria-label={t("html.linksLbl")}
+   650→                className="mt-2 flex flex-wrap gap-2"
+   651→              >
+   652→                {(
+   653→                  [
+   654→                    [true, "html.linksShow"],
+   655→                    [false, "html.linksHide"],
+   656→                  ] as const
+   657→                ).map(([value, key]) => (
+   658→                  <button
+   659→                    key={key}
+   660→                    type="button"
+   661→                    aria-pressed={showLinks === value}
+   662→                    onClick={() => onChange("showLinks", value)}
+   663→                    className={cn(
+   664→                      "h-9 rounded-btn px-4 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+   665→                      showLinks === value
+   666→                        ? "bg-primary text-primary-foreground"
+   667→                        : "bg-muted text-foreground hover:bg-muted/80"
+   668→                    )}
+   669→                  >
+   670→                    {t(key)}
+   671→                  </button>
+   672→                ))}
+   673→              </div>
+   674→            </div>
+   675→          </div>
+   676→
+   677→          <div className="flex flex-col gap-3">
+   678→            <Button
+   679→              type="button"
+   680→              size="touch"
+   681→              className="w-full rounded-btn font-semibold sm:w-auto sm:self-start"
+   682→              onClick={convert}
+   683→              disabled={!file || pct !== null || !docOk}
+   684→            >
+   685→              {pct !== null ? (
+   686→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   687→              ) : (
+   688→                <FileDown className="size-4" aria-hidden="true" />
+   689→              )}
+   690→              {pct !== null ? t("html.converting") : t("html.convert")}
+   691→            </Button>
+   692→            {pct !== null ? (
+   693→              <div
+   694→                role="progressbar"
+   695→                aria-valuemin={0}
+   696→                aria-valuemax={100}
+   697→                aria-valuenow={pct}
+   698→                className="h-1.5 w-full overflow-hidden rounded-full bg-muted sm:max-w-xs"
+   699→              >
+   700→                <div
+   701→                  className="h-full rounded-full bg-primary transition-all duration-300"
+   702→                  style={{ width: `${pct}%` }}
+   703→                />
+   704→              </div>
+   705→            ) : null}
+   706→          </div>
+   707→        </div>
+   708→      </section>
+   709→
+   710→      {/* ---------------- honest limits ---------------- */}
+   711→      <p className="rounded-btn bg-muted/60 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+   712→        {t("html.honestNote")}
+   713→      </p>
+   714→    </div>
+   715→  );
+   716→}
+   717→

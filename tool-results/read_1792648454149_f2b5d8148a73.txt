@@ -1,0 +1,847 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * EPUB to PDF surface (RB3-a — the 75th tool). EPUB → PDF, 100%
+     5→ * on-device, EN + हिंदी.
+     6→ *
+     7→ * Landing (landingSurface — html-to-pdf pattern): a .epub drop zone
+     8→ * that sniffs the ZIP magic itself (isZipBytes from the SAME model the
+     9→ * worker uses), so a renamed text file or a stray binary can never
+    10→ * enter the pipeline.
+    11→ *
+    12→ * Workspace: the file card, a LIVE book summary (detected title,
+    13→ * author, chapters, words, ≈pages, cover/toc chips) from the exact
+    14→ * same parseEpub the worker runs (so the numbers can never disagree
+    15→ * with the output), A4/Letter + normal/narrow/wide + font size +
+    16→ * TOC/cover/page-number toggles bound to the shared option values
+    17→ * (the aside/bottom-sheet selects and these chips write through one
+    18→ * source of truth), and the Convert button that spawns the worker →
+    19→ * download + toast. The shell CTA runs the same worker through the
+    20→ * standard pipeline — gated via setRunBlocked while no file is present.
+    21→ *
+    22→ * A book that fails parseEpub (DRM, bad package, empty spine…) shows
+    23→ * its honest localized reason inline instead of a generic error.
+    24→ *
+    25→ * Mobile-safe: min-w-0 on every grid/text wrapper (the pinned
+    26→ * grid-blowout lesson). Everything is real DOM text — no canvas.
+    27→ */
+    28→
+    29→import {
+    30→  useCallback,
+    31→  useEffect,
+    32→  useId,
+    33→  useRef,
+    34→  useState,
+    35→  type ChangeEvent,
+    36→  type DragEvent,
+    37→} from "react";
+    38→import {
+    39→  BookOpen,
+    40→  FileDown,
+    41→  FileUp,
+    42→  FolderOpen,
+    43→  Loader2,
+    44→  TriangleAlert,
+    45→  X,
+    46→} from "lucide-react";
+    47→
+    48→import { Button } from "@/components/ui/button";
+    49→import { useI18n } from "@/components/providers/locale-provider";
+    50→import { useToast } from "@/hooks/use-toast";
+    51→import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
+    52→import { downloadBlob } from "@/lib/files/output";
+    53→import { formatBytes } from "@/lib/storage/recent-files";
+    54→import type { WorkerResponse } from "@/lib/workers/protocol";
+    55→import { cn } from "@/lib/utils";
+    56→import {
+    57→  estimatePages,
+    58→  EpubParseError,
+    59→  inputTooLarge,
+    60→  isZipBytes,
+    61→  parseEpub,
+    62→  stats,
+    63→  type ParsedEpub,
+    64→} from "./model";
+    65→
+    66→/* ------------------------------------------------------------------ */
+    67→/* Local input validation (zip sniff, size limit)                       */
+    68→/* ------------------------------------------------------------------ */
+    69→
+    70→const SIZE_LIMIT = 20 * 1024 * 1024;
+    71→const SIZE_LABEL = "20 MB";
+    72→
+    73→/** the live book parse, keyed to the file identity it belongs to. */
+    74→interface SummaryState {
+    75→  key: string;
+    76→  book: ParsedEpub | null;
+    77→  /** EpubParseError code when the book was rejected. */
+    78→  errorCode: string | null;
+    79→}
+    80→
+    81→/* ------------------------------------------------------------------ */
+    82→/* Surface                                                              */
+    83→/* ------------------------------------------------------------------ */
+    84→
+    85→export function EpubToPdfSurface({
+    86→  files,
+    87→  values,
+    88→  onChange,
+    89→  setFileOrder,
+    90→  setRunBlocked,
+    91→  addFiles,
+    92→}: ToolSurfaceProps): React.JSX.Element {
+    93→  const { t, locale } = useI18n();
+    94→  const { toast } = useToast();
+    95→
+    96→  const file = files.length > 0 ? (files[files.length - 1]?.file ?? null) : null;
+    97→  const fileKey = file ? `${file.name}:${file.size}:${file.lastModified}` : "";
+    98→
+    99→  const [dragOver, setDragOver] = useState(false);
+   100→  const dragCounter = useRef(0);
+   101→  const inputRef = useRef<HTMLInputElement>(null);
+   102→  const inputId = useId();
+   103→
+   104→  const [summary, setSummary] = useState<SummaryState | null>(null);
+   105→  const [pct, setPct] = useState<number | null>(null);
+   106→  const workerRef = useRef<Worker | null>(null);
+   107→
+   108→  /* ---------- CTA gate: no file → blocked (scan-pdf pattern) ---------- */
+   109→  useEffect(() => {
+   110→    let cancelled = false;
+   111→    void Promise.resolve().then(() => {
+   112→      if (cancelled) return;
+   113→      setRunBlocked(files.length === 0 ? "epub.ctaNoFile" : null);
+   114→    });
+   115→    return () => {
+   116→      cancelled = true;
+   117→    };
+   118→  }, [files.length, setRunBlocked]);
+   119→
+   120→  /* ---------- localized lang hint for the worker's words ---------- */
+   121→  useEffect(() => {
+   122→    let cancelled = false;
+   123→    void Promise.resolve().then(() => {
+   124→      if (cancelled) return;
+   125→      onChange("lang", locale === "hi" ? "hi" : "en");
+   126→    });
+   127→    return () => {
+   128→      cancelled = true;
+   129→    };
+   130→  }, [locale, onChange]);
+   131→
+   132→  /* ---------- live book summary: the SAME parser the worker uses ---------- */
+   133→  useEffect(() => {
+   134→    let cancelled = false;
+   135→    if (!file) {
+   136→      void Promise.resolve().then(() => {
+   137→        if (!cancelled) setSummary(null);
+   138→      });
+   139→      return () => {
+   140→        cancelled = true;
+   141→      };
+   142→    }
+   143→    void (async () => {
+   144→      try {
+   145→        const bytes = new Uint8Array(await file.arrayBuffer());
+   146→        if (cancelled) return;
+   147→        try {
+   148→          const book = parseEpub(bytes);
+   149→          if (!cancelled) setSummary({ key: fileKey, book, errorCode: null });
+   150→        } catch (error) {
+   151→          const code =
+   152→            error instanceof EpubParseError ? error.code : "errCorrupt";
+   153→          if (!cancelled) setSummary({ key: fileKey, book: null, errorCode: code });
+   154→        }
+   155→      } catch {
+   156→        if (!cancelled) setSummary({ key: fileKey, book: null, errorCode: "errCorrupt" });
+   157→      }
+   158→    })();
+   159→    return () => {
+   160→      cancelled = true;
+   161→    };
+   162→  }, [file, fileKey]);
+   163→
+   164→  const bookOk =
+   165→    summary !== null &&
+   166→    summary.key === fileKey &&
+   167→    summary.book !== null &&
+   168→    summary.book.chapters.length > 0;
+   169→  const book = bookOk && summary ? summary.book : null;
+   170→  const bookStats = book ? stats(book) : null;
+   171→  const errorCode =
+   172→    summary !== null && summary.key === fileKey && !bookOk
+   173→      ? (summary.errorCode ?? "errEmpty")
+   174→      : null;
+   175→
+   176→  /* ---------- input pipeline (zip sniff + size limit) ---------- */
+   177→
+   178→  const acceptFile = useCallback(
+   179→    (incoming: File[]): void => {
+   180→      if (incoming.length === 0 || files.length > 0) return;
+   181→      const f = incoming[0];
+   182→      if (!f) return;
+   183→      if (inputTooLarge(f.size)) {
+   184→        toast({
+   185→          title: t("epub.errTooLargeTitle"),
+   186→          description: t("epub.errTooLargeDesc"),
+   187→          variant: "destructive",
+   188→        });
+   189→        return;
+   190→      }
+   191→      void (async () => {
+   192→        try {
+   193→          const head = new Uint8Array(await f.slice(0, 4).arrayBuffer());
+   194→          if (!isZipBytes(head)) {
+   195→            toast({
+   196→              title: t("epub.errNotEpubTitle"),
+   197→              description: t("epub.errNotEpubDesc"),
+   198→              variant: "destructive",
+   199→            });
+   200→            return;
+   201→          }
+   202→          addFiles([f]);
+   203→        } catch {
+   204→          toast({
+   205→            title: t("epub.errNotEpubTitle"),
+   206→            description: t("epub.errNotEpubDesc"),
+   207→            variant: "destructive",
+   208→          });
+   209→        }
+   210→      })();
+   211→    },
+   212→    [addFiles, files.length, t, toast]
+   213→  );
+   214→
+   215→  const handleInputChange = useCallback(
+   216→    (event: ChangeEvent<HTMLInputElement>): void => {
+   217→      acceptFile([...(event.target.files ?? [])]);
+   218→      event.target.value = ""; // allow re-selecting the same file
+   219→    },
+   220→    [acceptFile]
+   221→  );
+   222→
+   223→  const handleDrop = useCallback(
+   224→    (event: DragEvent<HTMLDivElement>): void => {
+   225→      event.preventDefault();
+   226→      dragCounter.current = 0;
+   227→      setDragOver(false);
+   228→      acceptFile([...event.dataTransfer.files]);
+   229→    },
+   230→    [acceptFile]
+   231→  );
+   232→
+   233→  // Ctrl+V of a file from the desktop (house DropZone behaviour).
+   234→  useEffect(() => {
+   235→    const onPaste = (event: globalThis.ClipboardEvent): void => {
+   236→      const pasted = [...(event.clipboardData?.files ?? [])];
+   237→      if (pasted.length === 0) return;
+   238→      event.preventDefault();
+   239→      acceptFile(pasted);
+   240→    };
+   241→    document.addEventListener("paste", onPaste);
+   242→    return () => document.removeEventListener("paste", onPaste);
+   243→  }, [acceptFile]);
+   244→
+   245→  /* ---------- Convert → worker spawn (create-invoice pattern) ---------- */
+   246→
+   247→  const pageSize = String(values.pageSize ?? "a4") === "letter" ? "letter" : "a4";
+   248→  const marginRaw = String(values.margin ?? "normal");
+   249→  const margin =
+   250→    marginRaw === "narrow" || marginRaw === "wide" ? marginRaw : "normal";
+   251→  const baseFontSizeRaw = String(values.baseFontSize ?? "normal");
+   252→  const baseFontSize =
+   253→    baseFontSizeRaw === "small" || baseFontSizeRaw === "large"
+   254→      ? baseFontSizeRaw
+   255→      : "normal";
+   256→  const includeToc = values.includeToc !== false;
+   257→  const includeCover = values.includeCover !== false;
+   258→  const pageNumbers = values.pageNumbers !== false;
+   259→
+   260→  const convert = useCallback((): void => {
+   261→    if (!file || workerRef.current || !bookOk) return;
+   262→    setPct(0);
+   263→    const worker = new Worker(new URL("./worker.ts", import.meta.url), {
+   264→      type: "module",
+   265→    });
+   266→    workerRef.current = worker;
+   267→    const runId = Date.now();
+   268→    const cleanup = (): void => {
+   269→      worker.terminate();
+   270→      if (workerRef.current === worker) workerRef.current = null;
+   271→    };
+   272→    worker.addEventListener(
+   273→      "message",
+   274→      (event: MessageEvent<WorkerResponse>) => {
+   275→        const data = event.data;
+   276→        if (!data || data.runId !== runId) return;
+   277→        if (data.type === "progress") {
+   278→          setPct(data.pct);
+   279→          return;
+   280→        }
+   281→        if (data.type === "result") {
+   282→          setPct(null);
+   283→          const output = data.outputs[0];
+   284→          if (output) {
+   285→            downloadBlob(output.blob, output.name);
+   286→            toast({
+   287→              title: t("epub.doneTitle"),
+   288→              description: t("epub.doneDesc", {
+   289→                name: output.name,
+   290→                pages: data.detail?.pages ?? 1,
+   291→              }),
+   292→            });
+   293→          }
+   294→          cleanup();
+   295→          return;
+   296→        }
+   297→        if (data.type === "error") {
+   298→          setPct(null);
+   299→          toast({
+   300→            title: t("tool.errorTitle"),
+   301→            description: data.code.startsWith("epub.")
+   302→              ? t(data.code)
+   303→              : t("tool.errorGeneric"),
+   304→            variant: "destructive",
+   305→          });
+   306→          cleanup();
+   307→        }
+   308→      }
+   309→    );
+   310→    worker.addEventListener("error", () => {
+   311→      setPct(null);
+   312→      toast({
+   313→        title: t("tool.errorTitle"),
+   314→        description: t("tool.errorGeneric"),
+   315→        variant: "destructive",
+   316→      });
+   317→      cleanup();
+   318→    });
+   319→    worker.postMessage({
+   320→      type: "run",
+   321→      runId,
+   322→      toolId: "epub-to-pdf",
+   323→      options: {
+   324→        pageSize,
+   325→        margin,
+   326→        baseFontSize,
+   327→        includeToc,
+   328→        includeCover,
+   329→        pageNumbers,
+   330→        lang: locale === "hi" ? "hi" : "en",
+   331→      },
+   332→      files: [file],
+   333→    });
+   334→  }, [
+   335→    baseFontSize,
+   336→    bookOk,
+   337→    file,
+   338→    includeCover,
+   339→    includeToc,
+   340→    locale,
+   341→    margin,
+   342→    pageNumbers,
+   343→    pageSize,
+   344→    t,
+   345→    toast,
+   346→  ]);
+   347→
+   348→  // Kill a stuck worker if the surface unmounts mid-run.
+   349→  useEffect(() => {
+   350→    return () => {
+   351→      workerRef.current?.terminate();
+   352→    };
+   353→  }, []);
+   354→
+   355→  const removeFile = useCallback((): void => {
+   356→    setFileOrder([]);
+   357→  }, [setFileOrder]);
+   358→
+   359→  const countFmt = useCallback(
+   360→    (n: number): string => n.toLocaleString(locale === "hi" ? "hi-IN" : "en-IN"),
+   361→    [locale]
+   362→  );
+   363→
+   364→  const estPages = book
+   365→    ? estimatePages(
+   366→        book,
+   367→        baseFontSize === "small" ? 10 : baseFontSize === "large" ? 12.5 : 11
+   368→      )
+   369→    : 0;
+   370→
+   371→  /* ---------------------------------------------------------------- */
+   372→
+   373→  return (
+   374→    <div className="flex flex-col gap-4 sm:gap-6">
+   375→      {/* ---------------- file input / file card ---------------- */}
+   376→      {!file ? (
+   377→        <section aria-label={t("epub.selectFile")}>
+   378→          <div
+   379→            onDragEnter={(event) => {
+   380→              event.preventDefault();
+   381→              dragCounter.current += 1;
+   382→              setDragOver(true);
+   383→            }}
+   384→            onDragOver={(event) => event.preventDefault()}
+   385→            onDragLeave={(event) => {
+   386→              event.preventDefault();
+   387→              dragCounter.current = Math.max(0, dragCounter.current - 1);
+   388→              if (dragCounter.current === 0) setDragOver(false);
+   389→            }}
+   390→            onDrop={handleDrop}
+   391→            className={cn(
+   392→              "relative rounded-card border-2 border-dashed transition-all duration-200",
+   393→              dragOver
+   394→                ? "scale-[1.01] border-primary bg-primary/5 ring-4 ring-primary/10"
+   395→                : "border-border bg-card hover:border-primary/40"
+   396→            )}
+   397→          >
+   398→            <label
+   399→              htmlFor={inputId}
+   400→              className="flex min-h-44 cursor-pointer flex-col items-center justify-center gap-3 px-6 py-8 text-center"
+   401→            >
+   402→              <span
+   403→                aria-hidden="true"
+   404→                className={cn(
+   405→                  "flex size-14 items-center justify-center rounded-full border transition-all duration-200",
+   406→                  dragOver
+   407→                    ? "scale-110 border-primary bg-primary/10 text-primary"
+   408→                    : "border-border bg-muted/50 text-muted-foreground"
+   409→                )}
+   410→              >
+   411→                {dragOver ? (
+   412→                  <FileUp className="size-6 animate-in fade-in-50 zoom-in-75" />
+   413→                ) : (
+   414→                  <FolderOpen className="size-6" />
+   415→                )}
+   416→              </span>
+   417→              <span className="text-sm font-semibold text-foreground">
+   418→                {t("epub.selectFile")}
+   419→              </span>
+   420→              <span className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+   421→                <span>{t("epub.dropHint")}</span>
+   422→                <span aria-hidden="true">·</span>
+   423→                <span className="font-medium">
+   424→                  <kbd className="rounded border border-border bg-muted px-1 py-0.5 font-sans text-[10px]">
+   425→                    Ctrl
+   426→                  </kbd>
+   427→                  <span> + </span>
+   428→                  <kbd className="rounded border border-border bg-muted px-1 py-0.5 font-sans text-[10px]">
+   429→                    V
+   430→                  </kbd>
+   431→                  <span className="sr-only"> </span>
+   432→                  <span> {t("epub.pasteHint")}</span>
+   433→                </span>
+   434→              </span>
+   435→              <span className="text-[11px] text-muted-foreground">
+   436→                {t("epub.limits", { size: SIZE_LABEL })}
+   437→              </span>
+   438→            </label>
+   439→            <input
+   440→              ref={inputRef}
+   441→              id={inputId}
+   442→              type="file"
+   443→              accept=".epub,application/epub+zip"
+   444→              className="sr-only"
+   445→              onChange={handleInputChange}
+   446→              aria-label={t("epub.selectFile")}
+   447→            />
+   448→          </div>
+   449→        </section>
+   450→      ) : (
+   451→        <section aria-label={file.name}>
+   452→          <div className="rounded-card border border-border bg-card p-4 sm:p-5">
+   453→            <div className="flex flex-wrap items-center gap-3">
+   454→              <span
+   455→                className="flex size-11 shrink-0 items-center justify-center rounded-btn bg-primary/10 text-primary"
+   456→                aria-hidden="true"
+   457→              >
+   458→                <BookOpen className="size-5" />
+   459→              </span>
+   460→              <div className="min-w-0 flex-1">
+   461→                <p
+   462→                  className="truncate text-sm font-semibold text-foreground"
+   463→                  title={file.name}
+   464→                >
+   465→                  {file.name}
+   466→                </p>
+   467→                <p className="text-xs text-muted-foreground">
+   468→                  {formatBytes(file.size)}
+   469→                </p>
+   470→              </div>
+   471→              <span className="shrink-0 rounded-chip bg-muted px-2.5 py-1 text-xs font-medium text-foreground">
+   472→                {t("epub.epubChip")}
+   473→              </span>
+   474→              <Button
+   475→                type="button"
+   476→                variant="outline"
+   477→                size="sm"
+   478→                className="rounded-btn"
+   479→                onClick={removeFile}
+   480→                aria-label={t("epub.removeFile")}
+   481→              >
+   482→                <X className="size-4" aria-hidden="true" />
+   483→                <span className="hidden sm:inline">{t("epub.removeFile")}</span>
+   484→              </Button>
+   485→            </div>
+   486→          </div>
+   487→        </section>
+   488→      )}
+   489→
+   490→      {/* ---------------- live book summary ---------------- */}
+   491→      {file ? (
+   492→        <section aria-labelledby="epub-summary-heading">
+   493→          <h2
+   494→            id="epub-summary-heading"
+   495→            className="text-sm font-semibold text-foreground"
+   496→          >
+   497→            {t("epub.summaryTitle")}
+   498→          </h2>
+   499→          {summary === null || summary.key !== fileKey ? (
+   500→            <div
+   501→              className="mt-3 flex items-center gap-2 rounded-card border border-border bg-card px-4 py-3 text-sm text-muted-foreground"
+   502→              aria-live="polite"
+   503→            >
+   504→              <Loader2
+   505→                className="size-4 shrink-0 animate-spin text-primary"
+   506→                aria-hidden="true"
+   507→              />
+   508→              {t("conv.reading")}
+   509→            </div>
+   510→          ) : book !== null ? (
+   511→            <div className="mt-3">
+   512→              <div className="min-w-0 rounded-card border border-border bg-card p-3">
+   513→                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+   514→                  {t("epub.statTitle")}
+   515→                </p>
+   516→                <p
+   517→                  className="mt-1 truncate text-sm font-semibold text-foreground"
+   518→                  title={book.title || file.name}
+   519→                >
+   520→                  {book.title || t("epub.noTitle")}
+   521→                </p>
+   522→                <p
+   523→                  className="mt-0.5 truncate text-xs text-muted-foreground"
+   524→                  title={book.author}
+   525→                >
+   526→                  {book.author !== ""
+   527→                    ? book.author
+   528→                    : t("epub.noAuthor")}
+   529→                </p>
+   530→              </div>
+   531→              <dl className="mt-3 grid grid-cols-3 gap-3">
+   532→                {(
+   533→                  [
+   534→                    ["epub.statChapters", bookStats ? bookStats.chapters : 0],
+   535→                    ["epub.statWords", bookStats ? bookStats.words : 0],
+   536→                    ["epub.statPages", estPages],
+   537→                  ] as const
+   538→                ).map(([key, n]) => (
+   539→                  <div
+   540→                    key={key}
+   541→                    className="min-w-0 rounded-card border border-border bg-card p-3 text-center"
+   542→                  >
+   543→                    <dt className="order-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+   544→                      {t(key)}
+   545→                    </dt>
+   546→                    <dd className="order-1 text-lg font-bold tabular-nums text-foreground">
+   547→                      {countFmt(n)}
+   548→                    </dd>
+   549→                  </div>
+   550→                ))}
+   551→              </dl>
+   552→              <div className="mt-3 flex flex-wrap gap-2">
+   553→                {bookStats?.hasCover ? (
+   554→                  <span className="rounded-chip bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+   555→                    {t("epub.coverFound")}
+   556→                  </span>
+   557→                ) : (
+   558→                  <span className="rounded-chip bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+   559→                    {t("epub.coverNone")}
+   560→                  </span>
+   561→                )}
+   562→                {bookStats !== null && bookStats.tocEntries > 0 ? (
+   563→                  <span className="rounded-chip bg-muted px-2.5 py-1 text-xs font-medium text-foreground">
+   564→                    {t("epub.tocEntries", { count: bookStats.tocEntries })}
+   565→                  </span>
+   566→                ) : null}
+   567→                {bookStats !== null && bookStats.skipped > 0 ? (
+   568→                  <span className="rounded-chip bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+   569→                    {t("epub.skippedChip", { count: bookStats.skipped })}
+   570→                  </span>
+   571→                ) : null}
+   572→              </div>
+   573→              {book.truncated ? (
+   574→                <div
+   575→                  role="status"
+   576→                  className="mt-3 flex items-start gap-2 rounded-btn border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs leading-relaxed text-amber-900 dark:text-amber-200"
+   577→                >
+   578→                  <TriangleAlert
+   579→                    className="mt-0.5 size-3.5 shrink-0"
+   580→                    aria-hidden="true"
+   581→                  />
+   582→                  {t("epub.truncatedNote")}
+   583→                </div>
+   584→              ) : null}
+   585→            </div>
+   586→          ) : (
+   587→            <div
+   588→              role="alert"
+   589→              className="mt-3 flex items-start gap-2 rounded-btn border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-xs leading-relaxed text-red-700 dark:text-red-300"
+   590→            >
+   591→              <TriangleAlert
+   592→                className="mt-0.5 size-3.5 shrink-0"
+   593→                aria-hidden="true"
+   594→              />
+   595→              {errorCode !== null ? t(`epub.${errorCode}`) : t("epub.errEmpty")}
+   596→            </div>
+   597→          )}
+   598→        </section>
+   599→      ) : null}
+   600→
+   601→      {/* ---------------- layout toggles + convert ---------------- */}
+   602→      <section aria-labelledby="epub-layout-heading">
+   603→        <h2
+   604→          id="epub-layout-heading"
+   605→          className="text-sm font-semibold text-foreground"
+   606→        >
+   607→          {t("epub.layoutTitle")}
+   608→        </h2>
+   609→        <div className="mt-3 flex flex-col gap-4 rounded-card border border-border bg-card p-4 sm:p-5">
+   610→          <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+   611→            <div className="min-w-0">
+   612→              <p className="text-xs font-medium text-muted-foreground">
+   613→                {t("epub.pageSizeLbl")}
+   614→              </p>
+   615→              <div
+   616→                role="group"
+   617→                aria-label={t("epub.pageSizeLbl")}
+   618→                className="mt-2 flex flex-wrap gap-2"
+   619→              >
+   620→                {(
+   621→                  [
+   622→                    ["a4", "epub.pageA4"],
+   623→                    ["letter", "epub.pageLetter"],
+   624→                  ] as const
+   625→                ).map(([value, key]) => (
+   626→                  <button
+   627→                    key={value}
+   628→                    type="button"
+   629→                    aria-pressed={pageSize === value}
+   630→                    onClick={() => onChange("pageSize", value)}
+   631→                    className={cn(
+   632→                      "h-9 rounded-btn px-4 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+   633→                      pageSize === value
+   634→                        ? "bg-primary text-primary-foreground"
+   635→                        : "bg-muted text-foreground hover:bg-muted/80"
+   636→                    )}
+   637→                  >
+   638→                    {t(key)}
+   639→                  </button>
+   640→                ))}
+   641→              </div>
+   642→            </div>
+   643→            <div className="min-w-0">
+   644→              <p className="text-xs font-medium text-muted-foreground">
+   645→                {t("epub.marginLbl")}
+   646→              </p>
+   647→              <div
+   648→                role="group"
+   649→                aria-label={t("epub.marginLbl")}
+   650→                className="mt-2 flex flex-wrap gap-2"
+   651→              >
+   652→                {(
+   653→                  [
+   654→                    ["normal", "epub.marginNormal"],
+   655→                    ["narrow", "epub.marginNarrow"],
+   656→                    ["wide", "epub.marginWide"],
+   657→                  ] as const
+   658→                ).map(([value, key]) => (
+   659→                  <button
+   660→                    key={value}
+   661→                    type="button"
+   662→                    aria-pressed={margin === value}
+   663→                    onClick={() => onChange("margin", value)}
+   664→                    className={cn(
+   665→                      "h-9 rounded-btn px-4 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+   666→                      margin === value
+   667→                        ? "bg-primary text-primary-foreground"
+   668→                        : "bg-muted text-foreground hover:bg-muted/80"
+   669→                    )}
+   670→                  >
+   671→                    {t(key)}
+   672→                  </button>
+   673→                ))}
+   674→              </div>
+   675→            </div>
+   676→            <div className="min-w-0">
+   677→              <p className="text-xs font-medium text-muted-foreground">
+   678→                {t("epub.fontSizeLbl")}
+   679→              </p>
+   680→              <div
+   681→                role="group"
+   682→                aria-label={t("epub.fontSizeLbl")}
+   683→                className="mt-2 flex flex-wrap gap-2"
+   684→              >
+   685→                {(
+   686→                  [
+   687→                    ["small", "epub.fontSmall"],
+   688→                    ["normal", "epub.fontNormal"],
+   689→                    ["large", "epub.fontLarge"],
+   690→                  ] as const
+   691→                ).map(([value, key]) => (
+   692→                  <button
+   693→                    key={value}
+   694→                    type="button"
+   695→                    aria-pressed={baseFontSize === value}
+   696→                    onClick={() => onChange("baseFontSize", value)}
+   697→                    className={cn(
+   698→                      "h-9 rounded-btn px-4 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+   699→                      baseFontSize === value
+   700→                        ? "bg-primary text-primary-foreground"
+   701→                        : "bg-muted text-foreground hover:bg-muted/80"
+   702→                    )}
+   703→                  >
+   704→                    {t(key)}
+   705→                  </button>
+   706→                ))}
+   707→              </div>
+   708→            </div>
+   709→            <div className="min-w-0">
+   710→              <p className="text-xs font-medium text-muted-foreground">
+   711→                {t("epub.pagesLbl")}
+   712→              </p>
+   713→              <div
+   714→                role="group"
+   715→                aria-label={t("epub.pagesLbl")}
+   716→                className="mt-2 flex flex-wrap gap-2"
+   717→              >
+   718→                {(
+   719→                  [
+   720→                    [true, "epub.pagesShow"],
+   721→                    [false, "epub.pagesHide"],
+   722→                  ] as const
+   723→                ).map(([value, key]) => (
+   724→                  <button
+   725→                    key={key}
+   726→                    type="button"
+   727→                    aria-pressed={pageNumbers === value}
+   728→                    onClick={() => onChange("pageNumbers", value)}
+   729→                    className={cn(
+   730→                      "h-9 rounded-btn px-4 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+   731→                      pageNumbers === value
+   732→                        ? "bg-primary text-primary-foreground"
+   733→                        : "bg-muted text-foreground hover:bg-muted/80"
+   734→                    )}
+   735→                  >
+   736→                    {t(key)}
+   737→                  </button>
+   738→                ))}
+   739→              </div>
+   740→            </div>
+   741→            <div className="min-w-0">
+   742→              <p className="text-xs font-medium text-muted-foreground">
+   743→                {t("epub.tocLbl")}
+   744→              </p>
+   745→              <div
+   746→                role="group"
+   747→                aria-label={t("epub.tocLbl")}
+   748→                className="mt-2 flex flex-wrap gap-2"
+   749→              >
+   750→                {(
+   751→                  [
+   752→                    [true, "epub.tocShow"],
+   753→                    [false, "epub.tocHide"],
+   754→                  ] as const
+   755→                ).map(([value, key]) => (
+   756→                  <button
+   757→                    key={key}
+   758→                    type="button"
+   759→                    aria-pressed={includeToc === value}
+   760→                    onClick={() => onChange("includeToc", value)}
+   761→                    className={cn(
+   762→                      "h-9 rounded-btn px-4 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+   763→                      includeToc === value
+   764→                        ? "bg-primary text-primary-foreground"
+   765→                        : "bg-muted text-foreground hover:bg-muted/80"
+   766→                    )}
+   767→                  >
+   768→                    {t(key)}
+   769→                  </button>
+   770→                ))}
+   771→              </div>
+   772→            </div>
+   773→            <div className="min-w-0">
+   774→              <p className="text-xs font-medium text-muted-foreground">
+   775→                {t("epub.coverLbl")}
+   776→              </p>
+   777→              <div
+   778→                role="group"
+   779→                aria-label={t("epub.coverLbl")}
+   780→                className="mt-2 flex flex-wrap gap-2"
+   781→              >
+   782→                {(
+   783→                  [
+   784→                    [true, "epub.coverShow"],
+   785→                    [false, "epub.coverHide"],
+   786→                  ] as const
+   787→                ).map(([value, key]) => (
+   788→                  <button
+   789→                    key={key}
+   790→                    type="button"
+   791→                    aria-pressed={includeCover === value}
+   792→                    onClick={() => onChange("includeCover", value)}
+   793→                    className={cn(
+   794→                      "h-9 rounded-btn px-4 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+   795→                      includeCover === value
+   796→                        ? "bg-primary text-primary-foreground"
+   797→                        : "bg-muted text-foreground hover:bg-muted/80"
+   798→                    )}
+   799→                  >
+   800→                    {t(key)}
+   801→                  </button>
+   802→                ))}
+   803→              </div>
+   804→            </div>
+   805→          </div>
+   806→
+   807→          <div className="flex flex-col gap-3">
+   808→            <Button
+   809→              type="button"
+   810→              size="touch"
+   811→              className="w-full rounded-btn font-semibold sm:w-auto sm:self-start"
+   812→              onClick={convert}
+   813→              disabled={!file || pct !== null || !bookOk}
+   814→            >
+   815→              {pct !== null ? (
+   816→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   817→              ) : (
+   818→                <FileDown className="size-4" aria-hidden="true" />
+   819→              )}
+   820→              {pct !== null ? t("epub.converting") : t("epub.convert")}
+   821→            </Button>
+   822→            {pct !== null ? (
+   823→              <div
+   824→                role="progressbar"
+   825→                aria-valuemin={0}
+   826→                aria-valuemax={100}
+   827→                aria-valuenow={pct}
+   828→                className="h-1.5 w-full overflow-hidden rounded-full bg-muted sm:max-w-xs"
+   829→              >
+   830→                <div
+   831→                  className="h-full rounded-full bg-primary transition-all duration-300"
+   832→                  style={{ width: `${pct}%` }}
+   833→                />
+   834→              </div>
+   835→            ) : null}
+   836→          </div>
+   837→        </div>
+   838→      </section>
+   839→
+   840→      {/* ---------------- honest limits ---------------- */}
+   841→      <p className="rounded-btn bg-muted/60 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+   842→        {t("epub.honestNote")}
+   843→      </p>
+   844→    </div>
+   845→  );
+   846→}
+   847→

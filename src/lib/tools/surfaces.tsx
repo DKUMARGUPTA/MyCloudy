@@ -46,6 +46,10 @@ import { PowerpointToPdfSurface } from "../../../tools/powerpoint-to-pdf/surface
 import { RtfToPdfSurface } from "../../../tools/rtf-to-pdf/surface";
 import { OdtToPdfSurface } from "../../../tools/odt-to-pdf/surface";
 import { HtmlToPdfSurface } from "../../../tools/html-to-pdf/surface";
+import { EpubToPdfSurface } from "../../../tools/epub-to-pdf/surface";
+import { PdfToPowerpointSurface } from "../../../tools/pdf-to-powerpoint/surface";
+import { WebOptimizeSurface } from "../../../tools/web-optimize-pdf/surface";
+import { RepairSurface } from "../../../tools/repair-pdf/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -139,6 +143,10 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "rtf-to-pdf": RtfToPdfSurface,
   "odt-to-pdf": OdtToPdfSurface,
   "html-to-pdf": HtmlToPdfSurface,
+  "epub-to-pdf": EpubToPdfSurface,
+  "pdf-to-powerpoint": PdfToPowerpointSurface,
+  "web-optimize-pdf": WebOptimizeSurface,
+  "repair-pdf": RepairSurface,
 };
 
 export function getToolSurface(
