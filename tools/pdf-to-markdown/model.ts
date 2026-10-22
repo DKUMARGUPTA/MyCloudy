@@ -340,6 +340,9 @@ interface LineRun {
 interface LineMarker {
   kind: "bullet" | "ordered";
   number?: number;
+  /** The literal marker text consumed from the line's head (restored
+   * into heading-tier blocks — "1. Introduction" must not lose its "1. "). */
+  raw?: string;
 }
 
 interface Line {
@@ -448,12 +451,16 @@ function stripListMarker(runs: LineRun[]): LineMarker | null {
   let marker: LineMarker | null = null;
   const ordered = ORDERED_RE.exec(joined);
   if (ordered !== null) {
-    marker = { kind: "ordered", number: Number.parseInt(ordered[1], 10) };
+    marker = {
+      kind: "ordered",
+      number: Number.parseInt(ordered[1], 10),
+      raw: ordered[0],
+    };
     length = ordered[0].length;
   } else {
     const bullet = BULLET_FIRST_RE.exec(joined) ?? BULLET_DASH_RE.exec(joined);
     if (bullet !== null) {
-      marker = { kind: "bullet" };
+      marker = { kind: "bullet", raw: bullet[0] };
       length = bullet[0].length;
     }
   }
@@ -792,11 +799,19 @@ export function extractMarkdownModel(
       const level = headingSize?.get(dominantSize(raw.runs));
       if (level !== undefined) {
         // Heading: plain, anchor-friendly text (inline markers dropped).
+        // A list-marker-shaped head ("1. Introduction" as a section
+        // heading) is restored from the consumed marker — the heading must
+        // keep saying what the page says.
         blocks.push({
           kind: "heading",
           level,
           text: fixDevanagariVisual(
-            raw.runs.map((run) => run.text).join("").replace(/\s+/g, " ").trim()
+            (raw.marker?.raw ?? "") +
+              raw.runs
+                .map((run) => run.text)
+                .join("")
+                .replace(/\s+/g, " ")
+                .trim()
           ),
         });
       } else if (

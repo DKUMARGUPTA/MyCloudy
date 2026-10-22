@@ -469,11 +469,6 @@ function buildCfb(opts: CfbBuildOpts): Uint8Array {
   const putSector = (s: number, data: Uint8Array): void => {
     out.set(data.subarray(0, sectorSize), (s + 1) * sectorSize);
   };
-  const padInto = (len: number): Uint8Array => {
-    const buf = new Uint8Array(len);
-    for (let i = 0; i < len && i < miniStreamLen; i += 1) buf[i] = miniBytes[i]!;
-    return buf;
-  };
 
   // directory
   const dir = new Uint8Array(dirSectors * sectorSize);
@@ -543,9 +538,19 @@ function buildCfb(opts: CfbBuildOpts): Uint8Array {
     }
   }
 
-  // mini stream (the root's chain)
+  // mini stream (the root's chain) — sector i carries miniBytes[i×size…]
+  // (the old padInto((i + 1) × size) emitted the FIRST sector's bytes into
+  // every sector, so any mini stream spanning 2+ file sectors was corrupt)
   for (let i = 0; i < miniStreamSectors; i += 1) {
-    putSector(miniStreamStartSec + i, padInto((i + 1) * sectorSize));
+    const buf = new Uint8Array(sectorSize);
+    for (
+      let k = 0;
+      k < sectorSize && i * sectorSize + k < miniStreamLen;
+      k += 1
+    ) {
+      buf[k] = miniBytes[i * sectorSize + k]!;
+    }
+    putSector(miniStreamStartSec + i, buf);
   }
 
   // mini FAT sectors
@@ -742,9 +747,13 @@ console.log("── 1. Pure helper vectors ────────────�
   );
   check(
     "extractStreamText: 7-bit honesty — a high byte splits the ASCII run",
+    // The é (0xE9) is not 7-bit representable, so the run SPLITS there and
+    // the byte is silently dropped — two fragments, not one merged run.
+    // Both fragments then get the model's uniform paragraph hygiene
+    // (collapse + trim), same as every other extracted fragment.
     t7.encoding === "ascii" &&
       JSON.stringify(t7.paragraphs) ===
-        JSON.stringify(["Cafe chars: caf", " main street number twelve with more words here"]),
+        JSON.stringify(["Cafe chars: caf", "main street number twelve with more words here"]),
     t7.paragraphs
   );
 
@@ -899,7 +908,7 @@ console.log("── 4. Caps + honesty (paragraph/char/para-length, dedup) ──
   check("cap: truncated flag set", paraCap.truncated === true);
   check("cap: no duplicate paragraphs numbered below the cap", new Set(paraCap.paras.map((p) => p.text)).size === paraCap.paraCount);
 
-  const charParas = Array.from({ length: 260 }, (_, i) => `w${i} `.repeat(0) + "x".repeat(1200));
+  const charParas = Array.from({ length: 260 }, (_, i) => `w${i} `.repeat(1) + "x".repeat(1200));
   const charCap = parsePub(
     buildCfb({ streams: [{ name: "FatChars", data: storyBytes(charParas, false) }] })
   );
@@ -950,7 +959,10 @@ console.log("── 5. REAL renders (the worker's exact engine path) ───�
   const enDoc = parsePub(enOnlyFixture);
   check("render EN: needsNoto false for pure-WinAnsi doc", needsNoto(enDoc) === false);
   const enOut = await renderDoc(enDoc, { pageSize: "a4", margin: "normal", baseSize: 10.5 });
-  check("render EN: %PDF header + size", enOut.bytes[0] === 0x25 && enOut.bytes.length > 4000, enOut.bytes.length);
+  // ~3.1 KB for the 13-paragraph story (2113 chars flate-compressed over
+  // base-14 fonts — the 4330-byte story stream compresses BELOW its raw
+  // size; an empty pdf-lib page is ~800 bytes, so > 2500 catches a stub).
+  check("render EN: %PDF header + size", enOut.bytes[0] === 0x25 && enOut.bytes.length > 2500, enOut.bytes.length);
   check("render EN: report.pages matches pdf-lib reload", enOut.pages === enOut.reportPages, [enOut.pages, enOut.reportPages]);
   const enDump = objDump(enOut.reloaded);
   check("render EN: NO FontFile2 (base-14, tiny file)", !enDump.includes("FontFile2"));
@@ -989,8 +1001,32 @@ console.log("── 5. REAL renders (the worker's exact engine path) ───�
     "revenue & costs",
     "Q1 < Q2",
     "QUARTERLY BULLETIN 2026",
-    "यह रिपोर्ट आपके डिवाइस पर बनती है",
-    "पुस्तकालय में शीतकालीन खुला दिवस",
+  ]) {
+    check(
+      `render full: pdf.js round-trip "${needle.slice(0, 24)}"`,
+      fullFlat.includes(needle) || fullFlatNoSp.includes(needle.replace(/\s+/g, ""))
+    );
+  }
+  // Devanagari round-trip honesty: pdf-lib's fontkit subset writes no
+  // ToUnicode map, so pdf.js rebuilds Devanagari text in VISUAL glyph order —
+  // the reph (र्) trails its cluster and the pre-base matra ि precedes its
+  // consonant (scripts/probe-deva.ts documents this for the pipeline; every
+  // other render smoke asserts Hindi via the embedded font + extraction
+  // presence instead of exact logical-order text). The RENDER is correct;
+  // extraction is lossy — so assert the stable substrings (no reph, no
+  // pre-base matra: one per Hindi paragraph) + real Devanagari items.
+  const devaItems = fullPages.flat().filter((i) => /[\u0900-\u097F]/.test(i.str));
+  check(
+    "render full: pdf.js extracts real Devanagari items (one per Hindi paragraph)",
+    devaItems.length >= 5,
+    devaItems.map((i) => i.str.slice(0, 12))
+  );
+  for (const needle of [
+    "पुस्तकालय में शीतकालीन खुला", // पैरा 1 (title) — दिवस reorders ि
+    "पर बनती है", // पैरा 2 tail — रिपोर्ट/डिवाइस reorder
+    "और सभी उम्र के पाठक आ सकते हैं", // पैरा 3 tail
+    "पढ़ने के कोने में होगा", // पैरा 4 tail
+    "कहानी सुनाने का", // पैरा 5 — कार्यक्रम reorders र्
   ]) {
     check(
       `render full: pdf.js round-trip "${needle.slice(0, 24)}"`,
@@ -1113,7 +1149,7 @@ console.log("── 6. Worker E2E (self-shimmed globalThis) ──────�
 
   // EN-only run — no font fetch at all
   const enFile = new File(
-    [buildCfb({ streams: [{ name: "EnglishStory", data: enStoryBytes }] })],
+    [buildCfb({ streams: [{ name: "EnglishStory", data: enStoryBytes }] }) as BlobPart],
     "Newsletter.pub"
   );
   const enRes = await drive(101, { pageSize: "a4", margin: "normal", fontSize: 10.5, fileWord: "document" }, [enFile]);
@@ -1124,10 +1160,14 @@ console.log("── 6. Worker E2E (self-shimmed globalThis) ──────�
     check("worker EN: pdf mime", out.mime === "application/pdf");
     const outBytes = new Uint8Array(await out.blob.arrayBuffer());
     check("worker EN: %PDF magic", outBytes[0] === 0x25 && outBytes[1] === 0x50);
-    const reloaded = await PDFDocument.load(outBytes);
+    // updateMetadata:false — pdf-lib's load() otherwise STAMPS its own
+    // producer over the file's (the smoke-epub-to-pdf recipe); the worker
+    // saved Producer/Creator "MyCloudy" and that is what must be read back.
+    const reloaded = await PDFDocument.load(outBytes, { updateMetadata: false });
     check("worker EN: page count matches detail", reloaded.getPageCount() === enRes.detail?.pages, [reloaded.getPageCount(), enRes.detail?.pages]);
     check("worker EN: no FontFile2 (Helvetica path)", !objDump(reloaded).includes("FontFile2"));
-    check("worker EN: producer MyCloudy", reloaded.getProducer() === "MyCloudy");
+    check("worker EN: producer MyCloudy", reloaded.getProducer() === "MyCloudy", reloaded.getProducer());
+    check("worker EN: creator MyCloudy", reloaded.getCreator() === "MyCloudy", reloaded.getCreator());
     const parseAgain = parsePub(new Uint8Array(await enFile.arrayBuffer()));
     check(
       "worker EN: detail paragraphs/chars/streams mirror the model",
@@ -1142,7 +1182,7 @@ console.log("── 6. Worker E2E (self-shimmed globalThis) ──────�
   check("worker EN: progress pcts 20/45/85 posted", pcts.includes(20) && pcts.includes(45) && pcts.includes(85), pcts);
 
   // Full mixed run — the fetch-shimmed Noto path
-  const fullFile = new File([fixtureA], "Mela Patrika.pub");
+  const fullFile = new File([fixtureA as BlobPart], "Mela Patrika.pub");
   const fullRes = await drive(102, { pageSize: "a4", margin: "narrow", fontSize: 12, fileWord: "दस्तावेज़" }, [fullFile]);
   check("worker full: result", fullRes.type === "result", fullRes);
   if (fullRes.type === "result") {
@@ -1154,11 +1194,25 @@ console.log("── 6. Worker E2E (self-shimmed globalThis) ──────�
     check("worker full: detail streams = 3", fullRes.detail?.streams === 3, fullRes.detail);
     const pageBytes = await pdfjsPages(outBytes);
     const flat = pageBytes.map((p) => p.map((i) => i.str).join("")).join("\n");
-    check("worker full: Hindi text in the output", flat.includes("यह रिपोर्ट आपके डिवाइस पर बनती है") || flat.replace(/\s+/g, "").includes("यहरिपोर्टआपकेडिवाइसपरबनतीहै"));
+    const flatNoSp = flat.replace(/\s+/g, "");
+    // Same visual-order honesty as the render section above: reph/ि clusters
+    // extract reordered, so assert the stable Devanagari substrings.
+    check(
+      "worker full: Hindi text in the output",
+      flat.includes("पुस्तकालय में शीतकालीन खुला") ||
+        flatNoSp.includes("पुस्तकालयमेंशीतकालीनखुला") ||
+        flat.includes("पर बनती है") ||
+        flatNoSp.includes("परबनतीहै"),
+      flat.slice(0, 120)
+    );
+    check(
+      "worker full: Devanagari items extracted (visual order, see render section)",
+      pageBytes.flat().some((i) => /[\u0900-\u097F]/.test(i.str))
+    );
   }
 
   // output name sanitization (the cleanName fix, end to end)
-  const hostileFile = new File([fixtureA], "Report/2026:Q1.pub");
+  const hostileFile = new File([fixtureA as BlobPart], "Report/2026:Q1.pub");
   const hostileRes = await drive(103, { pageSize: "a4", margin: "normal", fontSize: 10.5, fileWord: "document" }, [hostileFile]);
   check("worker: result for hostile name", hostileRes.type === "result");
   if (hostileRes.type === "result") {
@@ -1173,7 +1227,7 @@ console.log("── 6. Worker E2E (self-shimmed globalThis) ──────�
   const noFileRes = await drive(201, {}, []);
   check("worker: no file → pub.errNoFile", noFileRes.type === "error" && noFileRes.code === "pub.errNoFile", noFileRes);
 
-  const garbageRes = await drive(202, {}, [new File([noiseBytes(400)], "garbage.pub")]);
+  const garbageRes = await drive(202, {}, [new File([noiseBytes(400) as BlobPart], "garbage.pub")]);
   check("worker: garbage bytes → pub.errNotPub", garbageRes.type === "error" && garbageRes.code === "pub.errNotPub", garbageRes);
 
   const noTextCfb = buildCfb({
@@ -1182,14 +1236,14 @@ console.log("── 6. Worker E2E (self-shimmed globalThis) ──────�
       { name: "BinaryB", data: noiseBytes(200) },
     ],
   });
-  const noTextRes = await drive(203, {}, [new File([noTextCfb], "notext.pub")]);
+  const noTextRes = await drive(203, {}, [new File([noTextCfb as BlobPart], "notext.pub")]);
   check("worker: valid container, no text → pub.errNoText", noTextRes.type === "error" && noTextRes.code === "pub.errNoText", noTextRes);
 
   const brokenStart = buildCfb({
     streams: [{ name: "BrokenStory", data: storyBytes(["This story will never be reached because the directory start sector is out of range and the chain is empty."], true) }],
     breakStart: "BrokenStory",
   });
-  const brokenRes = await drive(204, {}, [new File([brokenStart], "broken.pub")]);
+  const brokenRes = await drive(204, {}, [new File([brokenStart as BlobPart], "broken.pub")]);
   check("worker: broken chain, nothing salvaged → pub.errStreamRead", brokenRes.type === "error" && brokenRes.code === "pub.errStreamRead", brokenRes);
 }
 
@@ -1238,11 +1292,20 @@ console.log("── 7. Rejection vectors (honest taxonomy) ───────
   );
 
   // partially broken chain: 1 readable sector, then FREE — honest partial
+  // (the three story paragraphs alone are only ~432 bytes, which would land
+  // the stream in the MINI chain where breakChain never bites — the filler
+  // paragraphs push it past 5000 bytes so subarray(0, 5000) yields exactly
+  // the 10-sector NORMAL-FAT chain the tamper is meant to cut)
   const partialStory = storyBytes(
     [
       "First paragraph lives in the first sector and survives the broken chain.",
       "Second paragraph is lost with the rest of the chain after the cut.",
       "Third paragraph is lost as well, but the tool reports the failure.",
+      ...Array.from(
+        { length: 26 },
+        (_, k) =>
+          `Broken chain filler ${k + 1}: this paragraph exists to push the story into the normal FAT chain where the cut can bite.`
+      ),
     ],
     true
   ).subarray(0, 5000); // ≥ 4096 → normal FAT path, 10 sectors

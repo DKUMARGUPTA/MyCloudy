@@ -175,7 +175,7 @@ function wrapText(
       let cut = piece.length;
       while (
         cut > 1 &&
-        p.width(piece.slice(0, cut - 1), size, bold) > width
+        p.width(piece.slice(0, cut), size, bold) > width
       ) {
         cut -= 1;
       }

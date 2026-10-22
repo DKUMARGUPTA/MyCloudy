@@ -718,7 +718,12 @@ export function classifyHeading(text: string): 1 | 2 | undefined {
   const words = t.split(/\s+/).filter(Boolean);
   if (words.length === 0) return undefined;
   if (/[A-Z]/.test(t) && t === t.toUpperCase()) return 1; // ALL CAPS
-  const titleCased = words.every((w) => /^[A-Za-z]/.test(w) ? /^[A-Z]/.test(w) : true);
+  // Title-Case needs actual Latin letters: digits-only strings ("12 34")
+  // are not headings, and Devanagari must fall through to its own branch
+  // below (a danda sentence must never ride the Latin title-case path).
+  const titleCased =
+    /[A-Za-z]/.test(t) &&
+    words.every((w) => /^[A-Za-z]/.test(w) ? /^[A-Z]/.test(w) : true);
   if (titleCased && words.length >= 2 && !/^[a-z]/.test(t)) return 2;
   if (DEVA_RE.test(t) && !/[।?!]/.test(t) && words.length >= 2) return 2;
   return undefined;

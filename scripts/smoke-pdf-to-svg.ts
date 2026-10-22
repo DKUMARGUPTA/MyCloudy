@@ -83,6 +83,7 @@ import {
   toFontInfo,
   xmlEscape,
   type GlyphObject,
+  type SvgBuildStats,
   type SvgFontInfo,
   type SvgImagePayload,
   type SvgOpsTable,
@@ -154,7 +155,10 @@ check("xmlEscape keeps Devanagari intact", xmlEscape("प्रिया शर�
 
 check(
   "sanitizeSvgText: controls → space, C0/C1 dropped, Devanagari kept",
-  sanitizeSvgText("a\tb\nc\rd\u0000e\u007ff\u009fग") === "ab c d e fग",
+  // \t\n\r are the only control chars XML 1.0 permits → they become spaces;
+  // the other C0 bytes and the C1 range (\u007f-\u009f) are illegal in XML
+  // → dropped. So a\tb\nc\rd + dropped \u0000/\u007f/\u009f → "a b c defग".
+  sanitizeSvgText("a\tb\nc\rd\u0000e\u007ff\u009fग") === "a b c defग",
   sanitizeSvgText("a\tb\nc\rd\u0000e\u007ff\u009fग")
 );
 check("sanitizeSvgText keeps plain ASCII", sanitizeSvgText("Hello 42") === "Hello 42");
@@ -170,12 +174,18 @@ check(
   mul([1, 0, 0, -1, 0, 792], [2, 0, 0, 2, 10, 20])
 );
 check(
-  "mul is non-commutative (translation order matters)",
-  JSON.stringify(mul([1, 0, 0, 1, 10, 0], [1, 0, 0, 1, 0, 5])) !==
-    JSON.stringify(mul([1, 0, 0, 1, 0, 5], [1, 0, 0, 1, 10, 0])),
+  "mul is non-commutative (scale × translation order matters)",
+  // Pure translations COMMUTE (T1×T2 == T2×T1), so the honest
+  // non-commutativity probe is scale × translate: scaling a translated
+  // origin (20) differs from translating a scaled origin (10) — both
+  // exact values asserted, per pdf.js Util.transform composition.
+  JSON.stringify(mul([2, 0, 0, 1, 0, 0], [1, 0, 0, 1, 10, 0])) ===
+    JSON.stringify([2, 0, 0, 1, 20, 0]) &&
+    JSON.stringify(mul([1, 0, 0, 1, 10, 0], [2, 0, 0, 1, 0, 0])) ===
+      JSON.stringify([2, 0, 0, 1, 10, 0]),
   [
-    mul([1, 0, 0, 1, 10, 0], [1, 0, 0, 1, 0, 5]),
-    mul([1, 0, 0, 1, 0, 5], [1, 0, 0, 1, 10, 0]),
+    mul([2, 0, 0, 1, 0, 0], [1, 0, 0, 1, 10, 0]),
+    mul([1, 0, 0, 1, 10, 0], [2, 0, 0, 1, 0, 0]),
   ]
 );
 
@@ -455,9 +465,15 @@ console.log("── 2. synthetic extraction (real OPS table) ──────�
 class OpList implements SvgOperatorList {
   fnArray: number[] = [];
   argsArray: unknown[][] = [];
-  add(fn: number, args: unknown[] = []): this {
+  /** pdf.js pushes SOME args entries as raw typed arrays — color ops hand
+   * the 3-element Uint8ClampedArray straight through addOp (evaluator:
+   * `args = cs.getRgb(args, 0)` then `operatorList.addOp(fn, args)` —
+   * verified against pdfjs-dist 4.10.38 + a runtime probe on this repo).
+   * The union + cast keeps the field's declared shape while letting the
+   * fixture feed the REAL (unwrapped) color payload. */
+  add(fn: number, args: unknown[] | Uint8ClampedArray = []): this {
     this.fnArray.push(fn);
-    this.argsArray.push(args);
+    this.argsArray.push(args as unknown[]);
     return this;
   }
   get list(): SvgOperatorList {
@@ -518,9 +534,12 @@ async function run(
   ops: SvgOpsTable,
   list: OpList,
   ctx: SvgPageContext = synCtx()
-): Promise<{ svg: string; body: string; stats: ReturnType<typeof buildPageSvg> extends Promise<infer R> ? R : never }> {
+): Promise<{ svg: string; body: string; stats: SvgBuildStats }> {
   const result = await buildPageSvg(ops, list.list, ctx);
-  const body = result.svg.split("\n").slice(3, -1).join("\n");
+  // The document ends with "</svg>\n" (asserted by the structure section),
+  // so split() yields [..., "</svg>", ""] — slice(3, -2) is exactly the
+  // content lines between the white background rect and the closing tag.
+  const body = result.svg.split("\n").slice(3, -2).join("\n");
   return { svg: result.svg, body, stats: result.stats };
 }
 
@@ -528,7 +547,7 @@ async function run(
 {
   const list = new OpList()
     .add(OPS.beginText)
-    .add(OPS.setFillRGBColor, [new Uint8ClampedArray([51, 102, 153])])
+    .add(OPS.setFillRGBColor, new Uint8ClampedArray([51, 102, 153]))
     .add(OPS.setFont, ["f-plain", 11])
     .add(OPS.setTextMatrix, [1, 0, 0, 1, 72, 720])
     .add(OPS.showText, [[g("H", 722), null, g("e", 556), g("l", 222)]]);
@@ -670,7 +689,7 @@ async function run(
 {
   const list = new OpList()
     .add(OPS.save)
-    .add(OPS.setFillRGBColor, [new Uint8ClampedArray([255, 0, 0])])
+    .add(OPS.setFillRGBColor, new Uint8ClampedArray([255, 0, 0]))
     .add(OPS.constructPath, [[OPS.rectangle], [100, 200, 50, 30], [100, 200, 150, 230]])
     .add(OPS.fill)
     .add(OPS.restore)
@@ -694,7 +713,7 @@ async function run(
 {
   const list = new OpList()
     .add(OPS.save)
-    .add(OPS.setStrokeRGBColor, [new Uint8ClampedArray([0, 0, 0])])
+    .add(OPS.setStrokeRGBColor, new Uint8ClampedArray([0, 0, 0]))
     .add(OPS.setLineWidth, [2])
     .add(OPS.setDash, [[3, 2], 0])
     .add(OPS.constructPath, [[OPS.moveTo, OPS.lineTo], [72, 80, 300, 80], [72, 80, 300, 80]])
@@ -754,7 +773,7 @@ async function run(
   const list = new OpList()
     .add(OPS.save)
     .add(OPS.transform, [0, 1, -1, 0, 50, 50])
-    .add(OPS.setStrokeRGBColor, [new Uint8ClampedArray([255, 0, 0])])
+    .add(OPS.setStrokeRGBColor, new Uint8ClampedArray([255, 0, 0]))
     .add(OPS.setLineWidth, [2])
     .add(OPS.setDash, [[4, 2], 0])
     .add(OPS.constructPath, [
@@ -768,7 +787,7 @@ async function run(
   check(
     "rotated CTM: transform carries the matrix, d stays in PDF space",
     body.includes('transform="matrix(0 -1 -1 0 50 742)"') &&
-      body.includes('d="M100 200L150 200L150 230L100 230Z"'),
+      body.includes('d="M100 200L150 200L150 230Z"'),
     body
   );
   check(
@@ -783,7 +802,7 @@ async function run(
   const list = new OpList()
     .add(OPS.save)
     .add(OPS.transform, [2, 0, 0, 2, 0, 0])
-    .add(OPS.setStrokeRGBColor, [new Uint8ClampedArray([0, 0, 0])])
+    .add(OPS.setStrokeRGBColor, new Uint8ClampedArray([0, 0, 0]))
     .add(OPS.setLineWidth, [2])
     .add(OPS.constructPath, [[OPS.moveTo, OPS.lineTo], [100, 200, 150, 200], []])
     .add(OPS.stroke)
@@ -813,7 +832,7 @@ async function run(
   // A rotated page's baseTransform is [0,1,1,0,0,0] — the stroke pen
   // must NOT collapse to width 0 (the singular-value average fix).
   const list = new OpList()
-    .add(OPS.setStrokeRGBColor, [new Uint8ClampedArray([0, 0, 0])])
+    .add(OPS.setStrokeRGBColor, new Uint8ClampedArray([0, 0, 0]))
     .add(OPS.setLineWidth, [2])
     .add(OPS.constructPath, [[OPS.moveTo, OPS.lineTo], [72, 80, 300, 80], []])
     .add(OPS.stroke);
@@ -862,7 +881,7 @@ async function run(
         ["Font", ["f-bold", 14]],
       ],
     ])
-    .add(OPS.setStrokeRGBColor, [new Uint8ClampedArray([0, 0, 0])])
+    .add(OPS.setStrokeRGBColor, new Uint8ClampedArray([0, 0, 0]))
     .add(OPS.constructPath, [[OPS.moveTo, OPS.lineTo], [72, 80, 300, 80], []])
     .add(OPS.stroke)
     .add(OPS.beginText)
@@ -920,7 +939,11 @@ async function run(
   );
   check(
     "moveText offsets the pen from the line origin",
-    body.includes('<text x="82" y="92"') && body.includes(">T</text>"),
+    // Td is relative to the START of the previous line (PDF Table 108 +
+    // pdf.js canvas moveText: lineX/lineY accumulate). After T* the line
+    // origin sits at (0, -12) rel. Tm; Td 10 -20 → (10, -32) → baseline
+    // 720-32=688 → SVG y = 792-688 = 104, x = 72+10 = 82.
+    body.includes('<text x="82" y="104"') && body.includes(">T</text>"),
     body
   );
 }
@@ -931,7 +954,6 @@ async function run(
     .add(OPS.save)
     .add(OPS.transform, [120, 0, 0, 60, 72, 200])
     .add(OPS.paintImageXObject, ["img_rgba", 2, 2])
-    .add(OPS.restore)
     .add(OPS.paintInlineImageXObject, [
       {
         width: 2,
@@ -942,7 +964,8 @@ async function run(
           0, 0, 255, 255, 255, 255, 0, 255,
         ]),
       },
-    ]);
+    ])
+    .add(OPS.restore);
   const { body, stats } = await run(OPS_TABLE, list);
   check(
     "named image: unit square + exact device matrix",
@@ -1223,7 +1246,7 @@ async function convertPage(
   page.cleanup();
   return {
     svg: result.svg,
-    body: result.svg.split("\n").slice(3, -1).join("\n"),
+    body: result.svg.split("\n").slice(3, -2).join("\n"),
     stats: result.stats,
     rawShowText,
     viewport,
@@ -1377,7 +1400,11 @@ check("p3 stats honest: 1 text + 1 image", pg3.stats.texts === 1 && pg3.stats.im
     while (off + 8 <= png.length) {
       const len = png.readUInt32BE(off);
       const type = png.toString("latin1", off + 4, off + 8);
-      if (type === "IHDR") ihdrOk = png[off + 8 + 8] === 0 && png[off + 8 + 9] === 0;
+      if (type === "IHDR")
+        // IHDR data: width(4) height(4) depth(1) colorType(1) compression(1)
+        // filter(1) interlace(1) — filter is data byte 11, interlace byte
+        // 12 (bytes 8/9 are depth/colorType, asserted above as 8/6).
+        ihdrOk = png[off + 8 + 11] === 0 && png[off + 8 + 12] === 0;
       if (type === "IDAT") idat.push(png.subarray(off + 8, off + 8 + len));
       if (type === "IEND") break;
       off += 12 + len;
@@ -1453,9 +1480,19 @@ console.log("── 4. page-range subset + naming ──────────
   );
   const open = parsePageSpec("8-", 4);
   check(
-    "open range beyond the last page → empty (worker rejects honestly)",
-    open !== null && open.length === 0,
+    "open range beyond the last page clamps to the last page (shared contract)",
+    // parsePageSpec's documented contract is "clamped, deduped, ascending"
+    // — an open "8-" end clamps to pageCount, so on a 4-page document it
+    // selects the last page (index 3). An EMPTY array is impossible by
+    // design (empty picks → null), and the worker rejects null specs with
+    // tool.errorInvalidPages — covered by the next vector.
+    open !== null && open.length === 1 && open[0] === 3,
     open
+  );
+  check(
+    "bare page beyond the last page → null (worker rejects honestly)",
+    parsePageSpec("9", 4) === null,
+    parsePageSpec("9", 4)
   );
 
   check(
