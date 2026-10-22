@@ -85,6 +85,11 @@ import { config as pdfToHtml } from "../../../tools/pdf-to-html/config";
 import { config as pdfToOdt } from "../../../tools/pdf-to-odt/config";
 import { config as publisherToPdf } from "../../../tools/publisher-to-pdf/config";
 import { config as webpageToPdf } from "../../../tools/webpage-to-pdf/config";
+import { config as createInvoiceVisually } from "../../../tools/create-invoice-visually/config";
+import { config as createElectronicInvoice } from "../../../tools/create-electronic-invoice/config";
+import { config as pdfToEInvoice } from "../../../tools/pdf-to-e-invoice/config";
+import { config as xmlInvoiceToPdf } from "../../../tools/xml-invoice-to-pdf/config";
+import { config as validateEInvoice } from "../../../tools/validate-e-invoice/config";
 
 
 /**
@@ -181,6 +186,11 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [pdfToHtml.toolId]: pdfToHtml,
   [pdfToMarkdown.toolId]: pdfToMarkdown,
   [webpageToPdf.toolId]: webpageToPdf,
+  [createInvoiceVisually.toolId]: createInvoiceVisually,
+  [createElectronicInvoice.toolId]: createElectronicInvoice,
+  [pdfToEInvoice.toolId]: pdfToEInvoice,
+  [xmlInvoiceToPdf.toolId]: xmlInvoiceToPdf,
+  [validateEInvoice.toolId]: validateEInvoice,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

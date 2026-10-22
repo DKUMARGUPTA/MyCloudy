@@ -56,6 +56,11 @@ import { PdfToHtmlSurface } from "../../../tools/pdf-to-html/surface";
 import { PdfToMarkdownSurface } from "../../../tools/pdf-to-markdown/surface";
 import { PublisherToPdfSurface } from "../../../tools/publisher-to-pdf/surface";
 import { WebpageToPdfSurface } from "../../../tools/webpage-to-pdf/surface";
+import { CreateInvoiceVisuallySurface } from "../../../tools/create-invoice-visually/surface";
+import { CreateElectronicInvoiceSurface } from "../../../tools/create-electronic-invoice/surface";
+import { PdfToEInvoiceSurface } from "../../../tools/pdf-to-e-invoice/surface";
+import { XmlInvoiceToPdfSurface } from "../../../tools/xml-invoice-to-pdf/surface";
+import { ValidateEInvoiceSurface } from "../../../tools/validate-e-invoice/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -159,6 +164,11 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "pdf-to-markdown": PdfToMarkdownSurface,
   "publisher-to-pdf": PublisherToPdfSurface,
   "webpage-to-pdf": WebpageToPdfSurface,
+  "create-invoice-visually": CreateInvoiceVisuallySurface,
+  "create-electronic-invoice": CreateElectronicInvoiceSurface,
+  "pdf-to-e-invoice": PdfToEInvoiceSurface,
+  "xml-invoice-to-pdf": XmlInvoiceToPdfSurface,
+  "validate-e-invoice": ValidateEInvoiceSurface,
 };
 
 export function getToolSurface(

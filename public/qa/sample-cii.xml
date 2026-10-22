@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100" xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100" xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
+  <rsm:ExchangedDocumentContext>
+    <ram:GuidelineSpecifiedDocumentContextParameter>
+      <ram:ID>urn:cen.eu:en16931:2017</ram:ID>
+    </ram:GuidelineSpecifiedDocumentContextParameter>
+  </rsm:ExchangedDocumentContext>
+  <rsm:ExchangedDocument>
+    <ram:ID>INV-2026-042</ram:ID>
+    <ram:IssueDateTime>
+      <udt:DateTimeString format="102">20260214</udt:DateTimeString>
+    </ram:IssueDateTime>
+    <ram:TypeCode>380</ram:TypeCode>
+  </rsm:ExchangedDocument>
+  <rsm:SupplyChainTradeTransaction>
+    <ram:IncludedSupplyChainTradeLineItem>
+      <ram:AssociatedDocumentLineDocument><ram:LineID>1</ram:LineID></ram:AssociatedDocumentLineDocument>
+      <ram:SpecifiedSupplyChainTradeProduct><ram:Name>Steel bracket set</ram:Name></ram:SpecifiedSupplyChainTradeProduct>
+      <ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="HUR">10</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
+      <ram:SpecifiedLineTradeSettlement>
+        <ram:ApplicableTradeTax><ram:RateApplicablePercent>18.00</ram:RateApplicablePercent></ram:ApplicableTradeTax>
+        <ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>1000.00</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation>
+      </ram:SpecifiedLineTradeSettlement>
+    </ram:IncludedSupplyChainTradeLineItem>
+    <ram:IncludedSupplyChainTradeLineItem>
+      <ram:AssociatedDocumentLineDocument><ram:LineID>2</ram:LineID></ram:AssociatedDocumentLineDocument>
+      <ram:SpecifiedSupplyChainTradeProduct><ram:Name>Copper cable 5m</ram:Name></ram:SpecifiedSupplyChainTradeProduct>
+      <ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="MTR">20</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
+      <ram:SpecifiedLineTradeSettlement>
+        <ram:ApplicableTradeTax><ram:RateApplicablePercent>18.00</ram:RateApplicablePercent></ram:ApplicableTradeTax>
+        <ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>2000.00</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation>
+      </ram:SpecifiedLineTradeSettlement>
+    </ram:IncludedSupplyChainTradeLineItem>
+    <ram:ApplicableHeaderTradeAgreement>
+      <ram:SellerTradeParty><ram:Name>Sharma Trading Company</ram:Name></ram:SellerTradeParty>
+      <ram:BuyerTradeParty><ram:Name>Blue Harbour GmbH</ram:Name></ram:BuyerTradeParty>
+    </ram:ApplicableHeaderTradeAgreement>
+    <ram:ApplicableHeaderTradeDelivery/>
+    <ram:ApplicableHeaderTradeSettlement>
+      <ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>
+      <ram:ApplicableTradeTax>
+        <ram:CalculatedAmount>540.00</ram:CalculatedAmount>
+        <ram:TypeCode>VAT</ram:TypeCode>
+        <ram:RateApplicablePercent>18.00</ram:RateApplicablePercent>
+        <ram:CategoryCode>S</ram:CategoryCode>
+      </ram:ApplicableTradeTax>
+      <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+        <ram:LineTotalAmount>3000.00</ram:LineTotalAmount>
+        <ram:TaxBasisTotalAmount>3000.00</ram:TaxBasisTotalAmount>
+        <ram:TaxTotalAmount currencyID="EUR">540.00</ram:TaxTotalAmount>
+        <ram:GrandTotalAmount>3540.00</ram:GrandTotalAmount>
+        <ram:DuePayableAmount>3540.00</ram:DuePayableAmount>
+      </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+    </ram:ApplicableHeaderTradeSettlement>
+  </rsm:SupplyChainTradeTransaction>
+</rsm:CrossIndustryInvoice>
