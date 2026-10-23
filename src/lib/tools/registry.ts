@@ -1186,6 +1186,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: ShieldCheck,
     popularity: 12,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Digital signature", hi: "डिजिटल हस्ताक्षर" },
     description: {
       en: "Certificate-based PAdES signing with your .pfx/.p12 file.",
@@ -1256,19 +1257,20 @@ export const ALL_TOOLS: ToolDef[] = [
   def({
     id: "request-signature",
     category: "security",
-    mode: "S",
+    mode: "D",
     phase: "P3",
     icon: Send,
     popularity: 8,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Request signature", hi: "हस्ताक्षर मँगाएँ" },
     description: {
-      en: "Send an expiring link so someone else can sign (Pro, server).",
-      hi: "एक्सपायर होने वाला लिंक भेजें (प्रो, सर्वर)।",
+      en: "Prepare a signing pack: numbered sign-here fields, request note and mail draft — on-device.",
+      hi: "साइनिंग पैक बनाएँ: नंबर वाले हस्ताक्षर फ़ील्ड, अनुरोध पत्र और मेल ड्राफ़्ट — ऑन-डिवाइस।",
     },
     tags: {
-      en: ["send for signature", "audit trail"],
-      hi: ["हस्ताक्षर मँगाएँ", "request sign"],
+      en: ["prepare for signature", "sign request", "signature fields"],
+      hi: ["हस्ताक्षर मँगाएँ", "साइनिंग पैक"],
     },
   }),
 
@@ -1344,6 +1346,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Award,
     popularity: 8,
     accepts: "pdf",
+    enabled: true,
     name: { en: "Verify PDF signatures", hi: "हस्ताक्षर जाँचें" },
     description: {
       en: "Signer, time, certificate status and tamper detection.",
@@ -1983,6 +1986,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Contact,
     popularity: 20,
     accepts: "image",
+    enabled: true,
     name: { en: "Passport photo maker", hi: "पासपोर्ट फ़ोटो बनाएँ" },
     description: {
       en: "India photo sizes, white background and print-ready sheets.",

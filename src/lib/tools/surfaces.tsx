@@ -61,6 +61,10 @@ import { CreateElectronicInvoiceSurface } from "../../../tools/create-electronic
 import { PdfToEInvoiceSurface } from "../../../tools/pdf-to-e-invoice/surface";
 import { XmlInvoiceToPdfSurface } from "../../../tools/xml-invoice-to-pdf/surface";
 import { ValidateEInvoiceSurface } from "../../../tools/validate-e-invoice/surface";
+import { PassportPhotoSurface } from "../../../tools/passport-photo/surface";
+import { RequestSignatureSurface } from "../../../tools/request-signature/surface";
+import { DigitalSignatureSurface } from "../../../tools/digital-signature/surface";
+import { VerifyPdfSignaturesSurface } from "../../../tools/verify-pdf-signatures/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -169,6 +173,10 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "pdf-to-e-invoice": PdfToEInvoiceSurface,
   "xml-invoice-to-pdf": XmlInvoiceToPdfSurface,
   "validate-e-invoice": ValidateEInvoiceSurface,
+  "passport-photo": PassportPhotoSurface,
+  "request-signature": RequestSignatureSurface,
+  "digital-signature": DigitalSignatureSurface,
+  "verify-pdf-signatures": VerifyPdfSignaturesSurface,
 };
 
 export function getToolSurface(

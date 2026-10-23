@@ -90,6 +90,10 @@ import { config as createElectronicInvoice } from "../../../tools/create-electro
 import { config as pdfToEInvoice } from "../../../tools/pdf-to-e-invoice/config";
 import { config as xmlInvoiceToPdf } from "../../../tools/xml-invoice-to-pdf/config";
 import { config as validateEInvoice } from "../../../tools/validate-e-invoice/config";
+import { config as passportPhoto } from "../../../tools/passport-photo/config";
+import { config as requestSignature } from "../../../tools/request-signature/config";
+import { config as digitalSignature } from "../../../tools/digital-signature/config";
+import { config as verifyPdfSignatures } from "../../../tools/verify-pdf-signatures/config";
 
 
 /**
@@ -191,6 +195,10 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [pdfToEInvoice.toolId]: pdfToEInvoice,
   [xmlInvoiceToPdf.toolId]: xmlInvoiceToPdf,
   [validateEInvoice.toolId]: validateEInvoice,
+  [passportPhoto.toolId]: passportPhoto,
+  [requestSignature.toolId]: requestSignature,
+  [digitalSignature.toolId]: digitalSignature,
+  [verifyPdfSignatures.toolId]: verifyPdfSignatures,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

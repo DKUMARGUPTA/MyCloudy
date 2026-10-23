@@ -100,6 +100,8 @@ export interface RunDetail {
   duplicatesResolved?: number;
   /** Stream /Length entries corrected (repair-pdf). */
   streamLengthsFixed?: number;
+  /** Photo copies packed onto the print sheet (passport-photo). */
+  copies?: number;
 }
 
 export interface ToolOutput {
