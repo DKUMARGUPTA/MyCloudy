@@ -47,8 +47,12 @@ export const config: ToolConfig = {
       hi: "एक टूल में 39 टेम्पलेट — GST टैक्स इनवॉइस, बिल ऑफ़ सप्लाई, एक्सपोर्ट इनवॉइस, क्रेडिट और डेबिट नोट, प्रोफ़ॉर्मा, कोटेशन, अनुमान, परचेज़ ऑर्डर, रसीदें, और फ़ार्मेसी से होटल तक के पेशेवर बिल।",
     },
     {
-      en: "India-ready GST maths: CGST + SGST or IGST split decided by your state and place of supply, per-item GST rates and HSN/SAC, discount before tax (flat or %) shared fairly across items, and round-off to a whole rupee.",
-      hi: "भारत के लिए GST गणित: आपके राज्य और आपूर्ति के स्थान से CGST + SGST या IGST का बँटवारा, हर आइटम पर GST दर और HSN/SAC, कर से पहले छूट (सीधी या %) का आइटमों में न्यायसंगत बँटवारा, और पूर्ण रुपये में राउंड ऑफ़।",
+      en: "India-ready GST maths: CGST + SGST or IGST split decided by your state and place of supply, per-item GST rates and HSN/SAC, an optional per-item Disc % on every row plus a discount before tax (flat or %) shared fairly across items, and round-off to a whole rupee.",
+      hi: "भारत के लिए GST गणित: आपके राज्य और आपूर्ति के स्थान से CGST + SGST या IGST का बँटवारा, हर आइटम पर GST दर और HSN/SAC, हर पंक्ति पर विकल्प छूट % और कर से पहले कुल छूट (सीधी या %) का न्यायसंगत बँटवारा, और पूर्ण रुपये में राउंड ऑफ़।",
+    },
+    {
+      en: "Each item row has a one-tap duplicate button — repeat lines copy themselves straight below, values and all.",
+      hi: "हर आइटम पंक्ति में एक-टैप डुप्लिकेट बटन — दोहराने वाली पंक्तियाँ सारे मानों सहित ठीक नीचे कॉपी हो जाती हैं।",
     },
     {
       en: "Every money value is computed in integer paise and shown live — subtotal, taxable value, taxes, total and the amount in words (Crore/Lakh for ₹, Billion/Million for $ € £) can never disagree.",
@@ -68,6 +72,16 @@ export const config: ToolConfig = {
     },
   ],
   faq: [
+    {
+      q: {
+        en: "How do the per-item discount and the overall discount combine?",
+        hi: "प्रति-आइटम छूट और कुल छूट साथ कैसे काम करती हैं?",
+      },
+      a: {
+        en: "Per-item first: each line's Disc % reduces that line's total. The overall discount ( % or flat) then applies on the subtotal of those discounted line totals — never on the part the per-item discount already removed. Every row also has a duplicate button that copies it instantly below itself.",
+        hi: "पहले प्रति-आइटम: हर पंक्ति की छूट % उसी पंक्ति का योग घटाती है। फिर कुल छूट (% या सीधी) उन घटी हुई पंक्तियों के सबटोटल पर लगती है — उस हिस्से पर नहीं जो प्रति-आइटम छूट पहले ही हटा चुकी है। हर पंक्ति में डुप्लिकेट बटन भी है, जो उसे ठीक नीचे तुरंत कॉपी कर देता है।",
+      },
+    },
     {
       q: {
         en: "Which invoice type should I use?",

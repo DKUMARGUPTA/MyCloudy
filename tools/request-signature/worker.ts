@@ -8,11 +8,7 @@ import type {
 } from "@/lib/workers/protocol";
 import { hasExistingSignature } from "../digital-signature/model";
 import { loadStampFonts } from "../stamp-common/worker-lib";
-import {
-  FlattenFormsError,
-  FlattenNothingError,
-  flattenDocument,
-} from "../flatten-pdf/engine";
+import { FlattenFormsError, flattenDocument } from "../flatten-pdf/engine";
 import {
   buildRequestText,
   needsNoto,
@@ -129,25 +125,24 @@ async function run(request: WorkerRunRequest): Promise<void> {
   post({ type: "progress", runId, pct: 12, stage: "processing" });
 
   // --- optional: flatten the EXISTING form first (house engine) -----
+  // A document with no form never throws — flattenDocument reports
+  // nothingToDo and the run simply proceeds (nothing to burn).
   if (readBool(options, "flattenFirst", false)) {
     try {
       flattenDocument(doc, { scope: "forms-only" });
     } catch (error) {
-      if (error instanceof FlattenNothingError) {
-        // No form at all — nothing to burn, proceed.
-      } else if (error instanceof FlattenFormsError) {
+      if (error instanceof FlattenFormsError) {
         post({ type: "error", runId, code: "reqsig.errFlatten" });
         return;
-      } else {
-        const message = error instanceof Error ? error.message : String(error);
-        post({
-          type: "error",
-          runId,
-          code: "tool.errorGeneric",
-          detail: message.slice(0, 200),
-        });
-        return;
       }
+      const message = error instanceof Error ? error.message : String(error);
+      post({
+        type: "error",
+        runId,
+        code: "tool.errorGeneric",
+        detail: message.slice(0, 200),
+      });
+      return;
     }
   }
 

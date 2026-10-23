@@ -1,13 +1,11 @@
 {
   "en": {
     "flatten": {
-      "errorNothing": "This PDF is already flat — there are no form fields or annotations to merge.",
       "errorFormsFailed": "The form fields couldn't be baked into the page. Fill them first (Fill out PDF), then flatten again."
     }
   },
   "hi": {
     "flatten": {
-      "errorNothing": "यह PDF पहले से फ़्लैट है — मिलाने को कोई फ़ॉर्म फ़ील्ड या टिप्पणी नहीं है।",
       "errorFormsFailed": "फ़ॉर्म फ़ील्ड पेज में स्थिर नहीं हो सके। पहले उन्हें भरें (Fill out PDF), फिर दोबारा फ़्लैटन करें।"
     }
   }

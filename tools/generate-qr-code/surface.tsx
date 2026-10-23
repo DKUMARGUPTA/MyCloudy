@@ -1,11 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent as ReactDragEvent,
+} from "react";
 import QRCode from "qrcode";
 import {
   Check,
   Copy,
   Download,
+  FileArchive,
   FileDown,
   ImageDown,
   Link2,
@@ -15,6 +24,7 @@ import {
   Phone,
   Plus,
   QrCode as QrIcon,
+  Table,
   TriangleAlert,
   Type,
   Wifi,
@@ -32,7 +42,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useI18n } from "@/components/providers/locale-provider";
 import { useToast } from "@/hooks/use-toast";
 import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
-import { downloadBlob, sanitizeFileName } from "@/lib/files/output";
+import { downloadBlob, sanitizeFileName, zipOutputs } from "@/lib/files/output";
 import { cn } from "@/lib/utils";
 import {
   AtSign,
@@ -40,6 +50,7 @@ import {
   IndianRupee,
   Mail,
 } from "lucide-react";
+import { CsvError } from "../create-card/model";
 import {
   DEFAULT_MARGIN,
   DEFAULT_SIZE,
@@ -57,6 +68,8 @@ import {
   isEcLevel,
   normalizeQrColor,
   normalizeUrl,
+  parseQrCsv,
+  qrCsvBaseName,
   buildEmailPayload,
   buildTextPayload,
   buildVcardPayload,
@@ -67,6 +80,7 @@ import {
   qrFileName,
   type EcLevel,
   type EmailInput,
+  type QrCsvRow,
   type QrKind,
   type QrSize,
   type UpiInput,
@@ -255,6 +269,17 @@ export function GenerateQrSurface(_props: ToolSurfaceProps): React.JSX.Element |
   const [copied, setCopied] = useState(false);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
 
+  /* ---- batch mode (one QR per CSV row) ---- */
+  const [mode, setMode] = useState<"single" | "batch">("single");
+  const [csv, setCsv] = useState<{
+    name: string;
+    rows: QrCsvRow[];
+    skipped: number;
+  } | null>(null);
+  const [csvDrag, setCsvDrag] = useState(false);
+  const [zipPct, setZipPct] = useState<number | null>(null);
+  const csvInputRef = useRef<HTMLInputElement | null>(null);
+
   /* ---- derived: payload + why it might be blocked ---- */
 
   const payload = useMemo<string | null>(() => {
@@ -398,6 +423,58 @@ export function GenerateQrSurface(_props: ToolSurfaceProps): React.JSX.Element |
     if (logoInputRef.current) logoInputRef.current.value = "";
   }, []);
 
+  /* ---- batch CSV (parse on read — the create-card pattern) ---- */
+
+  const readCsvFile = useCallback(
+    (file: File): void => {
+      void file
+        .text()
+        .then((text) => {
+          try {
+            const parsed = parseQrCsv(text);
+            setCsv({
+              name: file.name.replace(/[\u0000-\u001f]/g, "").slice(0, 120),
+              rows: parsed.rows,
+              skipped: parsed.skipped,
+            });
+          } catch (error) {
+            // CsvError carries the card.errorCsv* i18n key (shared parser).
+            const code = error instanceof CsvError ? error.code : "card.errorCsvQuote";
+            toast({ title: t(code), variant: "destructive" });
+          }
+        })
+        .catch(() => {
+          toast({ title: t("tool.errorGeneric"), variant: "destructive" });
+        });
+    },
+    [t, toast]
+  );
+
+  const onCsvDrop = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>): void => {
+      event.preventDefault();
+      setCsvDrag(false);
+      const dropped = Array.from(event.dataTransfer?.files ?? [])[0];
+      if (dropped) readCsvFile(dropped);
+    },
+    [readCsvFile]
+  );
+
+  const onCsvPick = useCallback(
+    (event: ChangeEvent<HTMLInputElement>): void => {
+      const picked = event.target.files?.[0];
+      if (picked) readCsvFile(picked);
+      event.target.value = "";
+    },
+    [readCsvFile]
+  );
+
+  const clearCsv = useCallback((): void => {
+    setCsv(null);
+    setZipPct(null);
+    if (csvInputRef.current) csvInputRef.current.value = "";
+  }, []);
+
   /* ---- downloads ---- */
 
   const baseRenderOptions = useMemo<RenderOptions>(
@@ -452,6 +529,37 @@ export function GenerateQrSurface(_props: ToolSurfaceProps): React.JSX.Element |
     );
   }, [payload, baseRenderOptions, state.logoDataUrl, state.kind]);
 
+  /** Batch: one PNG per CSV row, all styles applied, zipped with dedup. */
+  const downloadBatchZip = useCallback(async (): Promise<void> => {
+    if (!csv || csv.rows.length === 0 || zipPct !== null) return;
+    setZipPct(0);
+    try {
+      const outputs: { name: string; blob: Blob }[] = [];
+      for (let i = 0; i < csv.rows.length; i += 1) {
+        const row = csv.rows[i];
+        const blob = await composeQrPng(
+          row.content,
+          baseRenderOptions,
+          state.logoDataUrl
+        );
+        outputs.push({
+          name: sanitizeFileName(qrCsvBaseName(row.label, i), "png"),
+          blob,
+        });
+        setZipPct(Math.round(((i + 1) / csv.rows.length) * 100));
+      }
+      const base =
+        csv.name.replace(/\.[^.]*$/, "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "") ||
+        "qr-batch";
+      const zip = await zipOutputs(outputs, `${base}-qr-codes.zip`);
+      downloadBlob(zip.blob, zip.name);
+    } catch {
+      toast({ title: t("tool.errorGeneric"), variant: "destructive" });
+    } finally {
+      setZipPct(null);
+    }
+  }, [csv, zipPct, baseRenderOptions, state.logoDataUrl, t, toast]);
+
   /* ------------------------------ render ------------------------------ */
 
   return (
@@ -459,6 +567,177 @@ export function GenerateQrSurface(_props: ToolSurfaceProps): React.JSX.Element |
       aria-label={t("qr.surfaceLabel")}
       className="flex flex-col gap-6"
     >
+      {/* Mode toggle: one QR ↔ batch from CSV (single flow untouched) */}
+      <div>
+        <span id="qr-mode-label" className="text-xs font-medium text-foreground">
+          {t("qr.modeLabel")}
+        </span>
+        <div
+          role="radiogroup"
+          aria-labelledby="qr-mode-label"
+          className="mt-2 grid max-w-sm grid-cols-2 gap-2"
+        >
+          {(
+            [
+              ["single", t("qr.modeSingle"), QrIcon],
+              ["batch", t("qr.modeBatch"), Table],
+            ] as const
+          ).map(([value, label, Icon]) => {
+            const active = mode === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => setMode(value)}
+                className={cn(
+                  "flex min-h-11 items-center justify-center gap-2 rounded-btn border px-3 text-xs font-medium outline-none transition-colors",
+                  "focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                  active
+                    ? "border-primary/60 bg-primary/10 text-primary"
+                    : "border-border bg-card text-muted-foreground hover:border-primary/30 hover:text-foreground"
+                )}
+              >
+                <Icon className="size-4" aria-hidden="true" />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {mode === "batch" ? (
+        /* ------------------- batch: one QR per CSV row ------------------- */
+        <div className="flex flex-col gap-3 rounded-card border border-border bg-card p-4">
+          {!csv ? (
+            <>
+              <div
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setCsvDrag(true);
+                }}
+                onDragLeave={() => setCsvDrag(false)}
+                onDrop={onCsvDrop}
+                className={cn(
+                  "flex flex-col items-center gap-2 rounded-card border border-dashed p-6 text-center",
+                  csvDrag
+                    ? "border-primary bg-accent/40"
+                    : "border-border bg-background"
+                )}
+              >
+                <Table className="size-6 text-muted-foreground" aria-hidden="true" />
+                <p className="text-xs font-medium text-foreground">
+                  {t("qr.csvDrop")}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 min-h-11 rounded-btn text-xs font-medium"
+                  onClick={() => csvInputRef.current?.click()}
+                >
+                  {t("qr.csvPick")}
+                </Button>
+                <input
+                  ref={csvInputRef}
+                  type="file"
+                  accept=".csv,.txt,text/csv,text/plain"
+                  onChange={onCsvPick}
+                  className="sr-only"
+                  aria-label={t("qr.csvPick")}
+                />
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  {t("qr.csvHint", { count: 200 })}
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="max-w-full truncate rounded-chip bg-muted px-2.5 py-1 text-[11px] font-medium text-foreground">
+                  {csv.name}
+                </span>
+                <span className="rounded-chip bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
+                  {t("qr.csvRows", { count: csv.rows.length })}
+                </span>
+                {csv.skipped > 0 ? (
+                  <span className="flex items-center gap-1 rounded-chip bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+                    <TriangleAlert className="size-3" aria-hidden="true" />
+                    {t("qr.csvSkipped", { count: csv.skipped })}
+                  </span>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto h-8 gap-1.5 rounded-btn px-3 text-muted-foreground"
+                  onClick={clearCsv}
+                >
+                  <X className="size-3.5" aria-hidden="true" />
+                  {t("qr.csvClear")}
+                </Button>
+              </div>
+
+              <div className="overflow-x-auto rounded-card border border-border">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/40">
+                      <th className="px-3 py-2 font-semibold text-foreground">#</th>
+                      <th className="px-3 py-2 font-semibold text-foreground">
+                        {t("qr.csvColContent")}
+                      </th>
+                      <th className="px-3 py-2 font-semibold text-foreground">
+                        {t("qr.csvColName")}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {csv.rows.slice(0, 6).map((row, i) => (
+                      <tr key={i} className="border-b border-border/60 last:border-b-0">
+                        <td className="px-3 py-2 tabular-nums text-muted-foreground">
+                          {i + 1}
+                        </td>
+                        <td className="max-w-0 truncate px-3 py-2 font-mono text-[11px] text-foreground">
+                          {row.content}
+                        </td>
+                        <td className="max-w-0 truncate px-3 py-2 text-muted-foreground">
+                          {sanitizeFileName(qrCsvBaseName(row.label, i), "png")}
+                        </td>
+                      </tr>
+                    ))}
+                    {csv.rows.length > 6 ? (
+                      <tr>
+                        <td colSpan={3} className="px-3 py-2 text-[11px] text-muted-foreground">
+                          {t("qr.csvMore", { count: csv.rows.length - 6 })}
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+
+              <Button
+                type="button"
+                className="h-12 min-h-12 rounded-btn text-sm font-semibold"
+                disabled={!colorsValid || csv.rows.length === 0 || zipPct !== null}
+                onClick={() => void downloadBatchZip()}
+              >
+                {zipPct !== null ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <FileArchive className="size-4" aria-hidden="true" />
+                )}
+                {zipPct !== null
+                  ? t("qr.zipProgress", { pct: zipPct })
+                  : t("qr.downloadZip", { count: csv.rows.length })}
+              </Button>
+              <p className="text-[11px] text-muted-foreground">
+                {colorsValid ? t("qr.zipNote") : t("qr.badColors")}
+              </p>
+            </>
+          )}
+        </div>
+      ) : (
       <div className="grid gap-6 lg:grid-cols-2">
         {/* LEFT: kind + form */}
         <div className="flex flex-col gap-4">
@@ -571,8 +850,9 @@ export function GenerateQrSurface(_props: ToolSurfaceProps): React.JSX.Element |
           ) : null}
         </div>
       </div>
+      )}
 
-      {/* Style controls */}
+      {/* Style controls (shared: single QR and every batch PNG) */}
       <QrStylePanel
         state={state}
         patch={patch}
@@ -584,7 +864,8 @@ export function GenerateQrSurface(_props: ToolSurfaceProps): React.JSX.Element |
         logoInputRef={logoInputRef}
       />
 
-      {/* Downloads */}
+      {/* Downloads (single-QR mode) */}
+      {mode === "single" ? (
       <div className="flex flex-col gap-2 rounded-card border border-border bg-card p-4">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {t("qr.downloadLabel")}
@@ -628,6 +909,7 @@ export function GenerateQrSurface(_props: ToolSurfaceProps): React.JSX.Element |
           </p>
         )}
       </div>
+      ) : null}
     </section>
   );
 }

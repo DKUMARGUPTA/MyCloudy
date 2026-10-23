@@ -349,7 +349,9 @@ function renderItems(d: RenderDeps): void {
   const s = run.s;
   const def = typeDef(s.ty);
 
-  // Column plan (pt): # | desc | hsn? | qty | rate? | taxable? gst%? | amount?
+  // Column plan (pt): # | desc | hsn? | qty | rate? dp? | taxable? gst%? | amount?
+  // The per-item discount % column appears ONLY when some line actually
+  // carries one (keeps classic invoices pixel-identical).
   const cols: { key: string; w: number; align: "l" | "r" }[] = [
     { key: "#", w: 20, align: "l" },
   ];
@@ -363,6 +365,10 @@ function renderItems(d: RenderDeps): void {
   if (!c.np) {
     fixed += 62;
     cols.push({ key: "rate", w: 62, align: "r" });
+    if (c.L.some((l) => Q(l.dp) > 0)) {
+      fixed += 34;
+      cols.push({ key: "dp", w: 34, align: "r" });
+    }
     if (c.g && !c.nt) {
       fixed += 60 + 34;
       cols.push({ key: "tb", w: 60, align: "r" });
@@ -425,9 +431,11 @@ function renderItems(d: RenderDeps): void {
       else if (col.key === "hsn") val = l.h;
       else if (col.key === "qty") val = String(l.q);
       else if (col.key === "rate") val = d.fmt(Math.round(Q(l.r) * 100));
+      else if (col.key === "dp")
+        val = Q(l.dp) > 0 ? `${String(l.dp).trim()}%` : "";
       else if (col.key === "tb") val = d.fmt(l.tb);
       else if (col.key === "gp") val = l.rt + "%";
-      else if (col.key === "amt") val = d.fmt(l.amt);
+      else if (col.key === "amt") val = d.fmt(l.net);
       if (val && col.key !== "desc") {
         sheet.text(String(val), colX(i) + PAD, rowTop - PAD, FS, {
           right: col.align === "r" ? colRight(i) : undefined,
@@ -455,6 +463,8 @@ function renderTotals(d: RenderDeps): void {
   type Row = [string, string, boolean?];
   const rows: Row[] = [];
   rows.push([sheet.l("sub"), d.money(c.sub)]);
+  if (c.idisc)
+    rows.push([sheet.l("idisc"), "− " + d.money(c.idisc)]);
   if (c.disc) rows.push([sheet.l("disc2"), "− " + d.money(c.disc)]);
   if (!c.np) {
     if (c.g && !c.nt) {

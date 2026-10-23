@@ -63,6 +63,8 @@ export interface InvoiceItem {
   r: string;
   /** Per-item GST % (GST family only). */
   g: string;
+  /** Per-item discount % (0–100, optional — "" = none). */
+  dp: string;
 }
 
 export interface InvoiceBiz {
@@ -129,9 +131,13 @@ export function typeDef(ty: string): InvoiceTypeDef {
 /* ------------------------------------------------------------------ */
 
 export interface InvoiceLine extends InvoiceItem {
-  /** Line amount = R(qty × rate) in paise. */
+  /** Gross line amount = R(qty × rate) in paise. */
   amt: number;
-  /** Taxable base = amt − pro-rata discount share. */
+  /** Per-item discount in paise (dp % of amt, dp clamped 0–100). */
+  pd: number;
+  /** Discounted line total = amt − pd ("net"). */
+  net: number;
+  /** Taxable base = net − pro-rata share of the global discount. */
   tb: number;
   /** Applied tax rate % (0 for no-tax types). */
   rt: number;
@@ -150,11 +156,13 @@ export interface InvoiceCalc {
   nt: boolean;
   /** No-price type (delivery challan). */
   np: boolean;
-  /** Σ line amounts. */
+  /** Σ gross line amounts (the displayed subtotal). */
   sub: number;
-  /** Discount actually applied (clamped to [0, sub]). */
+  /** Σ per-item discounts (the "Item discount" totals row). */
+  idisc: number;
+  /** Global discount actually applied (clamped to [0, sub − idisc]). */
   disc: number;
-  /** Σ taxable bases after discount. */
+  /** Σ taxable bases after both discounts. */
   tb: number;
   cg: number;
   sg: number;
@@ -173,33 +181,51 @@ export interface InvoiceCalc {
   bal: number;
 }
 
+/**
+ * Per-item discount % clamped to [0, 100] (Q already rejects garbage /
+ * negative / ±Infinity; >100 % can never remove more than the line).
+ */
+const itemDiscPct = (v: string): number => Math.min(Q(v), 100);
+
 export function calc(s: InvoiceState): InvoiceCalc {
   const def = typeDef(s.ty);
   const g = def.fam === "gst";
   const nt = def.nt === true;
   const np = def.np === true;
 
-  const L: InvoiceLine[] = s.items.map((i) => ({
-    ...i,
-    // tb/rt/cg/sg/ig/t are zero-initialized here and filled per-line in
-    // the pro-rata loop below — the annotation type needs them present.
+  const L: InvoiceLine[] = s.items.map((i) => {
     // Q() clamps each side (NaN / negative / ±Infinity → 0) so the line
     // amount is always finite money; R(Q(r)·100) is P(r) with the clamp.
-    amt: R(Q(i.q) * R(Q(i.r) * 100)),
-    tb: 0,
-    rt: 0,
-    cg: 0,
-    sg: 0,
-    ig: 0,
-    t: 0,
-  }));
+    const amt = R(Q(i.q) * R(Q(i.r) * 100));
+    // Per-item discount first (the documented combination order): the
+    // global discount then applies on the subtotal of NET line totals.
+    const pd = R((amt * itemDiscPct(i.dp)) / 100);
+    return {
+      ...i,
+      // tb/rt/cg/sg/ig/t are zero-initialized here and filled per-line in
+      // the pro-rata loop below — the annotation type needs them present.
+      amt,
+      pd,
+      net: amt - pd,
+      tb: 0,
+      rt: 0,
+      cg: 0,
+      sg: 0,
+      ig: 0,
+      t: 0,
+    };
+  });
   const sub = L.reduce((a, l) => a + l.amt, 0);
+  const idisc = L.reduce((a, l) => a + l.pd, 0);
+  // The global discount base is the per-item-discounted subtotal — with
+  // no per-item discounts this is exactly `sub` (the ported behaviour).
+  const base = Math.max(0, sub - idisc);
   const dv = parseFloat(s.d) || 0;
   const disc = Math.max(
     0,
     Math.min(
-      sub,
-      s.dMode === "%" ? R((sub * Math.min(dv, 100)) / 100) : P(String(dv))
+      base,
+      s.dMode === "%" ? R((base * Math.min(dv, 100)) / 100) : P(String(dv))
     )
   );
   const intra = !s.biz.state || !s.pos || s.biz.state === s.pos;
@@ -212,9 +238,9 @@ export function calc(s: InvoiceState): InvoiceCalc {
   let tx = 0;
   L.forEach((l, k) => {
     const sh =
-      k === L.length - 1 ? rem : R((disc * l.amt) / (sub || 1));
+      k === L.length - 1 ? rem : R((disc * l.net) / (base || 1));
     rem -= sh;
-    l.tb = l.amt - sh;
+    l.tb = l.net - sh;
     const rt = nt
       ? 0
       : g
@@ -241,6 +267,7 @@ export function calc(s: InvoiceState): InvoiceCalc {
     nt,
     np,
     sub,
+    idisc,
     disc,
     tb,
     cg,
@@ -515,7 +542,25 @@ function item(v: unknown): InvoiceItem {
     q: str(o.q, 32),
     r: str(o.r, 32),
     g: str(o.g, 8),
+    dp: str(o.dp, 8),
   };
+}
+
+/**
+ * Duplicate one item row: a copy (same values) inserted directly AFTER the
+ * source index — the classic invoice-tool affordance. Caps at MAX_ITEMS
+ * and ignores out-of-range indices (returns the input array unchanged).
+ */
+export function duplicateItems(
+  items: InvoiceItem[],
+  idx: number
+): InvoiceItem[] {
+  if (idx < 0 || idx >= items.length || items.length >= MAX_ITEMS) {
+    return items;
+  }
+  const next = items.slice();
+  next.splice(idx + 1, 0, { ...next[idx] });
+  return next;
 }
 
 /**

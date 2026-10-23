@@ -54,6 +54,10 @@ export const config: ToolConfig = {
       hi: "विकल्प: फ़्लैटन आपके जवाब स्थायी कर देता है, कोई मिटा नहीं सकता।",
     },
     {
+      en: "Export your answers as FDF or XFDF and re-import them any time — the classic portable form-data formats, saved on this device.",
+      hi: "अपने जवाब FDF या XFDF में निर्यात करें और कभी भी वापस आयात करें — क्लासिक पोर्टेबल फ़ॉर्म-डेटा फ़ॉर्मैट, इसी डिवाइस पर सेव।",
+    },
+    {
       en: "Runs entirely on your device — your answers never leave the browser.",
       hi: "पूरा काम डिवाइस पर — आपके जवाब ब्राउज़र से बाहर नहीं जाते।",
     },

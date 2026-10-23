@@ -45,6 +45,7 @@ import QRCode from "qrcode";
 import {
   ArrowDown,
   ArrowUp,
+  Copy,
   FileDown,
   Loader2,
   MoveVertical,
@@ -70,6 +71,7 @@ import type { WorkerResponse } from "@/lib/workers/protocol";
 import {
   BLOCK_KEYS,
   calc,
+  duplicateItems,
   fd,
   formatMoney,
   gstOK,
@@ -234,7 +236,7 @@ function defaultState(profile: InvProfile): InvoiceState {
     notes: "",
     terms: profile.tu ? profile.terms ?? "" : "",
     xv: ["", "", ""],
-    items: [{ d: "", h: "", q: "1", r: "", g: "18" }],
+    items: [{ d: "", h: "", q: "1", r: "", g: "18", dp: "" }],
   };
 }
 
@@ -335,10 +337,12 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
       hsn: t("invoice.hsn"),
       qty: t(defNow.ql ? `invoice.${defNow.ql}` : "invoice.qty"),
       rate: t(defNow.rl ? `invoice.${defNow.rl}` : "invoice.rate"),
+      dp: t("invoice.dp"),
       tb: t("invoice.tb"),
       gp: t("invoice.gp"),
       amt: t("invoice.amt"),
       sub: t("invoice.sub"),
+      idisc: t("invoice.idisc"),
       disc2: t("invoice.disc2"),
       cg: t("invoice.cg"),
       sg: t("invoice.sg"),
@@ -495,6 +499,7 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
           q: "1",
           r: "",
           g: prev.items.length ? prev.items[prev.items.length - 1].g : "18",
+          dp: "",
         },
       ],
     }));
@@ -505,6 +510,11 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
       if (prev.items.length <= 1) return prev;
       return { ...prev, items: prev.items.filter((_, i) => i !== idx) };
     });
+  }, []);
+
+  /** Duplicate: a full copy of the row inserted right after it (capped). */
+  const duplicateItem = useCallback((idx: number) => {
+    setState((prev) => ({ ...prev, items: duplicateItems(prev.items, idx) }));
   }, []);
 
   /* ---------- new invoice ($('#new') port) ---------- */
@@ -540,6 +550,7 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
             q: "1",
             r: "",
             g: prev.items.length ? prev.items[prev.items.length - 1].g : "18",
+            dp: "",
           },
         ],
       };
@@ -605,7 +616,7 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
         biz: prev.biz,
         items: x.items?.length
           ? x.items
-          : [{ d: "", h: "", q: "1", r: "", g: "18" }],
+          : [{ d: "", h: "", q: "1", r: "", g: "18", dp: "" }],
       }));
     },
     [savedList]
@@ -840,6 +851,8 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
   const totalsRows: { label: string; value: string; gt?: boolean }[] = [];
   if (!c.np) {
     totalsRows.push({ label: t("invoice.sub"), value: money(c.sub) });
+    if (c.idisc)
+      totalsRows.push({ label: t("invoice.idisc"), value: "− " + money(c.idisc) });
     if (c.disc)
       totalsRows.push({ label: t("invoice.disc2"), value: "− " + money(c.disc) });
     if (!c.nt) {
@@ -968,7 +981,10 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
             </div>
           </div>
         );
-      case "it":
+      case "it": {
+        // The per-item discount % column appears only when some line has
+        // one (classic invoices keep their exact old shape).
+        const showDp = c.L.some((l) => Q(l.dp) > 0);
         return (
           <div data-b="it" key="it">
             {dzUiFor("it")}
@@ -982,6 +998,7 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
                   {!c.np ? (
                     <>
                       <th className="r">{rateLabel}</th>
+                      {showDp ? <th className="r">{t("invoice.dp")}</th> : null}
                       {c.g && !c.nt ? (
                         <>
                           <th className="r">{t("invoice.tb")}</th>
@@ -1004,13 +1021,16 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
                     {!c.np ? (
                       <>
                         <td className="r">{fmt(Math.round(Q(l.r) * 100))}</td>
+                        {showDp ? (
+                          <td className="r">{Q(l.dp) > 0 ? `${String(l.dp).trim()}%` : ""}</td>
+                        ) : null}
                         {c.g && !c.nt ? (
                           <>
                             <td className="r">{fmt(l.tb)}</td>
                             <td className="r">{l.rt}%</td>
                           </>
                         ) : (
-                          <td className="r">{fmt(l.amt)}</td>
+                          <td className="r">{fmt(l.net)}</td>
                         )}
                       </>
                     ) : null}
@@ -1020,6 +1040,7 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
             </table>
           </div>
         );
+      }
       case "tt":
         return c.np ? null : (
           <div
@@ -1594,6 +1615,19 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
                       aria-label={rateLabel}
                     />
                   ) : null}
+                  {!c.np ? (
+                    <input
+                      className={inputCls}
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={it.dp}
+                      onChange={(e) => setItem(i, "dp", e.target.value)}
+                      placeholder={t("invoice.dp")}
+                      aria-label={t("invoice.dp")}
+                      title={t("invoice.dpHint")}
+                    />
+                  ) : null}
                   {c.g && !c.nt ? (
                     <input
                       className={inputCls}
@@ -1607,6 +1641,15 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
                       aria-label={t("invoice.gp")}
                     />
                   ) : null}
+                  <button
+                    type="button"
+                    onClick={() => duplicateItem(i)}
+                    aria-label={t("invoice.dupItem")}
+                    title={t("invoice.dupItem")}
+                    className="flex size-11 min-h-11 items-center justify-center self-center justify-self-end rounded-md text-muted-foreground transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                  >
+                    <Copy className="size-4" aria-hidden="true" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => removeItem(i)}

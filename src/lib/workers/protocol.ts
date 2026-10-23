@@ -35,6 +35,28 @@ export interface RunDetail {
   confidence?: number;
   /** Whether the output fit the byte budget (compress-pdf-to-size). */
   targetHit?: boolean;
+  /** Winning compress-to-size ladder stage (compress-pdf-to-size). */
+  compressStage?: "optimize" | "images" | "raster";
+  /** JPEG quality (%) of the winning image rung (compressStage "images"). */
+  compressQuality?: number;
+  /** Pixel cap of the winning image rung (compressStage "images"). */
+  compressMaxDim?: number;
+  /** Photos turned grayscale on the winning rung (compressStage "images"). */
+  compressGrayscale?: boolean;
+  /** DPI of the winning raster rung (compressStage "raster"). */
+  compressDpi?: number;
+  /** Input was already flat — returned unchanged (flatten-pdf). */
+  nothingFlattened?: boolean;
+  /** Info-dict entries removed, dates + custom included (remove-pdf-metadata). */
+  removedInfoFields?: number;
+  /** XMP /Metadata stream removed (remove-pdf-metadata). */
+  removedXmp?: boolean;
+  /** Page /PieceInfo dictionaries stripped (remove-pdf-metadata). */
+  strippedPieceInfo?: number;
+  /** Page-level /Metadata streams stripped (remove-pdf-metadata). */
+  strippedPageMetadata?: number;
+  /** Annotation /M modification dates stripped (remove-pdf-metadata). */
+  strippedAnnotationDates?: number;
   /** Form fields added to the output (make-pdf-fillable). */
   fields?: number;
   /** Editor objects drawn into the output (edit-pdf). */

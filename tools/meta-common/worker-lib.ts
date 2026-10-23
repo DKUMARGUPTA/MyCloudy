@@ -1,4 +1,4 @@
-import { PDFDict, PDFHexString, PDFName, PDFDocument } from "pdf-lib";
+import { PDFArray, PDFDict, PDFHexString, PDFName, PDFDocument } from "pdf-lib";
 import type { PDFRef } from "pdf-lib";
 
 import { type DocInfoEdits } from "./meta";
@@ -72,16 +72,78 @@ export function stripXmpBlock(doc: PDFDocument): boolean {
   return true;
 }
 
+/** Drop one page-dict entry plus its (optional) indirect object. */
+function stripPageEntry(
+  doc: PDFDocument,
+  node: PDFDict,
+  name: string
+): boolean {
+  const obj = node.get(PDFName.of(name));
+  if (obj === undefined) return false;
+  const ref = asRef(obj);
+  node.delete(PDFName.of(name));
+  if (ref) doc.context.delete(ref);
+  return true;
+}
+
 export interface StripReport {
   /** Raw Info-dict keys that were present and removed (e.g. "Title"). */
   removedFields: string[];
   removedXmp: boolean;
+  /** Pages whose /PieceInfo dictionary was removed (private app data). */
+  removedPieceInfo: number;
+  /** Page-level /Metadata streams removed (a second XMP copy per page). */
+  removedPageMetadata: number;
+  /** Annotation /M modification dates removed. */
+  removedAnnotationDates: number;
 }
 
 /**
- * Removes EVERYTHING: the whole Info dict (object + trailer reference) and,
- * when asked, the XMP /Metadata stream. Returns what was actually there —
- * the honest count the result reporting uses.
+ * Deep page-level clean (iLovePDF parity+): every page loses its /PieceInfo
+ * (application-private data — Illustrator/InDesign last-modified stamps,
+ * zoom positions), its own /Metadata stream (page-level XMP) and every
+ * annotation's /M modification date. The annotations themselves (type,
+ * rect, contents, appearance) stay — only the identifying timestamps go.
+ */
+function stripPageLevelMetadata(
+  doc: PDFDocument
+): Pick<
+  StripReport,
+  "removedPieceInfo" | "removedPageMetadata" | "removedAnnotationDates"
+> {
+  let removedPieceInfo = 0;
+  let removedPageMetadata = 0;
+  let removedAnnotationDates = 0;
+  for (const page of doc.getPages()) {
+    const node = page.node;
+    if (stripPageEntry(doc, node, "PieceInfo")) removedPieceInfo += 1;
+    if (stripPageEntry(doc, node, "Metadata")) removedPageMetadata += 1;
+    const annots: PDFArray | undefined = node.Annots();
+    if (annots !== undefined) {
+      for (let i = 0; i < annots.size(); i += 1) {
+        const entry = annots.lookup(i);
+        // Direct dicts and refs both resolve; a shared dict (two pages
+        // referencing one annotation) is counted only where /M still lives.
+        if (entry instanceof PDFDict && entry.get(PDFName.of("M")) !== undefined) {
+          entry.delete(PDFName.of("M"));
+          removedAnnotationDates += 1;
+        }
+      }
+    }
+  }
+  return {
+    removedPieceInfo,
+    removedPageMetadata,
+    removedAnnotationDates,
+  };
+}
+
+/**
+ * Removes EVERYTHING the remove-metadata tool promises: the whole Info dict
+ * (object + trailer reference), the XMP /Metadata stream (when asked) and
+ * the page-level extras (PieceInfo, page /Metadata streams, annotation /M
+ * dates — always; a privacy tool cannot half-strip). Returns what was
+ * actually there — the honest count the result reporting uses.
  */
 export function stripAllMetadata(
   doc: PDFDocument,
@@ -98,19 +160,24 @@ export function stripAllMetadata(
   if (ref) doc.context.delete(ref);
   doc.context.trailerInfo.Info = undefined;
   const removedXmp = alsoXmp ? stripXmpBlock(doc) : false;
-  return { removedFields, removedXmp };
+  const pageLevel = stripPageLevelMetadata(doc);
+  return { removedFields, removedXmp, ...pageLevel };
 }
 
-/** Info-dict keys handled by the six text fields + the two date modes. */
+/** Info-dict keys handled by the six text fields + the two date modes.
+ *  NOTE: PDFName.asString() keeps the leading slash ("/Title") — the set
+ *  carries the same shape or the has() check never matches (that bug let
+ *  stripCustom delete the STANDARD fields too; pinned by smoke §7). */
 const KNOWN_INFO_KEYS = new Set([
-  "Title",
-  "Author",
-  "Subject",
-  "Keywords",
-  "Creator",
-  "Producer",
-  "CreationDate",
-  "ModDate",
+  "/Title",
+  "/Author",
+  "/Subject",
+  "/Keywords",
+  "/Creator",
+  "/Producer",
+  "/CreationDate",
+  "/ModDate",
+  "/Trapped",
 ]);
 
 /** Applies the doc-info form edits (undefined = untouched, "" = remove). */

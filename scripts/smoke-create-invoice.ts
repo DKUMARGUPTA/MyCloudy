@@ -3,14 +3,15 @@
  * 64th tool). Proves the ZERO-MISTAKE core with hand-computed vectors
  * before the tool is trusted:
  *
- *  1. MATH (model.ts): paise-integer engine — line amounts, pro-rata
- *     discount with last-item remainder (Σ shares == discount EXACTLY,
- *     Σ taxable == sub − disc EXACTLY), CGST/SGST vs IGST split,
- *     standard-family tax, round-off delta, advance clamp, and the
- *     amount-in-words for ₹ Crore/Lakh AND $ Billion/Million systems.
- *     Every expected number below was computed BY HAND from the GST
- *     rules, then written down before running (no self-fulfilling
- *     assertions).
+ *  1. MATH (model.ts): paise-integer engine — line amounts, per-item
+ *     discounts (dp %, net line totals, global discount on the discounted
+ *     subtotal, net-based pro-rata), CGST/SGST vs IGST split, standard-
+ *     family tax, round-off delta, advance clamp, and the amount-in-words
+ *     for ₹ Crore/Lakh AND $ Billion/Million systems. Every expected
+ *     number below was computed BY HAND from the GST rules, then written
+ *     down before running (no self-fulfilling assertions).
+ *  1b. ROW AFFORDANCES: duplicateItems (copy-after-row, MAX_ITEMS cap,
+ *     no aliasing) + the dp/duplicate parser-boundary round-trips.
  *  2. VALIDATION: GSTIN checksum (valid + corrupted), invoice-number
  *     bumping (trailing digit group, width-preserving), April–March
  *     financial-year prefix, next-number memory, the five GST warnings.
@@ -32,6 +33,7 @@ import fontkit from "@pdf-lib/fontkit";
 import {
   calc,
   bump,
+  duplicateItems,
   fy,
   gstOK,
   nextNo,
@@ -40,6 +42,7 @@ import {
   upiPayload,
   words,
   warnings,
+  type InvoiceItem,
   type InvoiceState,
 } from "../tools/create-invoice/model";
 import { drawInvoice } from "../tools/create-invoice/render";
@@ -88,7 +91,7 @@ function baseState(over: Partial<InvoiceState> = {}): InvoiceState {
     notes: "",
     terms: "",
     xv: ["", "", ""],
-    items: [{ d: "Widget", h: "1001", q: "1", r: "100", g: "18" }],
+    items: [{ d: "Widget", h: "1001", q: "1", r: "100", g: "18", dp: "" }],
     ...over,
   };
 }
@@ -113,8 +116,8 @@ console.log("── 1. Money math ───────────────�
     pos: "27",
     d: "10",
     items: [
-      { d: "A", h: "", q: "2", r: "100.50", g: "18" },
-      { d: "B", h: "", q: "1", r: "33.335", g: "18" },
+      { d: "A", h: "", q: "2", r: "100.50", g: "18", dp: "" },
+      { d: "B", h: "", q: "1", r: "33.335", g: "18", dp: "" },
     ],
   });
   const c = calc(s);
@@ -154,7 +157,7 @@ console.log("── 1. Money math ───────────────�
     pos: "29",
     dMode: "f",
     d: "100",
-    items: [{ d: "C", h: "", q: "3", r: "99.99", g: "12" }],
+    items: [{ d: "C", h: "", q: "3", r: "99.99", g: "12", dp: "" }],
   });
   const c = calc(s);
   eq(c.intra, false, "27→29 inter-state");
@@ -176,8 +179,8 @@ console.log("── 1. Money math ───────────────�
     tr: "18",
     adv: "100",
     items: [
-      { d: "X", h: "", q: "5", r: "20", g: "" },
-      { d: "Y", h: "", q: "2", r: "150", g: "" },
+      { d: "X", h: "", q: "5", r: "20", g: "", dp: "" },
+      { d: "Y", h: "", q: "2", r: "150", g: "", dp: "" },
     ],
   });
   const c = calc(s);
@@ -203,7 +206,7 @@ console.log("── 1. Money math ───────────────�
 {
   const s = baseState({
     ro: false,
-    items: [{ d: "P", h: "", q: "1", r: "10.55", g: "5" }],
+    items: [{ d: "P", h: "", q: "1", r: "10.55", g: "5", dp: "" }],
   });
   const c = calc(s);
   eq(c.intra, true, "blank states count as intra (ported rule)");
@@ -223,7 +226,7 @@ console.log("── 1. Money math ───────────────�
   const s = baseState({
     dMode: "f",
     d: "1",
-    items: [1, 2, 3].map(() => ({ d: "E", h: "", q: "1", r: "33.33", g: "0" })),
+    items: [1, 2, 3].map(() => ({ d: "E", h: "", q: "1", r: "33.33", g: "0", dp: "" })),
   });
   const c = calc(s);
   eq(c.sub, 9999, "3 × 3333 subtotal");
@@ -257,11 +260,11 @@ eq(words(5, "GBP"), "Pounds Zero and Five Pence Only", "paise-only words");
   const s = baseState({
     ro: false,
     items: [
-      { d: "neg", h: "", q: "-5", r: "100", g: "0" },
-      { d: "inf-q", h: "", q: "1e999", r: "2", g: "0" },
-      { d: "inf-r", h: "", q: "2", r: "1e999", g: "0" },
-      { d: "nan", h: "", q: "abc", r: "xyz", g: "0" },
-      { d: "ok", h: "", q: "3", r: "50", g: "0" },
+      { d: "neg", h: "", q: "-5", r: "100", g: "0", dp: "" },
+      { d: "inf-q", h: "", q: "1e999", r: "2", g: "0", dp: "" },
+      { d: "inf-r", h: "", q: "2", r: "1e999", g: "0", dp: "" },
+      { d: "nan", h: "", q: "abc", r: "xyz", g: "0", dp: "" },
+      { d: "ok", h: "", q: "3", r: "50", g: "0", dp: "" },
     ],
   });
   const c = calc(s);
@@ -289,9 +292,114 @@ eq(words(5, "GBP"), "Pounds Zero and Five Pence Only", "paise-only words");
   // quantizes to paise BEFORE the multiply (Vector A/B prove the clean path).
   const s = baseState({
     ro: false,
-    items: [{ d: "B", h: "", q: "1", r: "33.335", g: "0" }],
+    items: [{ d: "B", h: "", q: "1", r: "33.335", g: "0", dp: "" }],
   });
   eq(calc(s).L[0].amt, 3334, "clamped path keeps Vector A's 33.335 → 3334 paise rounding");
+}
+
+/* Vector H — per-item discount + global discount combination.
+ * Hand-computed (the documented order: per-item FIRST, then the global
+ * discount on the subtotal of discounted line totals):
+ *   A: 2 × ₹100.50, dp 10% → amt 20100, pd 2010, net 18090
+ *   B: 1 × ₹33.335 → amt 3334, pd 0, net 3334
+ *   sub (gross) = 23434, idisc = 2010, base = 21424
+ *   global 10% = R(2142.4) = 2142
+ *   share A = R(2142×18090/21424) = R(1808.66…) = 1809, B = 333 (remainder)
+ *   tbA = 16281, tbB = 3001, Σ tb = 19282 = 21424 − 2142 ✓
+ *   intra 18%: cgA=sgA=R(1465.29)=1465, cgB=sgB=R(270.09)=270 → cg=sg=1735
+ *   grand = 19282 + 3470 = 22752 → round-off → 22800 (delta +48)
+ */
+{
+  const s = baseState({
+    biz: { ...baseState().biz, state: "27" },
+    pos: "27",
+    d: "10",
+    items: [
+      { d: "A", h: "", q: "2", r: "100.50", g: "18", dp: "10" },
+      { d: "B", h: "", q: "1", r: "33.335", g: "18", dp: "" },
+    ],
+  });
+  const c = calc(s);
+  eq(c.L[0].amt, 20100, "H: gross line amount (rate × qty)");
+  eq(c.L[0].pd, 2010, "H: per-item discount 10% of 20100");
+  eq(c.L[0].net, 18090, "H: discounted line total");
+  eq(c.L[1].net, 3334, "H: no dp → net == amt");
+  eq(c.sub, 23434, "H: subtotal stays the GROSS Σ amt");
+  eq(c.idisc, 2010, "H: item-discount total");
+  eq(c.disc, 2142, "H: global 10% applies on the discounted subtotal 21424");
+  eq(c.L[0].tb, 16281, "H: A taxable (pro-rata share 1809 over net)");
+  eq(c.L[1].tb, 3001, "H: B taxable (last-item remainder 333)");
+  eq(
+    c.L.reduce((a, l) => a + (l.net - l.tb), 0),
+    c.disc,
+    "H: Σ global shares == global discount EXACTLY (net-based pro-rata)"
+  );
+  eq(c.tb, 19282, "H: Σ taxable == sub − idisc − disc");
+  eq(c.cg, 1735, "H: CGST total");
+  eq(c.sg, 1735, "H: SGST total");
+  eq(c.tot, 22800, "H: round-off 22752 → 22800");
+  eq(c.ro, 48, "H: round-off delta +48");
+}
+
+/* Vector I — per-item discount edge cases.
+ *   dp > 100 clamps to a full line discount; garbage/negative/∞ → 0;
+ *   fractional dp works; a global flat discount clamps to the NET base.
+ */
+{
+  const s = baseState({
+    ro: false,
+    items: [
+      { d: "over", h: "", q: "1", r: "100", g: "0", dp: "150" },
+      { d: "neg", h: "", q: "1", r: "100", g: "0", dp: "-5" },
+      { d: "inf", h: "", q: "1", r: "100", g: "0", dp: "1e999" },
+      { d: "junk", h: "", q: "1", r: "100", g: "0", dp: "abc" },
+      { d: "frac", h: "", q: "1", r: "100", g: "0", dp: "12.5" },
+    ],
+  });
+  const c = calc(s);
+  eq(c.L.map((l) => l.pd), [10000, 0, 0, 0, 1250], "I: pd clamps/garbage/fractional");
+  eq(c.L.map((l) => l.net), [0, 10000, 10000, 10000, 8750], "I: net line totals");
+  eq(c.idisc, 11250, "I: idisc total");
+  eq(c.sub, 50000, "I: gross subtotal");
+  eq(c.tb, 38750, "I: Σ net == sub − idisc (no global discount)");
+}
+{
+  // Flat global discount clamps to the per-item-discounted base, not gross.
+  const s = baseState({
+    ro: false,
+    dMode: "f",
+    d: "9000",
+    items: [{ d: "clamp", h: "", q: "1", r: "100", g: "0", dp: "12.5" }],
+  });
+  const c = calc(s);
+  eq(c.disc, 8750, "I: flat global clamps to net base 8750 (not gross 10000)");
+  eq(c.tb, 0, "I: taxable hits exactly zero");
+  eq(c.tot, 0, "I: total zero (no negative money)");
+}
+
+/* duplicateItems — the row copy affordance (pure, surface uses it verbatim). */
+{
+  const A: InvoiceItem = { d: "Widget", h: "1001", q: "2", r: "10", g: "18", dp: "5" };
+  const B: InvoiceItem = { d: "Gadget", h: "", q: "1", r: "25", g: "18", dp: "" };
+  eq(duplicateItems([A, B], 0).length, 3, "dup: inserts a row");
+  eq(duplicateItems([A, B], 0)[1], A, "dup: copy carries every field (deep equal)");
+  eq(duplicateItems([A, B], 0)[2], B, "dup: rows after it shift down one");
+  eq(duplicateItems([A, B], 1)[2], B, "dup: duplicating the LAST row appends");
+  eq(duplicateItems([A, B], -1).length, 2, "dup: negative index ignored");
+  eq(duplicateItems([A, B], 7).length, 2, "dup: out-of-range index ignored");
+  eq(
+    duplicateItems(Array.from({ length: 200 }, () => A), 0).length,
+    200,
+    "dup: MAX_ITEMS cap blocks growth at 200"
+  );
+  eq(
+    duplicateItems(Array.from({ length: 199 }, () => A), 100).length,
+    200,
+    "dup: below cap grows to exactly 200"
+  );
+  const mutated = duplicateItems([A], 0);
+  mutated[1].d = "changed";
+  eq(A.d, "Widget", "dup: the copy is a separate object (no aliasing)");
 }
 
 console.log("── 2. GSTIN + numbering + warnings ─────────────────────");
@@ -327,7 +435,7 @@ eq(
   const s = baseState({
     no: "WAY TOO LONG NUMBER",
     biz: { ...baseState().biz, state: "29", gstin: "27AAPFU0939F1ZV" },
-    items: [{ d: "Z", h: "123", q: "1", r: "60000", g: "15" }],
+    items: [{ d: "Z", h: "123", q: "1", r: "60000", g: "15", dp: "" }],
   });
   const c = calc(s);
   const w = warnings(s, c);
@@ -360,7 +468,7 @@ eq(
       ty: "UNKNOWN-TYPE",
       cur: "CHF",
       biz: { logo: "data:image/png;base64,AAAA", sig: "javascript:alert(1)" },
-      items: [{ d: "ok", h: "12345", q: "1", r: "5", g: "18" }],
+      items: [{ d: "ok", h: "12345", q: "1", r: "5", g: "18", dp: "0123456789" }],
     },
     ord: ["sig", "hd", "zzz", "bt", "it", "tt", "wd", "bank", "notes", "terms"],
     ac: "not-a-color",
@@ -374,6 +482,28 @@ eq(
   eq(run.ord, BLOCK_KEYS, "block order sanitized to the 9 keys");
   eq(run.ac, "#0b6b4d", "bad accent → default green");
   eq(run.s.items[0].h, "12345", "HSN length clamped to 16");
+  eq(run.s.items[0].dp, "01234567", "per-item discount clamped to 8 chars");
+}
+{
+  // dp round-trips through the serializer boundary (saved invoices,
+  // worker payload, localStorage).
+  const s = baseState({
+    items: [{ d: "keep", h: "", q: "1", r: "10", g: "18", dp: "7.5" }],
+  });
+  const run = parseInvoiceRun(
+    JSON.stringify({ s, ord: BLOCK_KEYS.slice(), ac: "#0b6b4d", labels: {} })
+  );
+  eq(run.s.items[0].dp, "7.5", "serialized dp survives the worker boundary");
+  eq(calc(run.s).L[0].pd, 75, "serialized dp still computes (10 × 7.5%)");
+  const legacy = parseInvoiceRun(
+    JSON.stringify({
+      s: { items: [{ d: "old", h: "", q: "1", r: "10", g: "18" }] },
+      ord: [],
+      ac: "#0b6b4d",
+      labels: {},
+    })
+  );
+  eq(legacy.s.items[0].dp, "", "dp-less legacy payload coerces to \"\"");
 }
 
 console.log("── 4. Vector PDF render (worker's exact code) ──────────");
@@ -454,8 +584,8 @@ await renderAndCheck(
       notes: "Thank you for your business.",
       terms: "Payment due within 15 days of the invoice date.",
       items: [
-        { d: "Consulting services\nPhase 1 + Phase 2", h: "998313", q: "10", r: "250", g: "18" },
-        { d: "Software licence", h: "8523", q: "2", r: "999.99", g: "18" },
+        { d: "Consulting services\nPhase 1 + Phase 2", h: "998313", q: "10", r: "250", g: "18", dp: "" },
+        { d: "Software licence", h: "8523", q: "2", r: "999.99", g: "18", dp: "" },
       ],
     }),
     ord: BLOCK_KEYS.slice(),
@@ -478,6 +608,7 @@ await renderAndCheck(
         q: "1",
         r: "99",
         g: "18",
+        dp: "",
       })),
     }),
     ord: BLOCK_KEYS.slice(),
@@ -494,7 +625,7 @@ await renderAndCheck(
   "Hindi labels + ₹ amounts",
   {
     s: baseState({
-      items: [{ d: "डिज़ाइन सेवा", h: "9983", q: "1", r: "1234.50", g: "18" }],
+      items: [{ d: "डिज़ाइन सेवा", h: "9983", q: "1", r: "1234.50", g: "18", dp: "" }],
     }),
     ord: BLOCK_KEYS.slice(),
     ac: "#7c2d12",
@@ -527,7 +658,7 @@ await renderAndCheck(
   {
     s: baseState({
       ty: "delivery-challan",
-      items: [{ d: "Machine parts (20 boxes)", h: "8481", q: "20", r: "500", g: "18" }],
+      items: [{ d: "Machine parts (20 boxes)", h: "8481", q: "20", r: "500", g: "18", dp: "" }],
     }),
     ord: BLOCK_KEYS.slice(),
     ac: "#0b6b4d",
@@ -535,6 +666,33 @@ await renderAndCheck(
   },
   () => {
     /* np path renders without totals — reaching here is the check */
+  }
+);
+
+/* Per-item discount column + "Item discount" totals row (R3-c): the dp
+ * column appears only when a line carries one, the line amount prints the
+ * NET total, and the totals block gains the idisc row between Subtotal
+ * and Discount. Draws without a font/geometry exception — that IS the
+ * regression guard for the new column plan. */
+await renderAndCheck(
+  "per-item discount invoice (dp column + idisc row)",
+  {
+    s: baseState({
+      biz: { ...baseState().biz, state: "27" },
+      pos: "27",
+      d: "10",
+      items: [
+        { d: "Bulk widgets", h: "1001", q: "2", r: "100.50", g: "18", dp: "10" },
+        { d: "Licence", h: "8523", q: "1", r: "33.335", g: "18", dp: "" },
+      ],
+    }),
+    ord: BLOCK_KEYS.slice(),
+    ac: "#0b6b4d",
+    labels: { ...LABELS, dp: "Disc %", idisc: "Item discount" },
+  },
+  (bytes, _doc, pages) => {
+    eq(pages, 1, "dp-column invoice fits one page");
+    eq(bytes.length > 1000, true, "dp-column invoice non-trivial");
   }
 );
 
@@ -552,7 +710,7 @@ await renderAndCheck(
     s: baseState({
       biz: { ...baseState().biz, logo: PX, sig: PX },
       pos: "27",
-      items: [{ d: "item", h: "", q: "1", r: "100", g: "18" }],
+      items: [{ d: "item", h: "", q: "1", r: "100", g: "18", dp: "" }],
     }),
     ord: BLOCK_KEYS.slice(),
     ac: "#0b6b4d",

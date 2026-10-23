@@ -71,6 +71,17 @@ export function ResultView({
         pages?: number;
         confidence?: number;
         targetHit?: boolean;
+        compressStage?: "optimize" | "images" | "raster";
+        compressQuality?: number;
+        compressMaxDim?: number;
+        compressGrayscale?: boolean;
+        compressDpi?: number;
+        nothingFlattened?: boolean;
+        removedInfoFields?: number;
+        removedXmp?: boolean;
+        strippedPieceInfo?: number;
+        strippedPageMetadata?: number;
+        strippedAnnotationDates?: number;
         annotations?: number;
       }
     | null;
@@ -195,6 +206,65 @@ export function ResultView({
         {runSummary?.targetHit === false ? (
           <p className="rounded-chip bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
             {t("result.targetMissed")}
+          </p>
+        ) : null}
+        {/* compress-to-size: WHICH ladder rung produced the output — the
+            honest "how" behind the target chip (audit R3). */}
+        {runSummary?.compressStage === "optimize" ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.stageOptimize")}
+          </p>
+        ) : null}
+        {runSummary?.compressStage === "images" ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {runSummary.compressGrayscale
+              ? t("result.stageImagesGray", {
+                  quality: runSummary.compressQuality ?? 0,
+                  maxDim: runSummary.compressMaxDim ?? 0,
+                })
+              : t("result.stageImages", {
+                  quality: runSummary.compressQuality ?? 0,
+                  maxDim: runSummary.compressMaxDim ?? 0,
+                })}
+          </p>
+        ) : null}
+        {runSummary?.compressStage === "raster" ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.stageRaster", { dpi: runSummary.compressDpi ?? 0 })}
+          </p>
+        ) : null}
+        {/* flatten-pdf: nothing to flatten is normal usage — the input
+            came back untouched (audit R3), never an error toast. */}
+        {runSummary?.nothingFlattened ? (
+          <p className="rounded-chip bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
+            {t("result.nothingFlattened")}
+          </p>
+        ) : null}
+        {/* remove-pdf-metadata: the honest what-was-stripped report, one
+            chip per category (only the categories that had something). */}
+        {runSummary?.removedInfoFields ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.rmInfoFields", { n: runSummary.removedInfoFields })}
+          </p>
+        ) : null}
+        {runSummary?.removedXmp ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.rmXmp")}
+          </p>
+        ) : null}
+        {runSummary?.strippedPieceInfo ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.rmPieceInfo", { n: runSummary.strippedPieceInfo })}
+          </p>
+        ) : null}
+        {runSummary?.strippedPageMetadata ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.rmPageMeta", { n: runSummary.strippedPageMetadata })}
+          </p>
+        ) : null}
+        {runSummary?.strippedAnnotationDates ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.rmAnnotDates", { n: runSummary.strippedAnnotationDates })}
           </p>
         ) : null}
         {runSummary?.annotations ? (

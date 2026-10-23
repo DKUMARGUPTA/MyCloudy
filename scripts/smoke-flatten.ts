@@ -20,13 +20,18 @@
  *     renders identically before (annotation layer) and after (burned
  *     content) — red box, flipped-matrix stamp and field value all sample
  *     at the same pixels; whole-page diff within anti-aliasing tolerance.
- *  5. Error paths: already-flat → FlattenNothingError; a widget whose
+ *  5. Error paths: already-flat → report.nothingToDo (normal usage,
+ *     NOT an error — the worker passes the input through); a widget whose
  *     /AP /N is a direct (unregistered) stream → FlattenFormsError;
  *     encrypted input → tool.errorEncrypted classification.
+ *  6. WORKER E2E (self/postMessage shim, web-optimize recipe): a flat
+ *     input SUCCEEDS — exactly one result, output bytes byte-identical
+ *     to the input (passthrough, no re-save churn), detail.nothingFlattened
+ *     true; an annotated input still burns + saves (control).
  *
  * Run: bun scripts/smoke-flatten.ts
  */
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import {
   PDFArray,
   PDFDict,
@@ -40,7 +45,6 @@ import {
 
 import {
   FlattenFormsError,
-  FlattenNothingError,
   applyAffine,
   axialAlignedBounds,
   classifyFlattenError,
@@ -549,23 +553,21 @@ async function main(): Promise<void> {
     `visual: page diff within AA tolerance (${diffs}/${total} px)`
   );
 
-  // --- 5. error paths --------------------------------------------------
+  // --- 5. already-flat + error paths ------------------------------
   const plain = await PDFDocument.create();
   plain.addPage([300, 300]);
-  try {
-    flattenDocument(plain);
-    fail("error: already-flat document must throw");
-  } catch (error) {
-    assert(
-      error instanceof FlattenNothingError,
-      "error: already-flat throws FlattenNothingError"
-    );
-    eq(
-      classifyFlattenError(error),
-      "flatten.errorNothing",
-      "error: classification → flatten.errorNothing"
-    );
-  }
+  const plainReport = flattenDocument(plain);
+  assert(
+    plainReport.nothingToDo === true,
+    "already-flat: report.nothingToDo (normal usage, no throw)"
+  );
+  eq(plainReport.fieldCount, 0, "already-flat: no fields");
+  eq(plainReport.annotationsBurned, 0, "already-flat: nothing burned");
+  // The flatten fixture above must NOT be nothingToDo (real work).
+  assert(
+    report.nothingToDo === false,
+    "annotated fixture: report.nothingToDo false (work was done)"
+  );
 
   // Widget with a DIRECT /N appearance (not an indirect ref) — pdf-lib's
   // flatten cannot extract the appearance ref (after a save+reload the
@@ -652,6 +654,129 @@ async function main(): Promise<void> {
     "multi-page: second page /Annots removed"
   );
   eq(multiReport.annotationsBurned, 1, "multi-page: only the real annot burned");
+
+  /* ------------------------------------------------------------------ */
+  /* 6. worker E2E: nothing-to-flatten SUCCEEDS with the input passthrough */
+  /* ------------------------------------------------------------------ */
+  {
+    const workerGlobal = globalThis as unknown as {
+      postMessage: (msg: unknown) => void;
+      onmessage: ((event: { data: unknown }) => void) | null;
+    };
+    const inbox: (Record<string, unknown> & { type: string })[] = [];
+    workerGlobal.postMessage = (msg: unknown): void => {
+      inbox.push(msg as Record<string, unknown> & { type: string });
+    };
+    (globalThis as unknown as Record<string, unknown>).self = workerGlobal;
+    await import("../tools/flatten-pdf/worker");
+    assert(
+      typeof workerGlobal.onmessage === "function",
+      "worker: module loaded, onmessage registered"
+    );
+
+    const drive = async (runId: number, file: File): Promise<void> => {
+      const before = inbox.length;
+      workerGlobal.onmessage!({
+        data: {
+          type: "run",
+          runId,
+          toolId: "flatten-pdf",
+          options: {},
+          files: [file],
+        },
+      });
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const terminal = inbox
+          .slice(before)
+          .some((m) => m.type === "result" || m.type === "error");
+        if (terminal) return;
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      throw new Error(`worker run ${runId} did not finish`);
+    };
+
+    // Flat input: a plain single-page PDF with no fields, no annotations.
+    const flatDoc = await PDFDocument.create();
+    flatDoc.addPage([300, 300]);
+    const flatBytes = await flatDoc.save();
+    const flatFile = new File([flatBytes as BlobPart], "already-flat.pdf");
+    await drive(7001, flatFile);
+
+    const runMsgs = inbox.filter((m) => m.runId === 7001);
+    const results = runMsgs.filter((m) => m.type === "result");
+    const errors = runMsgs.filter((m) => m.type === "error");
+    eq(results.length, 1, "worker flat run: exactly ONE result message");
+    eq(errors.length, 0, "worker flat run: NO error (already-flat is normal usage)");
+    const flatResult = results[0] as {
+      outputs?: { name?: string; blob?: Blob }[];
+      detail?: Record<string, unknown>;
+    };
+    eq(
+      flatResult.detail?.nothingFlattened,
+      true,
+      "worker flat run: detail.nothingFlattened true"
+    );
+    eq(flatResult.detail?.pages, 1, "worker flat run: pages reported");
+    eq(
+      flatResult.outputs?.[0]?.name,
+      "already-flat-flattened.pdf",
+      "worker flat run: -flattened name kept"
+    );
+    const passedThrough = new Uint8Array(
+      await (flatResult.outputs![0].blob as Blob).arrayBuffer()
+    );
+    assert(
+      passedThrough.length === flatBytes.length &&
+        passedThrough.every((b, i) => b === flatBytes[i]),
+      "worker flat run: output is BYTE-IDENTICAL to the input (no re-save churn)"
+    );
+
+    // Control: the annotated fixture still burns + saves (not passthrough).
+    const annotatedBytes = await readFile("download/qa-p41-flatten-fixture.pdf");
+    await drive(7002, new File([annotatedBytes as BlobPart], "annotated.pdf"));
+    const ctrlResults = inbox.filter(
+      (m) => m.runId === 7002 && m.type === "result"
+    );
+    const ctrlErrors = inbox.filter(
+      (m) => m.runId === 7002 && m.type === "error"
+    );
+    eq(ctrlResults.length, 1, "worker control: one result");
+    eq(ctrlErrors.length, 0, "worker control: no error");
+    const ctrl = ctrlResults[0] as { detail?: Record<string, unknown> };
+    eq(
+      ctrl.detail?.nothingFlattened,
+      undefined,
+      "worker control: nothingFlattened ABSENT for a real flatten"
+    );
+    assert(
+      (ctrl.detail?.pages as number) === 1,
+      "worker control: pages reported"
+    );
+
+    // i18n: the chip key exists in BOTH catalogs, the removed error key
+    // exists in NEITHER (it is no longer posted by anything).
+    const en = JSON.parse(
+      new TextDecoder().decode(
+        await readFile("src/i18n/en.json")
+      )
+    ) as { result?: Record<string, unknown>; flatten?: Record<string, unknown> };
+    const hi = JSON.parse(
+      new TextDecoder().decode(
+        await readFile("src/i18n/hi.json")
+      )
+    ) as { result?: Record<string, unknown>; flatten?: Record<string, unknown> };
+    assert(
+      typeof en.result?.nothingFlattened === "string" &&
+        typeof hi.result?.nothingFlattened === "string",
+      "i18n: result.nothingFlattened in BOTH catalogs"
+    );
+    assert(
+      en.flatten?.errorNothing === undefined &&
+        hi.flatten?.errorNothing === undefined,
+      "i18n: dead flatten.errorNothing removed from BOTH catalogs"
+    );
+  }
 
   console.log(
     `\nsmoke-flatten: ${passed}/${passed + failed} GREEN${failed > 0 ? ` (${failed} FAILED)` : ""}`

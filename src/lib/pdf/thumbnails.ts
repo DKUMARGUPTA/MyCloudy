@@ -138,6 +138,7 @@ const PDFJS_INFO_KEYS = new Set([
   "IsAcroFormPresent",
   "IsXFAPresent",
   "IsCollectionPresent",
+  "IsSignaturesPresent",
   "Language",
 ]);
 

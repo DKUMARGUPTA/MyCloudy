@@ -1,14 +1,22 @@
 /**
- * Generate QR code engine (PRD §7.7 / §8.7) — 100% PURE, zero imports.
+ * Generate QR code engine (PRD §7.7 / §8.7) — 100% PURE, no platform APIs.
  *
  * Owns everything that can be decided without the DOM:
  * payload builders for the eight QR kinds (URL, text, WiFi, UPI, vCard,
- * email, phone, WhatsApp), their validators, color + contrast math and the
- * style clamps. The renderer (the `qrcode` package) and the DOM live in the
- * surface; bun smoke tests (scripts/smoke-qr.ts) run against THIS file.
+ * email, phone, WhatsApp), their validators, color + contrast math, the
+ * style clamps and the batch-CSV row parser (reusing the create-card
+ * RFC-4180 parser — the one pure cross-tool import). The renderer (the
+ * `qrcode` package) and the DOM live in the surface; bun smoke tests
+ * (scripts/smoke-qr.ts) run against THIS file.
  *
  * Nothing here touches storage, the network or the DOM.
  */
+
+import {
+  MAX_CSV_ROWS,
+  parseCsv,
+  CsvError,
+} from "../create-card/model";
 
 /* ------------------------------------------------------------------ */
 /* Kinds + shared types                                                */
@@ -313,4 +321,62 @@ export const MIN_SCAN_CONTRAST = 3;
 
 export function qrFileName(kind: QrKind, extension: "png" | "svg" | "pdf"): string {
   return `qr-${kind}.${extension}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Batch mode: one QR per CSV row                                       */
+/* ------------------------------------------------------------------ */
+
+/** One parsed CSV data row: content (col 1) + optional label (col 2). */
+export interface QrCsvRow {
+  /** QR content / URL — first column, trimmed, 1..MAX_TEXT_LENGTH chars. */
+  content: string;
+  /** Optional file-name label — second column, trimmed. */
+  label: string;
+}
+
+export interface QrCsvParse {
+  rows: QrCsvRow[];
+  /** Rows dropped honestly: blank first column or over MAX_TEXT_LENGTH. */
+  skipped: number;
+}
+
+/**
+ * Parse a CSV into QR rows — reuses the create-card RFC-4180 parser
+ * (quoted fields, CRLF/LF/CR, BOM, 2 MB cap, unterminated-quote error)
+ * but treats EVERY record as data: this format has no header row.
+ * Throws the create-card CsvError (card.errorCsv* i18n keys — the
+ * cross-namespace reuse pattern) for a broken quote, >200 rows or an
+ * oversized file.
+ */
+export function parseQrCsv(text: string): QrCsvParse {
+  const { columns, rows } = parseCsv(text);
+  const records = [columns, ...rows];
+  if (records.length > MAX_CSV_ROWS) {
+    throw new CsvError("card.errorCsvRows");
+  }
+  const out: QrCsvRow[] = [];
+  let skipped = 0;
+  for (const record of records) {
+    const content = (record[0] ?? "").trim();
+    if (content === "" || content.length > MAX_TEXT_LENGTH) {
+      skipped += 1;
+      continue;
+    }
+    out.push({ content, label: (record[1] ?? "").trim() });
+  }
+  return { rows: out, skipped };
+}
+
+/** Strip characters a file name cannot carry (keeps spaces readable). */
+const FILE_NAME_STRIP = /[\\/:*?"<>|\u0000-\u001f]/g;
+
+/**
+ * ZIP entry base name for one CSV row: the label when present (cleaned,
+ * capped at 100 chars), else the row number — "qr-1", "qr-2", … Name
+ * collisions are resolved by the shared ZIP bundler (-2, -3, …).
+ */
+export function qrCsvBaseName(label: string, index: number): string {
+  const clean = label.replace(FILE_NAME_STRIP, "").replace(/\s+/g, " ").trim();
+  return clean !== "" ? clean.slice(0, 100) : `qr-${index + 1}`;
 }

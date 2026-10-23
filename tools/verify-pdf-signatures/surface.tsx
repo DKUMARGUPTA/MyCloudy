@@ -298,8 +298,8 @@ function SignatureCardView({
               mono
               chip={
                 cert.selfSigned === true ? (
-                  <span className="rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                    {t("vps.wSelfSigned")}
+                  <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
+                    {t("vps.selfSignedChip")}
                   </span>
                 ) : undefined
               }

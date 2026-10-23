@@ -1,6 +1,7 @@
 import { PDFDocument } from "pdf-lib";
 
 import {
+  type RunDetail,
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
@@ -42,6 +43,11 @@ import {
  *
  * If even the floor misses the budget, the SMALLEST attempt wins and the
  * result reports targetHit: false (an honest chip, never a lie).
+ *
+ * The result detail names WHICH ladder rung produced the output
+ * (compressStage + the rung's parameters) so the result card can tell
+ * the user HOW the target was reached — lossless clean-up, photo
+ * re-encode at N% quality, or rasterized pages at N DPI.
  *
  * Device-only: the File arrives by structured clone, the PDF Blob goes
  * back — nothing touches the network.
@@ -169,11 +175,30 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   // Best attempt so far — the output can never be bigger than this.
+  // bestImageStep/bestRasterStep remember WHICH rung produced bestBytes
+  // (the ladder compounds, so the winning rung's params describe the
+  // strongest settings actually applied) — surfaced on the result card.
   let bestBytes = optimized;
   let bestStage: "optimize" | "images" | "raster" = "optimize";
+  let bestImageStep = -1;
+  let bestRasterStep = -1;
 
-  const finish = (finalBytes: Uint8Array) => {
+  const finish = (finalBytes: Uint8Array): void => {
     post({ type: "progress", runId, pct: 97, stage: "saving" });
+    const detail: RunDetail = {
+      files: 1,
+      pages: pageCount,
+      targetHit: finalBytes.length <= target,
+      compressStage: bestStage,
+    };
+    if (bestStage === "images" && bestImageStep >= 0) {
+      const rung = IMAGE_LADDER[bestImageStep];
+      detail.compressQuality = Math.round(rung.quality * 100);
+      detail.compressMaxDim = rung.maxDim;
+      detail.compressGrayscale = rung.grayscale;
+    } else if (bestStage === "raster" && bestRasterStep >= 0) {
+      detail.compressDpi = RASTER_LADDER[bestRasterStep].dpi;
+    }
     post({
       type: "result",
       runId,
@@ -186,11 +211,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
           }),
         },
       ],
-      detail: {
-        files: 1,
-        pages: pageCount,
-        targetHit: finalBytes.length <= target,
-      },
+      detail,
     });
   };
 
@@ -245,13 +266,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
       if (saved.length < bestBytes.length) {
         bestBytes = saved;
         bestStage = "images";
+        bestImageStep = step;
       }
       if (saved.length <= target) break;
     }
   }
 
   if (bestBytes.length <= target) {
-    void bestStage;
     finish(bestBytes);
     return;
   }
@@ -298,12 +319,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
     if (saved.length < bestBytes.length) {
       bestBytes = saved;
       bestStage = "raster";
+      bestRasterStep = step;
     }
     if (saved.length <= target) break;
   }
 
   renderDoc.cleanup();
-  void bestStage;
   finish(bestBytes);
 }
 

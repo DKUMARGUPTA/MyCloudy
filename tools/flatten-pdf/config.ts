@@ -97,6 +97,16 @@ export const config: ToolConfig = {
     },
     {
       q: {
+        en: "What if my PDF has nothing to flatten?",
+        hi: "अगर मेरी PDF में फ़्लैटन करने को कुछ नहीं हो तो?",
+      },
+      a: {
+        en: "That is normal, not an error — a PDF without form fields or annotations is already flat. You get the file back unchanged, with a clear note that there was nothing to flatten.",
+        hi: "यह आम बात है, ग़लती नहीं — बिना फ़ॉर्म फ़ील्ड या टिप्पणियों वाली PDF पहले से फ़्लैट होती है। फ़ाइल जैसी है वैसी ही वापस मिलती है, साफ़ लिखे के साथ कि फ़्लैटन करने को कुछ नहीं था।",
+      },
+    },
+    {
+      q: {
         en: "Can I undo a flatten later?",
         hi: "क्या फ़्लैटन बाद में वापस लिया जा सकता है?",
       },

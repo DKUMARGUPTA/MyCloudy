@@ -18,9 +18,25 @@
  *     come back as Dates via getCreationDate/getModificationDate.
  *  6. updateMetadata:false on load keeps pdf-lib from re-adding its own
  *     Producer/ModDate on save (the tools control every field).
+ *  7. DEEP PAGE-LEVEL STRIP (audit R3-b): page /PieceInfo (direct dict
+ *     AND indirect ref), page /Metadata streams and annotation /M dates
+ *     are removed with honest per-category counts — the annotations
+ *     themselves survive. A clean file reports all-zero categories.
+ *  8. stripCustom SCOPE (slash-shape regression): applyDocInfoEdits with
+ *     stripCustom removes ONLY the non-standard Info entries — the six
+ *     standard fields (and /Trapped) survive.
+ *  9. REAL WORKER E2E (audit R3-b, self-shimmed globalThis — the
+ *     smoke-sign §6 recipe): the remove-pdf-metadata worker posts the
+ *     honest per-category detail (removedInfoFields / removedXmp /
+ *     strippedPieceInfo / strippedPageMetadata / strippedAnnotationDates)
+ *     and its output bytes are genuinely clean.
+ * 10. WIRING + i18n (audit R3-b): protocol RunDetail carries the three
+ *     new fields, result-view renders the chips, both catalogs have the
+ *     EN+HI strings, the panel carries the deep-clean note.
  *
  * Run: bun scripts/smoke-metadata.ts
  */
+import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import {
   PDFDocument,
@@ -28,8 +44,11 @@ import {
   PDFHexString,
   PDFName,
   PDFRawStream,
+  PDFString,
+  type PDFRef,
 } from "pdf-lib";
 import { applyDocInfoEdits, stripAllMetadata } from "../tools/meta-common/worker-lib";
+import type { WorkerRunRequest, WorkerResponse } from "../src/lib/workers/protocol";
 
 function fail(message: string): never {
   console.error(`FAIL ${message}`);
@@ -257,7 +276,424 @@ async function main(): Promise<void> {
   eq(check4.getProducer(), "LibreOffice 7.6", "producer not overwritten");
   eq(check4.getTitle(), "Only Title", "title written");
 
-  console.log("\nALL 22 METADATA CHECKS PASS");
+  /* ---- 7. DEEP PAGE-LEVEL STRIP (audit R3-b) ------------------------- */
+  // A 2-page fixture that carries page /PieceInfo (page 1 as a DIRECT dict,
+  // page 2 via an INDIRECT ref), a page /Metadata stream on page 1, and
+  // annotations with /M on both pages (+ one /M-less control annotation).
+  const deep = await PDFDocument.create({ updateMetadata: false });
+  deep.setTitle("Deep Clean");
+  const pageA = deep.addPage([300, 300]);
+  const pageB = deep.addPage([300, 300]);
+  const stamp = PDFString.of("D:20261023120000Z");
+
+  const annotWithM = (contents: string): PDFRef =>
+    deep.context.register(
+      deep.context.obj({
+        Type: "Annot",
+        Subtype: "Text",
+        Rect: [10, 10, 90, 90],
+        Contents: PDFHexString.fromText(contents),
+        M: PDFString.of("D:20261023120000Z"),
+      })
+    );
+  const annotNoM = deep.context.register(
+    deep.context.obj({
+      Type: "Annot",
+      Subtype: "Text",
+      Rect: [10, 10, 90, 90],
+      Contents: PDFHexString.fromText("no date here"),
+    })
+  );
+
+  // page A: direct PieceInfo dict + /Metadata stream + 2 dated annots + 1 undated
+  pageA.node.set(
+    PDFName.of("PieceInfo"),
+    deep.context.obj({
+      LastModified: stamp,
+      Illustrator: deep.context.obj({ LastModified: stamp }),
+    })
+  );
+  const metaDict = PDFDict.withContext(deep.context);
+  metaDict.set(PDFName.of("Type"), PDFName.of("Metadata"));
+  metaDict.set(PDFName.of("Subtype"), PDFName.of("XML"));
+  const metaStream = PDFRawStream.of(
+    metaDict,
+    new TextEncoder().encode(
+      `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>` +
+        `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF/></rdf:RDF></x:xmpmeta>`
+    )
+  );
+  pageA.node.set(PDFName.of("Metadata"), deep.context.register(metaStream));
+  pageA.node.set(
+    PDFName.of("Annots"),
+    deep.context.obj([annotWithM("dated note 1"), annotWithM("dated note 2"), annotNoM])
+  );
+
+  // page B: PieceInfo behind an INDIRECT ref + 1 dated annot, no page metadata
+  const pieceRef = deep.context.register(
+    deep.context.obj({ LastModified: stamp })
+  );
+  pageB.node.set(PDFName.of("PieceInfo"), pieceRef);
+  pageB.node.set(
+    PDFName.of("Annots"),
+    deep.context.obj([annotWithM("dated note 3")])
+  );
+
+  const deepBytes = await deep.save();
+  const deepDoc = await PDFDocument.load(deepBytes, { updateMetadata: false });
+  const deepReport = stripAllMetadata(deepDoc, true);
+  eq(deepReport.removedPieceInfo, 2, "deep strip: both pages' PieceInfo counted (direct + indirect)");
+  eq(deepReport.removedPageMetadata, 1, "deep strip: page metadata stream counted");
+  eq(deepReport.removedAnnotationDates, 3, "deep strip: 3 annotation /M dates counted (control skipped)");
+  eq(deepReport.removedFields.length, 1, "deep strip: Info entries still counted (Title only)");
+  eq(
+    deepReport.removedXmp,
+    false,
+    "deep strip: page-level XMP is NOT misreported as catalog XMP (fixture has none)"
+  );
+
+  const deepSaved = await deepDoc.save();
+  const deepCheck = await PDFDocument.load(deepSaved, { updateMetadata: false });
+  eq(deepCheck.getPageCount(), 2, "deep strip: pages intact");
+  for (const [pi, page] of deepCheck.getPages().entries()) {
+    eq(
+      page.node.get(PDFName.of("PieceInfo")),
+      undefined,
+      `deep strip: page ${pi + 1} /PieceInfo gone`
+    );
+    eq(
+      page.node.get(PDFName.of("Metadata")),
+      undefined,
+      `deep strip: page ${pi + 1} /Metadata gone`
+    );
+  }
+  const checkAnnots = (page: ReturnType<PDFDocument["getPages"]>[number], count: number, label: string): void => {
+    const annots = page.node.Annots();
+    eq(annots?.size() ?? 0, count, `${label}: annotation count unchanged`);
+    let withM = 0;
+    for (let i = 0; i < (annots?.size() ?? 0); i += 1) {
+      const entry = annots!.lookup(i);
+      if (entry instanceof PDFDict) {
+        if (entry.get(PDFName.of("M")) !== undefined) withM += 1;
+        // the annotation itself survives intact:
+        eq(
+          entry.get(PDFName.of("Subtype")) !== undefined &&
+            entry.get(PDFName.of("Contents")) !== undefined,
+          true,
+          `${label}: annotation substance kept (Subtype + Contents)`
+        );
+      }
+    }
+    eq(withM, 0, `${label}: no /M survives`);
+  };
+  checkAnnots(deepCheck.getPages()[0]!, 3, "deep strip page 1");
+  checkAnnots(deepCheck.getPages()[1]!, 1, "deep strip page 2");
+  eq(
+    deepCheck.context.trailerInfo.Info,
+    undefined,
+    "deep strip: Info dict still fully removed"
+  );
+
+  // Zero-control: a clean file reports all-zero new categories.
+  const cleanDoc = await PDFDocument.create({ updateMetadata: false });
+  cleanDoc.addPage([200, 200]);
+  const cleanBytes = await cleanDoc.save();
+  const cleanCheck = await PDFDocument.load(cleanBytes, { updateMetadata: false });
+  const cleanReport = stripAllMetadata(cleanCheck, true);
+  eq(cleanReport.removedPieceInfo, 0, "clean file: 0 PieceInfo");
+  eq(cleanReport.removedPageMetadata, 0, "clean file: 0 page metadata");
+  eq(cleanReport.removedAnnotationDates, 0, "clean file: 0 annotation dates");
+  eq(cleanReport.removedXmp, false, "clean file: no XMP claim");
+
+  /* ---- 8. stripCustom SCOPE (slash-shape regression) --------------- */
+  const scopeDoc = await PDFDocument.load(bytes, { updateMetadata: false });
+  const scopeInfo = scopeDoc.context.lookup(
+    scopeDoc.context.trailerInfo.Info as never,
+    PDFDict
+  );
+  scopeInfo.set(PDFName.of("Trapped"), PDFName.of("False"));
+  applyDocInfoEdits(scopeDoc, {
+    title: undefined,
+    author: undefined,
+    subject: undefined,
+    keywords: undefined,
+    creator: undefined,
+    producer: undefined,
+    creationMode: "keep",
+    modMode: "keep",
+    stripXmp: false,
+    stripCustom: true,
+  });
+  const scopeSaved = await scopeDoc.save();
+  const scopeCheck = await PDFDocument.load(scopeSaved, { updateMetadata: false });
+  eq(scopeCheck.getTitle(), "Quarterly Report", "stripCustom keeps standard Title");
+  eq(scopeCheck.getProducer(), "LibreOffice 7.6", "stripCustom keeps standard Producer");
+  const scopeInfo2 = scopeCheck.context.lookup(
+    scopeCheck.context.trailerInfo.Info as never,
+    PDFDict
+  );
+  eq(
+    scopeInfo2.get(PDFName.of("GTS_PDFXVersion")),
+    undefined,
+    "stripCustom removes the custom entry"
+  );
+  eq(
+    scopeInfo2.get(PDFName.of("Trapped")),
+    PDFName.of("False"),
+    "stripCustom keeps /Trapped (standard, layout state)"
+  );
+
+  /* ---- 9. REAL WORKER E2E (audit R3-b, self-shimmed) ----------------- */
+  // The exact drive the browser does: File in, per-category detail out.
+  {
+    const workerGlobal = globalThis as unknown as {
+      postMessage: (msg: unknown) => void;
+      onmessage: ((event: { data: WorkerRunRequest }) => void) | null;
+      location: { href: string };
+    };
+    const messages: WorkerResponse[] = [];
+    workerGlobal.postMessage = (msg: unknown): void => {
+      messages.push(msg as WorkerResponse);
+    };
+    workerGlobal.location = { href: "http://localhost/" };
+    (globalThis as unknown as Record<string, unknown>).self = workerGlobal;
+    await import("../tools/remove-pdf-metadata/worker");
+    eq(
+      typeof workerGlobal.onmessage === "function",
+      true,
+      "worker E2E: module loaded, onmessage registered"
+    );
+
+    const drive = async (
+      runId: number,
+      options: Record<string, unknown>,
+      file: File
+    ): Promise<WorkerResponse> => {
+      const before = messages.length;
+      workerGlobal.onmessage!({
+        data: {
+          type: "run",
+          runId,
+          toolId: "remove-pdf-metadata",
+          options,
+          files: [file],
+        } as WorkerRunRequest,
+      });
+      const done = await (async (): Promise<boolean> => {
+        const deadline = Date.now() + 30_000;
+        while (Date.now() < deadline) {
+          if (
+            messages
+              .slice(before)
+              .some(
+                (m) => m.runId === runId && (m.type === "result" || m.type === "error")
+              )
+          ) {
+            return true;
+          }
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        return false;
+      })();
+      if (!done) throw new Error(`worker run ${runId} did not finish`);
+      return messages
+        .slice(before)
+        .find((m) => m.runId === runId && (m.type === "result" || m.type === "error"))!;
+    };
+
+    // The §7 deep fixture through the REAL worker: every category honest.
+    const deepRun = await drive(
+      1,
+      { alsoXmp: true },
+      new File([deepBytes as BlobPart], "deep-clean.pdf")
+    );
+    eq(deepRun.type, "result", "worker E2E: deep fixture → result (not error)");
+    if (deepRun.type === "result") {
+      eq(deepRun.outputs.length, 1, "worker E2E: one output");
+      eq(
+        deepRun.outputs[0]!.name,
+        "deep-clean-clean.pdf",
+        "worker E2E: -clean.pdf output name"
+      );
+      const d = deepRun.detail as {
+        files?: number;
+        pages?: number;
+        removedInfoFields?: number;
+        removedXmp?: boolean;
+        strippedPieceInfo?: number;
+        strippedPageMetadata?: number;
+        strippedAnnotationDates?: number;
+      };
+      eq(d.files, 1, "worker E2E: files 1");
+      eq(d.pages, 2, "worker E2E: pages 2");
+      eq(d.removedInfoFields, 1, "worker E2E: removedInfoFields 1 (Title)");
+      eq(
+        d.removedXmp,
+        false,
+        "worker E2E: removedXmp false (fixture has no catalog XMP)"
+      );
+      eq(d.strippedPieceInfo, 2, "worker E2E: strippedPieceInfo 2");
+      eq(d.strippedPageMetadata, 1, "worker E2E: strippedPageMetadata 1");
+      eq(d.strippedAnnotationDates, 3, "worker E2E: strippedAnnotationDates 3");
+      // Output bytes are genuinely clean (the honest witness):
+      const outBytes = new Uint8Array(
+        await deepRun.outputs[0]!.blob.arrayBuffer()
+      );
+      const outDoc = await PDFDocument.load(outBytes, { updateMetadata: false });
+      eq(
+        outDoc.context.trailerInfo.Info,
+        undefined,
+        "worker E2E: output Info gone"
+      );
+      let mLeft = 0;
+      for (const page of outDoc.getPages()) {
+        if (page.node.get(PDFName.of("PieceInfo")) !== undefined) {
+          eq(false, true, `worker E2E: page still has PieceInfo`);
+        }
+        if (page.node.get(PDFName.of("Metadata")) !== undefined) {
+          eq(false, true, `worker E2E: page still has Metadata`);
+        }
+        const annots = page.node.Annots();
+        if (annots) {
+          for (let i = 0; i < annots.size(); i += 1) {
+            const entry = annots.lookup(i);
+            if (entry instanceof PDFDict && entry.get(PDFName.of("M")) !== undefined) {
+              mLeft += 1;
+            }
+          }
+        }
+      }
+      eq(mLeft, 0, "worker E2E: no annotation /M survives in output");
+      eq(outDoc.getPageCount(), 2, "worker E2E: pages intact in output");
+    }
+
+    // The §1 metadata-rich fixture: 9 Info fields + catalog XMP, and the
+    // new categories report honest ZEROES (no page-level extras).
+    const richRun = await drive(
+      2,
+      { alsoXmp: true },
+      new File([bytes as BlobPart], "rich.pdf")
+    );
+    eq(richRun.type, "result", "worker E2E: rich fixture → result");
+    if (richRun.type === "result") {
+      const d = richRun.detail as {
+        removedInfoFields?: number;
+        removedXmp?: boolean;
+        strippedPieceInfo?: number;
+        strippedPageMetadata?: number;
+        strippedAnnotationDates?: number;
+      };
+      eq(d.removedInfoFields, 9, "worker E2E: rich fixture 9 Info fields");
+      eq(d.removedXmp, true, "worker E2E: rich fixture XMP removed");
+      eq(
+        d.strippedPieceInfo ?? 0,
+        0,
+        "worker E2E: rich fixture honest 0 PieceInfo"
+      );
+      eq(
+        d.strippedPageMetadata ?? 0,
+        0,
+        "worker E2E: rich fixture honest 0 page metadata"
+      );
+      eq(
+        d.strippedAnnotationDates ?? 0,
+        0,
+        "worker E2E: rich fixture honest 0 annotation dates"
+      );
+    }
+
+    // alsoXmp:false keeps the catalog XMP (the user's explicit choice) —
+    // the page-level privacy strip is NOT optional.
+    const keepRun = await drive(
+      3,
+      { alsoXmp: false },
+      new File([bytes as BlobPart], "keepxmp.pdf")
+    );
+    eq(keepRun.type, "result", "worker E2E: alsoXmp:false → result");
+    if (keepRun.type === "result") {
+      const d = keepRun.detail as { removedXmp?: boolean; removedInfoFields?: number };
+      eq(d.removedXmp, false, "worker E2E: alsoXmp:false keeps XMP (detail honest)");
+      eq(d.removedInfoFields, 9, "worker E2E: Info still stripped with alsoXmp:false");
+      const outBytes = new Uint8Array(await keepRun.outputs[0]!.blob.arrayBuffer());
+      const outDoc = await PDFDocument.load(outBytes, { updateMetadata: false });
+      assert(
+        outDoc.catalog.get(PDFName.of("Metadata")) !== undefined,
+        "worker E2E: catalog XMP survives when the user keeps it"
+      );
+      eq(
+        outDoc.context.trailerInfo.Info,
+        undefined,
+        "worker E2E: Info still stripped when alsoXmp:false"
+      );
+    }
+  }
+
+  /* ---- 10. WIRING + i18n (audit R3-b) ------------------------------- */
+  {
+    const protocolSrc = readFileSync("src/lib/workers/protocol.ts", "utf8");
+    assert(
+      protocolSrc.includes("strippedPieceInfo?: number") &&
+        protocolSrc.includes("strippedPageMetadata?: number") &&
+        protocolSrc.includes("strippedAnnotationDates?: number"),
+      "wiring: protocol RunDetail carries the 3 new strip fields"
+    );
+    const resultViewSrc = readFileSync(
+      "src/components/doco/tool/result-view.tsx",
+      "utf8"
+    );
+    assert(
+      resultViewSrc.includes('t("result.rmPieceInfo"') &&
+        resultViewSrc.includes('t("result.rmPageMeta"') &&
+        resultViewSrc.includes('t("result.rmAnnotDates"'),
+      "wiring: result-view renders the 3 new strip chips"
+    );
+    assert(
+      resultViewSrc.includes("runSummary?.removedInfoFields") &&
+        resultViewSrc.includes("runSummary?.strippedPieceInfo"),
+      "wiring: result-view reads the worker detail keys"
+    );
+    const workerSrc = readFileSync("tools/remove-pdf-metadata/worker.ts", "utf8");
+    assert(
+      workerSrc.includes("strippedPieceInfo: report.removedPieceInfo") &&
+        workerSrc.includes("strippedPageMetadata: report.removedPageMetadata") &&
+        workerSrc.includes("strippedAnnotationDates: report.removedAnnotationDates"),
+      "wiring: worker posts the honest per-category counts"
+    );
+    const panelSrc = readFileSync("tools/remove-pdf-metadata/panel.tsx", "utf8");
+    assert(
+      panelSrc.includes('t("rmeta.deepNote")'),
+      "wiring: panel carries the deep-clean note"
+    );
+    type I18nCatalog = { result?: Record<string, string>; rmeta?: Record<string, string> };
+    const en = JSON.parse(readFileSync("src/i18n/en.json", "utf8")) as I18nCatalog;
+    const hi = JSON.parse(readFileSync("src/i18n/hi.json", "utf8")) as I18nCatalog;
+    for (const key of ["rmPieceInfo", "rmPageMeta", "rmAnnotDates"]) {
+      const enStr = en.result?.[key];
+      const hiStr = hi.result?.[key];
+      assert(
+        typeof enStr === "string" && enStr.length > 0,
+        `i18n: result.${key} EN exists`
+      );
+      assert(
+        typeof hiStr === "string" && hiStr.length > 0,
+        `i18n: result.${key} HI exists`
+      );
+      assert(
+        enStr !== hiStr,
+        `i18n: result.${key} HI is a real translation (not EN copy)`
+      );
+    }
+    assert(
+      typeof en.rmeta?.deepNote === "string" &&
+        typeof hi.rmeta?.deepNote === "string" &&
+        hi.rmeta.deepNote !== en.rmeta.deepNote,
+      "i18n: rmeta.deepNote EN+HI (panel note)"
+    );
+  }
+
+  console.log("\nALL METADATA CHECKS PASS");
+  // House convention: importing any worker keeps bun's event loop alive.
+  process.exit(0);
 }
 
 main().catch((error: unknown) => {

@@ -6,6 +6,7 @@
  * exercised too. Exit code = failures.
  */
 import QRCode from "qrcode";
+import { unzipSync } from "fflate";
 import {
   buildEmailPayload,
   buildPhonePayload,
@@ -24,9 +25,13 @@ import {
   luminance,
   normalizeQrColor,
   normalizeUrl,
+  parseQrCsv,
+  qrCsvBaseName,
   qrFileName,
   type WifiInput,
 } from "../tools/generate-qr-code/engine";
+import { CsvError } from "../tools/create-card/model";
+import { readFileSync } from "node:fs";
 
 let pass = 0;
 let fail = 0;
@@ -145,6 +150,205 @@ check("render: SVG upi renders too", svgUpi.includes("<svg") || svgUpi.includes(
 const longText = "DocoPDF smoke test ".repeat(40); // 380 chars
 const longPng = await QRCode.toDataURL(longText, { errorCorrectionLevel: "H", width: 1024 });
 check("render: 380-char text at H", longPng.startsWith("data:image/png;base64,"));
+
+/* ---------------- batch CSV (R3-c) ---------------- */
+console.log("batch CSV:");
+{
+  // Basic parse: no header row — every record is data; col 2 = label.
+  const p = parseQrCsv(
+    "https://a.example/1,Alpha\nhttps://a.example/2,Beta\ntel:+919876543210\n"
+  );
+  check("csv: 3 rows parsed (no header row)", p.rows.length === 3);
+  check(
+    "csv: rows carry content + label",
+    p.rows[0].content === "https://a.example/1" &&
+      p.rows[0].label === "Alpha" &&
+      p.rows[2].content === "tel:+919876543210" &&
+      p.rows[2].label === ""
+  );
+  check("csv: nothing skipped", p.skipped === 0);
+}
+{
+  // RFC-4180 courtesy of the shared create-card parser: quotes, embedded
+  // commas/newlines, CRLF, BOM, trailing empty line.
+  const p = parseQrCsv(
+    '\uFEFF"https://x.example/a,b","My, Label"\r\n"say ""hi""\nline2",n2\r\n'
+  );
+  check("csv: quoted comma fields", p.rows.length === 2);
+  check(
+    "csv: embedded comma + quoted label survive",
+    p.rows[0].content === "https://x.example/a,b" && p.rows[0].label === "My, Label"
+  );
+  check(
+    "csv: embedded newline + escaped quotes survive",
+    p.rows[1].content === "say \"hi\"\nline2" && p.rows[1].label === "n2"
+  );
+}
+{
+  // Honest skipping: blank content rows and over-MAX_TEXT_LENGTH rows.
+  const p = parseQrCsv(
+    ",ghost\n\nhttps://ok.example\n" + "x".repeat(1501) + ",too long\nhttps://fine.example,ok\n"
+  );
+  check("csv: blank + over-cap rows skipped (incl. the mid-file empty line)", p.rows.length === 2 && p.skipped === 3);
+  check(
+    "csv: survivors keep order",
+    p.rows[0].content === "https://ok.example" && p.rows[1].label === "ok"
+  );
+  // Exactly at cap is NOT skipped.
+  check(
+    "csv: 1500-char content kept (at cap)",
+    parseQrCsv("x".repeat(1500) + ",cap\n").rows.length === 1
+  );
+  // Content is trimmed.
+  check(
+    "csv: content + label trimmed",
+    parseQrCsv("  https://t.example  ,  Pad  \n").rows[0].label === "Pad"
+  );
+}
+{
+  // Caps: >200 records → CsvError("card.errorCsvRows"); oversized text →
+  // CsvError("card.errorCsvSize"); unterminated quote → quote error.
+  let code = "";
+  try {
+    parseQrCsv(Array.from({ length: 201 }, (_, i) => `r${i}`).join("\n") + "\n");
+  } catch (e) {
+    code = e instanceof CsvError ? e.code : String(e);
+  }
+  check("csv: >200 rows → card.errorCsvRows", code === "card.errorCsvRows");
+  code = "";
+  try {
+    parseQrCsv(Array.from({ length: 200 }, (_, i) => `r${i}`).join("\n") + "\n");
+  } catch {
+    code = "threw";
+  }
+  check("csv: exactly 200 rows parse fine", code === "");
+  code = "";
+  try {
+    parseQrCsv('broken,"unterminated');
+  } catch (e) {
+    code = e instanceof CsvError ? e.code : String(e);
+  }
+  check("csv: unterminated quote → card.errorCsvQuote", code === "card.errorCsvQuote");
+  code = "";
+  try {
+    parseQrCsv("x".repeat(2 * 1024 * 1024 + 1));
+  } catch (e) {
+    code = e instanceof CsvError ? e.code : String(e);
+  }
+  check("csv: >2 MB → card.errorCsvSize", code === "card.errorCsvSize");
+}
+{
+  // ZIP entry naming: label wins (cleaned, capped), row number fills in,
+  // and the shared zipOutputs dedup resolves collisions with -2/-3.
+  check("name: label used", qrCsvBaseName("Alpha", 0) === "Alpha");
+  check("name: label cleaned", qrCsvBaseName('bad/\\:*?"<>|name', 0) === "badname");
+  check("name: label collapsed + trimmed", qrCsvBaseName("  My   Label  ", 3) === "My Label");
+  check("name: 100-char cap", qrCsvBaseName("L".repeat(140), 0).length === 100);
+  check("name: blank label → row number", qrCsvBaseName("", 0) === "qr-1" && qrCsvBaseName("   ", 4) === "qr-5");
+  const { zipOutputs } = await import("../src/lib/files/output");
+  const png = await QRCode.toDataURL("https://zip.example/x", { width: 256 });
+  const blob = new Blob([Buffer.from(png.split(",")[1]!, "base64")], {
+    type: "image/png",
+  });
+  const zip = await zipOutputs(
+    [
+      { name: "Alpha.png", blob },
+      { name: "Alpha.png", blob },
+      { name: "Alpha.png", blob },
+      { name: "qr-1.png", blob },
+    ],
+    "batch-qr-codes.zip"
+  );
+  const entries = Object.keys(unzipSync(new Uint8Array(await zip.blob.arrayBuffer())));
+  check(
+    "zip: dedup suffixes -2/-3 (create-card naming)",
+    entries.includes("Alpha.png") &&
+      entries.includes("Alpha-2.png") &&
+      entries.includes("Alpha-3.png")
+  );
+  check("zip: unique names untouched", entries.includes("qr-1.png") && entries.length === 4);
+  check("zip: name + mime", zip.name === "batch-qr-codes.zip" && zip.blob.type === "application/zip");
+}
+{
+  // End-to-end: N rows → N PNGs in the ZIP output set, each a real PNG.
+  const rows = parseQrCsv(
+    "https://e2e.example/1,One\nhttps://e2e.example/2,Two\nhttps://e2e.example/3\n"
+  ).rows;
+  const { zipOutputs, sanitizeFileName } = await import("../src/lib/files/output");
+  const outputs: { name: string; blob: Blob }[] = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const dataUrl = await QRCode.toDataURL(rows[i].content, {
+      errorCorrectionLevel: "M",
+      margin: 4,
+      width: 512,
+      color: { dark: "#000000", light: "#ffffff" },
+    });
+    outputs.push({
+      name: sanitizeFileName(qrCsvBaseName(rows[i].label, i), "png"),
+      blob: new Blob([Buffer.from(dataUrl.split(",")[1]!, "base64")], {
+        type: "image/png",
+      }),
+    });
+  }
+  const zip = await zipOutputs(outputs, "e2e-qr.zip");
+  const files = unzipSync(new Uint8Array(await zip.blob.arrayBuffer()));
+  const names = Object.keys(files).sort();
+  check(
+    "e2e: N PNGs in the ZIP output set",
+    names.length === 3 &&
+      JSON.stringify(names) === JSON.stringify(["One.png", "Two.png", "qr-3.png"])
+  );
+  check(
+    "e2e: every entry is a real PNG (magic bytes)",
+    Object.values(files).every(
+      (bytes) =>
+        bytes instanceof Uint8Array &&
+        bytes.length > 100 &&
+        bytes[0] === 0x89 &&
+        bytes[1] === 0x50 &&
+        bytes[2] === 0x4e &&
+        bytes[3] === 0x47
+    )
+  );
+}
+
+// Wiring: the engine's CSV helpers are pure (create-card parser reuse) —
+// the surface imports them; the catalogs carry every new UI key EN+HI.
+{
+  const en = JSON.parse(readFileSync("src/i18n/en.json", "utf8"));
+  const hi = JSON.parse(readFileSync("src/i18n/hi.json", "utf8"));
+  const keys = [
+    "modeLabel",
+    "modeSingle",
+    "modeBatch",
+    "csvDrop",
+    "csvPick",
+    "csvHint",
+    "csvRows",
+    "csvSkipped",
+    "csvClear",
+    "csvColContent",
+    "csvColName",
+    "csvMore",
+    "downloadZip",
+    "zipProgress",
+    "zipNote",
+  ];
+  check(
+    "i18n: every batch key exists in BOTH catalogs",
+    keys.every((k) => k in en.qr && k in hi.qr)
+  );
+  const tool = JSON.parse(readFileSync("tools/generate-qr-code/i18n.json", "utf8"));
+  check(
+    "i18n: tool i18n.json mirrors the merged qr catalogs",
+    JSON.stringify(tool.en.qr) === JSON.stringify(en.qr) &&
+      JSON.stringify(tool.hi.qr) === JSON.stringify(hi.qr)
+  );
+  check(
+    "i18n: shared CSV error keys exist (create-card namespace reuse)",
+    "errorCsvRows" in en.card && "errorCsvQuote" in en.card && "errorCsvSize" in en.card
+  );
+}
 
 console.log(`qr smoke: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

@@ -406,6 +406,16 @@
     "ocrConfidence": "Average OCR confidence: {n}%",
     "underTarget": "Under your target size",
     "targetMissed": "Target not reached — this is the smallest this file gets on-device",
+    "stageOptimize": "Method: lossless clean-up only — text and images untouched",
+    "stageImages": "Method: photos re-encoded at {quality}% quality, capped to {maxDim}px",
+    "stageImagesGray": "Method: photos re-encoded grayscale at {quality}% quality, capped to {maxDim}px",
+    "stageRaster": "Method: pages rasterized at {dpi} DPI — text became images",
+    "nothingFlattened": "Nothing to flatten — file unchanged",
+    "rmInfoFields": "{n, plural, =1 {1 information field} other {# information fields}} removed",
+    "rmXmp": "XMP block removed",
+    "rmPieceInfo": "{n, plural, =1 {PieceInfo removed from 1 page} other {PieceInfo removed from # pages}}",
+    "rmPageMeta": "{n, plural, =1 {1 page metadata stream} other {# page metadata streams}} removed",
+    "rmAnnotDates": "{n, plural, =1 {1 annotation date} other {# annotation dates}} removed",
     "annotationCount": "{n, plural, =1 {1 annotation} other {# annotations}} added"
   },
   "feedback": {
@@ -887,6 +897,7 @@
     "alsoXmpHint": "Turn off to keep XMP data in the file.",
     "noteId": "The internal file ID stays — PDF readers use it for integrity, it contains no personal data.",
     "noteExif": "GPS data inside embedded photos (EXIF) is not touched — photos stay bit-for-bit identical. It is rare inside PDFs.",
+    "deepNote": "Beyond the fields above, the deep clean also removes page-level metadata (PieceInfo, page metadata streams) and annotation modification dates — the preview lists only the document-level fields; the result shows every category.",
     "loading": "Scanning the document…",
     "ctaNothing": "Nothing to remove — this PDF is already clean."
   },
@@ -937,7 +948,15 @@
     "jumpToField": "Fill: {field}",
     "ctaScanning": "Reading the form…",
     "ctaNoFields": "No form fields to fill in this PDF",
-    "ctaNoChanges": "Fill at least one field first"
+    "ctaNoChanges": "Fill at least one field first",
+    "fdfExport": "Export FDF",
+    "xfdfExport": "Export XFDF",
+    "fdfImportTitle": "Import answers (FDF / XFDF)",
+    "fdfImportHint": "Drop an .fdf or .xfdf file here — matching fields fill instantly.",
+    "fdfPick": "Choose file",
+    "fdfApplied": "Answers applied: {applied} · skipped: {skipped}",
+    "fdfBadFile": "This file is not a valid FDF or XFDF form-data file.",
+    "fdfEmpty": "No field values found in this file."
   },
   "sign": {
     "ctaNoSignatures": "Place at least one signature on the page to continue",
@@ -1339,7 +1358,6 @@
     "count": "{before} pages → {after} pages"
   },
   "flatten": {
-    "errorNothing": "This PDF is already flat — there are no form fields or annotations to merge.",
     "errorFormsFailed": "The form fields couldn't be baked into the page. Fill them first (Fill out PDF), then flatten again."
   },
   "rasterize": {
@@ -1606,7 +1624,22 @@
     "lowContrast": "Low contrast ({ratio}:1) — scanners may struggle to read this. Dark on light is safest.",
     "copyPayload": "Copy QR content",
     "copied": "Copied!",
-    "copyFailed": "Couldn't copy — please select and copy manually."
+    "copyFailed": "Couldn't copy — please select and copy manually.",
+    "modeLabel": "Mode",
+    "modeSingle": "One QR",
+    "modeBatch": "Batch from CSV",
+    "csvDrop": "Drop a .csv file here — every row becomes one QR code",
+    "csvPick": "Choose CSV file",
+    "csvHint": "Column 1: the QR content or link. Column 2 (optional): the PNG file name. Up to {count} rows, 2 MB.",
+    "csvRows": "{count} QR codes ready",
+    "csvSkipped": "{count} rows skipped — empty or too long",
+    "csvClear": "Remove CSV",
+    "csvColContent": "QR content",
+    "csvColName": "PNG file name",
+    "csvMore": "…and {count} more",
+    "downloadZip": "Download ZIP ({count} PNGs)",
+    "zipProgress": "Rendering… {pct}%",
+    "zipNote": "Each PNG renders on this device with the colors, size and logo above — nothing is uploaded."
   },
   "compare": {
     "how1": "Drop the original and the revised PDF — exactly two files.",
@@ -2269,6 +2302,10 @@
     "valid": "Valid until",
     "itm": "Items",
     "add": "+ Add item",
+    "dp": "Disc %",
+    "dpHint": "Per-item discount % — applied before the overall discount on the subtotal",
+    "dupItem": "Duplicate item row",
+    "idisc": "Item discount",
     "desc": "Description",
     "desc-task": "Task",
     "hsn": "HSN / SAC",
@@ -4199,6 +4236,7 @@
     "wExpired": "EXPIRED",
     "wNotYet": "NOT YET VALID",
     "wSelfSigned": "self-signed",
+    "selfSignedChip": "Self-signed certificate",
     "wUnsigned": "never signed",
     "cValid": "valid",
     "cAttention": "attention",

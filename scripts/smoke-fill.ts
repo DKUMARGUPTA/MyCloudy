@@ -35,6 +35,17 @@ import {
   userRectToDisplay,
   displaySize,
 } from "../tools/fill-out-pdf/scan";
+import {
+  type FdfEntry,
+  FdfParseError,
+  buildFdf,
+  buildFdfEntries,
+  buildXfdf,
+  matchFdfEntries,
+  parseFdf,
+  parseFdfOrXfdf,
+  parseXfdf,
+} from "../tools/fill-out-pdf/fdf";
 
 function fail(message: string): never {
   console.error(`FAIL ${message}`);
@@ -271,6 +282,218 @@ async function main(): Promise<void> {
   eq(d270.left, 0, "rot270 left");
   eq(d270.top, 0, "rot270 top");
   eq(d270.w, 25, "rot270 display width = rect height");
+
+  // --- 5. FDF / XFDF import-export ---------------------------------------
+  // Scenario: the user fills TWO fields (name + the consent checkbox), the
+  // export snapshots every effective answer (user overrides + the file's
+  // own values; read-only fields are skipped — they can never re-apply).
+  console.log("── 5. FDF / XFDF export + import ──────────────────");
+  const overrides: Record<string, string | boolean> = {
+    "applicant.name": "Arjun Mehta",
+    "consent.agree": true,
+  };
+  const valueOf = (name: string): string | boolean => {
+    if (name in overrides) return overrides[name];
+    const field = scan.fields.find((f) => f.name === name);
+    if (!field) return "";
+    if (field.kind === "checkbox") return field.value === true;
+    if (field.kind === "optionlist") return field.selected.join("\n");
+    return typeof field.value === "string" ? field.value : "";
+  };
+  const entries = buildFdfEntries(scan.fields, (field) => valueOf(field.name));
+  eq(
+    JSON.stringify(entries.map((e) => e.name)),
+    JSON.stringify([
+      "applicant.name",
+      "consent.agree",
+      "address.city",
+      "personal.gender",
+    ]),
+    "export: user answers + file values, read-only skipped, empties skipped"
+  );
+  eq(entries[1].value, true, "export: checked checkbox becomes a boolean entry");
+
+  const fdf = buildFdf(entries, "qa-p310-fixture.pdf");
+  assert(fdf.startsWith("%FDF-1.2"), "FDF: %FDF-1.2 header");
+  assert(fdf.includes("/F (qa-p310-fixture.pdf)"), "FDF: /F carries the source PDF");
+  assert(fdf.includes("/Fields ["), "FDF: /Fields array present");
+  assert(
+    fdf.includes("/T (applicant.name) /V (Arjun Mehta)"),
+    "FDF: /T + /V pair for the filled text field"
+  );
+  assert(
+    fdf.includes("<< /T (consent.agree) /V /Yes >>"),
+    "FDF: checkbox exports the classic /V /Yes name"
+  );
+  assert(
+    fdf.includes("/T (address.city) /V (Delhi)"),
+    "FDF: dropdown's export value is a string"
+  );
+  assert(fdf.includes("trailer"), "FDF: trailer present");
+  assert(fdf.includes("%%EOF"), "FDF: %%EOF tail");
+
+  const xfdf = buildXfdf(entries, "qa-p310-fixture.pdf");
+  assert(xfdf.startsWith('<?xml version="1.0" encoding="UTF-8"?>'), "XFDF: XML declaration");
+  assert(xfdf.includes('<xfdf xmlns="http://ns.adobe.com/xfdf/"'), "XFDF: Adobe namespace");
+  assert(xfdf.includes('<f href="qa-p310-fixture.pdf"/>'), "XFDF: <f> target");
+  assert(
+    xfdf.includes('<field name="applicant.name">') &&
+      xfdf.includes("<value>Arjun Mehta</value>"),
+    "XFDF: field + value elements"
+  );
+  assert(
+    xfdf.includes('<field name="consent.agree"><value>Yes</value></field>'),
+    "XFDF: checkbox Yes convention"
+  );
+
+  // Parse round-trips: FDF rebuilds the entries EXACTLY (the checkbox /V /Yes
+  // name re-parses as the boolean). XFDF is XML — it has no boolean type, so
+  // buildXfdf writes the checkbox as the literal string "Yes"/"Off" and
+  // parseXfdf KEEPS it a string on purpose (the entry layer cannot know the
+  // field kind; matchFdfEntries resolves it kind-aware — §5b proves that
+  // path). The round-trip expectation maps the boolean accordingly.
+  eq(
+    JSON.stringify(parseFdf(fdf)),
+    JSON.stringify(entries),
+    "FDF: parse(build()) round-trips exactly"
+  );
+  const xfdfForm = entries.map((e) => ({
+    name: e.name,
+    value: typeof e.value === "boolean" ? (e.value ? "Yes" : "Off") : e.value,
+  }));
+  eq(
+    JSON.stringify(parseXfdf(xfdf)),
+    JSON.stringify(xfdfForm),
+    "XFDF: parse(build()) round-trips (checkbox as the Yes/Off string)"
+  );
+  eq(
+    JSON.stringify(parseFdfOrXfdf(fdf)),
+    JSON.stringify(entries),
+    "sniff: FDF content recognized"
+  );
+  eq(
+    JSON.stringify(parseFdfOrXfdf(xfdf)),
+    JSON.stringify(xfdfForm),
+    "sniff: XFDF content recognized (checkbox string convention)"
+  );
+  let sniffThrew = false;
+  try {
+    parseFdfOrXfdf("this is neither fdf nor xml");
+  } catch (e) {
+    sniffThrew = e instanceof FdfParseError;
+  }
+  assert(sniffThrew, "sniff: garbage → FdfParseError (honest toast path)");
+
+  // Escaping: parens, backslash, newlines + an octal control character.
+  const nasty: FdfEntry[] = [
+    { name: "we(ird).\\name", value: "line1\nline2 (with parens) \\ and \u0001 ctrl" },
+  ];
+  eq(
+    JSON.stringify(parseFdf(buildFdf(nasty, "x.pdf"))),
+    JSON.stringify(nasty),
+    "FDF: string escapes round-trip"
+  );
+  eq(
+    JSON.stringify(parseXfdf(buildXfdf(nasty, "x.pdf"))),
+    JSON.stringify(nasty),
+    "XFDF: XML escapes round-trip"
+  );
+
+  // Multi-select optionlist exports the FDF /V array form.
+  const multi: FdfEntry[] = [{ name: "skills.languages", value: "Hindi\nTamil" }];
+  const multiFdf = buildFdf(multi, "x.pdf");
+  assert(
+    multiFdf.includes("/V [(Hindi) (Tamil)]"),
+    "FDF: optionlist multi-select → /V array of strings"
+  );
+  eq(
+    JSON.stringify(parseFdf(multiFdf)),
+    JSON.stringify(multi),
+    "FDF: /V array parses back to the \"\n join"
+  );
+
+  // --- 5b. Import matching (the honesty rules) --------------------------
+  const freshScan = await scanFormFields(bytes); // a FRESH load of the same form
+  const hostile: FdfEntry[] = [
+    { name: "applicant.name", value: "Arjun Mehta" },
+    { name: "nope.unknown", value: "x" }, // no such field
+    { name: "locked.total", value: "999" }, // read-only
+    { name: "address.city", value: "Paris" }, // not on the option list
+    { name: "personal.gender", value: "Female" }, // valid radio export
+    { name: "applicant.pincode", value: "1234567" }, // maxLength 6
+    { name: "applicant.email", value: true }, // boolean for a text field
+    { name: "consent.agree", value: "Yes" }, // XFDF checkbox convention
+  ];
+  const match = matchFdfEntries(hostile, freshScan.fields);
+  eq(
+    JSON.stringify(match.applies.map((a) => a.name)),
+    JSON.stringify([
+      "applicant.name",
+      "personal.gender",
+      "applicant.pincode",
+      "consent.agree",
+    ]),
+    "import: only honest applies survive (unknown/readonly/off-list/kind-mismatch skipped)"
+  );
+  eq(match.skipped, 4, "import: 4 skips counted honestly");
+  eq(
+    match.applies.find((a) => a.name === "applicant.pincode")?.value,
+    "123456",
+    "import: text truncated to maxLength (worker parity)"
+  );
+  eq(
+    match.applies.find((a) => a.name === "consent.agree")?.value,
+    true,
+    "import: XFDF \"Yes\" string → checkbox true"
+  );
+
+  // --- 5c. Full round-trip: export → fresh load → apply → save → read ---
+  // The surface's own import applies the same per-kind writes the worker
+  // performs; prove the exported answers land in a re-saved PDF.
+  const doc3 = await PDFDocument.load(bytes, {
+    ignoreEncryption: false,
+    updateMetadata: false,
+  });
+  const form3 = doc3.getForm();
+  const byName3 = new Map(form3.getFields().map((f) => [f.getName(), f]));
+  for (const apply of matchFdfEntries(entries, freshScan.fields).applies) {
+    const field = byName3.get(apply.name);
+    if (!field) continue;
+    if (field instanceof PDFTextField) field.setText(String(apply.value));
+    else if (field instanceof PDFCheckBox && apply.value === true) field.check();
+    else if (field instanceof PDFDropdown && typeof apply.value === "string")
+      field.select(apply.value);
+    else if (field instanceof PDFRadioGroup && typeof apply.value === "string")
+      field.select(apply.value);
+  }
+  const saved3 = await doc3.save({ updateFieldAppearances: false });
+  const reread3 = await PDFDocument.load(saved3, { updateMetadata: false });
+  const f4 = reread3.getForm();
+  eq(
+    (f4.getField("applicant.name") as PDFTextField).getText(),
+    "Arjun Mehta",
+    "round-trip: filled name restored from the exported FDF"
+  );
+  eq(
+    (f4.getField("consent.agree") as PDFCheckBox).isChecked(),
+    true,
+    "round-trip: checkbox restored"
+  );
+  eq(
+    (f4.getField("address.city") as PDFDropdown).getSelected()[0],
+    "Delhi",
+    "round-trip: dropdown value restored"
+  );
+  eq(
+    (f4.getField("personal.gender") as PDFRadioGroup).getSelected(),
+    "Female",
+    "round-trip: radio export value restored"
+  );
+  eq(
+    (f4.getField("locked.total") as PDFTextField).getText(),
+    "Rs 1,250",
+    "round-trip: read-only field untouched"
+  );
 
   console.log("\nALL FILL SMOKE CHECKS PASSED");
 }

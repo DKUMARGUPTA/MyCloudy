@@ -8,7 +8,6 @@ import {
 } from "@/lib/workers/protocol";
 import {
   FlattenFormsError,
-  FlattenNothingError,
   classifyFlattenError,
   flattenDocument,
   type FlattenScope,
@@ -25,6 +24,11 @@ import {
  * The engine (engine.ts) is the same pure pdf-lib pipeline the smoke locks;
  * this wrapper only adds IO, progress and typed error codes for the UI's
  * i18n toasts. Never touches the network.
+ *
+ * A document with nothing to flatten SUCCEEDS: the input bytes are
+ * passed through untouched (no re-save churn) and the result detail
+ * carries nothingFlattened: true so the UI shows an honest info chip
+ * instead of an error toast — being already flat is normal usage.
  */
 
 function post(response: WorkerResponse): void {
@@ -126,6 +130,27 @@ async function run(request: WorkerRunRequest): Promise<void> {
       stage: "saving",
     });
 
+    // Already flat — normal usage, not an error: hand the ORIGINAL bytes
+    // back untouched (byte-identical, zero re-save churn) and flag the
+    // honest "nothing to flatten" chip on the result card.
+    if (report.nothingToDo) {
+      post({
+        type: "result",
+        runId,
+        outputs: [
+          {
+            name: `${safeBaseName(file.name)}-flattened.pdf`,
+            mime: "application/pdf",
+            blob: new Blob([bytes as unknown as BlobPart], {
+              type: "application/pdf",
+            }),
+          },
+        ],
+        detail: { files: 1, pages: report.pages, nothingFlattened: true },
+      });
+      return;
+    }
+
     const saved = await doc.save({ useObjectStreams: true });
     const outputName = `${safeBaseName(file.name)}-flattened.pdf`;
 
@@ -144,11 +169,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
       detail: { files: 1, pages: report.pages },
     });
   } catch (error) {
-    if (
-      error instanceof FlattenNothingError ||
-      error instanceof FlattenFormsError
-    ) {
-      // Expected, typed outcomes — the engine maps them to their keys.
+    if (error instanceof FlattenFormsError) {
+      // Expected, typed outcome — the engine maps it to its key.
       post({
         type: "error",
         runId,

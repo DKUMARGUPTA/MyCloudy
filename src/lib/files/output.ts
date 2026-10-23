@@ -106,14 +106,15 @@ export async function zipOutputs(
   const used = new Set<string>();
   for (const output of outputs) {
     let name = output.name;
-    let counter = 2;
-    while (used.has(name)) {
+    if (used.has(name)) {
+      // Collision: -2, -3, … always counting from the ORIGINAL base —
+      // never the -2-3 chains the naive retry loop used to produce.
       const dot = name.lastIndexOf(".");
-      name =
-        dot > 0
-          ? `${name.slice(0, dot)}-${counter}${name.slice(dot)}`
-          : `${name}-${counter}`;
-      counter += 1;
+      const base = dot > 0 ? name.slice(0, dot) : name;
+      const ext = dot > 0 ? name.slice(dot) : "";
+      let counter = 2;
+      while (used.has(`${base}-${counter}${ext}`)) counter += 1;
+      name = `${base}-${counter}${ext}`;
     }
     used.add(name);
     entries[name] = new Uint8Array(await output.blob.arrayBuffer());

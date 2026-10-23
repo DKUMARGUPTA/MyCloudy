@@ -29,8 +29,8 @@ export const config: ToolConfig = {
       hi: "पहले हर छुपी जानकारी देखें — लेखक, सॉफ़्टवेयर, तारीख़ें, कस्टम कुंजियाँ और XMP ब्लॉक।",
     },
     {
-      en: "One click removes the entire document information dictionary — not just the visible fields.",
-      hi: "एक क्लिक में पूरी जानकारी डिक्शनरी हटती है — सिर्फ़ दिखने वाले फ़ील्ड नहीं।",
+      en: "One click removes the entire document information dictionary — plus page-level PieceInfo, page metadata streams and annotation modification dates.",
+      hi: "एक क्लिक में पूरी जानकारी डिक्शनरी हटती है — साथ में पेज-स्तर का PieceInfo, पेज मेटाडेटा स्ट्रीम और एनोटेशन की तारीख़ें भी।",
     },
     {
       en: "The XMP block (a second copy many files carry) is removed too — your choice.",

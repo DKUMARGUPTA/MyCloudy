@@ -36,7 +36,8 @@
  *     burned into the page content stream (hex needle in the inflated
  *     stream), the original widget + AcroForm field are GONE, the sig
  *     field is added on top (house flatten semantics: what the model
- *     actually does — scope "forms-only", FlattenNothingError tolerated).
+ *     actually does — scope "forms-only", a form-less input reports
+ *     nothingToDo and is tolerated).
  *  6. Pack assembly — fflate zipSync output verified via a node:zlib
  *     CENTRAL-DIRECTORY walk (EOCD → CD entries → local headers →
  *     inflateRawSync): both entries (prepared PDF + request note) inflate
@@ -1131,7 +1132,7 @@ console.log("── 2. REAL E2E through the worker (self-shimmed) ────�
     );
   }
 
-  // flattenFirst ON with NO form at all → FlattenNothingError tolerated
+  // flattenFirst ON with NO form at all → nothingToDo tolerated
   const fnRes = await drive(
     105,
     {

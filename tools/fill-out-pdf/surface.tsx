@@ -7,10 +7,14 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
+  type DragEvent as ReactDragEvent,
 } from "react";
 import {
   Calendar,
   ClipboardCheck,
+  FileDown,
+  FileUp,
   Loader2,
   Lock,
   TriangleAlert,
@@ -34,11 +38,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { useI18n } from "@/components/providers/locale-provider";
 import { useToast } from "@/hooks/use-toast";
 import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
+import { downloadBlob } from "@/lib/files/output";
 import {
   getPdfPagePixelSize,
   renderPdfThumbnail,
 } from "@/lib/pdf/thumbnails";
 import { cn } from "@/lib/utils";
+import { fileBaseName } from "../stamp-common/layout";
 import {
   PreviewFileHeader,
   PreviewPageStrip,
@@ -60,6 +66,14 @@ import {
   profileHasAny,
   saveFillProfile,
 } from "./profile";
+import {
+  type FdfEntry,
+  buildFdf,
+  buildFdfEntries,
+  buildXfdf,
+  matchFdfEntries,
+  parseFdfOrXfdf,
+} from "./fdf";
 
 /**
  * Fill out PDF forms live surface (PRD §8.2 "Fill out"). Scans the AcroForm
@@ -427,6 +441,81 @@ export function FillSurface({
     setFileOrder([]);
   }, [setFileOrder]);
 
+  // --- FDF / XFDF import-export ---------------------------------------
+  // Export: the current effective answers (user overrides or the file's
+  // own values) as a portable FDF/XFDF file. Import: match an .fdf/.xfdf
+  // file's entries against the scan — applied/skipped counts are honest.
+  const fdfInputRef = useRef<HTMLInputElement | null>(null);
+  const [fdfDrag, setFdfDrag] = useState(false);
+
+  const exportAnswers = useCallback(
+    (kind: "fdf" | "xfdf"): void => {
+      if (!file) return;
+      const entries = buildFdfEntries(fields, (field) =>
+        currentValue(field, values, fileId)
+      );
+      const text =
+        kind === "fdf"
+          ? buildFdf(entries, file.name)
+          : buildXfdf(entries, file.name);
+      downloadBlob(
+        new Blob([text], {
+          type: kind === "fdf" ? "application/vnd.fdf" : "application/xml",
+        }),
+        `${fileBaseName(file.name)}-answers.${kind}`
+      );
+    },
+    [fields, file, values, fileId]
+  );
+
+  const importAnswers = useCallback(
+    (file: File): void => {
+      void file
+        .text()
+        .then((text) => {
+          let entries: FdfEntry[];
+          try {
+            entries = parseFdfOrXfdf(text);
+          } catch {
+            toast({ title: t("fill.fdfBadFile"), variant: "destructive" });
+            return;
+          }
+          if (entries.length === 0) {
+            toast({ title: t("fill.fdfEmpty") });
+            return;
+          }
+          const { applies, skipped } = matchFdfEntries(entries, fields);
+          for (const apply of applies) {
+            onChange(fieldKey(fileId, apply.name), apply.value);
+          }
+          toast({ title: t("fill.fdfApplied", { applied: applies.length, skipped }) });
+        })
+        .catch(() => {
+          toast({ title: t("tool.errorGeneric"), variant: "destructive" });
+        });
+    },
+    [fields, fileId, onChange, t, toast]
+  );
+
+  const onFdfDrop = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>): void => {
+      event.preventDefault();
+      setFdfDrag(false);
+      const dropped = Array.from(event.dataTransfer?.files ?? [])[0];
+      if (dropped) importAnswers(dropped);
+    },
+    [importAnswers]
+  );
+
+  const onFdfPick = useCallback(
+    (event: ChangeEvent<HTMLInputElement>): void => {
+      const picked = event.target.files?.[0];
+      if (picked) importAnswers(picked);
+      event.target.value = "";
+    },
+    [importAnswers]
+  );
+
   if (!file || !fileMeta) return null;
 
   const loading = scan === null && !scanError;
@@ -623,6 +712,26 @@ export function FillSurface({
             )}
             <Button
               type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 rounded-btn px-3"
+              onClick={() => exportAnswers("fdf")}
+            >
+              <FileDown className="size-3.5 text-primary" aria-hidden="true" />
+              {t("fill.fdfExport")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 rounded-btn px-3"
+              onClick={() => exportAnswers("xfdf")}
+            >
+              <FileDown className="size-3.5 text-primary" aria-hidden="true" />
+              {t("fill.xfdfExport")}
+            </Button>
+            <Button
+              type="button"
               variant="ghost"
               size="sm"
               className="ml-auto h-8 gap-1.5 rounded-btn px-3 text-muted-foreground"
@@ -632,6 +741,52 @@ export function FillSurface({
               <UserRound className="size-3.5" aria-hidden="true" />
               {t("fill.manageProfile")}
             </Button>
+          </div>
+
+          {/* --- Import answers (FDF / XFDF) --------------------------- */}
+          <div className="overflow-hidden rounded-card border border-border bg-card">
+            <p className="flex items-center gap-1.5 border-b border-border/60 bg-muted/40 px-4 py-2.5 text-xs font-semibold text-foreground">
+              <FileUp className="size-3.5 text-primary" aria-hidden="true" />
+              {t("fill.fdfImportTitle")}
+            </p>
+            <div className="px-4 py-3">
+              <div
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setFdfDrag(true);
+                }}
+                onDragLeave={() => setFdfDrag(false)}
+                onDrop={onFdfDrop}
+                className={cn(
+                  "flex flex-col items-center gap-2 rounded-card border border-dashed p-4 text-center",
+                  fdfDrag
+                    ? "border-primary bg-accent/40"
+                    : "border-border bg-background"
+                )}
+              >
+                <p className="text-xs font-medium text-foreground">
+                  {t("fill.fdfImportHint")}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 rounded-btn px-3"
+                  onClick={() => fdfInputRef.current?.click()}
+                >
+                  <FileUp className="size-3.5 text-primary" aria-hidden="true" />
+                  {t("fill.fdfPick")}
+                </Button>
+                <input
+                  ref={fdfInputRef}
+                  type="file"
+                  accept=".fdf,.xfdf,application/vnd.fdf,application/xml,text/xml"
+                  onChange={onFdfPick}
+                  className="sr-only"
+                  aria-label={t("fill.fdfImportTitle")}
+                />
+              </div>
+            </div>
           </div>
 
           {profileOpen ? (

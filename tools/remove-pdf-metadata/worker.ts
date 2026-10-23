@@ -9,11 +9,13 @@ import { RM_IDS } from "../meta-common/meta";
 import { stripAllMetadata } from "../meta-common/worker-lib";
 
 /**
- * Remove PDF metadata worker (PRD §8.3): strips the whole Info dictionary
- * and (optionally) the XMP /Metadata stream with pdf-lib — on-device, zero
- * network. The strip is object-level (the Info object and XMP stream are
- * dropped from the file, not just blanked) — smoke-locked in
- * scripts/smoke-metadata.ts.
+ * Remove PDF metadata worker (PRD §8.3): strips the whole Info dictionary,
+ * (optionally) the XMP /Metadata stream AND the page-level extras — every
+ * page's /PieceInfo, its own /Metadata stream, every annotation's /M
+ * modification date — with pdf-lib, on-device, zero network. Every strip
+ * is object-level (the objects are dropped from the file, not just
+ * blanked); the honest per-category counts ride the result detail.
+ * Smoke-locked in scripts/smoke-metadata.ts.
  */
 
 function post(response: WorkerResponse): void {
@@ -57,7 +59,15 @@ async function run(request: WorkerRunRequest): Promise<void> {
     type: "result",
     runId,
     outputs,
-    detail: { files: 1, pages: pageCount },
+    detail: {
+      files: 1,
+      pages: pageCount,
+      removedInfoFields: report.removedFields.length,
+      removedXmp: report.removedXmp,
+      strippedPieceInfo: report.removedPieceInfo,
+      strippedPageMetadata: report.removedPageMetadata,
+      strippedAnnotationDates: report.removedAnnotationDates,
+    },
   });
 }
 

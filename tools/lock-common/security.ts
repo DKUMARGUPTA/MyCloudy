@@ -27,6 +27,7 @@
  */
 
 import {
+  PDFDict,
   PDFDocument,
   PDFName,
   PDFObjectCopier,
@@ -81,6 +82,27 @@ export function parseUnlockMeta(raw: unknown): UnlockMeta | null {
     return null;
   }
 }
+
+/**
+ * Standard Info keys (PDF 32000-1 §14.3.3): the rebuild re-applies the six
+ * editable ones from the pdf.js snapshot (setters below); CreationDate/
+ * ModDate/Trapped stay dropped (timestamps and layout state, no producer
+ * identity — same as before). Everything NOT in this set is "custom" and
+ * now survives the unlock (audit R3-b: producer workflows, IRP metadata,
+ * PDF/X stamps). NOTE: PDFName.asString() keeps the leading slash — the
+ * set carries the same shape.
+ */
+const STANDARD_INFO_KEYS = new Set([
+  "/Title",
+  "/Author",
+  "/Subject",
+  "/Keywords",
+  "/Creator",
+  "/Producer",
+  "/CreationDate",
+  "/ModDate",
+  "/Trapped",
+]);
 
 /* ------------------------------------------------------------------ */
 /* Errors (thrown as coded payloads; the workers map them to i18n keys) */
@@ -202,10 +224,12 @@ function toUserPermissions(p: LockRequest["permissions"]): PermSet {
  *
  * INFO INSIGHT (prototype-verified, pin this): @cantoo's re-parse of an
  * encrypted file returns GARBAGE for the trailer Info strings (the file
- * itself is fine — pdf.js reads Title/Author perfectly). So Info is NOT
- * copied from the parsed doc; the caller passes `meta` read via pdf.js on
- * the main thread and we re-apply it with fresh setters instead. Custom
- * keys are dropped (honest scope — the standard six survive).
+ * itself is fine — pdf.js reads Title/Author perfectly). So the standard
+ * Info keys are NOT copied from the parsed doc; the caller passes `meta`
+ * read via pdf.js on the main thread and we re-apply it with fresh setters
+ * instead. Custom keys ARE recovered (audit R3-b) — see step 4 in
+ * unlockPdf: the /Info ref comes from an ignoreEncryption parse, the
+ * decrypted dict from the password parse.
  */
 export async function unlockPdf(
   bytes: Uint8Array,
@@ -257,6 +281,57 @@ export async function unlockPdf(
     if (meta.creator !== undefined) fresh.setCreator(meta.creator);
     if (meta.producer !== undefined) fresh.setProducer(meta.producer);
   }
+
+  // 4. Custom Info entries survive too (audit R3-b). PINNED INSIGHT
+  // (probed against @cantoo-locked AND qpdf-locked AES-256 files):
+  //   - the with-password parse (src) holds every DECRYPTED object, even
+  //     the ones inside encrypted object streams, but its trailerInfo.Info
+  //     is EMPTY — only /Root survives the xref-stream parse in that pass;
+  //   - the ignoreEncryption parse keeps the /Info REF from the xref
+  //     stream but cannot materialize the object itself (the encrypted
+  //     ObjStm never parses — PDFInvalidObject instead).
+  // Two cheap parses of the same in-memory bytes: the REF from the
+  // ignoreEncryption probe, the DECRYPTED dict from the password parse.
+  // The spec keeps /Info indirect, so only a ref-shaped entry counts;
+  // anything unreadable degrades to the old honest scope (standard six).
+  let infoRef: unknown;
+  try {
+    const probe = await PDFDocument.load(bytes, {
+      ignoreEncryption: true,
+      updateMetadata: false,
+    });
+    infoRef = probe.context.trailerInfo.Info;
+  } catch {
+    infoRef = undefined;
+  }
+  if (
+    typeof infoRef === "object" &&
+    infoRef !== null &&
+    "objectNumber" in infoRef
+  ) {
+    try {
+      const srcInfo = src.context.lookupMaybe(infoRef as never, PDFDict);
+      if (srcInfo !== undefined) {
+        let outInfo = fresh.context.lookupMaybe(
+          fresh.context.trailerInfo.Info as never,
+          PDFDict
+        );
+        if (outInfo === undefined) {
+          outInfo = PDFDict.withContext(fresh.context);
+          fresh.context.trailerInfo.Info = fresh.context.register(outInfo);
+        }
+        for (const [key, value] of srcInfo.entries()) {
+          if (STANDARD_INFO_KEYS.has(key.asString())) continue;
+          // copier.copy clones the decrypted leaf (string/number/name —
+          // even an indirect value is followed and re-registered).
+          outInfo.set(key, copier.copy(value));
+        }
+      }
+    } catch {
+      // Unreadable Info — the standard six still survive above.
+    }
+  }
+
   const saved = await fresh.save();
   return { bytes: saved, pageCount: pages.length };
 }

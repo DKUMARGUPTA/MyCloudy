@@ -1600,13 +1600,42 @@ console.log("── 10. i18n + config + wiring ───────────
   const drift = Object.entries(REPORT_LABELS_EN).filter(([k, v]) => enLeaves[k.slice(4)] !== v);
   check("i18n: model REPORT_LABELS_EN == en catalog (no drift)", drift.length === 0, drift.map(([k]) => k));
 
-  const catEn = JSON.parse(readFileSync("src/i18n/en.json", "utf8")) as { tool: Record<string, string> };
-  const catHi = JSON.parse(readFileSync("src/i18n/hi.json", "utf8")) as { tool: Record<string, string> };
+  const catEn = JSON.parse(readFileSync("src/i18n/en.json", "utf8")) as { tool: Record<string, string>; vps: Record<string, string> };
+  const catHi = JSON.parse(readFileSync("src/i18n/hi.json", "utf8")) as { tool: Record<string, string>; vps: Record<string, string> };
   check(
     "i18n: shared tool.error* exist in the central catalog (worker fallbacks)",
     ["errorEncrypted", "errorCorrupt", "errorGeneric", "errorTitle"].every(
       (k) => k in catEn.tool && k in catHi.tool
     )
+  );
+
+  // ---- self-signed chip (audit R3-b): informational AMBER chip on the
+  // signature card — the verdict math stays untouched (asserted above:
+  // self-signed is attention, crypto PASS, integrity intact).
+  check(
+    "i18n: selfSignedChip exists EN+HI in the tool catalog",
+    "selfSignedChip" in enLeaves && "selfSignedChip" in hiLeaves &&
+      enLeaves.selfSignedChip === "Self-signed certificate"
+  );
+  check(
+    "i18n: selfSignedChip mirrored in the central catalogs",
+    "selfSignedChip" in catEn.vps && "selfSignedChip" in catHi.vps &&
+      catEn.vps.selfSignedChip === enLeaves.selfSignedChip &&
+      catHi.vps.selfSignedChip === hiLeaves.selfSignedChip
+  );
+  check(
+    "surface: serial row renders the amber self-signed chip",
+    surfaceSrc.includes("vps.selfSignedChip") &&
+      /border-amber-500\/30 bg-amber-500\/15[^"]*"\s*\)?[^<]*\{t\("vps\.selfSignedChip"\)/.test(
+        surfaceSrc.replace(/\s+/g, " ")
+      )
+  );
+  check(
+    "surface: verdict math untouched (statusWord still vValid/vAttention/vInvalid)",
+    surfaceSrc.includes('t("vps.vValid")') &&
+      surfaceSrc.includes('t("vps.vAttention")') &&
+      surfaceSrc.includes('t("vps.vInvalid")') &&
+      !/statusWord\s*=\s*[^;]*selfSigned/.test(surfaceSrc)
   );
 
   // ---- config.ts ------------------------------------------------------

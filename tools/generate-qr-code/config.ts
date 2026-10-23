@@ -20,6 +20,10 @@ export const config: ToolConfig = {
       hi: "एक ही जगह आठ तरह के QR — लिंक, सादा टेक्स्ट, WiFi लॉगिन, UPI पेमेंट, vCard संपर्क, ईमेल, फ़ोन और WhatsApp चैट।",
     },
     {
+      en: "Batch mode: drop a CSV (up to 200 rows) and get one QR per row in a single ZIP of PNGs, named from the second column or the row number.",
+      hi: "बैच मोड: CSV छोड़ें (200 पंक्तियाँ तक) और हर पंक्ति का एक QR, सब एक ZIP में PNG के रूप में — नाम दूसरे कॉलम से या पंक्ति-नंबर से।",
+    },
+    {
       en: "Live preview as you type, with honest validation — the download buttons stay off until the payload actually scans.",
       hi: "टाइप करते ही लाइव प्रीव्यू, ईमानदार वैलिडेशन के साथ — पेलोड असल में स्कैन होने लायक़ हो तभी डाउनलोड बटन चालू होते हैं।",
     },
@@ -37,6 +41,16 @@ export const config: ToolConfig = {
     },
   ],
   faq: [
+    {
+      q: {
+        en: "What does the CSV batch mode expect?",
+        hi: "CSV बैच मोड में क्या चाहिए?",
+      },
+      a: {
+        en: "A plain CSV with no header row: column 1 is the QR content or link, column 2 (optional) is the PNG file name. Blank or over-long rows are skipped and counted honestly; up to 200 rows and 2 MB. Every QR uses the colors, size, quiet zone and logo you set above, and same-named rows get -2, -3 suffixes in the ZIP.",
+        hi: "बिना हेडर वाली सादी CSV: कॉलम 1 में QR कंटेंट या लिंक, कॉलम 2 (वैकल्पिक) में PNG फ़ाइल का नाम। खाली या बहुत लंबी पंक्तियाँ छोड़ दी जाती हैं और ईमानदारी से गिनी जाती हैं; 200 पंक्तियाँ और 2 MB तक। हर QR ऊपर सेट किए रंगों, आकार, क्वाइट ज़ोन और लोगो से बनता है, और एक जैसे नामों को ZIP में -2, -3 जुड़ जाता है।",
+      },
+    },
     {
       q: {
         en: "What can I put in a QR code?",

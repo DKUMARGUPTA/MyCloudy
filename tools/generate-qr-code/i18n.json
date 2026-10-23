@@ -79,7 +79,22 @@
       "lowContrast": "Low contrast ({ratio}:1) — scanners may struggle to read this. Dark on light is safest.",
       "copyPayload": "Copy QR content",
       "copied": "Copied!",
-      "copyFailed": "Couldn't copy — please select and copy manually."
+      "copyFailed": "Couldn't copy — please select and copy manually.",
+      "modeLabel": "Mode",
+      "modeSingle": "One QR",
+      "modeBatch": "Batch from CSV",
+      "csvDrop": "Drop a .csv file here — every row becomes one QR code",
+      "csvPick": "Choose CSV file",
+      "csvHint": "Column 1: the QR content or link. Column 2 (optional): the PNG file name. Up to {count} rows, 2 MB.",
+      "csvRows": "{count} QR codes ready",
+      "csvSkipped": "{count} rows skipped — empty or too long",
+      "csvClear": "Remove CSV",
+      "csvColContent": "QR content",
+      "csvColName": "PNG file name",
+      "csvMore": "…and {count} more",
+      "downloadZip": "Download ZIP ({count} PNGs)",
+      "zipProgress": "Rendering… {pct}%",
+      "zipNote": "Each PNG renders on this device with the colors, size and logo above — nothing is uploaded."
     }
   },
   "hi": {
@@ -162,7 +177,22 @@
       "lowContrast": "कंट्रास्ट कम है ({ratio}:1) — स्कैनर पढ़ने में दिक़्क़त कर सकता है। गहरा ऊपर, हल्का नीचे सबसे सुरक्षित।",
       "copyPayload": "QR का कंटेंट कॉपी करें",
       "copied": "कॉपी हो गया!",
-      "copyFailed": "कॉपी नहीं हो सका — कृपया चुनकर खुद कॉपी करें।"
+      "copyFailed": "कॉपी नहीं हो सका — कृपया चुनकर खुद कॉपी करें।",
+      "modeLabel": "मोड",
+      "modeSingle": "एक QR",
+      "modeBatch": "CSV से बैच",
+      "csvDrop": "यहाँ .csv फ़ाइल छोड़ें — हर पंक्ति से एक QR कोड बनता है",
+      "csvPick": "CSV फ़ाइल चुनें",
+      "csvHint": "कॉलम 1: QR कंटेंट या लिंक। कॉलम 2 (वैकल्पिक): PNG फ़ाइल का नाम। {count} पंक्तियाँ तक, 2 MB।",
+      "csvRows": "{count} QR कोड तैयार",
+      "csvSkipped": "{count} पंक्तियाँ छोड़ी गईं — खाली या बहुत लंबी",
+      "csvClear": "CSV हटाएँ",
+      "csvColContent": "QR कंटेंट",
+      "csvColName": "PNG फ़ाइल नाम",
+      "csvMore": "…और {count} और",
+      "downloadZip": "ZIP डाउनलोड करें ({count} PNG)",
+      "zipProgress": "बन रहा है… {pct}%",
+      "zipNote": "हर PNG ऊपर चुने रंगों, आकार और लोगो के साथ इसी डिवाइस पर बनता है — कुछ भी अपलोड नहीं होता।"
     }
   }
 }

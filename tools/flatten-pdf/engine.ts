@@ -148,6 +148,11 @@ export interface FlattenReport {
   annotationsBurned: number;
   /** Annotations skipped (no /AP /N, hidden/no-view, widgets, …). */
   annotationsSkipped: number;
+  /** True when the run found NOTHING to flatten — the document is
+   *  already flat (no fields, no burnable annotations). Normal usage,
+   *  not an error: the worker passes the input through untouched and
+   *  the result view shows an honest "nothing to flatten" chip. */
+  nothingToDo: boolean;
 }
 
 /** Which targets the flatten run touches (tool "scope" option). */
@@ -169,14 +174,6 @@ export interface FlattenOptions {
   onAnnotationPage?: (done: number, total: number) => void;
 }
 
-/** The document is already flat — no form fields, no annotations. */
-export class FlattenNothingError extends Error {
-  constructor() {
-    super("flatten-nothing");
-    this.name = "FlattenNothingError";
-  }
-}
-
 /** pdf-lib could not flatten the form fields (kept honest: no output). */
 export class FlattenFormsError extends Error {
   constructor() {
@@ -187,7 +184,6 @@ export class FlattenFormsError extends Error {
 
 /** Maps any worker failure to the i18n key the UI shows. */
 export function classifyFlattenError(error: unknown): string {
-  if (error instanceof FlattenNothingError) return "flatten.errorNothing";
   if (error instanceof FlattenFormsError) return "flatten.errorFormsFailed";
   const message = error instanceof Error ? error.message : String(error);
   return /encrypt/i.test(message) ? "tool.errorEncrypted" : "tool.errorCorrupt";
@@ -433,8 +429,11 @@ function burnPageAnnotations(
  * Flattens the document (forms first, then annotation appearances — both
  * controllable via `options.scope`; `options.annotationPages` limits the
  * annotation pass to specific pages).
- * Throws FlattenNothingError when there was nothing to flatten and
- * FlattenFormsError when the form fields could not be flattened.
+ *
+ * A document with nothing to flatten is NOT an error — the report comes
+ * back with `nothingToDo: true` (fieldCount / burned / skipped all zero)
+ * and the caller passes the input through unchanged. FlattenFormsError is
+ * thrown only when the form fields exist but could not be baked.
  */
 export function flattenDocument(
   doc: PDFDocument,
@@ -452,6 +451,7 @@ export function flattenDocument(
     fieldCount: 0,
     annotationsBurned: 0,
     annotationsSkipped: 0,
+    nothingToDo: false,
   };
 
   // Any content stream pdf-lib built earlier may carry stale encoded bytes
@@ -496,12 +496,12 @@ export function flattenDocument(
     }
   }
 
-  if (
+  // Already flat — nothing to do. Normal usage, not an error: the
+  // worker hands the ORIGINAL bytes back untouched (no re-save churn)
+  // and the result view shows the "nothing to flatten" info chip.
+  report.nothingToDo =
     report.fieldCount === 0 &&
     report.annotationsBurned === 0 &&
-    report.annotationsSkipped === 0
-  ) {
-    throw new FlattenNothingError();
-  }
+    report.annotationsSkipped === 0;
   return report;
 }

@@ -2,13 +2,32 @@
  * Smoke test for tools/lock-common/security.ts (pure engine).
  * Run: bun scripts/smoke-lock.ts
  * Covers the full PRD §8.4 matrix: AES-256/128, permissions, owner-only,
- * unlock roundtrip, form/value survival, error codes.
+ * unlock roundtrip, form/value survival, error codes, custom Info keys
+ * surviving unlock (audit R3-b) and dying to remove-metadata afterwards.
  */
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
   PDFDocument,
+  PDFDict,
+  PDFHexString,
+  PDFName,
+  PDFNumber,
   PDFString,
   StandardFonts,
 } from "@cantoo/pdf-lib";
+import {
+  PDFDocument as PlainDoc,
+  PDFDict as PlainDict,
+  PDFHexString as PlainHex,
+  PDFName as PlainName,
+  PDFNumber as PlainNum,
+  PDFString as PlainStr,
+} from "pdf-lib";
+import { stripAllMetadata } from "../tools/meta-common/worker-lib";
 import {
   SecurityError,
   estimateTypedBits,
@@ -314,6 +333,129 @@ console.log("12. verifyUnlocked structural check");
     lockedCode === "tool.errorAlreadyEncrypted",
     "genuinely encrypted bytes → still refused (trailer /Encrypt seen)"
   );
+}
+
+/* 13 — custom Info entries survive unlock, die to remove-metadata (R3-b) */
+console.log("13. custom info preserved");
+{
+  const src = await PDFDocument.create();
+  src.setTitle("Custom Keys Doc");
+  src.setAuthor("K. Verma");
+  const info = src.context.lookup(src.context.trailerInfo.Info as never, PDFDict);
+  info.set(PDFName.of("IRP_Number"), PDFHexString.fromText("IRP-2026-001"));
+  info.set(PDFName.of("GTS_PDFXVersion"), PDFString.of("PDF/X-1a"));
+  info.set(PDFName.of("DocVersion"), PDFNumber.of(3));
+  info.set(PDFName.of("Trapped"), PDFName.of("False")); // standard → NOT copied
+  const font = await src.embedFont(StandardFonts.Helvetica);
+  src.addPage([612, 792]).drawText("custom info", { x: 50, y: 700, size: 12, font });
+  const sample = await src.save();
+
+  const { bytes: locked } = await lockPdf(sample, baseReq());
+  const { bytes: unlocked } = await unlockPdf(locked, "open123", {
+    title: "Custom Keys Doc",
+    author: "K. Verma",
+  });
+  await verifyUnlocked(unlocked);
+  ok(true, "custom-info unlock still verifies clean");
+
+  const doc = await PDFDocument.load(unlocked);
+  const outInfo = doc.context.lookup(doc.context.trailerInfo.Info as never, PDFDict);
+  const irp = outInfo.get(PDFName.of("IRP_Number"));
+  ok(
+    irp instanceof PDFHexString && irp.decodeText() === "IRP-2026-001",
+    "custom hex-string key survives unlock",
+    irp?.toString() ?? "missing"
+  );
+  const gts = outInfo.get(PDFName.of("GTS_PDFXVersion"));
+  ok(
+    gts instanceof PDFString && gts.asString() === "PDF/X-1a",
+    "custom literal-string key survives unlock",
+    gts?.toString() ?? "missing"
+  );
+  const ver = outInfo.get(PDFName.of("DocVersion"));
+  ok(
+    ver instanceof PDFNumber && ver.asNumber() === 3,
+    "custom numeric key survives unlock",
+    ver?.toString() ?? "missing"
+  );
+  ok(
+    outInfo.get(PDFName.of("Trapped")) === undefined,
+    "standard /Trapped is NOT copied as custom"
+  );
+  ok(
+    doc.getTitle() === "Custom Keys Doc" && doc.getAuthor() === "K. Verma",
+    "standard fields still come via the meta path",
+    `${doc.getTitle()} / ${doc.getAuthor()}`
+  );
+
+  // remove-metadata then kills ALL of it (the plain pdf-lib worker path):
+  const plain = await PlainDoc.load(unlocked, { updateMetadata: false });
+  const plainInfo = plain.context.lookup(plain.context.trailerInfo.Info as never, PlainDict);
+  ok(
+    plainInfo.get(PlainName.of("IRP_Number")) instanceof PlainHex,
+    "pre-strip control: custom key visible to the plain parse"
+  );
+  const plainReport = stripAllMetadata(plain, true);
+  ok(
+    plainReport.removedFields.some((f) => f === "/IRP_Number"),
+    "strip report lists the custom key"
+  );
+  const stripped = await plain.save();
+  const strippedCheck = await PlainDoc.load(stripped, { updateMetadata: false });
+  ok(
+    strippedCheck.context.trailerInfo.Info === undefined,
+    "remove-metadata drops the whole Info dict (custom keys gone)"
+  );
+
+  // Real-encryption interop: qpdf encrypts the Info STRINGS themselves
+  // (unlike @cantoo's save, which leaves them plain) — the two-parse
+  // recovery must still deliver decrypted values.
+  let qpdfOk = false;
+  try {
+    execFileSync("qpdf", ["--version"], { stdio: "pipe" });
+    qpdfOk = true;
+  } catch {
+    qpdfOk = false;
+  }
+  if (!qpdfOk) {
+    console.log("  (qpdf unavailable — skipping real-encryption interop)");
+  } else {
+    const dir = mkdtempSync(join(tmpdir(), "doco-lock-"));
+    const srcPath = join(dir, "custom.pdf");
+    writeFileSync(srcPath, sample);
+    const qPath = join(dir, "custom-locked.pdf");
+    execFileSync("qpdf", [
+      "--encrypt", "open123", "owner999", "256", "--print=full", "--",
+      srcPath, qPath,
+    ]);
+    const qBytes = new Uint8Array(readFileSync(qPath));
+    const { bytes: qUnlocked } = await unlockPdf(qBytes, "open123", {
+      title: "Custom Keys Doc",
+    });
+    const qDoc = await PDFDocument.load(qUnlocked);
+    const qInfo = qDoc.context.lookup(qDoc.context.trailerInfo.Info as never, PDFDict);
+    const qIrp = qInfo.get(PDFName.of("IRP_Number"));
+    ok(
+      qIrp instanceof PDFHexString && qIrp.decodeText() === "IRP-2026-001",
+      "qpdf-locked (encrypted strings): custom hex key decrypts + survives",
+      qIrp?.toString() ?? "missing"
+    );
+    const qGts = qInfo.get(PDFName.of("GTS_PDFXVersion"));
+    ok(
+      qGts instanceof PDFString && qGts.asString() === "PDF/X-1a",
+      "qpdf-locked: literal-string custom key survives",
+      qGts?.toString() ?? "missing"
+    );
+    const qVer = qInfo.get(PDFName.of("DocVersion"));
+    ok(
+      qVer instanceof PDFNumber && qVer.asNumber() === 3,
+      "qpdf-locked: numeric custom key survives"
+    );
+    ok(
+      qInfo.get(PDFName.of("Trapped")) === undefined,
+      "qpdf-locked: /Trapped still not copied"
+    );
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

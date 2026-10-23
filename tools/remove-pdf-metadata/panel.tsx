@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Braces, Info, ShieldCheck } from "lucide-react";
+import { Braces, Info, ShieldCheck, Trash2 } from "lucide-react";
 
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -121,6 +121,7 @@ export function RemoveMetaPanel({
       <Note icon={<ShieldCheck className="size-3.5" />}>
         {t("rmeta.noteExif")}
       </Note>
+      <Note icon={<Trash2 className="size-3.5" />}>{t("rmeta.deepNote")}</Note>
     </div>
   );
 }
