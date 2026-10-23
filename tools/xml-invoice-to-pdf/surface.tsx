@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * XML e-invoice to PDF surface (RB5-d — the 87th tool). CII XML → PDF,
- * 100% on-device, EN + हिंदी.
+ * XML e-invoice to PDF surface (RB5-d — the 87th tool). CII + UBL 2.1
+ * XML → PDF, 100% on-device, EN + हिंदी.
  *
  * Landing (landingSurface — powerpoint-to-pdf precedent): the drop zone
  * is owned by the surface and sniffs the XML shape itself (leading "<" +
@@ -10,10 +10,11 @@
  * non-XML file can never enter the pipeline. The 10 MB cap is enforced
  * before any read.
  *
- * Workspace: the file card, the PRE-RENDER PARSE REPORT — found/missing
- * chips for invoice number, dates, currency, parties, items, taxes and
- * totals + the parser's plain-language notes — computed by the exact same
- * parseCii the worker runs, so the chips can never disagree with the
+ * Workspace: the file card (with a chip that names the detected dialect —
+ * CII or UBL 2.1), the PRE-RENDER PARSE REPORT — found/missing chips for
+ * invoice number, dates, currency, parties, items, taxes and totals +
+ * the parser's plain-language notes — computed by the exact same
+ * parseInvoice the worker runs, so the chips can never disagree with the
  * PDF; the A4/Letter toggle bound to the shared option values (the
  * aside/bottom-sheet chips and these buttons write through one source
  * of truth); and the Convert button that spawns the worker
@@ -63,17 +64,17 @@ import {
   invoiceTypeLabel,
   knownTypeCode,
   looksLikeXml,
-  parseCii,
+  parseInvoice,
   parseXmlText,
 } from "./model";
-import type { InvoiceLabelMap, ParsedInvoice } from "./types";
+import type { InvoiceDialect, InvoiceLabelMap, ParsedInvoice } from "./types";
 
 /* ------------------------------------------------------------------ */
 /* Local shapes                                                         */
 /* ------------------------------------------------------------------ */
 
 /** The live parse report (key = the file it belongs to, stale-guarded). */
-type BadCode = "TooLarge" | "NotXml" | "Malformed" | "Ubl" | "NotCii" | "Empty";
+type BadCode = "TooLarge" | "NotXml" | "Malformed" | "NotCii" | "Empty";
 
 interface ReportBase {
   key: string;
@@ -81,6 +82,8 @@ interface ReportBase {
 interface ReportOk extends ReportBase {
   kind: "ok";
   inv: ParsedInvoice;
+  /** which dialect was detected — the file card chip speaks it. */
+  dialect: InvoiceDialect;
 }
 interface ReportBad extends ReportBase {
   kind: "bad";
@@ -172,7 +175,6 @@ const ERROR_TOASTS: Record<
     titleKey: "xinv.errMalformedTitle",
     descKey: "xinv.errMalformedDesc",
   },
-  "xinv.errUbl": { titleKey: "xinv.errUblTitle", descKey: "xinv.errUblDesc" },
   "xinv.errNotCii": {
     titleKey: "xinv.errNotCiiTitle",
     descKey: "xinv.errNotCiiDesc",
@@ -273,18 +275,14 @@ export function XmlInvoiceToPdfSurface({
                 code: parsed.reason === "not-xml" ? "NotXml" : "Malformed",
               };
             } else {
-              const rootCode = classifyRoot(parsed.root);
-              if (rootCode !== null) {
-                next = {
-                  key: fileKey,
-                  kind: "bad",
-                  code: rootCode === "xinv.errUbl" ? "Ubl" : "NotCii",
-                };
+              const dialect = classifyRoot(parsed.root);
+              if (dialect === null) {
+                next = { key: fileKey, kind: "bad", code: "NotCii" };
               } else {
-                const inv = parseCii(parsed.root);
+                const inv = parseInvoice(parsed.root);
                 next = invoiceIsEmpty(inv)
                   ? { key: fileKey, kind: "bad", code: "Empty" }
-                  : { key: fileKey, kind: "ok", inv };
+                  : { key: fileKey, kind: "ok", inv, dialect };
               }
             }
           }
@@ -699,9 +697,11 @@ export function XmlInvoiceToPdfSurface({
               {formatBytes(file.size)}
             </p>
           </div>
-          <span className="shrink-0 rounded-chip bg-muted px-2.5 py-1 text-xs font-medium text-foreground">
-            {t("xinv.xmlChip")}
-          </span>
+          {reportOk ? (
+            <span className="shrink-0 rounded-chip bg-muted px-2.5 py-1 text-xs font-medium text-foreground">
+              {t(reportOk.dialect === "ubl" ? "xinv.ublChip" : "xinv.xmlChip")}
+            </span>
+          ) : null}
           <Button
             type="button"
             variant="outline"
@@ -753,11 +753,9 @@ export function XmlInvoiceToPdfSurface({
                     ? t("xinv.errNotXmlTitle")
                     : current.code === "Malformed"
                       ? t("xinv.errMalformedTitle")
-                      : current.code === "Ubl"
-                        ? t("xinv.errUblTitle")
-                        : current.code === "NotCii"
-                          ? t("xinv.errNotCiiTitle")
-                          : t("xinv.errEmptyTitle")}
+                      : current.code === "NotCii"
+                        ? t("xinv.errNotCiiTitle")
+                        : t("xinv.errEmptyTitle")}
               </p>
               <p className="mt-0.5 text-muted-foreground">
                 {current.code === "TooLarge"
@@ -766,11 +764,9 @@ export function XmlInvoiceToPdfSurface({
                     ? t("xinv.errNotXmlDesc")
                     : current.code === "Malformed"
                       ? t("xinv.errMalformedDesc")
-                      : current.code === "Ubl"
-                        ? t("xinv.errUblDesc")
-                        : current.code === "NotCii"
-                          ? t("xinv.errNotCiiDesc")
-                          : t("xinv.errEmptyDesc")}
+                      : current.code === "NotCii"
+                        ? t("xinv.errNotCiiDesc")
+                        : t("xinv.errEmptyDesc")}
               </p>
             </div>
           </div>

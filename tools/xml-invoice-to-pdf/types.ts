@@ -1,11 +1,14 @@
 /**
  * XML e-invoice to PDF (RB5-d — the 87th tool) — the document model.
  *
- * Input: a CII (rsm:CrossIndustryInvoice) XML file — the UN/CEFACT Cross
- * Industry Invoice dialect used by Factur-X / ZUGFeRD 1.0 + 2.x and many
- * e-invoicing rails. The parser is namespace-tolerant by construction:
- * it matches LOCAL names (rsm:ID, ID, x:ID all resolve to "ID"), so every
- * CII version URN (:10, :100, XRechnung …) reads the same.
+ * Input: a CII (rsm:CrossIndustryInvoice) or UBL 2.1 (Invoice / CreditNote
+ * root in the urn:…ubl:schema:xsd:-2 namespace) e-invoice XML file. The
+ * CII dialect is the UN/CEFACT Cross Industry Invoice used by Factur-X /
+ * ZUGFeRD 1.0 + 2.x and many e-invoicing rails; UBL 2.1 is ISO/IEC 19845
+ * (the oasis.org schema). The parsers are namespace-tolerant by
+ * construction: they match LOCAL names (rsm:ID, ID, x:ID all resolve to
+ * "ID"), so every CII version URN (:10, :100, XRechnung …) and the shared
+ * UBL 2.x "-2" URN read the same.
  *
  * This file is types + pure constants only. model.ts owns the parsing and
  * layout planning, render.ts owns every point of ink, worker.ts the run
@@ -42,6 +45,9 @@ export type XmlParseFailure = "not-xml" | "malformed";
 export type XmlParseResult =
   | { ok: true; root: XmlElem }
   | { ok: false; reason: XmlParseFailure };
+
+/** The e-invoice dialects this tool reads (null = unsupported root). */
+export type InvoiceDialect = "cii" | "ubl";
 
 /* ------------------------------------------------------------------ */
 /* Parties / lines / taxes / totals                                     */

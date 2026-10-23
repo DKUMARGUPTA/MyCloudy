@@ -1,9 +1,10 @@
 import type { ToolConfig } from "@/lib/tools/config-types";
 
 /**
- * XML e-invoice to PDF (RB5-d — the 87th tool). CII XML → clean vector
- * PDF, 100% on-device (a Web Worker parses the rsm:CrossIndustryInvoice
- * and paints it with pdf-lib), EN + हिंदी.
+ * XML e-invoice to PDF (RB5-d — the 87th tool). CII + UBL 2.1 XML → clean
+ * vector PDF, 100% on-device (a Web Worker parses the
+ * rsm:CrossIndustryInvoice or the UBL Invoice/CreditNote and paints it
+ * with pdf-lib), EN + हिंदी.
  *
  * The surface (tools/xml-invoice-to-pdf/surface.tsx) owns the input flow:
  * a drop zone that sniffs the XML shape itself, a pre-render parse report
@@ -12,9 +13,11 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  * worker through the standard pipeline.
  *
  * Honest limits (mirrored in the FAQ):
- *  - CII dialects only (rsm:CrossIndustryInvoice — Factur-X / ZUGFeRD
- *    1.0 + 2.x, XRechnung-style CII). UBL 2.1 is DETECTED and rejected
- *    with a clear "not supported yet" error — never a wrong render;
+ *  - Two dialects: CII (rsm:CrossIndustryInvoice — Factur-X / ZUGFeRD
+ *    1.0 + 2.x, XRechnung-style CII) and UBL 2.1 (ISO/IEC 19845 —
+ *    Invoice / CreditNote in the oasis.org -2 namespace). Everything
+ *    else is detected and refused with a clear error — never a wrong
+ *    render;
  *  - IncludedNote content renders as small footer text only; attachments
  *    embedded in the XML wrapper (PDF/A-3 parts) are ignored;
  *  - 80 line items render max (a printed truncation note says so), 10 MB
@@ -51,8 +54,8 @@ export const config: ToolConfig = {
   chainToolIds: ["view-pdf", "compress-pdf"],
   features: [
     {
-      en: "Turn CII e-invoice XML (rsm:CrossIndustryInvoice — the Factur-X / ZUGFeRD 1.0 + 2.x dialect) into a clean, readable A4 PDF entirely on your device — the file is parsed in your browser and never uploaded.",
-      hi: "CII ई-इनवॉइस XML (rsm:CrossIndustryInvoice — Factur-X / ZUGFeRD 1.0 + 2.x रूप) को साफ़, पढ़ने योग्य A4 PDF में बदलें — पूरी तरह आपके डिवाइस पर। फ़ाइल आपके ब्राउज़र में ही खुलती है, कहीं अपलोड नहीं होती।",
+      en: "Turn e-invoice XML into a clean, readable A4 PDF entirely on your device — both the CII dialect (rsm:CrossIndustryInvoice, the Factur-X / ZUGFeRD 1.0 + 2.x format) and UBL 2.1 (the oasis.org Invoice / CreditNote schema) parse. The file is read in your browser and never uploaded.",
+      hi: "ई-इनवॉइस XML को साफ़, पढ़ने योग्य A4 PDF में बदलें — पूरी तरह आपके डिवाइस पर। दोनों रूप चलते हैं: CII (rsm:CrossIndustryInvoice — Factur-X / ZUGFeRD 1.0 व 2.x) और UBL 2.1 (oasis.org का Invoice / CreditNote स्कीमा)। फ़ाइल आपके ब्राउज़र में ही खुलती है, कहीं अपलोड नहीं होती।",
     },
     {
       en: "Real selectable text, never a screenshot: seller and buyer blocks, a line-item table with quantities and unit codes (piece, hour, kg…), per-rate tax rows, grand total and amount due — bold, vector, searchable.",
@@ -63,8 +66,8 @@ export const config: ToolConfig = {
       hi: "बदलने से पहले देखें कि XML में ठीक क्या है: इनवॉइस नंबर, तारीख़ें, मुद्रा, पक्ष, आइटम और कुल के लिए मिला/नहीं मिला चिप्स — और उन सबकी साफ़ सूची जो रेंडरर ने भरा या छोड़ा। कोई फ़ील्ड missing होने से रेंडर कभी नहीं टूटता।",
     },
     {
-      en: "Latin-only invoices export with the built-in Helvetica (nothing embedded, tiny files); any Devanagari — or ₹ amounts — switches those runs to the embedded Noto Sans Devanagari subset. English and हिंदी both print perfectly, and UBL files are detected and told apart honestly.",
-      hi: "सिर्फ़ लैटिन वाले इनवॉइस बिल्ट-इन Helvetica से निकलते हैं (कुछ एम्बेड नहीं, छोटी फ़ाइल); कोई देवनागरी — या ₹ राशि — आते ही वह हिस्सा एम्बेडेड Noto Sans Devanagari सबसेट से छपता है। अंग्रेज़ी और हिंदी दोनों बेदाग़ छपती हैं, और UBL फ़ाइलें ईमानदारी से पहचानकर बता दी जाती हैं।",
+      en: "Latin-only invoices export with the built-in Helvetica (nothing embedded, tiny files); any Devanagari — or ₹ amounts — switches those runs to the embedded Noto Sans Devanagari subset. English and हिंदी both print perfectly, and the detected dialect (CII or UBL 2.1) is named on the file card.",
+      hi: "सिर्फ़ लैटिन वाले इनवॉइस बिल्ट-इन Helvetica से निकलते हैं (कुछ एम्बेड नहीं, छोटी फ़ाइल); कोई देवनागरी — या ₹ राशि — आते ही वह हिस्सा एम्बेडेड Noto Sans Devanagari सबसेट से छपता है। अंग्रेज़ी और हिंदी दोनों बेदाग़ छपती हैं, और पहचाना रूप (CII या UBL 2.1) फ़ाइल कार्ड पर लिखा आता है।",
     },
   ],
   faq: [
@@ -74,8 +77,8 @@ export const config: ToolConfig = {
         hi: "कौन से XML ई-इनवॉइस फ़ॉर्मैट चलते हैं?",
       },
       a: {
-        en: "The CII dialect only: files whose root is rsm:CrossIndustryInvoice — the UN/CEFACT Cross Industry Invoice used by Factur-X and ZUGFeRD 1.0 and 2.x, and XRechnung-style CII. The parser matches local names, so the different namespace versions all read. UBL 2.1 files (root Invoice or CreditNote, the oasis.org schema) are detected and rejected with an honest \"UBL invoices are not supported yet\" — we never render a wrong document. EDIFACT, X12 and proprietary XML dialects are likewise rejected up front.",
-        hi: "केवल CII रूप: जिन फ़ाइलों की जड़ rsm:CrossIndustryInvoice है — Factur-X और ZUGFeRD 1.0 व 2.x, और XRechnung-शैली का CII। पार्सर लोकल नाम मिलाता है, इसलिए अलग-अलग नेमस्पेस वर्ज़न सब पढ़े जाते हैं। UBL 2.1 फ़ाइलें (जड़ Invoice या CreditNote, oasis.org स्कीमा) पहचानी जाती हैं और ईमानदार \"UBL इनवॉइस अभी समर्थित नहीं\" के साथ अस्वीकार कर दी जाती हैं — हम कभी ग़लत दस्तावेज़ नहीं बनाते। EDIFACT, X12 और निजी XML बोलियाँ भी शुरू में ही अस्वीकार होती हैं।",
+        en: "Two dialects: CII — files whose root is rsm:CrossIndustryInvoice (the UN/CEFACT Cross Industry Invoice used by Factur-X and ZUGFeRD 1.0 and 2.x, and XRechnung-style CII) — and UBL 2.1 (ISO/IEC 19845), files whose root is Invoice or CreditNote in the urn:…ubl:schema:xsd:-2 namespace. The parser matches local names, so the different namespace versions all read. EDIFACT, X12 and other proprietary XML dialects are detected and rejected up front with a clear error — we never render a wrong document.",
+        hi: "दो रूप: CII — जिन फ़ाइलों की जड़ rsm:CrossIndustryInvoice है (Factur-X और ZUGFeRD 1.0 व 2.x, और XRechnung-शैली का UN/CEFACT CII) — और UBL 2.1 (ISO/IEC 19845), जिनकी जड़ urn:…ubl:schema:xsd:-2 नेमस्पेस में Invoice या CreditNote है। पार्सर लोकल नाम मिलाता है, इसलिए अलग-अलग नेमस्पेस वर्ज़न सब पढ़े जाते हैं। EDIFACT, X12 और निजी XML बोलियाँ शुरू में ही साफ़ ग़लती के साथ अस्वीकार होती हैं — हम कभी ग़लत दस्तावेज़ नहीं बनाते।",
       },
     },
     {

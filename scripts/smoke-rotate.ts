@@ -1,6 +1,7 @@
 /**
  * Smoke: rotate-pdf-pages batch multi-file (ENH-2 feature 3) — the
- * PageGrid family's first multi-file member.
+ * PageGrid family's first multi-file member (pattern-setter for R2-a, which
+ * extended the same batch flow to rearrange / remove / extract).
  *
  * House conventions (smoke-pdf-to-pdfa / smoke-split): the REAL shared
  * worker (tools/pagegrid/worker.ts) runs through a self-shimmed
@@ -10,8 +11,9 @@
  *
  *  0. Wiring sanity: rotate config maxFiles = 20, the grid surface ships
  *     the batch list + add-more DropZone + per-file gate, the worker
- *     parses the per-file grids map, rearrange/remove/extract stay
- *     maxFiles 1 (only rotate goes multi-file).
+ *     parses the per-file grids map, the whole family is multi-file now
+ *     (rearrange/remove/extract also maxFiles 20 — their own smokes cover
+ *     their per-file semantics).
  *  1. Model vectors: grid serialization round-trip.
  *  2. REAL E2E through the worker:
  *     - single-file legacy path unchanged (options.grid only),
@@ -21,8 +23,7 @@
  *     - same-base-name collisions get the ZIP-style "-2" dedup,
  *     - malformed / partial / empty grids maps are hard errors (never a
  *       silent fall-back to one grid for all files),
- *     - a valid `grids` option must NOT hijack the other family presets,
- *     - extract one-per-page + remove naming unchanged,
+ *     - extract one-per-page + remove naming unchanged (legacy path),
  *     - encrypted input, non-run messages ignored, progress beats,
  *       result detail {files, pages} summed across the batch.
  *
@@ -77,23 +78,23 @@ console.log("── 0. Wiring sanity ──────────────�
     rotateConfig.maxFiles === 20 && rotateConfig.minFiles === 1
   );
   check(
-    "family: only rotate is multi-file (rearrange/remove/extract stay 1)",
-    rearrangeConfig.maxFiles === 1 &&
-      removeConfig.maxFiles === 1 &&
-      extractConfig.maxFiles === 1
+    "family: ALL four presets are multi-file (R2-a — rearrange/remove/extract also 20)",
+    rearrangeConfig.maxFiles === 20 &&
+      removeConfig.maxFiles === 20 &&
+      extractConfig.maxFiles === 20
   );
   check(
-    "surface: rotate batch drives the per-file grid store",
+    "surface: family batch drives the per-file grid store",
     surface.includes("gridsByFileRef") &&
       surface.includes('onChange("grids"') &&
       surface.includes("syncBatchBlocked")
   );
   check(
-    "surface: batch file list + add-more DropZone rendered for rotate",
+    "surface: batch file list + add-more DropZone rendered for the family",
     surface.includes("showBatchList") &&
       surface.includes("removeBatchFile") &&
       surface.includes('labelKey="grid.addMore"') &&
-      surface.includes("ROTATE_MAX_FILES = 20")
+      surface.includes("GRID_MAX_FILES = 20")
   );
   check(
     "surface: batch CTA gate blocks while a file is undetected/empty",
@@ -101,9 +102,9 @@ console.log("── 0. Wiring sanity ──────────────�
       surface.includes('"grid.ctaAllRemoved"')
   );
   check(
-    "worker: parses the per-file grids map (rotate-gated)",
+    "worker: parses the per-file grids map (whole family — no rotate gating left)",
     workerSrc.includes("parseGridsOption") &&
-      workerSrc.includes('toolId === "rotate-pdf-pages"')
+      !workerSrc.includes('toolId === "rotate-pdf-pages"')
   );
   check(
     "worker: partial/missing per-file grids are hard errors",
@@ -391,7 +392,7 @@ console.log("── 2. REAL E2E through the shared worker ───────�
     );
   }
 
-  /* --- a valid grids option must NOT hijack the other presets ----------- */
+  /* --- other family presets: legacy intact + grids honored (R2-a) ----- */
   {
     const r = await drive(runId++, "rearrange-pdf-pages", [
       { name: "order.pdf", bytes: b2, id: "r1" },
@@ -399,18 +400,39 @@ console.log("── 2. REAL E2E through the shared worker ───────�
       grid: JSON.stringify([
         [1, 0],
         [0, 0],
-      ]), // swap pages 1↔2
-      grids: JSON.stringify({ r1: JSON.stringify([[0, 90]]) }),
+      ]), // swap pages 1↔2 — NO grids map: the legacy single-file flow
     });
-    check("rearrange ignores grids: result", r.type === "result", codeOf(r));
+    check("rearrange legacy (no grids): result", r.type === "result", codeOf(r));
     if (r.type === "result") {
       const info = await inspectOutput(r.outputs[0].blob);
       check(
-        "rearrange uses options.grid (pages swapped, no rotation)",
+        "rearrange legacy uses options.grid (pages swapped, no rotation)",
         namesOf(r).join() === "order-rearranged.pdf" &&
           info.pages.join(",") === "2,1" &&
           info.angles.join(",") === "0,0",
         { names: namesOf(r), info }
+      );
+    }
+
+    // With a grids map present, rearrange honors it per file (R2-a) —
+    // the per-file semantics themselves live in smoke-rearrange.ts.
+    const r2 = await drive(runId++, "rearrange-pdf-pages", [
+      { name: "order.pdf", bytes: b2, id: "r1" },
+    ], {
+      grid: JSON.stringify([
+        [1, 0],
+        [0, 0],
+      ]),
+      grids: JSON.stringify({ r1: JSON.stringify([[0, 0], [1, 90]]) }),
+    });
+    check("rearrange with grids map: result", r2.type === "result", codeOf(r2));
+    if (r2.type === "result") {
+      const info = await inspectOutput(r2.outputs[0].blob);
+      check(
+        "rearrange with grids map rebuilds from the per-file grid",
+        info.pages.join(",") === "1,2" &&
+          info.angles.join(",") === "0,90",
+        info
       );
     }
   }

@@ -1,8 +1,8 @@
 /**
- * Minimal PNG encoder (RGBA, 8-bit, filter Sub) for the image conversion
- * engine — used on the libheif decode path so HEIC → PNG is BIT-EXACT:
- * the wasm decoder's RGBA bytes go straight into the PNG without the
- * canvas premultiply/color round-trip that nudges pixels by ±4.
+ * Minimal PNG encoder (RGBA, 8-bit, filter Sub) for the image pipeline —
+ * used by pdf-to-svg extract-images (and any future path that needs the
+ * exact RGBA bytes in a PNG without a canvas premultiply/color
+ * round-trip that nudges pixels by ±4).
  *
  * Structure: signature, IHDR, one IDAT (zlib stream via fflate zlibSync),
  * IEND. The Sub filter (left-neighbour delta, bpp 4) typically shrinks
@@ -10,7 +10,13 @@
  */
 
 import { zlibSync } from "fflate";
-import type { RgbaImage } from "./heic-decode";
+
+/** Raw RGBA pixels: the decode-side shape this encoder consumes. */
+export interface RgbaImage {
+  data: Uint8ClampedArray<ArrayBuffer>;
+  width: number;
+  height: number;
+}
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);

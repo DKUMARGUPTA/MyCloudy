@@ -17,12 +17,15 @@ import {
  * All four family tools (rotate / rearrange / remove / extract) run THIS
  * worker; only the naming and the extract filter differ.
  *
- * Batch mode (rotate-pdf-pages only — the family's multi-file member, the
- * pattern-setter for later batches): when `options.grids` carries a map of
- * { [workspace file id]: gridWireString }, every input file is rebuilt from
- * ITS OWN grid (iLovePDF/Smallpdf-style batch rotate). The map must cover
- * every file — a malformed or partial map is a hard error, never a silent
- * fall-back to applying one file's grid to all files.
+ * Batch mode (R2-a — rotate was the pattern-setter, now the whole family):
+ * when `options.grids` carries a map of { [workspace file id]:
+ * gridWireString }, every input file is rebuilt from ITS OWN grid
+ * (iLovePDF/Smallpdf-style batch). `options.selections` carries the same
+ * shaped map of per-file extract selections. The maps must cover every
+ * file — a malformed or partial map is a hard error, never a silent
+ * fall-back to applying one file's state to all files. Without a grids map
+ * the legacy single-file path (options.grid / options.selected) runs
+ * byte-for-byte as before.
  *
  * Device-only (PRD §2.3): pdf-lib in a Web Worker, File/Blob in and out,
  * zero network. Real per-page progress is posted while rebuilding.
@@ -82,6 +85,53 @@ function post(response: WorkerResponse): void {
 }
 
 /**
+ * Parses the per-file selections map for batch extract runs:
+ * { [workspace file id]: selectionWireString } — the exact same per-file
+ * shape as `grids`. Strict per entry: anything that is not a JSON array
+ * of non-negative integers makes the WHOLE map malformed (null).
+ */
+function parseSelectionsOption(raw: unknown): Map<string, number[]> | null {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed)
+  ) {
+    return null;
+  }
+  const map = new Map<string, number[]>();
+  for (const [key, value] of Object.entries(
+    parsed as Record<string, unknown>
+  )) {
+    if (typeof value !== "string") return null;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(value);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(entry)) return null;
+    for (const item of entry) {
+      if (
+        typeof item !== "number" ||
+        !Number.isInteger(item) ||
+        item < 0
+      ) {
+        return null;
+      }
+    }
+    map.set(key, entry);
+  }
+  return map.size > 0 ? map : null;
+}
+
+/**
  * Disambiguates output names across the whole run — the SAME "-2" pattern
  * the shared ZIP bundler (zipOutputs) applies before the extension. Two
  * workspace files can share a base name ("scan.pdf" twice); distinct base
@@ -105,7 +155,21 @@ function makeUniqueNamer(): (name: string) => string {
   };
 }
 
-/** Entries this run should emit: the whole grid, or the extract selection. */
+/** Extract entries: the grid restricted to the (unique, sorted) selection. */
+function filterBySelection(
+  grid: GridPage[],
+  selected: number[]
+): GridPage[] {
+  const unique = [...new Set(selected)].sort((a, b) => a - b);
+  const entries: GridPage[] = [];
+  for (const index of unique) {
+    const entry = grid[index];
+    if (entry) entries.push(entry);
+  }
+  return entries;
+}
+
+/** Legacy single-file resolution: the whole grid, or the extract selection. */
 function resolveEntries(
   toolId: string,
   options: OptionValues,
@@ -115,14 +179,10 @@ function resolveEntries(
   if (toolId !== "extract-pdf-pages") {
     return { entries: grid, onePerPage: false };
   }
-  const selected = parseNumberListOption(options.selected);
-  const unique = [...new Set(selected)].sort((a, b) => a - b);
-  const entries: GridPage[] = [];
-  for (const index of unique) {
-    const entry = grid[index];
-    if (entry) entries.push(entry);
-  }
-  return { entries, onePerPage };
+  return {
+    entries: filterBySelection(grid, parseNumberListOption(options.selected)),
+    onePerPage,
+  };
 }
 
 /**
@@ -176,31 +236,48 @@ async function run(request: WorkerRunRequest): Promise<void> {
     post({ type: "error", runId, code: "tool.errorCorrupt" });
     return;
   }
-  const resolved = resolveEntries(toolId, options, grid);
-  if (resolved === null || resolved.entries.length === 0) {
-    // Safety net — the CTA is disabled before this can happen (PRD §8.1).
-    post({ type: "error", runId, code: "tool.errorInvalidPages" });
-    return;
-  }
+  const isExtract = toolId === "extract-pdf-pages";
+  const onePerPage = isExtract && options.onePerPage === true;
 
-  // Batch mode (rotate only): per-file grids keyed by workspace file id.
+  // Batch mode: per-file grids keyed by workspace file id (all four family
+  // tools). A malformed map is refused rather than guessed (never apply
+  // one file's grid to every file silently).
   const gridsRaw = options.grids;
   let gridMap: Map<string, GridPage[]> | null = null;
-  if (
-    toolId === "rotate-pdf-pages" &&
-    typeof gridsRaw === "string" &&
-    gridsRaw.length > 0
-  ) {
+  if (typeof gridsRaw === "string" && gridsRaw.length > 0) {
     gridMap = parseGridsOption(gridsRaw);
     if (gridMap === null) {
-      // Malformed map — refuse rather than guessing (never apply one
-      // file's grid to every file silently).
       post({ type: "error", runId, code: "tool.errorCorrupt" });
       return;
     }
   }
 
-  const { entries, onePerPage } = resolved;
+  // Extract batch: per-file selections in the same map shape.
+  let selectionMap: Map<string, number[]> | null = null;
+  if (isExtract) {
+    const selectionsRaw = options.selections;
+    if (typeof selectionsRaw === "string" && selectionsRaw.length > 0) {
+      selectionMap = parseSelectionsOption(selectionsRaw);
+      if (selectionMap === null) {
+        post({ type: "error", runId, code: "tool.errorCorrupt" });
+        return;
+      }
+    }
+  }
+
+  // Legacy single-file path (no grids map): resolve once from the shared
+  // options — the exact pre-batch flow.
+  let legacyEntries: GridPage[] | null = null;
+  if (gridMap === null) {
+    const resolved = resolveEntries(toolId, options, grid);
+    if (resolved === null || resolved.entries.length === 0) {
+      // Safety net — the CTA is disabled before this can happen (PRD §8.1).
+      post({ type: "error", runId, code: "tool.errorInvalidPages" });
+      return;
+    }
+    legacyEntries = resolved.entries;
+  }
+
   const suffix = OUTPUT_SUFFIX[toolId] ?? "-pages";
   const outputs: { name: string; mime: string; blob: Blob }[] = [];
   const uniqueName = makeUniqueNamer();
@@ -211,18 +288,39 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const file = files[fileIndex];
     const base = safeBaseName(file.name);
 
-    // Batch rotate: each file rebuilds from ITS OWN grid.
-    let fileEntries: GridPage[] | null = entries;
+    // Batch: each file rebuilds from ITS OWN grid (+ its own extract
+    // selection). Legacy runs share the single resolved entry list.
+    let fileEntries: GridPage[];
     if (gridMap !== null) {
       const fileId = fileIds?.[fileIndex];
-      fileEntries =
-        fileId !== undefined ? (gridMap.get(fileId) ?? null) : null;
-      if (fileEntries === null || fileEntries.length === 0) {
+      const fileGrid =
+        fileId !== undefined ? gridMap.get(fileId) ?? null : null;
+      if (fileGrid === null || fileGrid.length === 0) {
         // Missing/empty grid for this file — refuse the whole run (the
         // surface gates this before the CTA; worker stays defense-in-depth).
         post({ type: "error", runId, code: "tool.errorInvalidPages" });
         return;
       }
+      if (isExtract) {
+        const fileSelected =
+          fileId !== undefined && selectionMap !== null
+            ? selectionMap.get(fileId)
+            : undefined;
+        if (fileSelected === undefined || fileSelected.length === 0) {
+          // Every batch file needs its own non-empty selection.
+          post({ type: "error", runId, code: "tool.errorInvalidPages" });
+          return;
+        }
+        fileEntries = filterBySelection(fileGrid, fileSelected);
+        if (fileEntries.length === 0) {
+          post({ type: "error", runId, code: "tool.errorInvalidPages" });
+          return;
+        }
+      } else {
+        fileEntries = fileGrid;
+      }
+    } else {
+      fileEntries = legacyEntries as GridPage[];
     }
     pagesTotal += fileEntries.length;
 

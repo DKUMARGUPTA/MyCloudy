@@ -4,6 +4,9 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  * Remove PDF pages — PageGrid family preset "remove" (PRD §8.1):
  * select to delete, or type "2,5-7", plus "remove blank pages"
  * auto-detect. Safety: the CTA disables when every page would be deleted.
+ *
+ * BATCH (R2-a): up to 20 PDFs at once — each file keeps its own edited
+ * grid (one per file in the surface), one output per input.
  */
 export const config: ToolConfig = {
   toolId: "remove-pdf-pages",
@@ -13,12 +16,16 @@ export const config: ToolConfig = {
     }),
   outputKind: "pdf",
   minFiles: 1,
-  maxFiles: 1,
+  maxFiles: 20,
   options: [],
   features: [
     {
       en: "Click pages to select them, or type a range like 2, 5-7.",
       hi: "पेज पर क्लिक करके चुनें, या 2, 5-7 जैसी रेंज लिखें।",
+    },
+    {
+      en: "Batch: add up to 20 PDFs — each file keeps its own removals, one output per file.",
+      hi: "बैच: 20 तक PDF जोड़ें — हर फ़ाइल के अपने हटाए पेज रहते हैं, हर फ़ाइल का अपना आउटपुट।",
     },
     {
       en: "One tap removes auto-detected blank pages.",
@@ -34,6 +41,16 @@ export const config: ToolConfig = {
     },
   ],
   faq: [
+    {
+      q: {
+        en: "Can I delete pages from several PDFs at once?",
+        hi: "क्या एक साथ कई PDF से पेज हटा सकते हैं?",
+      },
+      a: {
+        en: "Yes — add up to 20 files. Click a file in the list, delete its pages, switch to the next, and run once: every file is saved with its own pages removed, one output per file.",
+        hi: "हाँ — 20 तक फ़ाइलें जोड़ें। सूची में फ़ाइल पर क्लिक करके उसके पेज हटाएँ, फिर अगली पकड़ें — और एक बार चलाएँ: हर फ़ाइल अपने हटाए पेजों के साथ सेव होती है, हर फ़ाइल का अपना आउटपुट।",
+      },
+    },
     {
       q: {
         en: "Can I undo a deletion?",

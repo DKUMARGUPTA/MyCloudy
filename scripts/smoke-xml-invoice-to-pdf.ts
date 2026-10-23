@@ -13,18 +13,26 @@
  *     attrValue local-name lookup, and the honest malformed taxonomy
  *     (unclosed, close mismatch, text outside root, two roots).
  *  2. Classification — looksLikeXml sniff vectors, classifyRoot /
- *     classifyXmlError: UBL Invoice + CreditNote → errUbl, other roots →
+ *     classifyXmlError: CII root → "cii", UBL 2.1 Invoice + CreditNote
+ *     (oasis.org -2 namespace, default or prefixed) → "ubl", namespace-less
+ *     <Invoice> without UBL markers / foreign namespaces / other roots →
  *     errNotCii, garbage → errNotXml, broken XML → errMalformed.
  *  3. Font decisions + text hygiene — isWinAnsi/needsNoto/collectDrawnText
  *     (₹ forces Noto, é stays Helvetica, CJK → "?" honesty), sanitizeText
  *     (controls, Devanagari quote-dropping, cap), splitTextRuns.
  *  4. Code maps + formatting — unit codes, type codes, payment means,
  *     currency symbols, Indian vs international grouping, currencyFmt,
- *     formatQty, formatRate, formatCiiDate (102 + invalid + raw).
+ *     formatQty, formatRate, formatCiiDate (102 + invalid + raw),
+ *     formatUblDate (xs:date + timezone + invalid).
  *  5. parseCii — the FULL fixture read field-by-field (meta/parties/lines/
  *     taxes/totals/payment, zero issues), the namespace-tolerance
  *     deep-equality oracle, missing-optional-nodes fixtures → exactly the
  *     right issue codes (never a throw), invoiceIsEmpty.
+ *  5b. parseUbl — the FULL UBL 2.1 fixture (2 lines, CGST+SGST subtotals,
+ *     INR) read field-by-field onto the SAME model, the prefix-tolerance
+ *     oracle, CreditNote mapping (CreditNoteLine/CreditedQuantity/
+ *     CreditNoteTypeCode), line-cap, missing-optionals → issues, the
+ *     empty-document taxonomy.
  *  6. Layout planning — wrapText, tableColumns, computeRows pagination +
  *     rowCap, planHeader/planBuyer (title label precedence), outputPdfName,
  *     parseInvoiceLabels tamper vectors.
@@ -36,8 +44,11 @@
  *     Producer/Creator DocoPDF, stable-substring Devanagari, margins;
  *     the EN-only EUR run (nothing embedded, SEPA label); the 81-line
  *     truncation run (capped at 80, printed note, Widget 0081 absent);
- *     Letter geometry; rejection drives (no file, garbage, not-xml,
- *     malformed, UBL, not-CII, empty, >10 MB).
+ *     Letter geometry; the UBL 2.1 run (GST subtotals, ₹ → Noto subset,
+ *     path-unsafe invoice number sanitized in the file name);
+ *     rejection drives (no file, garbage, not-xml, malformed, empty,
+ *     unsupported roots incl. namespace-less/foreign-ns <Invoice>,
+ *     >10 MB).
  *  8. i18n + config — tool catalog en/hi parity, every referenced xinv.*
  *     key resolves in BOTH catalogs (surface + config + worker + model),
  *     every ParseIssueCode + worker error code has leaves (and the surface
@@ -64,16 +75,20 @@ import {
   formatCiiDate,
   formatQty,
   formatRate,
+  formatUblDate,
   groupNumber,
   invoiceIsEmpty,
   invoiceNeedsNoto,
   invoiceTypeLabel,
+  isUblRoot,
   knownTypeCode,
   looksLikeXml,
   needsNoto,
   outputPdfName,
   parseCii,
+  parseInvoice,
   parseInvoiceLabels,
+  parseUbl,
   parseXmlDocument,
   parseXmlText,
   paymentMeansLabel,
@@ -633,6 +648,367 @@ const manySpec: CiiSpec = {
 };
 const manyXml = buildCii(manySpec);
 
+/* ------------------------------------------------------------------ */
+/* The UBL 2.1 fixture builder                                          */
+/* ------------------------------------------------------------------ */
+
+interface UblAddrSpec {
+  street: string;
+  street2?: string;
+  city: string;
+  postcode: string;
+  country: string;
+  region?: string;
+}
+
+interface UblPartySpec {
+  name: string;
+  legalName?: string;
+  companyId?: string;
+  taxId?: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+  addr?: UblAddrSpec;
+}
+
+interface UblItemSpec {
+  id: string;
+  name: string;
+  description?: string;
+  sku?: string;
+  qty: string;
+  unit: string;
+  price: string;
+  net: string;
+  rate?: string;
+  category?: string;
+}
+
+interface UblSpec {
+  /** false → default xmlns; true (default) → ubl:/cac:/cbc: prefixes. */
+  prefixes?: boolean;
+  /** CreditNote root instead of Invoice. */
+  credit?: boolean;
+  number: string;
+  typeCode: string;
+  issueDate: string;
+  dueDate?: string;
+  deliveryDate?: string;
+  currency: string;
+  buyerReference?: string;
+  note?: string;
+  seller: UblPartySpec;
+  buyer: UblPartySpec;
+  items: UblItemSpec[];
+  /** cac:TaxSubtotal rows inside the header cac:TaxTotal (GST style). */
+  subtotals: { rate: string; category: string; basis: string; amount: string }[];
+  taxTotal: string;
+  totals: {
+    line: string;
+    taxBasis: string;
+    grand: string;
+    prepaid?: string;
+    due: string;
+  };
+  payment?: {
+    means: string;
+    instruction?: string;
+    iban?: string;
+    accountName?: string;
+    bic?: string;
+  };
+}
+
+/**
+ * A realistic hand-written UBL 2.1 (ISO/IEC 19845) document: Invoice (or
+ * CreditNote) root in the urn:…ubl:schema:xsd:-2 namespace, GST-style
+ * subtotals, cbc:/cac: children — prefixed or default-namespace forms
+ * (the parser is local-name based, so both must read identically).
+ */
+function buildUbl(spec: UblSpec): string {
+  const bare = spec.prefixes === false;
+  const R = bare ? "" : "ubl:";
+  const C = bare ? "" : "cbc:";
+  const A = bare ? "" : "cac:";
+  const rootName = spec.credit === true ? "CreditNote" : "Invoice";
+  const lineName = spec.credit === true ? "CreditNoteLine" : "InvoiceLine";
+  const qtyName = spec.credit === true ? "CreditedQuantity" : "InvoicedQuantity";
+  const typeEl = spec.credit === true ? "CreditNoteTypeCode" : "InvoiceTypeCode";
+  const ns = bare
+    ? ` xmlns="urn:oasis:names:specification:ubl:schema:xsd:${rootName}-2"`
+    : ` xmlns:ubl="urn:oasis:names:specification:ubl:schema:xsd:${rootName}-2"` +
+      ' xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"' +
+      ' xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"';
+
+  const o = (pre: string, name: string, body: string): string =>
+    `<${pre}${name}>${body}</${pre}${name}>`;
+  const oCur = (name: string, amount: string): string =>
+    `<${C}${name} currencyID="${spec.currency}">${amount}</${C}${name}>`;
+
+  const party = (p: UblPartySpec): string => {
+    const inner: string[] = [];
+    if (p.website) inner.push(o(C, "WebsiteURI", esc(p.website)));
+    inner.push(o(A, "PartyName", o(C, "Name", esc(p.name))));
+    if (p.addr) {
+      const a: string[] = [o(C, "StreetName", esc(p.addr.street))];
+      if (p.addr.street2) {
+        a.push(o(C, "AdditionalStreetName", esc(p.addr.street2)));
+      }
+      a.push(o(C, "CityName", esc(p.addr.city)));
+      a.push(o(C, "PostalZone", esc(p.addr.postcode)));
+      if (p.addr.region) a.push(o(C, "CountrySubentity", esc(p.addr.region)));
+      a.push(o(A, "Country", o(C, "IdentificationCode", p.addr.country)));
+      inner.push(o(A, "PostalAddress", a.join("")));
+    }
+    if (p.taxId) {
+      inner.push(
+        o(A, "PartyTaxScheme", o(C, "CompanyID", p.taxId) + o(A, "TaxScheme", o(C, "ID", "GST")))
+      );
+    }
+    if (p.legalName || p.companyId) {
+      const le: string[] = [];
+      if (p.legalName) le.push(o(C, "RegistrationName", esc(p.legalName)));
+      if (p.companyId) le.push(o(C, "CompanyID", p.companyId));
+      inner.push(o(A, "PartyLegalEntity", le.join("")));
+    }
+    if (p.phone || p.email) {
+      const c: string[] = [];
+      if (p.phone) c.push(o(C, "Telephone", esc(p.phone)));
+      if (p.email) c.push(o(C, "ElectronicMail", esc(p.email)));
+      inner.push(o(A, "Contact", c.join("")));
+    }
+    return o(A, "Party", inner.join(""));
+  };
+
+  const out: string[] = [];
+  out.push('<?xml version="1.0" encoding="UTF-8"?>');
+  out.push(`<${R}${rootName}${ns}>`);
+  out.push(
+    `  ${o(C, "CustomizationID", "urn:www.cenbii.eu:transaction:biitrns010a:ver2.0:extended:urn:www.peppol.eu:bis:peppol4a:ver2.0")}`
+  );
+  out.push(`  ${o(C, "ProfileID", "urn:www.peppol.eu:bis:peppol4a")}`);
+  out.push(`  ${o(C, "ID", esc(spec.number))}`);
+  out.push(`  ${o(C, "IssueDate", spec.issueDate)}`);
+  if (spec.dueDate) out.push(`  ${o(C, "DueDate", spec.dueDate)}`);
+  out.push(`  ${o(C, typeEl, spec.typeCode)}`);
+  if (spec.note) out.push(`  ${o(C, "Note", esc(spec.note))}`);
+  out.push(`  ${o(C, "DocumentCurrencyCode", spec.currency)}`);
+  out.push(`  ${o(C, "LineCountNumeric", String(spec.items.length))}`);
+  if (spec.buyerReference) out.push(`  ${o(C, "BuyerReference", esc(spec.buyerReference))}`);
+
+  out.push(`  ${o(A, "AccountingSupplierParty", party(spec.seller))}`);
+  out.push(`  ${o(A, "AccountingCustomerParty", party(spec.buyer))}`);
+
+  if (spec.deliveryDate) {
+    out.push(
+      `  ${o(A, "Delivery", o(C, "ActualDeliveryDate", spec.deliveryDate))}`
+    );
+  }
+
+  if (spec.payment) {
+    const pm: string[] = [o(C, "PaymentMeansCode", spec.payment.means)];
+    if (spec.payment.instruction) {
+      pm.push(o(C, "InstructionID", esc(spec.payment.instruction)));
+    }
+    if (spec.payment.iban || spec.payment.accountName) {
+      const fa: string[] = [];
+      if (spec.payment.iban) fa.push(o(C, "ID", spec.payment.iban));
+      if (spec.payment.accountName) {
+        fa.push(o(C, "Name", esc(spec.payment.accountName)));
+      }
+      if (spec.payment.bic) {
+        fa.push(
+          o(A, "FinancialInstitutionBranch", o(C, "ID", spec.payment.bic))
+        );
+      }
+      pm.push(o(A, "PayeeFinancialAccount", fa.join("")));
+    }
+    out.push(`  ${o(A, "PaymentMeans", pm.join(""))}`);
+  }
+
+  const subs = spec.subtotals
+    .map(
+      (s) =>
+        `    ${o(
+          A,
+          "TaxSubtotal",
+          oCur("TaxableAmount", s.basis) +
+            oCur("TaxAmount", s.amount) +
+            o(
+              A,
+              "TaxCategory",
+              o(C, "ID", s.category) +
+                o(C, "Percent", s.rate) +
+                o(A, "TaxScheme", o(C, "ID", "GST"))
+            )
+        )}`
+    )
+    .join("\n");
+  out.push(
+    `  ${o(A, "TaxTotal", oCur("TaxAmount", spec.taxTotal) + "\n" + subs + "\n  ")}`
+  );
+
+  const mt: string[] = [oCur("LineExtensionAmount", spec.totals.line)];
+  mt.push(oCur("TaxExclusiveAmount", spec.totals.taxBasis));
+  mt.push(oCur("TaxInclusiveAmount", spec.totals.grand));
+  if (spec.totals.prepaid) {
+    mt.push(oCur("PrepaidAmount", spec.totals.prepaid));
+  }
+  mt.push(oCur("PayableAmount", spec.totals.due));
+  out.push(`  ${o(A, "LegalMonetaryTotal", mt.join(""))}`);
+
+  for (const it of spec.items) {
+    const item: string[] = [];
+    if (it.description) item.push(o(C, "Description", esc(it.description)));
+    item.push(o(C, "Name", esc(it.name)));
+    if (it.sku) {
+      item.push(
+        o(A, "SellersItemIdentification", o(C, "ID", esc(it.sku)))
+      );
+    }
+    if (it.rate && it.category) {
+      item.push(
+        o(
+          A,
+          "ClassifiedTaxCategory",
+          o(C, "ID", it.category) + o(C, "Percent", it.rate)
+        )
+      );
+    }
+    const line: string[] = [o(C, "ID", it.id)];
+    line.push(`<${C}${qtyName} unitCode="${it.unit}">${it.qty}</${C}${qtyName}>`);
+    line.push(oCur("LineExtensionAmount", it.net));
+    line.push(o(A, "Item", item.join("")));
+    line.push(o(A, "Price", oCur("PriceAmount", it.price)));
+    if (it.rate && it.category) {
+      line.push(
+        o(
+          A,
+          "TaxTotal",
+          o(
+            A,
+            "TaxSubtotal",
+            oCur("TaxableAmount", it.net) +
+              o(
+                A,
+                "TaxCategory",
+                o(C, "ID", it.category) + o(C, "Percent", it.rate)
+              )
+          )
+        )
+      );
+    }
+    out.push(`  ${o(A, lineName, line.join(""))}`);
+  }
+
+  out.push(`</${R}${rootName}>`);
+  return out.join("\n");
+}
+
+/* The FULL UBL fixture — 2 lines, GST CGST+SGST subtotals, INR, prepaid. */
+const ublSpec: UblSpec = {
+  prefixes: true,
+  number: "INV/2026/0042",
+  typeCode: "380",
+  issueDate: "2026-03-15",
+  dueDate: "2026-04-14",
+  deliveryDate: "2026-03-14",
+  currency: "INR",
+  buyerReference: "SUPPLIER-77",
+  note: "Thank you for your business.",
+  seller: {
+    name: "Sharma Trading Company",
+    legalName: "Sharma Trading Company Pvt Ltd",
+    companyId: "U12345MH2010PTC204421",
+    taxId: "27AAAPS1234M1Z5",
+    phone: "+91 98200 12345",
+    email: "billing@sharmatrading.example",
+    website: "https://sharmatrading.example",
+    addr: {
+      street: "12 MG Road",
+      street2: "Flour Mills Lane",
+      city: "Pune",
+      postcode: "411001",
+      country: "IN",
+      region: "Maharashtra",
+    },
+  },
+  buyer: {
+    name: "Gupta Constructions Pvt Ltd",
+    taxId: "07AAGCG4511Q1ZP",
+    addr: {
+      street: "88 Nehru Place",
+      city: "New Delhi",
+      postcode: "110019",
+      country: "IN",
+    },
+  },
+  items: [
+    {
+      id: "1",
+      name: "Steel bracket",
+      description: "Hot-rolled, galvanised",
+      sku: "SKU-1001",
+      qty: "400",
+      unit: "C62",
+      price: "250.00",
+      net: "100000.00",
+      rate: "9.00",
+      category: "CGST",
+    },
+    {
+      id: "2",
+      name: "Consulting support",
+      description: "On-site engineering hours",
+      qty: "160",
+      unit: "HUR",
+      price: "100.00",
+      net: "16000.00",
+      rate: "9.00",
+      category: "SGST",
+    },
+  ],
+  subtotals: [
+    { rate: "9.00", category: "CGST", basis: "116000.00", amount: "10440.00" },
+    { rate: "9.00", category: "SGST", basis: "116000.00", amount: "10440.00" },
+  ],
+  taxTotal: "20880.00",
+  totals: {
+    line: "116000.00",
+    taxBasis: "116000.00",
+    grand: "136880.00",
+    prepaid: "36880.00",
+    due: "100000.00",
+  },
+  payment: {
+    means: "30",
+    instruction: "NEFT-REF-889",
+    iban: "DE44500105175407324931",
+    accountName: "Sharma Trading Current Account",
+    bic: "COBADEFFXXX",
+  },
+};
+const ublXml = buildUbl(ublSpec);
+
+/* The same fixture with the DEFAULT namespace (prefix-tolerance oracle). */
+const ublBareXml = buildUbl({ ...ublSpec, prefixes: false });
+
+/* A UBL CreditNote (same numbers, one line — the credit-note mapping). */
+const ublCreditXml = buildUbl({
+  ...ublSpec,
+  prefixes: false,
+  credit: true,
+  number: "CN/2026/0007",
+  typeCode: "381",
+  dueDate: undefined,
+  items: [ublSpec.items[0]!],
+  subtotals: [{ rate: "9.00", category: "CGST", basis: "100000.00", amount: "9000.00" }],
+  taxTotal: "9000.00",
+  totals: { line: "100000.00", taxBasis: "100000.00", grand: "109000.00", due: "109000.00" },
+});
+
+
 /* The label map the surface ships (read from the tool's own catalog). */
 const toolI18n = JSON.parse(
   readFileSync("tools/xml-invoice-to-pdf/i18n.json", "utf8")
@@ -801,30 +1177,69 @@ console.log("── 2. classification (sniff + root) ─────────
 
   const ciiRoot = parseXmlDocument(fullXml);
   check(
-    "classifyRoot: CrossIndustryInvoice → null (good to go)",
-    ciiRoot.ok && classifyRoot(ciiRoot.root) === null
+    "classifyRoot: CrossIndustryInvoice → 'cii'",
+    ciiRoot.ok && classifyRoot(ciiRoot.root) === "cii"
   );
 
-  const ublInvoiceXml =
-    '<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"><ID>1</ID></Invoice>';
-  const ublInvoice = parseXmlDocument(ublInvoiceXml);
+  const ublInvoice = parseXmlDocument(ublXml);
   check(
-    "classifyRoot: UBL Invoice → honest errUbl",
-    ublInvoice.ok && classifyRoot(ublInvoice.root) === "xinv.errUbl"
+    "classifyRoot: UBL Invoice (prefixed -2 ns) → 'ubl'",
+    ublInvoice.ok && classifyRoot(ublInvoice.root) === "ubl"
+  );
+
+  const ublBare = parseXmlDocument(ublBareXml);
+  check(
+    "classifyRoot: UBL Invoice (default -2 ns) → 'ubl'",
+    ublBare.ok && classifyRoot(ublBare.root) === "ubl"
   );
 
   const ublCredit = parseXmlDocument(
     '<CreditNote xmlns="urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2"><ID>1</ID></CreditNote>'
   );
   check(
-    "classifyRoot: UBL CreditNote → honest errUbl",
-    ublCredit.ok && classifyRoot(ublCredit.root) === "xinv.errUbl"
+    "classifyRoot: UBL CreditNote → 'ubl'",
+    ublCredit.ok && classifyRoot(ublCredit.root) === "ubl"
+  );
+
+  check(
+    "classifyRoot: isUblRoot + classifyRoot agree",
+    ublCredit.ok && isUblRoot(ublCredit.root) && classifyRoot(ublCredit.root) === "ubl"
+  );
+
+  const ublPrefixedRoot = parseXmlDocument(
+    '<x:Invoice xmlns:x="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"><x:ID>1</x:ID></x:Invoice>'
+  );
+  check(
+    "classifyRoot: any-prefix UBL root → 'ubl' (local-name rule)",
+    ublPrefixedRoot.ok && classifyRoot(ublPrefixedRoot.root) === "ubl"
+  );
+
+  const ublNoNs = parseXmlDocument(
+    '<Invoice><ID>1</ID><AccountingSupplierParty/></Invoice>'
+  );
+  check(
+    "classifyRoot: namespace-less <Invoice> with UBL markers → 'ubl'",
+    ublNoNs.ok && classifyRoot(ublNoNs.root) === "ubl"
+  );
+
+  const bareInvoice = parseXmlDocument("<Invoice><ID>1</ID></Invoice>");
+  check(
+    "classifyRoot: namespace-less <Invoice> without markers → null",
+    bareInvoice.ok && classifyRoot(bareInvoice.root) === null
+  );
+
+  const foreignNs = parseXmlDocument(
+    '<Invoice xmlns="http://example.com/not-ubl"><ID>1</ID></Invoice>'
+  );
+  check(
+    "classifyRoot: <Invoice> in a FOREIGN namespace → null (honest refusal)",
+    foreignNs.ok && classifyRoot(foreignNs.root) === null
   );
 
   const htmlRoot = parseXmlDocument("<html><body>x</body></html>");
   check(
-    "classifyRoot: other root → errNotCii",
-    htmlRoot.ok && classifyRoot(htmlRoot.root) === "xinv.errNotCii"
+    "classifyRoot: other root → null",
+    htmlRoot.ok && classifyRoot(htmlRoot.root) === null
   );
 
   check(
@@ -839,8 +1254,17 @@ console.log("── 2. classification (sniff + root) ─────────
     }) === "xinv.errMalformed"
   );
   check(
-    "classifyXmlError: parsed UBL → errUbl",
-    ublInvoice.ok && classifyXmlError(ublInvoiceXml, ublInvoice) === "xinv.errUbl"
+    "classifyXmlError: parsed UBL → null (good to go)",
+    ublInvoice.ok && classifyXmlError(ublXml, ublInvoice) === null
+  );
+  check(
+    "classifyXmlError: parsed CII → null",
+    ciiRoot.ok && classifyXmlError(fullXml, ciiRoot) === null
+  );
+  check(
+    "classifyXmlError: unsupported root → errNotCii",
+    bareInvoice.ok &&
+      classifyXmlError("<Invoice><ID>1</ID></Invoice>", bareInvoice) === "xinv.errNotCii"
   );
 }
 
@@ -947,6 +1371,14 @@ console.log("── 4. code maps + currency/date formatting ──────�
   check("formatCiiDate: invalid month stays raw", formatCiiDate("20261301") === "20261301");
   check("formatCiiDate: non-102 format stays raw", formatCiiDate("20260315", "101") === "20260315");
   check("formatCiiDate: non-digit input stays raw", formatCiiDate("2026-03-15") === "2026-03-15");
+
+  check("formatUblDate: xs:date → human", formatUblDate("2026-03-15") === "15 Mar 2026");
+  check("formatUblDate: UTC timezone suffix tolerated", formatUblDate("2026-01-01Z") === "1 Jan 2026");
+  check("formatUblDate: +05:30 offset tolerated", formatUblDate("2026-12-31+05:30") === "31 Dec 2026");
+  check("formatUblDate: invalid month stays raw", formatUblDate("2026-13-01") === "2026-13-01");
+  check("formatUblDate: CII 102 digits stay raw", formatUblDate("20260315") === "20260315");
+  check("formatUblDate: garbage stays raw", formatUblDate("soon") === "soon");
+  check("formatUblDate: empty → empty", formatUblDate("") === "");
 }
 
 /* ================================================================== */
@@ -1128,6 +1560,264 @@ console.log("── 5. parseCii (fields, namespace oracle, issues) ────�
   check(
     "invoiceNeedsNoto: Hindi labels alone flip the decision",
     invoiceNeedsNoto(enInv, { ...enLabels, ttl: "इनवॉइस" }) === true
+  );
+}
+
+/* ================================================================== */
+console.log("── 5b. parseUbl (fields, prefix oracle, issues) ─────────");
+/* ================================================================== */
+{
+  const parsed = parseXmlDocument(ublXml);
+  if (!parsed.ok) throw new Error("UBL fixture failed to parse");
+  const inv = parseUbl(parsed.root);
+
+  check("meta: number", inv.meta.number === "INV/2026/0042");
+  check("meta: typeCode", inv.meta.typeCode === "380");
+  check("meta: issueDate human-formatted", inv.meta.issueDate === "15 Mar 2026");
+  check("meta: dueDate (cbc:DueDate)", inv.meta.dueDate === "14 Apr 2026");
+  check("meta: deliveryDate (cac:Delivery)", inv.meta.deliveryDate === "14 Mar 2026");
+  check("meta: currency uppercased", inv.meta.currency === "INR");
+  check("meta: buyerReference (cbc:BuyerReference)", inv.meta.buyerReference === "SUPPLIER-77");
+  check("meta: cbc:Note captured", JSON.stringify(inv.meta.notes) === '["Thank you for your business."]');
+
+  check("seller: PartyName/Name", inv.seller.name === "Sharma Trading Company");
+  check("seller: RegistrationName rides the trading-name slot", inv.seller.tradingName === "Sharma Trading Company Pvt Ltd");
+  check("seller: legal CompanyID", inv.seller.id === "U12345MH2010PTC204421");
+  check("seller: PartyTaxScheme CompanyID (GSTIN)", JSON.stringify(inv.seller.taxIds) === '["27AAAPS1234M1Z5"]');
+  check("seller: Contact telephone", inv.seller.phone === "+91 98200 12345");
+  check("seller: Contact email", inv.seller.email === "billing@sharmatrading.example");
+  check("seller: WebsiteURI", inv.seller.uri === "https://sharmatrading.example");
+  check(
+    "seller: address fields (StreetName/Additional/City/Zone/Country/Subentity)",
+    inv.seller.address.line1 === "12 MG Road" &&
+      inv.seller.address.line2 === "Flour Mills Lane" &&
+      inv.seller.address.city === "Pune" &&
+      inv.seller.address.postcode === "411001" &&
+      inv.seller.address.country === "IN" &&
+      inv.seller.address.subdivision === "Maharashtra"
+  );
+  check("buyer: name", inv.buyer.name === "Gupta Constructions Pvt Ltd");
+  check("buyer: GSTIN", JSON.stringify(inv.buyer.taxIds) === '["07AAGCG4511Q1ZP"]');
+  check("buyer: address fields", inv.buyer.address.line1 === "88 Nehru Place" && inv.buyer.address.city === "New Delhi");
+
+  check("lines: count", inv.lines.length === 2);
+  const l1 = inv.lines[0]!;
+  check(
+    "line 1: all fields",
+    l1.lineId === "1" &&
+      l1.name === "Steel bracket" &&
+      l1.description === "Hot-rolled, galvanised" &&
+      l1.sellerAssignedId === "SKU-1001" &&
+      l1.quantity === 400 &&
+      l1.unitCode === "C62" &&
+      l1.unitPrice === 250 &&
+      l1.netAmount === 100000 &&
+      l1.taxRate === 9 &&
+      l1.taxCategory === "CGST"
+  );
+  const l2 = inv.lines[1]!;
+  check(
+    "line 2: no-SKU path + fields",
+    l2.lineId === "2" &&
+      l2.name === "Consulting support" &&
+      l2.description === "On-site engineering hours" &&
+      l2.sellerAssignedId === "" &&
+      l2.quantity === 160 &&
+      l2.unitCode === "HUR" &&
+      l2.netAmount === 16000 &&
+      l2.taxRate === 9 &&
+      l2.taxCategory === "SGST"
+  );
+
+  check(
+    "taxes: GST subtotals (CGST + SGST)",
+    inv.taxes.length === 2 &&
+      inv.taxes[0]!.rate === 9 &&
+      inv.taxes[0]!.category === "CGST" &&
+      inv.taxes[0]!.basis === 116000 &&
+      inv.taxes[0]!.amount === 10440 &&
+      inv.taxes[1]!.category === "SGST" &&
+      inv.taxes[1]!.amount === 10440
+  );
+  check(
+    "totals: LegalMonetaryTotal mapping",
+    inv.totals.lineTotal === 116000 &&
+      inv.totals.taxBasisTotal === 116000 &&
+      inv.totals.grandTotal === 136880 &&
+      inv.totals.prepaid === 36880 &&
+      inv.totals.duePayable === 100000
+  );
+  check(
+    "totals: header cac:TaxTotal/cbc:TaxAmount fills the tax slot",
+    inv.totals.taxTotal === 20880
+  );
+  check(
+    "payment: means + instruction + account + bic",
+    inv.payment.meansCode === "30" &&
+      inv.payment.reference === "NEFT-REF-889" &&
+      inv.payment.iban === "DE44500105175407324931" &&
+      inv.payment.accountName === "Sharma Trading Current Account" &&
+      inv.payment.bic === "COBADEFFXXX"
+  );
+  check("issues: the full UBL fixture has NONE", JSON.stringify(inv.issues) === "[]", inv.issues);
+  check("truncation: false for 2 lines", inv.truncated === false && inv.totalLineCount === 2);
+
+  // ---- prefix tolerance oracle: default-ns fixture parses IDENTICALLY ----
+  const bareParsed = parseXmlDocument(ublBareXml);
+  if (!bareParsed.ok) throw new Error("bare UBL fixture failed to parse");
+  const bareInv = parseUbl(bareParsed.root);
+  const shape = (i: typeof inv): unknown => ({
+    meta: i.meta,
+    seller: i.seller,
+    buyer: i.buyer,
+    lines: i.lines,
+    taxes: i.taxes,
+    totals: i.totals,
+    payment: i.payment,
+    issues: i.issues,
+    truncated: i.truncated,
+    totalLineCount: i.totalLineCount,
+  });
+  check(
+    "UBL prefix oracle: prefixed + default-ns parse identically",
+    JSON.stringify(shape(inv)) === JSON.stringify(shape(bareInv))
+  );
+
+  // ---- the dispatcher routes both dialects onto the shared model --------
+  check(
+    "parseInvoice: dispatches UBL roots to parseUbl",
+    JSON.stringify(shape(parseInvoice(parsed.root))) === JSON.stringify(shape(inv))
+  );
+  const ciiParsed = parseXmlDocument(fullXml);
+  check(
+    "parseInvoice: dispatches CII roots to parseCii",
+    ciiParsed.ok &&
+      parseInvoice(ciiParsed.root).meta.number === "RE-2026-0042"
+  );
+
+  // ---- CreditNote mapping (root, type code, line + quantity names) -----
+  const creditParsed = parseXmlDocument(ublCreditXml);
+  check("CreditNote fixture parses", creditParsed.ok);
+  if (creditParsed.ok) {
+    const cn = parseUbl(creditParsed.root);
+    check(
+      "CreditNote: number + typeCode + single CreditNoteLine",
+      cn.meta.number === "CN/2026/0007" &&
+        cn.meta.typeCode === "381" &&
+        cn.lines.length === 1 &&
+        cn.lines[0]!.quantity === 400 &&
+        cn.lines[0]!.netAmount === 100000
+    );
+    check(
+      "CreditNote: dues + no prepaid",
+      cn.totals.grandTotal === 109000 &&
+        cn.totals.duePayable === 109000 &&
+        cn.totals.prepaid === null &&
+        cn.meta.dueDate === ""
+    );
+    check("CreditNote: clean parse (no issues)", JSON.stringify(cn.issues) === "[]", cn.issues);
+  }
+
+  // ---- missing optional nodes → issues, never a throw -------------------
+  const missing = buildUbl({
+    ...ublSpec,
+    prefixes: false,
+    seller: { ...ublSpec.seller, addr: undefined },
+    buyer: { ...ublSpec.buyer, addr: undefined },
+    payment: undefined,
+  });
+  const missParsed = parseXmlDocument(missing);
+  check("missing-optionals UBL fixture parses", missParsed.ok);
+  if (missParsed.ok) {
+    const mInv = parseUbl(missParsed.root);
+    const codes = mInv.issues.map((i) => i.code).sort();
+    check(
+      "UBL missing nodes → exactly the right issue codes (no throw)",
+      JSON.stringify(codes) ===
+        JSON.stringify(["missBuyerAddr", "missPayment", "missSellerAddr"].sort()),
+      codes
+    );
+  }
+
+  // a line without LineExtensionAmount → missLineAmount, still rendered
+  const noAmount = buildUbl({
+    ...ublSpec,
+    prefixes: false,
+    items: [
+      { ...ublSpec.items[0]!, net: "" },
+      ublSpec.items[1]!,
+    ],
+  });
+  const naParsed = parseXmlDocument(noAmount);
+  if (naParsed.ok) {
+    const naInv = parseUbl(naParsed.root);
+    check(
+      "UBL line without net amount → missLineAmount issue, netAmount null",
+      naInv.issues.some((i) => i.code === "missLineAmount") &&
+        naInv.lines[0]!.netAmount === null
+    );
+  }
+
+  // line cap: 82 UBL lines → 80 rendered + lineCap issue (shared cap logic)
+  const manyUbl = buildUbl({
+    ...ublSpec,
+    prefixes: false,
+    items: Array.from({ length: 82 }, (_, i) => ({
+      id: String(i + 1),
+      name: `Widget ${String(i + 1).padStart(4, "0")}`,
+      qty: "1",
+      unit: "C62",
+      price: "10.00",
+      net: "10.00",
+    })),
+    subtotals: [{ rate: "5.00", category: "GST", basis: "820.00", amount: "41.00" }],
+    taxTotal: "41.00",
+    totals: { line: "820.00", taxBasis: "820.00", grand: "861.00", due: "861.00" },
+  });
+  const muParsed = parseXmlDocument(manyUbl);
+  if (muParsed.ok) {
+    const muInv = parseUbl(muParsed.root);
+    check(
+      "UBL line cap: 82 found, 80 kept, truncated flagged",
+      muInv.totalLineCount === 82 &&
+        muInv.lines.length === 80 &&
+        muInv.truncated === true &&
+        muInv.issues.some((i) => i.code === "lineCap")
+    );
+  }
+
+  // empty UBL documents → invoiceIsEmpty (worker errors honestly)
+  const emptyUbl = parseXmlDocument(
+    '<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"></Invoice>'
+  );
+  check("empty UBL root parses", emptyUbl.ok);
+  if (emptyUbl.ok) {
+    const emptyInv = parseUbl(emptyUbl.root);
+    check("invoiceIsEmpty: true for the bare UBL document", invoiceIsEmpty(emptyInv) === true);
+    check(
+      "invoiceIsEmpty: every core field reported missing",
+      [
+        "missNumber",
+        "missDate",
+        "missType",
+        "missCurrency",
+        "missSellerName",
+        "missSellerAddr",
+        "missBuyerName",
+        "missBuyerAddr",
+        "missLines",
+        "missTax",
+        "missTotals",
+        "missPayment",
+      ].every((code) => emptyInv.issues.some((i) => i.code === code))
+    );
+  }
+  check("invoiceIsEmpty: false for the full UBL fixture", invoiceIsEmpty(inv) === false);
+
+  // font decisions through the UBL model (INR → ₹ forces the Noto path)
+  check(
+    "invoiceNeedsNoto: UBL + INR → true (₹ rides Noto)",
+    invoiceNeedsNoto(inv, enLabels) === true
   );
 }
 
@@ -1556,7 +2246,76 @@ console.log("── 7. REAL E2E through the worker (self-shimmed) ────�
     );
   }
 
-  /* ---------- 7e. rejection drives (honest taxonomy) ----------------- */
+  /* ---------- 7e. the UBL 2.1 run (GST subtotals, INR) -------------- */
+  const ublFile = new File([ublXml], "inv-2026-0042.xml", {
+    type: "application/xml",
+  });
+  const ublRes = await drive(105, { pageSize: "a4", labels: labelsJson, fileWord: "document" }, [ublFile]);
+  check("worker UBL: result", ublRes.type === "result", ublRes);
+  if (ublRes.type === "result") {
+    const out = ublRes.outputs[0]!;
+    const detail = ublRes.detail as
+      | {
+          pages?: number;
+          lines?: number;
+          totalLines?: number;
+          truncated?: boolean;
+          fontPath?: string;
+          issueKeys?: string[];
+        }
+      | undefined;
+    // the invoice number carries a path-unsafe "/" — sanitized in the name
+    check("worker UBL: output name sanitized", out.name === "invoice-INV-2026-0042.pdf", out.name);
+    const outBytes = new Uint8Array(await out.blob.arrayBuffer());
+    check("worker UBL: %PDF magic", outBytes[0] === 0x25 && outBytes[1] === 0x50);
+    const reloaded = await PDFDocument.load(outBytes, { updateMetadata: false });
+    check("worker UBL: 1 page", reloaded.getPageCount() === 1, reloaded.getPageCount());
+    check(
+      "worker UBL: detail lines/totalLines/fontPath/issues",
+      detail?.lines === 2 &&
+        detail?.totalLines === 2 &&
+        detail?.fontPath === "devanagari" &&
+        JSON.stringify(detail?.issueKeys) === "[]",
+      detail
+    );
+    const dump = objDump(reloaded);
+    check("worker UBL: ₹ amounts → Noto FontFile2 embedded", dump.includes("FontFile2"));
+    check("worker UBL: Identity-H CID encoding", dump.includes("/Identity-H"));
+    check("worker UBL: producer DocoPDF", reloaded.getProducer() === "DocoPDF");
+    check("worker UBL: title carries the invoice number", reloaded.getTitle() === "Invoice INV/2026/0042", reloaded.getTitle());
+    check("worker UBL: author is the seller", reloaded.getAuthor() === "Sharma Trading Company", reloaded.getAuthor());
+
+    const pages = await pdfjsPages(outBytes);
+    const flat = pages.map((p) => p.map((i) => i.str).join(" ")).join("\n");
+    const has = (needle: string): boolean => flat.includes(needle);
+
+    check("worker UBL: invoice number", has("INV/2026/0042"));
+    check("worker UBL: INVOICE title", has("INVOICE"));
+    check("worker UBL: seller name + registered name", has("Sharma Trading Company") && has("Sharma Trading Company Pvt Ltd"));
+    check("worker UBL: buyer name", has("Gupta Constructions Pvt Ltd"));
+    check("worker UBL: Bill to label", has("Bill to"));
+    check("worker UBL: your reference", has("SUPPLIER-77"));
+    check("worker UBL: item names", has("Steel bracket") && has("Consulting support"));
+    check("worker UBL: item description as subline", has("Hot-rolled, galvanised"));
+    check("worker UBL: quantities with unit labels", has("400 piece") && has("160 hour"));
+    check("worker UBL: dates human-formatted", has("15 Mar 2026") && has("14 Apr 2026"));
+    check("worker UBL: GST subtotal rows", has("Tax 9% (CGST)") && has("Tax 9% (SGST)"));
+    check("worker UBL: subtotal Indian grouping", has("1,16,000.00"));
+    check("worker UBL: total tax row from cac:TaxTotal", has("20,880.00"));
+    check("worker UBL: grand total Indian grouping", has("1,36,880.00"));
+    check("worker UBL: prepaid row", has("36,880.00"));
+    check("worker UBL: amount due", has("1,00,000.00"));
+    check("worker UBL: payment means label", has("Credit transfer"));
+    check("worker UBL: payment instruction as reference", has("NEFT-REF-889"));
+    check("worker UBL: account name", has("Sharma Trading Current Account"));
+    check("worker UBL: cbc:Note as footer text", has("Thank you for your business."));
+    check("worker UBL: page footer", has("Page 1 / 1"));
+    check("worker UBL: rupee glyph on the sheet", has("₹"));
+    checkMargins(pages, 595.28, 40, "worker UBL");
+    writeFileSync("download/qa-xinv-ubl.pdf", outBytes);
+  }
+
+  /* ---------- 7f. rejection drives (honest taxonomy) ----------------- */
   const noFileRes = await drive(201, {}, []);
   check("worker reject: no file → xinv.errNoFile", noFileRes.type === "error" && noFileRes.code === "xinv.errNoFile", noFileRes);
 
@@ -1569,15 +2328,32 @@ console.log("── 7. REAL E2E through the worker (self-shimmed) ────�
   const malformedRes = await drive(204, {}, [new File(["<rsm:CrossIndustryInvoice><ram:ID>x</ram:ID>"], "broken.xml")]);
   check("worker reject: truncated XML → xinv.errMalformed", malformedRes.type === "error" && malformedRes.code === "xinv.errMalformed", malformedRes);
 
-  const ublRes = await drive(205, {}, [new File([
+  // UBL root with no invoice data → the honest "empty" error (bad structure)
+  const ublEmptyRes = await drive(205, {}, [new File([
     '<?xml version="1.0"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"><ID>1</ID></Invoice>'
   ], "ubl-invoice.xml")]);
-  check("worker reject: UBL Invoice → honest xinv.errUbl", ublRes.type === "error" && ublRes.code === "xinv.errUbl", ublRes);
+  check("worker reject: UBL Invoice with no data → xinv.errEmpty", ublEmptyRes.type === "error" && ublEmptyRes.code === "xinv.errEmpty", ublEmptyRes);
 
-  const ublCreditRes = await drive(206, {}, [new File([
+  const ublCreditEmptyRes = await drive(206, {}, [new File([
     '<?xml version="1.0"?><CreditNote xmlns="urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2"><ID>1</ID></CreditNote>'
   ], "ubl-credit.xml")]);
-  check("worker reject: UBL CreditNote → honest xinv.errUbl", ublCreditRes.type === "error" && ublCreditRes.code === "xinv.errUbl", ublCreditRes);
+  check("worker reject: UBL CreditNote with no data → xinv.errEmpty", ublCreditEmptyRes.type === "error" && ublCreditEmptyRes.code === "xinv.errEmpty", ublCreditEmptyRes);
+
+  // an <Invoice> root that is NOT UBL (no namespace, no markers) → refused
+  const noNsRes = await drive(210, {}, [new File([
+    '<?xml version="1.0"?><Invoice><ID>1</ID></Invoice>'
+  ], "mystery-invoice.xml")]);
+  check("worker reject: namespace-less <Invoice> → xinv.errNotCii", noNsRes.type === "error" && noNsRes.code === "xinv.errNotCii", noNsRes);
+
+  const foreignNsRes = await drive(211, {}, [new File([
+    '<?xml version="1.0"?><Invoice xmlns="http://example.com/not-ubl"><ID>1</ID></Invoice>'
+  ], "foreign-invoice.xml")]);
+  check("worker reject: <Invoice> in a foreign namespace → xinv.errNotCii", foreignNsRes.type === "error" && foreignNsRes.code === "xinv.errNotCii", foreignNsRes);
+
+  const brokenUblRes = await drive(212, {}, [new File([
+    '<?xml version="1.0"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"><cbc:ID>x'
+  ], "broken-ubl.xml")]);
+  check("worker reject: truncated UBL → xinv.errMalformed", brokenUblRes.type === "error" && brokenUblRes.code === "xinv.errMalformed", brokenUblRes);
 
   const notCiiRes = await drive(207, {}, [new File(["<html><body>not an invoice</body></html>"], "page.xml")]);
   check("worker reject: other XML root → xinv.errNotCii", notCiiRes.type === "error" && notCiiRes.code === "xinv.errNotCii", notCiiRes);
@@ -1663,13 +2439,28 @@ console.log("── 8. i18n + config + wiring strings ────────�
     { missingRef, referenced: referenced.size }
   );
 
+  // the UBL support flip: the dead errUbl* keys are GONE everywhere
+  check(
+    "i18n: errUbl* keys removed from the tool + shared catalogs (UBL is supported)",
+    !["errUbl", "errUblTitle", "errUblDesc"].some(
+      (k) => k in toolI18n.en.xinv || k in toolI18n.hi.xinv
+    ) &&
+      !sources.includes("xinv.errUbl")
+  );
+  check(
+    "i18n: dialect chips (xmlChip + ublChip) exist in both catalogs",
+    "xmlChip" in toolI18n.en.xinv &&
+      "ublChip" in toolI18n.en.xinv &&
+      "xmlChip" in toolI18n.hi.xinv &&
+      "ublChip" in toolI18n.hi.xinv
+  );
+
   // the surface's ERROR_TOASTS table must cover every worker error code
   const workerCodes = [
     "xinv.errNoFile",
     "xinv.errTooLarge",
     "xinv.errNotXml",
     "xinv.errMalformed",
-    "xinv.errUbl",
     "xinv.errNotCii",
     "xinv.errEmpty",
   ];
@@ -1722,7 +2513,8 @@ console.log("── 8. i18n + config + wiring strings ────────�
   check("surface: gates the CTA on a bad file", surfaceSrc.includes('"xinv.ctaBadFile"'));
   check("surface: file input accepts .xml", surfaceSrc.includes('accept=".xml'));
   check("surface: setRunBlocked gating used", surfaceSrc.includes("setRunBlocked"));
-  check("surface: pre-render parse report uses the model parser", surfaceSrc.includes("parseCii"));
+  check("surface: pre-render parse report uses the model parser", surfaceSrc.includes("parseInvoice"));
+  check("surface: dialect chip speaks UBL", surfaceSrc.includes("xinv.ublChip"));
 
   // ---- worker.ts + render.ts ------------------------------------------
   const workerSrc = readFileSync("tools/xml-invoice-to-pdf/worker.ts", "utf8");

@@ -3,8 +3,10 @@ import type { ToolConfig } from "@/lib/tools/config-types";
 /**
  * View PDF (PRD §6.5 / §7.7) — the fast on-device viewer. Thumbnails,
  * outline, full-text search with highlights, zoom/fit/rotate, single-page
- * and two-page spread, dark reading mode, print, download, keyboard
- * navigation — and lazy page rendering (only visible ±2 pages in memory).
+ * and two-page spread, dark reading mode, presentation mode (fullscreen,
+ * one fitted page at a time, click or arrow-key advance), print,
+ * download, keyboard navigation — and lazy page rendering (only visible
+ * ±2 pages in memory).
  *
  * This is the first "viewer-only" tool: it never processes anything, so
  * there is no worker and no run step — the workspace surface IS the tool.
@@ -33,6 +35,10 @@ export const config: ToolConfig = {
     {
       en: "Dark reading mode flips pages to easy-on-eyes paper without touching the file.",
       hi: "डार्क रीडिंग मोड फ़ाइल में कुछ बदले बिना पेजों को आँखों को आराम देने वाला बना देता है।",
+    },
+    {
+      en: "Present full-screen: one fitted page at a time, advance by click or arrow key — controls fade away while you talk.",
+      hi: "फ़ुल-स्क्रीन प्रेज़ेंट करें: एक बार में एक पूरा पेज, क्लिक या ऐरो की से आगे बढ़ें — बोलते समय कंट्रोल ओछे हो जाते हैं।",
     },
     {
       en: "Select and copy text, print or download the original — the file never leaves your device.",

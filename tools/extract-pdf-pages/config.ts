@@ -4,6 +4,10 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  * Extract PDF pages — PageGrid family preset "extract" (PRD §8.1):
  * build a new PDF from the selected pages, with the option
  * "one page = one file". The grid is the picker.
+ *
+ * BATCH (R2-a): up to 20 PDFs at once — each file keeps its OWN page
+ * selection (the surface stores one selection per file), one output per
+ * input (or one file per selected page with "one page = one file").
  */
 export const config: ToolConfig = {
   toolId: "extract-pdf-pages",
@@ -13,7 +17,7 @@ export const config: ToolConfig = {
     }),
   outputKind: "pdf",
   minFiles: 1,
-  maxFiles: 1,
+  maxFiles: 20,
   options: [
     {
       kind: "switch",
@@ -32,6 +36,10 @@ export const config: ToolConfig = {
       hi: "ग्रिड पर पेज चुनें — क्लिक, शिफ़्ट-क्लिक, Ctrl+A या रेंज लिखें।",
     },
     {
+      en: "Batch: add up to 20 PDFs — each file keeps its own selection, one output per file.",
+      hi: "बैच: 20 तक PDF जोड़ें — हर फ़ाइल का अपना चयन रहता है, हर फ़ाइल का अपना आउटपुट।",
+    },
+    {
       en: "One new PDF from the selection, or one file per page.",
       hi: "चुने पेजों की एक PDF, या हर पेज अलग फ़ाइल।",
     },
@@ -45,6 +53,16 @@ export const config: ToolConfig = {
     },
   ],
   faq: [
+    {
+      q: {
+        en: "Can I extract from several PDFs in one go?",
+        hi: "क्या एक साथ कई PDF से पेज निकाल सकते हैं?",
+      },
+      a: {
+        en: "Yes — add up to 20 files. Click a file in the list, select its pages, switch to the next, and run once: every file produces its own extracted PDF from its own selection.",
+        hi: "हाँ — 20 तक फ़ाइलें जोड़ें। सूची में फ़ाइल पर क्लिक करके उसके पेज चुनें, फिर अगली पकड़ें — और एक बार चलाएँ: हर फ़ाइल अपने चयन से अपनी निकाली हुई PDF देती है।",
+      },
+    },
     {
       q: {
         en: "How do I select the pages I want?",

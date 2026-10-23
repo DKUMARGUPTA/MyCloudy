@@ -12,7 +12,7 @@ import {
   invoiceNeedsNoto,
   looksLikeXml,
   outputPdfName,
-  parseCii,
+  parseInvoice,
   parseInvoiceLabels,
   parseXmlText,
 } from "./model";
@@ -28,10 +28,12 @@ import type { XinvRunDetail } from "./types";
  *     up front — garbage is rejected honestly before any parse);
  *  2. parse — DOMParser when the runtime has one, else the model's own
  *     namespace-tolerant parser (both produce the same tree);
- *  3. classify the root: UBL Invoice/CreditNote → honest "not supported
- *     yet" error; any other non-CII root → not a CII e-invoice;
- *  4. parseCii — missing nodes become parse ISSUES that surface in the
- *     result detail; the renderer draws what exists;
+ *  3. classify the root: CII (CrossIndustryInvoice) and UBL 2.1
+ *     (Invoice/CreditNote in the oasis.org -2 namespace) parse; any
+ *     other root → not a supported e-invoice;
+ *  4. parseInvoice — the dialect reader maps the tree onto the shared
+ *     ParsedInvoice model; missing nodes become parse ISSUES that
+ *     surface in the result detail; the renderer draws what exists;
  *  5. font pick — pure-WinAnsi content embeds NO font at all (base-14
  *     Helvetica + HelveticaBold), while ANY Devanagari (or ₹) run embeds
  *     the self-hosted Noto Sans Devanagari subset (fontkit subset:true);
@@ -83,7 +85,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     }
     post({ type: "progress", runId, pct: 35, stage: "processing" });
 
-    const inv = parseCii(parsed.root);
+    const inv = parseInvoice(parsed.root);
     if (invoiceIsEmpty(inv)) {
       post({ type: "error", runId, code: "xinv.errEmpty", detail: file.name });
       return;

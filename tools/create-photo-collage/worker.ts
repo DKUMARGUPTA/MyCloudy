@@ -7,6 +7,7 @@ import {
 import { decodeHeicToBitmap } from "@/lib/heic/heic-decode";
 import { isTiffBytes, TiffFile, TiffError } from "../imgconv/tiff";
 import {
+  JPEG_QUALITY,
   computePages,
   outputBaseName,
   pagePixelSize,
@@ -29,10 +30,14 @@ import {
  * result goes straight back as a Blob. Nothing ever leaves the device.
  *
  * Quality policy (honest): the collage is a raster composition, so
- * photos are re-encoded once — JPEG quality 0.92, the same single
- * re-compression policy as the imagegrid's rotated branch. The PDF is
- * one page per collage page with the JPEG drawn at 2 px/pt (~144 DPI).
- * JPG/PNG export renders page 1 only (documented in the UI).
+ * photos are re-encoded once — the "high" preset is JPEG quality 0.92,
+ * the same single re-compression policy the tool shipped with; the
+ * "balanced"/"light" presets lower only that encode quality (the
+ * composite itself is untouched — the page background is always
+ * painted first, so JPEG stays alpha-safe). The PDF is one page per
+ * collage page with the JPEG drawn at 2 px/pt (~144 DPI). JPG/PNG
+ * export renders page 1 only (documented in the UI); PNG stays
+ * lossless.
  *
  * Inputs: JPG / PNG / WEBP / GIF decode natively (createImageBitmap),
  * HEIC decodes via Safari's native path with the self-hosted libheif
@@ -228,8 +233,8 @@ async function preparePhoto(
 }
 
 /**
- * Encodes one collage page to a JPEG blob (quality 0.92 — photos). The
- * canvas-commit guard from the OCR round is unnecessary here: nothing
+ * Encodes one collage page to a JPEG blob (preset quality — photos).
+ * The canvas-commit guard from the OCR round is unnecessary here: nothing
  * reads pixels back, convertToBlob IS the commit.
  */
 async function renderPageBlob(
@@ -238,7 +243,8 @@ async function renderPageBlob(
   pageIndex: number,
   pixelW: number,
   pixelH: number,
-  style: CollageStyle
+  style: CollageStyle,
+  quality: number
 ): Promise<Blob> {
   const plan = pages[pageIndex];
   if (!plan) fail("tool.errorGeneric", "page");
@@ -246,13 +252,16 @@ async function renderPageBlob(
   const ctx = canvas.getContext("2d") as CollageCtx | null;
   if (!ctx) fail("tool.images.errorDecode", "canvas");
   drawCollagePage(ctx, plan, images, style, pageIndex, pages.length);
-  return await canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 });
+  return await canvas.convertToBlob({ type: "image/jpeg", quality });
 }
 
 async function run(request: WorkerRunRequest): Promise<void> {
   const { runId, options, files } = request;
   const option = parseCollageOption(options.collage, files.length);
   const { style, exportFormat, locale } = option;
+  // Preset → JPEG encode quality ("high" = the 0.92 the tool shipped
+  // with; parseCollageOption guarantees a valid value).
+  const jpegQuality = JPEG_QUALITY[option.quality ?? "high"];
 
   if (option.photos.length === 0) {
     post({ type: "error", runId, code: "tool.images.errorNoImages" });
@@ -290,10 +299,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const ctx = canvas.getContext("2d") as CollageCtx | null;
     if (!ctx) fail("tool.images.errorDecode", "canvas");
     drawCollagePage(ctx, pages[0], images, style, 0, pages.length);
-    const blob = await canvas.convertToBlob({
-      type: exportFormat === "png" ? "image/png" : "image/jpeg",
-      quality: 0.92,
-    });
+    // PNG is lossless — the quality preset only shapes the JPEG paths.
+    const blob = await canvas.convertToBlob(
+      exportFormat === "png"
+        ? { type: "image/png" }
+        : { type: "image/jpeg", quality: jpegQuality }
+    );
     post({ type: "progress", runId, pct: 96, stage: "saving" });
     post({
       type: "result",
@@ -307,7 +318,15 @@ async function run(request: WorkerRunRequest): Promise<void> {
   /* ---------------- PDF: one page per collage page ---------------- */
   const pdf = await PDFDocument.create();
   for (let p = 0; p < pages.length; p += 1) {
-    const jpeg = await renderPageBlob(images, pages, p, px.w, px.h, style);
+    const jpeg = await renderPageBlob(
+      images,
+      pages,
+      p,
+      px.w,
+      px.h,
+      style,
+      jpegQuality
+    );
     const embedded = await pdf.embedJpg(new Uint8Array(await jpeg.arrayBuffer()));
     const page = pdf.addPage([pt.w, pt.h]);
     // Explicit width/height — pdf-lib ignores w/h spreads (P4.4 lesson).

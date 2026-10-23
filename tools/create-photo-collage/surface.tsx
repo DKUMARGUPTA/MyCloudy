@@ -65,6 +65,7 @@ import { cn } from "@/lib/utils";
 import {
   BACKGROUND_COLORS,
   DEFAULT_STYLE,
+  JPEG_QUALITY,
   LAYOUTS,
   MAX_CAPTION_CHARS,
   MAX_TITLE_CHARS,
@@ -76,6 +77,7 @@ import {
   serializeCollage,
   type CollageFormat,
   type CollagePhoto,
+  type CollageQuality,
   type CollageStyle,
   type ExportFormat,
 } from "./model";
@@ -117,6 +119,8 @@ interface SurfaceState {
   entries: CollageEntry[];
   style: CollageStyle;
   exportFormat: ExportFormat;
+  /** Output quality preset — "high" is the shipped default. */
+  quality: CollageQuality;
 }
 
 let uidSeq = 0;
@@ -314,12 +318,13 @@ export function CollageSurface({
     })),
     style: { ...DEFAULT_STYLE, captions: [] },
     exportFormat: "pdf",
+    quality: "high",
   }));
   const [prevFileCount, setPrevFileCount] = useState(files.length);
   const [previewPage, setPreviewPage] = useState(0);
   const [quickBusy, setQuickBusy] = useState<"jpg" | "png" | null>(null);
 
-  const { entries, style, exportFormat } = state;
+  const { entries, style, exportFormat, quality } = state;
   const pages = useMemo(
     () => computePages(entries.length, style.layout),
     [entries.length, style.layout]
@@ -346,6 +351,7 @@ export function CollageSurface({
             captions: next.entries.map((entry) => entry.caption),
           },
           exportFormat: next.exportFormat,
+          quality: next.quality,
           locale,
         })
       );
@@ -608,7 +614,7 @@ export function CollageSurface({
           canvas.toBlob(
             resolve,
             format === "png" ? "image/png" : "image/jpeg",
-            0.92
+            format === "png" ? undefined : JPEG_QUALITY[quality]
           )
         );
         if (!blob) throw new Error("encode-failed");
@@ -622,7 +628,7 @@ export function CollageSurface({
         setQuickBusy(null);
       }
     },
-    [entries, files, locale, pages, style, styleAll, t, toast]
+    [entries, files, locale, pages, quality, style, styleAll, t, toast]
   );
 
   /* ---------------- derived ---------------- */
@@ -1086,7 +1092,7 @@ export function CollageSurface({
           </div>
         </div>
 
-        {/* Export format + quick downloads */}
+        {/* Export format + quality + quick downloads */}
         <div className="flex flex-col gap-3 sm:col-span-2 sm:flex-row sm:items-end">
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <span className="text-xs font-medium text-foreground">
@@ -1114,8 +1120,39 @@ export function CollageSurface({
             </ToggleGroup>
             <p className="text-[10px] text-muted-foreground">
               {exportFormat === "pdf"
-                ? t("collage.qualityNote")
+                ? t("collage.qualityNote", {
+                    quality: JPEG_QUALITY[quality].toFixed(2),
+                  })
                 : t("collage.exportImageNote")}
+            </p>
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <span className="text-xs font-medium text-foreground">
+              {t("collage.qualityLabel")}
+            </span>
+            <ToggleGroup
+              type="single"
+              value={quality}
+              onValueChange={(value) => {
+                if (value === "high" || value === "balanced" || value === "light") {
+                  apply({ quality: value });
+                }
+              }}
+              className="min-h-10"
+              aria-label={t("collage.qualityLabel")}
+            >
+              <ToggleGroupItem value="high" className="min-h-9 flex-1 rounded-btn px-2 text-xs">
+                {t("collage.qualityHigh")}
+              </ToggleGroupItem>
+              <ToggleGroupItem value="balanced" className="min-h-9 flex-1 rounded-btn px-2 text-xs">
+                {t("collage.qualityBalanced")}
+              </ToggleGroupItem>
+              <ToggleGroupItem value="light" className="min-h-9 flex-1 rounded-btn px-2 text-xs">
+                {t("collage.qualityLight")}
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-[10px] text-muted-foreground">
+              {t("collage.qualityHint")}
             </p>
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">

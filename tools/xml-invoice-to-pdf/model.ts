@@ -14,6 +14,11 @@
  *    become parse ISSUES, never throws — the renderer draws what exists.
  *    Local-name matching only ("rsm:ID", "ID", "x:ID" are all "ID"), so
  *    ZUGFeRD 1.0 (:10), 2.x / Factur-X (:100) and XRechnung all read.
+ *  - parseUbl: the UBL 2.1 (ISO/IEC 19845) reader — Invoice and CreditNote
+ *    roots in the urn:…ubl:schema:xsd:(Invoice|CreditNote)-2 namespace.
+ *    It maps cbc:/cac: fields onto the SAME ParsedInvoice the CII reader
+ *    produces, so render.ts is shared untouched — that is the architecture
+ *    win. Local names only (UBL 2.0/2.1/2.2/2.3 share the -2 namespace).
  *  - needsNoto / isWinAnsi: pure-WinAnsi content → non-embedded base-14
  *    Helvetica; ANY Devanagari (or ₹) switches those RUNS to the
  *    self-hosted Noto Sans Devanagari (render.ts splits mixed strings).
@@ -21,13 +26,14 @@
  *    with an injected `measure(text, size, bold)` — pagination is decided
  *    here, ink is decided in render.ts.
  *
- * Honest limits (mirrored in config.ts): UBL 2.1 (Invoice/CreditNote root)
- * is detected and rejected with a clear error; notes render as small
- * footer text only; embedded attachments (Factur-X PDF/A-3 parts) are
- * ignored; 80 line items max, 10 MB XML max.
+ * Honest limits (mirrored in config.ts): other XML dialects are detected
+ * and rejected with a clear error; notes render as small footer text only;
+ * embedded attachments (Factur-X PDF/A-3 parts) are ignored; 80 line items
+ * max, 10 MB XML max.
  */
 
 import type {
+  InvoiceDialect,
   InvoiceLabelMap,
   InvoiceLine,
   ParsedInvoice,
@@ -349,14 +355,60 @@ export function looksLikeXml(text: string): boolean {
   return i + 1 < src.length && /[!?a-zA-Z_]/.test(src[i + 1] ?? "");
 }
 
-/** Root-level classification (after a successful parse). */
-export function classifyRoot(root: XmlElem): "xinv.errUbl" | "xinv.errNotCii" | null {
-  if (root.localName === "CrossIndustryInvoice") return null;
-  // UBL 2.1 document roots — honestly unsupported, detected up front.
-  if (root.localName === "Invoice" || root.localName === "CreditNote") {
-    return "xinv.errUbl";
+/* ------------------------------------------------------------------ */
+/* Root classification (CII vs UBL vs everything else)                 */
+/* ------------------------------------------------------------------ */
+
+/** The UBL 2.x document namespaces (UBL 2.0–2.3 all share the -2 URN). */
+const UBL_ROOT_NS = /^urn:oasis:names:specification:ubl:schema:xsd:(Invoice|CreditNote)-2$/;
+
+/** Root children that only a UBL document carries (marker sniff for
+ *  namespace-less hand-rolled files — a bare <Invoice> is not enough). */
+const UBL_MARKERS = new Set([
+  "CustomizationID",
+  "InvoiceTypeCode",
+  "CreditNoteTypeCode",
+  "DocumentCurrencyCode",
+  "BuyerReference",
+  "AccountingSupplierParty",
+  "AccountingCustomerParty",
+  "LegalMonetaryTotal",
+  "InvoiceLine",
+  "CreditNoteLine",
+  "PaymentMeans",
+  "TaxTotal",
+]);
+
+/** All namespace URNs declared on the root (xmlns + xmlns:prefix). */
+function rootNamespaces(root: XmlElem): string[] {
+  const out: string[] = [];
+  for (const [key, value] of Object.entries(root.attrs)) {
+    if (key === "xmlns" || key.startsWith("xmlns:")) out.push(value);
   }
-  return "xinv.errNotCii";
+  return out;
+}
+
+/** True for a UBL Invoice/CreditNote root (namespace-checked, honest). */
+export function isUblRoot(root: XmlElem): boolean {
+  if (root.localName !== "Invoice" && root.localName !== "CreditNote") {
+    return false;
+  }
+  const decls = rootNamespaces(root);
+  if (decls.length > 0) {
+    // Namespaces are declared — UBL only when the UBL 2.x schema URN is
+    // among them. Any OTHER namespace on an <Invoice> root is a foreign
+    // dialect and is refused honestly below.
+    return decls.some((v) => UBL_ROOT_NS.test(v));
+  }
+  // Namespace-less root: accept only a document that carries UBL markers.
+  return root.children.some((c) => UBL_MARKERS.has(c.localName));
+}
+
+/** Root-level classification (after a successful parse; null = unsupported). */
+export function classifyRoot(root: XmlElem): InvoiceDialect | null {
+  if (root.localName === "CrossIndustryInvoice") return "cii";
+  if (isUblRoot(root)) return "ubl";
+  return null;
 }
 
 /** Full classification for the worker's error paths (null = good to go). */
@@ -365,7 +417,12 @@ export function classifyXmlError(text: string, parsed: XmlParseResult): string |
   if (!parsed.ok) {
     return parsed.reason === "not-xml" ? "xinv.errNotXml" : "xinv.errMalformed";
   }
-  return classifyRoot(parsed.root);
+  return classifyRoot(parsed.root) === null ? "xinv.errNotCii" : null;
+}
+
+/** Parse a classified root (CII or UBL) into the shared model. */
+export function parseInvoice(root: XmlElem): ParsedInvoice {
+  return classifyRoot(root) === "ubl" ? parseUbl(root) : parseCii(root);
 }
 
 /* ------------------------------------------------------------------ */
@@ -653,8 +710,26 @@ export function formatCiiDate(raw: string, format?: string): string {
   return digits;
 }
 
+/**
+ * UBL date (xs:date, "2026-03-15", optional trailing timezone like
+ * "Z" or "+05:30") → "15 Mar 2026". Anything else is returned as-is —
+ * the same honest rule as formatCiiDate.
+ */
+export function formatUblDate(raw: string): string {
+  const trimmed = raw.trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(trimmed);
+  if (!m) return trimmed;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (y >= 1900 && y <= 2100 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+    return d + " " + (MONTHS[mo - 1] ?? "") + " " + y;
+  }
+  return trimmed;
+}
+
 /* ------------------------------------------------------------------ */
-/* CII traversal helpers                                                */
+/* Traversal helpers (shared by the CII + UBL readers)                 */
 /* ------------------------------------------------------------------ */
 
 function child(el: XmlElem | null, name: string): XmlElem | null {
@@ -880,6 +955,199 @@ export function invoiceIsEmpty(inv: ParsedInvoice): boolean {
     inv.lines.length === 0 &&
     inv.totals.grandTotal === null
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* parseUbl — the UBL 2.1 reader (Invoice + CreditNote roots)           */
+/*                                                                     */
+/* Local-name traversal (the CII recipe: "cbc:ID", "ID", "x:ID" all      */
+/* resolve to "ID"), defensive on every field — missing nodes become    */
+/* parse ISSUES, never throws. The output is the SAME ParsedInvoice     */
+/* parseCii produces, so render.ts + the surface chips are shared.      */
+/* ------------------------------------------------------------------ */
+
+function parseUblAddress(el: XmlElem | null): PartyAddress {
+  return {
+    line1: childText(el, "StreetName", 120),
+    line2: childText(el, "AdditionalStreetName", 120),
+    line3: childText(child(el, "AddressLine"), "Line", 120),
+    city: childText(el, "CityName", 80),
+    postcode: childText(el, "PostalZone", 20),
+    country: childText(child(el, "Country"), "IdentificationCode", 2),
+    subdivision: childText(el, "CountrySubentity", 60),
+  };
+}
+
+function parseUblParty(el: XmlElem | null): PartyInfo {
+  const party = child(el, "Party") ?? el;
+  const legal = child(party, "PartyLegalEntity");
+  const partyName = childText(child(party, "PartyName"), "Name", 200);
+  const regName = childText(legal, "RegistrationName", 200);
+  const contact = child(party, "Contact");
+  const taxIds = childAll(party, "PartyTaxScheme")
+    .map((s) => childText(s, "CompanyID", 40))
+    .filter(Boolean)
+    .slice(0, MAX_TAX_IDS);
+  return {
+    // PartyName/Name first, the registered name as the honest fallback.
+    name: partyName !== "" ? partyName : regName,
+    // The legal name rides the CII "trading name" slot (second line).
+    tradingName:
+      partyName !== "" && regName !== "" && regName !== partyName ? regName : "",
+    id: childText(legal, "CompanyID", 40),
+    taxIds,
+    phone: childText(contact, "Telephone", 40),
+    email: childText(contact, "ElectronicMail", 120),
+    uri: childText(party, "WebsiteURI", 160) || childText(party, "EndpointID", 160),
+    address: parseUblAddress(child(party, "PostalAddress")),
+  };
+}
+
+function parseUblLine(
+  el: XmlElem | null,
+  issues: ParseIssue[],
+  quantityName: string
+): InvoiceLine {
+  const item = child(el, "Item");
+  const taxCat = child(child(child(el, "TaxTotal"), "TaxSubtotal"), "TaxCategory");
+  const qtyEl = child(el, quantityName);
+  const amount = num(child(el, "LineExtensionAmount"));
+  if (amount === null) issues.push({ code: "missLineAmount" });
+  return {
+    lineId: childText(el, "ID", 12),
+    name: childText(item, "Name", 200),
+    description: childText(item, "Description", 500),
+    sellerAssignedId: childText(child(item, "SellersItemIdentification"), "ID", 40),
+    quantity: num(qtyEl),
+    unitCode: sanitizeText(attrValue(qtyEl, "unitCode"), 8).toUpperCase(),
+    netAmount: amount,
+    unitPrice: num(child(child(el, "Price"), "PriceAmount")),
+    taxRate: num(child(taxCat, "Percent")),
+    taxCategory: childText(taxCat, "ID", 8),
+  };
+}
+
+function parseUblTaxSubtotal(el: XmlElem | null): TaxSummary {
+  const cat = child(el, "TaxCategory");
+  return {
+    rate: num(child(cat, "Percent")),
+    category: childText(cat, "ID", 8),
+    basis: num(child(el, "TaxableAmount")),
+    amount: num(child(el, "TaxAmount")),
+  };
+}
+
+/**
+ * Read a UBL 2.1 Invoice (or CreditNote) tree into the shared model.
+ * The header TaxTotal with subtotals wins (UBL allows one per currency —
+ * the document-currency one carries the breakdown); missing nodes become
+ * issues exactly like parseCii, so the renderer draws what exists.
+ */
+export function parseUbl(root: XmlElem): ParsedInvoice {
+  const issues: ParseIssue[] = [];
+  const isCredit = root.localName === "CreditNote";
+  const lineName = isCredit ? "CreditNoteLine" : "InvoiceLine";
+  const quantityName = isCredit ? "CreditedQuantity" : "InvoicedQuantity";
+  const means = child(root, "PaymentMeans");
+  const account = child(means, "PayeeFinancialAccount");
+  const branch = child(account, "FinancialInstitutionBranch");
+
+  const meta: ParsedInvoice["meta"] = {
+    number: childText(root, "ID", 40),
+    typeCode: childText(root, isCredit ? "CreditNoteTypeCode" : "InvoiceTypeCode", 6),
+    issueDate: formatUblDate(childText(root, "IssueDate", 40)),
+    dueDate: formatUblDate(
+      childText(root, "DueDate", 40) || childText(means, "PaymentDueDate", 40)
+    ),
+    deliveryDate: formatUblDate(childText(child(root, "Delivery"), "ActualDeliveryDate", 40)),
+    currency: childText(root, "DocumentCurrencyCode", 8).toUpperCase(),
+    buyerReference: childText(root, "BuyerReference", 80),
+    notes: childAll(root, "Note")
+      .map((note) => textOf(note, 600))
+      .filter(Boolean)
+      .slice(0, MAX_NOTES),
+  };
+
+  if (meta.number === "") issues.push({ code: "missNumber" });
+  if (meta.issueDate === "") issues.push({ code: "missDate" });
+  if (meta.typeCode === "") issues.push({ code: "missType" });
+  if (meta.currency === "") issues.push({ code: "missCurrency" });
+
+  const seller = parseUblParty(child(root, "AccountingSupplierParty"));
+  const buyer = parseUblParty(child(root, "AccountingCustomerParty"));
+  if (seller.name === "" && seller.tradingName === "") issues.push({ code: "missSellerName" });
+  if (!hasAddress(seller.address)) issues.push({ code: "missSellerAddr" });
+  if (buyer.name === "") issues.push({ code: "missBuyerName" });
+  if (!hasAddress(buyer.address)) issues.push({ code: "missBuyerAddr" });
+
+  const allLines = childAll(root, lineName);
+  const totalLineCount = allLines.length;
+  const capped = allLines.slice(0, MAX_LINES);
+  const lines = capped.map((l) => parseUblLine(l, issues, quantityName));
+  if (totalLineCount === 0) issues.push({ code: "missLines" });
+  const truncated = totalLineCount > MAX_LINES;
+  if (truncated) issues.push({ code: "lineCap" });
+
+  // Header taxes: the TaxTotal that carries subtotals is the breakdown.
+  const taxTotals = childAll(root, "TaxTotal");
+  const breakdown =
+    taxTotals.find((t) => child(t, "TaxSubtotal") !== null) ?? taxTotals[0] ?? null;
+  const taxes = breakdown
+    ? childAll(breakdown, "TaxSubtotal")
+        .slice(0, MAX_TAX_RATES)
+        .map((s) => parseUblTaxSubtotal(s))
+    : [];
+  if (taxes.length === 0) issues.push({ code: "missTax" });
+
+  const totals = parseUblTotals(child(root, "LegalMonetaryTotal"));
+  if (totals.grandTotal === null && totals.lineTotal === null) {
+    issues.push({ code: "missTotals" });
+  }
+  // The header tax total (cac:TaxTotal/cbc:TaxAmount) fills the "Total tax"
+  // row when the monetary summary did not already provide it.
+  if (totals.taxTotal === null && breakdown !== null) {
+    totals.taxTotal = num(child(breakdown, "TaxAmount"));
+  }
+
+  const payment: ParsedInvoice["payment"] = {
+    reference: childText(means, "InstructionID", 80),
+    meansCode: childText(means, "PaymentMeansCode", 6),
+    iban: childText(account, "ID", 40),
+    accountName: childText(account, "Name", 120),
+    bic: childText(branch, "ID", 20),
+  };
+  if (payment.reference === "" && payment.iban === "") {
+    issues.push({ code: "missPayment" });
+  }
+
+  return {
+    meta,
+    seller,
+    buyer,
+    lines,
+    taxes,
+    totals,
+    payment,
+    issues,
+    truncated,
+    totalLineCount,
+  };
+}
+
+function parseUblTotals(el: XmlElem | null): ParsedInvoice["totals"] {
+  const n2 = (name: string): number | null => num(child(el, name));
+  return {
+    lineTotal: n2("LineExtensionAmount"),
+    chargeTotal: n2("ChargeTotalAmount"),
+    allowanceTotal: n2("AllowanceTotalAmount"),
+    taxBasisTotal: n2("TaxExclusiveAmount"),
+    // LegalMonetaryTotal carries no tax amount — the header cac:TaxTotal
+    // fills this slot in parseUbl.
+    taxTotal: null,
+    grandTotal: n2("TaxInclusiveAmount"),
+    prepaid: n2("PrepaidAmount"),
+    duePayable: n2("PayableAmount"),
+  };
 }
 
 /* ------------------------------------------------------------------ */

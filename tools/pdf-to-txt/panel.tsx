@@ -19,6 +19,7 @@ export function PdfToTxtPanel({ files }: ToolPanelProps) {
   const [preview, setPreview] = useState<
     { file: File; text: string; truncated: boolean } | null
   >(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!file) return;
@@ -26,11 +27,16 @@ export function PdfToTxtPanel({ files }: ToolPanelProps) {
     void getPdfPageTextPreview(file, 240)
       .then((text) => {
         if (!cancelled) {
+          setFailed(false);
           setPreview({ file, text, truncated: text.length >= 240 });
         }
       })
       .catch(() => {
-        if (!cancelled) setPreview(null);
+        // the probe itself failed — an honest hint, never a stuck spinner
+        if (!cancelled) {
+          setFailed(true);
+          setPreview(null);
+        }
       });
     return () => {
       cancelled = true;
@@ -64,9 +70,15 @@ export function PdfToTxtPanel({ files }: ToolPanelProps) {
       </div>
 
       {current === null ? (
-        <p className="px-3 py-3 text-xs text-muted-foreground">
-          {t("pdftxt.previewLoading")}
-        </p>
+        failed ? (
+          <p className="px-3 py-3 text-xs text-muted-foreground">
+            {t("pdftxt.previewFailed")}
+          </p>
+        ) : (
+          <p className="px-3 py-3 text-xs text-muted-foreground">
+            {t("pdftxt.previewLoading")}
+          </p>
+        )
       ) : current.text.length === 0 ? (
         <div className="flex items-start gap-2.5 px-3 py-3">
           <TriangleAlert

@@ -227,12 +227,28 @@ async function main(): Promise<void> {
     "previewSize",
     "previewNote",
     "previewLoading",
+    "previewFailed",
   ]) {
     check(
       `pdfimg.${key} shared in both catalogs`,
       typeof en.pdfimg?.[key] === "string" && typeof hi.pdfimg?.[key] === "string"
     );
   }
+
+  // AUD-B fix: the shared preview panel must catch probe failures — a
+  // rejected getPdfPagePixelSize may never leave the loading state up.
+  const panelSrc = readFileSync("tools/pdf-to-images/panel.tsx", "utf8");
+  check(
+    "panel: failure state set in the catch + honest hint rendered",
+    /\.catch\(\(\) =>\s*\{[\s\S]*?setFailed\(true\)/.test(panelSrc) &&
+      panelSrc.includes("pdfimg.previewFailed")
+  );
+  check(
+    "panel: previewLoading only shown while NOT failed",
+    /failed\s*\?\s*[\s\S]*?previewFailed[\s\S]*?:\s*[\s\S]*?previewLoading/.test(
+      panelSrc
+    )
+  );
 
   /* ---------------- 5. TIFF integration (worker call-shape) ---------------- */
   console.log("── 5. TIFF integration — multipage=true ───────────");

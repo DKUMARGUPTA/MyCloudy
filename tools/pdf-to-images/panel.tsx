@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Ruler } from "lucide-react";
+import { Ruler, TriangleAlert } from "lucide-react";
 
 import { useI18n } from "@/components/providers/locale-provider";
 import type { ToolPanelProps } from "@/lib/tools/panel-types";
@@ -11,15 +11,21 @@ import { getPdfPagePixelSize } from "@/lib/pdf/thumbnails";
  * PDF → images preview panel (PRD §8.6): shows what page 1 will look like
  * as pixels at the chosen DPI — before spending time on a full render.
  * Viewport-only math (no canvas render) + the real first-page thumbnail.
+ *
+ * Shared by pdf-to-jpg / png / webp / tiff (panels.tsx). When the size
+ * probe fails (unreadable page), the panel shows a small honest hint —
+ * never a stuck "reading" spinner (AUD-B finding).
  */
 export function PdfToImagesPanel({ files, values }: ToolPanelProps) {
   const { t } = useI18n();
   const file = files.length > 0 ? files[0].file : null;
 
+  // null while reading; false once the probe failed (honest hint state).
   const [pixelSize, setPixelSize] = useState<{
     w: number;
     h: number;
   } | null>(null);
+  const [failed, setFailed] = useState(false);
 
   const dpi = Number(values.dpi ?? 150);
 
@@ -28,10 +34,17 @@ export function PdfToImagesPanel({ files, values }: ToolPanelProps) {
     let cancelled = false;
     void getPdfPagePixelSize(file, dpi / 72)
       .then((size) => {
-        if (!cancelled) setPixelSize({ w: size.width, h: size.height });
+        if (!cancelled) {
+          setFailed(false);
+          setPixelSize({ w: size.width, h: size.height });
+        }
       })
       .catch(() => {
-        if (!cancelled) setPixelSize(null);
+        // the probe itself failed — say so, never keep "loading" up
+        if (!cancelled) {
+          setFailed(true);
+          setPixelSize(null);
+        }
       });
     return () => {
       cancelled = true;
@@ -42,10 +55,17 @@ export function PdfToImagesPanel({ files, values }: ToolPanelProps) {
 
   return (
     <div className="flex items-start gap-2.5 rounded-card border border-border bg-muted/40 p-3">
-      <Ruler
-        className="mt-0.5 size-4 shrink-0 text-primary"
-        aria-hidden="true"
-      />
+      {pixelSize ? (
+        <Ruler
+          className="mt-0.5 size-4 shrink-0 text-primary"
+          aria-hidden="true"
+        />
+      ) : (
+        <TriangleAlert
+          className="mt-0.5 size-4 shrink-0 text-amber-500"
+          aria-hidden="true"
+        />
+      )}
       <div className="min-w-0 text-xs leading-relaxed text-muted-foreground">
         {pixelSize ? (
           <>
@@ -63,6 +83,8 @@ export function PdfToImagesPanel({ files, values }: ToolPanelProps) {
               {t("pdfimg.previewNote")}
             </p>
           </>
+        ) : failed ? (
+          <p>{t("pdfimg.previewFailed")}</p>
         ) : (
           <p>{t("pdfimg.previewLoading")}</p>
         )}

@@ -22,6 +22,10 @@
  *     rows (the exact predicate that hides the tab); a 4-level tree must
  *     stop walking at depth 3 (the surface's nesting cap); an untitled
  *     bookmark gets the numbered fallback title.
+ *  3. Presentation mode wiring (R2-c): the button + native fullscreen
+ *     with the fixed-overlay fallback, the auto-hiding control strip,
+ *     click/arrow advance, the keyboard override (stopPropagation) and
+ *     the i18n keys in BOTH catalogs.
  *
  * Run: bun scripts/smoke-view-outline.ts
  */
@@ -297,6 +301,85 @@ console.log("── 2. REAL pdf.js outline resolution ────────�
     bogusRows.length === 2 &&
       bogusRows.every((row) => row.page >= 1 && row.page <= 5),
     bogusRows
+  );
+}
+
+/* ================================================================== */
+console.log("── 3. Presentation mode wiring (R2-c) ─────────────────");
+/* ================================================================== */
+{
+  const surface = readFileSync("tools/view-pdf/surface.tsx", "utf8");
+  const en = JSON.parse(readFileSync("src/i18n/en.json", "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const hi = JSON.parse(readFileSync("src/i18n/hi.json", "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const leaves = (node: unknown, prefix: string): string[] => {
+    if (typeof node !== "object" || node === null) return [prefix];
+    return Object.entries(node).flatMap(([key, value]) =>
+      leaves(value, prefix === "" ? key : `${prefix}.${key}`)
+    );
+  };
+  const enLeaves = new Set(leaves(en, ""));
+  const hiLeaves = new Set(leaves(hi, ""));
+
+  check(
+    "presentation button renders (Presentation icon + enterPresentation)",
+    surface.includes("<Presentation") && surface.includes("enterPresentation")
+  );
+  check(
+    "native fullscreen requested, fixed-overlay fallback when unavailable",
+    surface.includes("document.fullscreenEnabled") &&
+      surface.includes("requestFullscreen") &&
+      surface.includes("fixed inset-0 z-50")
+  );
+  check(
+    "native Esc exit handled via the fullscreenchange event",
+    surface.includes('addEventListener("fullscreenchange"') &&
+      surface.includes("document.fullscreenElement")
+  );
+  check(
+    "one fitted page at a time (dedicated stage + presScale fit math)",
+    surface.includes("key=\"pres-page\"") && surface.includes("PRES_STAGE_PADDING")
+  );
+  check(
+    "exit lands on the presented page only AFTER the fullscreen layout reverts (deferred presLandingRef + retries, never a scroll inside exitPresentation)",
+    surface.includes("presLandingRef.current = target") &&
+      surface.includes("presLandingRef.current = null") &&
+      !surface.includes("scrollToPage(target, false)")
+  );
+  check(
+    "controls auto-hide after ~2.5s; focus-within keeps them (a11y)",
+    surface.includes("PRES_CONTROLS_HIDE_MS = 2500") &&
+      surface.includes("focus-within:opacity-100")
+  );
+  check(
+    "click-advance with a text-selection guard",
+    surface.includes("handlePresClick") && surface.includes("getSelection()")
+  );
+  check(
+    "presentation keys override the viewer shortcuts (stopPropagation) + focus trap",
+    surface.includes("event.stopPropagation();") &&
+      surface.includes("querySelectorAll<HTMLElement>")
+  );
+  check(
+    "viewer chrome goes inert while presenting, restored on exit",
+    surface.includes("inert={presenting || undefined}")
+  );
+  check(
+    "i18n: view.present/presExit/presPageOf/presStage/presHint in BOTH catalogs",
+    ["view.present", "view.presExit", "view.presPageOf", "view.presStage", "view.presHint"].every(
+      (key) => enLeaves.has(key) && hiLeaves.has(key)
+    )
+  );
+  check(
+    "catalog leaf parity still holds after the new keys",
+    enLeaves.size === hiLeaves.size &&
+      [...enLeaves].every((key) => hiLeaves.has(key)),
+    { en: enLeaves.size, hi: hiLeaves.size }
   );
 }
 

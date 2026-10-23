@@ -6,10 +6,11 @@
  * sums, bounds, 400-point overlap sampling), pagination (exact fill,
  * partial last page, single photo, empty), the CollageStyle sanitizer
  * (garbage enums/hex/title/captions), the wire option parser (missing,
- * corrupt JSON, invalid entries, caption alignment, export format),
- * page geometry (A4/Letter/square/4×6 + landscape swaps + 2px/pt), the
- * gap-insetting cell rect math, cover-crop/contain fits, background
- * presets + luminance ink, caption defaults + localized output names.
+ * corrupt JSON, invalid entries, caption alignment, export format,
+ * output quality preset), page geometry (A4/Letter/square/4×6 +
+ * landscape swaps + 2px/pt), the gap-insetting cell rect math,
+ * cover-crop/contain fits, background presets + luminance ink, caption
+ * defaults + localized output names.
  *
  * Part 2 (worker, REAL module): bun runs the actual worker with a
  * self/postMessage shim PLUS a sharp-backed OffscreenCanvas /
@@ -21,7 +22,10 @@
  * %PDF-/%%EOF magic, page count matches computePages, page dimensions
  * match the format/orientation, embedded JPEG XObjects present, plus
  * a jpg-format run returning real FFD8 bytes and the honest error
- * paths (no photos, SVG rejection).
+ * paths (no photos, SVG rejection). The R2-c quality section proves the
+ * chosen preset's quantization value reaches the REAL encoder (every
+ * convertToBlob call is recorded) and orders the output size honestly,
+ * with the shipped default (0.92) pinned unchanged.
  *
  * Run: bun scripts/smoke-create-photo-collage.ts
  */
@@ -32,6 +36,7 @@ import {
   BACKGROUND_COLORS,
   DEFAULT_STYLE,
   GAP_PT,
+  JPEG_QUALITY,
   LAYOUTS,
   MARGIN_PT,
   MAX_CAPTION_CHARS,
@@ -236,6 +241,34 @@ function part1(): void {
   );
   assertEqual(invalid.photos, [[0, 90]], "parseCollageOption: out-of-range + bad rotation dropped");
   assert(invalid.exportFormat === "pdf" && invalid.locale === "en", "parseCollageOption: bad format/locale → defaults");
+
+  /* ---- output quality presets (R2-c) ---- */
+  assertEqual(
+    JPEG_QUALITY,
+    { high: 0.92, balanced: 0.8, light: 0.65 },
+    "JPEG_QUALITY: preset mapping (high = the shipped default)"
+  );
+  assert(
+    parseCollageOption(undefined, 2).quality === "high",
+    "parseCollageOption: missing quality → high (default unchanged)"
+  );
+  assert(
+    parseCollageOption(JSON.stringify({ photos: [[0, 0]], quality: "ultra" }), 1).quality === "high",
+    "parseCollageOption: unknown quality → high"
+  );
+  assert(
+    parseCollageOption(
+      serializeCollage({
+        photos: [[0, 0]],
+        style: { ...DEFAULT_STYLE },
+        exportFormat: "jpg",
+        quality: "light",
+        locale: "en",
+      }),
+      1
+    ).quality === "light",
+    "parseCollageOption: valid quality kept"
+  );
 
   /* ---- page geometry ---- */
   const a4p = pagePtSize({ ...DEFAULT_STYLE });
@@ -684,6 +717,9 @@ class ShimCanvas {
   }
 
   async convertToBlob(options: { type: string; quality?: number }): Promise<Blob> {
+    // R2-c: every export encode is recorded — the quality/quantization
+    // value the worker hands the REAL encoder is the regression signal.
+    blobEncodes.push({ type: options.type, quality: options.quality ?? null });
     const raw = await this._ensureRaw();
     const pipeline = sharp(raw, {
       raw: { width: this.width, height: this.height, channels: 4 },
@@ -734,6 +770,9 @@ const inbox: Posted[] = [];
 /** Every bitmap the worker decoded this run — close() flags are the
  *  memory-guard regression signal (full-res sources must be released). */
 const createdBitmaps: ShimBitmap[] = [];
+/** Every export encode this run (type + the quality/quantization value the
+ *  worker handed the encoder — null = lossless PNG). The R2-c signal. */
+const blobEncodes: { type: string; quality: number | null }[] = [];
 const workerGlobal = globalThis as unknown as {
   postMessage: (msg: unknown) => void;
   onmessage: ((event: { data: unknown }) => void) | null;
@@ -819,6 +858,7 @@ async function runWorker(
 ): Promise<RunOutcome> {
   inbox.length = 0;
   createdBitmaps.length = 0;
+  blobEncodes.length = 0;
   workerGlobal.onmessage!({
     data: { type: "run", runId: "smoke", files, options, assets: [] },
   });
@@ -1085,6 +1125,124 @@ async function part2(): Promise<void> {
       stats.channels[2].mean > stats.channels[0].mean + 40,
     "run 10: downscaled photo keeps its colour (blue-dominant fixture)",
     stats.channels.map((c) => Math.round(c.mean))
+  );
+
+  /* ---- 11. output quality reaches the REAL encoder (R2-c) ---- */
+  // High-entropy fixture: gaussian noise compresses very differently at
+  // different JPEG qualities, so the preset must visibly order the bytes.
+  const noiseBytes = await sharp({
+    create: {
+      width: 900,
+      height: 640,
+      channels: 3,
+      // Background is required by the create types; with noise set it is
+      // the noise distribution that actually fills the pixels.
+      background: { r: 128, g: 128, b: 128 },
+      noise: { type: "gaussian", mean: 128, sigma: 70 },
+    },
+  })
+    .png()
+    .toBuffer();
+  const noiseFile = new FakeFile("noise.png", new Uint8Array(noiseBytes));
+
+  // Default (no quality in the option) — the shipped 0.92, unchanged.
+  const runQDefault = await runWorker([noiseFile], {
+    collage: serializeCollage({
+      photos: [[0, 0]],
+      style: { ...DEFAULT_STYLE, layout: "duo-stack" },
+      exportFormat: "jpg",
+      locale: "en",
+    }),
+  });
+  assert(runQDefault.error === null, "quality run default: no error", runQDefault.error);
+  assertEqual(blobEncodes.length, 1, "quality run default: exactly one export encode");
+  assertEqual(blobEncodes[0].type, "image/jpeg", "quality run default: JPEG encode");
+  assertEqual(blobEncodes[0].quality, 0.92, "quality default: 0.92 reaches the encoder (regression pin)");
+
+  // Each preset's value reaches the encoder.
+  const encodeQualityFor = async (
+    quality: "high" | "balanced" | "light"
+  ): Promise<number | null> => {
+    const run = await runWorker([noiseFile], {
+      collage: serializeCollage({
+        photos: [[0, 0]],
+        style: { ...DEFAULT_STYLE, layout: "duo-stack" },
+        exportFormat: "jpg",
+        quality,
+        locale: "en",
+      }),
+    });
+    if (run.error !== null) throw new Error(`quality run ${quality} failed`);
+    return blobEncodes[0]?.quality ?? null;
+  };
+  assertEqual(await encodeQualityFor("high"), 0.92, "quality high: 0.92 reaches the encoder");
+  assertEqual(await encodeQualityFor("balanced"), 0.8, "quality balanced: 0.8 reaches the encoder");
+  assertEqual(await encodeQualityFor("light"), 0.65, "quality light: 0.65 reaches the encoder");
+
+  // PDF path: every page raster encodes at the preset value.
+  const runQPdf = await runWorker(fixtures.slice(0, 5), {
+    collage: serializeCollage({
+      photos: fixtures.slice(0, 5).map((_, index): [number, number] => [index, 0]),
+      style: { ...DEFAULT_STYLE, layout: "quad" },
+      exportFormat: "pdf",
+      quality: "light",
+      locale: "en",
+    }),
+  });
+  assert(runQPdf.error === null, "quality pdf run: no error", runQPdf.error);
+  assertEqual(blobEncodes.length, 2, "quality pdf run: one encode per page");
+  assert(
+    blobEncodes.every((call) => call.type === "image/jpeg" && call.quality === 0.65),
+    "quality pdf run: every page raster encodes JPEG 0.65",
+    blobEncodes
+  );
+  const pdfQ = await bytesOf(runQPdf);
+  const reopenedQ = await PDFDocument.load(pdfQ);
+  assertEqual(reopenedQ.getPageCount(), 2, "quality pdf run: 5 photos quad = 2 pages");
+
+  // PNG stays lossless — the preset never switches its encode.
+  const runQPng = await runWorker([noiseFile], {
+    collage: serializeCollage({
+      photos: [[0, 0]],
+      style: { ...DEFAULT_STYLE, layout: "duo-stack" },
+      exportFormat: "png",
+      quality: "light",
+      locale: "en",
+    }),
+  });
+  assert(runQPng.error === null, "quality png run: no error", runQPng.error);
+  assertEqual(blobEncodes.length, 1, "quality png run: one export encode");
+  assertEqual(blobEncodes[0].type, "image/png", "quality png run: PNG encode kept");
+  assertEqual(blobEncodes[0].quality, null, "quality png run: lossless — no quality value passed");
+
+  // Same fixture, three presets → the JPEG bytes order honestly
+  // (quantization provably reaches the encoder output).
+  const sizeFor = async (
+    quality: "high" | "balanced" | "light"
+  ): Promise<number> => {
+    const run = await runWorker([noiseFile], {
+      collage: serializeCollage({
+        photos: [[0, 0]],
+        style: { ...DEFAULT_STYLE, layout: "duo-stack" },
+        exportFormat: "jpg",
+        quality,
+        locale: "en",
+      }),
+    });
+    return (await bytesOf(run)).length;
+  };
+  const highBytes = await sizeFor("high");
+  const balancedBytes = await sizeFor("balanced");
+  const lightBytes = await sizeFor("light");
+  assert(
+    highBytes > balancedBytes && balancedBytes > lightBytes,
+    "quality presets order the JPEG size honestly (high > balanced > light)",
+    { highBytes, balancedBytes, lightBytes }
+  );
+  assert(
+    lightBytes < highBytes * 0.8,
+    "quality light: meaningfully smaller than high on a photo-heavy page",
+    { highBytes, lightBytes }
   );
 }
 

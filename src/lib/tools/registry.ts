@@ -953,10 +953,10 @@ export const ALL_TOOLS: ToolDef[] = [
     accepts: "text",
     name: { en: "XML e-invoice to PDF", hi: "XML से इनवॉइस पीडीएफ़" },
     description: {
-      en: "CII (Factur-X / ZUGFeRD) XML → a clean, readable invoice PDF — rendered entirely on your device.",
-      hi: "CII (Factur-X / ZUGFeRD) XML → साफ़, पढ़ने योग्य इनवॉइस PDF — पूरी तरह आपके डिवाइस पर बनती है।",
+      en: "CII (Factur-X / ZUGFeRD) and UBL 2.1 e-invoice XML → a clean, readable invoice PDF — rendered entirely on your device.",
+      hi: "CII (Factur-X / ZUGFeRD) और UBL 2.1 ई-इनवॉइस XML → साफ़, पढ़ने योग्य इनवॉइस PDF — पूरी तरह आपके डिवाइस पर बनती है।",
     },
-    tags: { en: ["xml invoice", "cii", "factur-x"], hi: ["xml", "इनवॉइस"] },
+    tags: { en: ["xml invoice", "cii", "factur-x", "ubl"], hi: ["xml", "इनवॉइस"] },
     enabled: true,
   }),
   def({

@@ -201,6 +201,7 @@ export type CollageGap = "none" | "thin" | "cozy";
 export type CollageMargin = "none" | "thin" | "cozy";
 export type CollageFit = "cover" | "contain";
 export type ExportFormat = "pdf" | "jpg" | "png";
+export type CollageQuality = "high" | "balanced" | "light";
 
 /** Full collage recipe (the wire format lives in CollageOption below). */
 export interface CollageStyle {
@@ -225,6 +226,19 @@ export const MAX_PHOTOS = 50;
 export const MAX_CAPTION_CHARS = 60;
 export const MAX_TITLE_CHARS = 120;
 export const MAX_CAPTIONS = 200;
+
+/**
+ * JPEG encode quality per output preset. "high" is the long-standing
+ * default (the exact 0.92 the tool shipped with). The collage raster is
+ * always composited on an opaque page background first (render.ts fills
+ * the full page), so JPEG is alpha-safe for EVERY template — no preset
+ * ever needs a transparent encode.
+ */
+export const JPEG_QUALITY: Record<CollageQuality, number> = {
+  high: 0.92,
+  balanced: 0.8,
+  light: 0.65,
+};
 
 export const DEFAULT_STYLE: CollageStyle = {
   format: "a4",
@@ -310,6 +324,10 @@ export interface CollageOption {
   style: CollageStyle;
   /** What the Run CTA produces (jpg/png render page 1). */
   exportFormat: ExportFormat;
+  /** JPEG encode quality for the PDF page rasters + JPG export.
+ *  Optional so older serialized options keep parsing; "high" is the
+ *  default. PNG export is lossless and ignores it. */
+  quality?: CollageQuality;
   /** UI locale — drives the localized output file name (workers have none). */
   locale: "en" | "hi";
 }
@@ -336,6 +354,7 @@ export function parseCollageOption(
       photos: Array.from({ length: fileCount }, (_, source): CollagePhoto => [source, 0]),
       style: { ...DEFAULT_STYLE, captions: [] },
       exportFormat: "pdf",
+      quality: "high",
       locale: "en",
     };
   }
@@ -374,11 +393,16 @@ export function parseCollageOption(
   }
   const style = sanitizeStyle(raw.style);
   const exportFormat = pickString(raw.exportFormat, EXPORT_FORMATS, "pdf");
+  const quality = pickString(
+    raw.quality,
+    ["high", "balanced", "light"] as const,
+    "high"
+  );
   const locale = pickString(raw.locale, ["en", "hi"] as const, "en");
   // Keep captions aligned with the photo count (pad/trim defensively).
   const captions = style.captions.slice(0, photos.length);
   while (captions.length < photos.length) captions.push("");
-  return { photos, style: { ...style, captions }, exportFormat, locale };
+  return { photos, style: { ...style, captions }, exportFormat, quality, locale };
 }
 
 /* ---------------------------- pixel math ---------------------------- */

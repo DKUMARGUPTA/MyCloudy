@@ -8,7 +8,7 @@
  * ESM-only mdast-util-from-markdown/micromark graph throws a SyntaxError
  * with no error message and the worker dies silently (found in P4.1 QA).
  * The parser therefore ships precompiled as a self-hosted classic IIFE
- * (the same separate-asset pattern as public/heic) and the worker loads it
+ * (the same separate-asset pattern as public/libheif) and the worker loads it
  * at runtime. Never import this file from app code — it exists only for
  * `bunx esbuild` (see scripts/build-md-parser.sh).
  */

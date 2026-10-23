@@ -24,8 +24,10 @@ import {
   Loader2,
   Lock,
   Maximize2,
+  Minimize2,
   Moon,
   PanelLeft,
+  Presentation,
   Printer,
   RotateCw,
   Rows3,
@@ -57,9 +59,11 @@ import { cn } from "@/lib/utils";
  * highlight boxes, thumbnails + outline sidebar (the outline tab is
  * HIDDEN entirely when the document has no bookmarks — no empty-state
  * noise), zoom 25-400% with fit-width / fit-page, single-page and
- * two-page spread, 90° view rotation and a dark reading mode. Printing
- * and downloading act on the ORIGINAL file bytes; the password prompt
- * for encrypted files is resolved entirely in the browser.
+ * two-page spread, 90° view rotation, a dark reading mode and a
+ * presentation mode (one fitted page at a time, fullscreen with a
+ * fixed-overlay fallback, arrow/click advance, auto-hiding controls).
+ * Printing and downloading act on the ORIGINAL file bytes; the password
+ * prompt for encrypted files is resolved entirely in the browser.
  */
 
 /* ------------------------------ constants ------------------------------ */
@@ -74,6 +78,10 @@ const THUMB_MAX_DIM = 108;
 /** Page paddings inside the scroll column (per side). */
 const VIEWPORT_PADDING = 24;
 const SPREAD_GAP = 12;
+/** Presentation controls hide after this much mouse silence (ms). */
+const PRES_CONTROLS_HIDE_MS = 2500;
+/** Breathing room around the fitted page inside the presentation stage. */
+const PRES_STAGE_PADDING = 28;
 
 type LayoutMode = "continuous" | "single" | "spread";
 type ZoomMode = "fit-width" | "fit-page" | number;
@@ -578,6 +586,16 @@ export function ViewSurface({
   );
   const [searchedPages, setSearchedPages] = useState(0);
 
+  /* ---- presentation mode state ---- */
+  const [presenting, setPresenting] = useState(false);
+  const [presPage, setPresPage] = useState(1);
+  const [presControls, setPresControls] = useState(true);
+  const [presSize, setPresSize] = useState({ w: 0, h: 0 });
+  const presStageRef = useRef<HTMLDivElement | null>(null);
+  const presHideTimer = useRef<number | null>(null);
+  /** Page to land the viewer on once the stage unmounts (set by exit). */
+  const presLandingRef = useRef<number | null>(null);
+
   /* ---- refs ---- */
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pageInputRef = useRef<HTMLInputElement | null>(null);
@@ -604,6 +622,7 @@ export function ViewSurface({
     setCurrentPage(1);
     setSearchResult(null);
     setActiveMatch(0);
+    setPresenting(false);
   }
 
   /* ---- open the document (password aware, retry on password) ---- */
@@ -886,6 +905,272 @@ export function ViewSurface({
     [goToPage, visibleMatches]
   );
 
+  /* ---- presentation mode (fullscreen one-page stage) ----
+     The stage is a fixed overlay covering the viewport; when the
+     Fullscreen API is available the stage itself goes fullscreen (same
+     UI either way), otherwise it stays a plain fixed overlay — iPhone
+     Safari and locked-down iframes get the identical experience. The
+     underlying viewer chrome stays mounted but `inert`, so exiting
+     restores it exactly as it was. */
+
+  const armPresHide = useCallback((): void => {
+    if (presHideTimer.current !== null) window.clearTimeout(presHideTimer.current);
+    presHideTimer.current = window.setTimeout(() => {
+      setPresControls(false);
+    }, PRES_CONTROLS_HIDE_MS);
+  }, []);
+
+  const exitPresentation = useCallback((): void => {
+    if (presHideTimer.current !== null) {
+      window.clearTimeout(presHideTimer.current);
+      presHideTimer.current = null;
+    }
+    setPresenting(false);
+    // If we own the native fullscreen, hand it back (the change event
+    // re-runs this — idempotent; overlay-only runs never entered it).
+    if (typeof document !== "undefined" && document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+    // Land the viewer on the last presented page. The SCROLL is deferred
+    // (presLandingRef + the effect below): while the stage is still
+    // fullscreen the viewer behind it is laid out at the fullscreen
+    // dimensions (screen ≠ viewport → fit-width scale differs → slot
+    // rects collapse), so a scroll computed now would target the wrong
+    // position once the normal layout returns.
+    const target = clamp(presPage, 1, Math.max(1, numPages));
+    setCurrentPage((prev) => (prev === target ? prev : target));
+    presLandingRef.current = target;
+  }, [numPages, presPage]);
+
+  // Deferred landing: once the stage is gone, scroll the viewer onto the
+  // last presented page. Retried (rAF + two timeouts) because the layout
+  // only settles back AFTER the asynchronous fullscreen exit — each
+  // attempt is idempotent, and overlay-only exits land on the first one.
+  // Also hands focus back to the viewer root (the dialog that swallowed
+  // it is gone).
+  useEffect(() => {
+    if (presenting) return;
+    const page = presLandingRef.current;
+    if (page === null) return;
+    presLandingRef.current = null;
+    if (!scrollRef.current) return;
+    scrollToPage(page, false);
+    const raf = requestAnimationFrame(() => scrollToPage(page, false));
+    const retry1 = window.setTimeout(() => scrollToPage(page, false), 250);
+    const retry2 = window.setTimeout(() => scrollToPage(page, false), 600);
+    rootRef.current?.focus();
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(retry1);
+      window.clearTimeout(retry2);
+    };
+  }, [presenting, scrollToPage]);
+
+  const enterPresentation = useCallback((): void => {
+    setPresPage(clamp(currentPage, 1, Math.max(1, numPages)));
+    setPresControls(true);
+    setPresenting(true);
+    armPresHide();
+  }, [armPresHide, currentPage, numPages]);
+
+  const presAdvance = useCallback(
+    (dir: 1 | -1): void => {
+      setPresPage((prev) => clamp(prev + dir, 1, Math.max(1, numPages)));
+    },
+    [numPages]
+  );
+
+  const presGo = useCallback(
+    (page: number): void => {
+      setPresPage(clamp(Math.round(page), 1, Math.max(1, numPages)));
+    },
+    [numPages]
+  );
+
+  // Enter: request fullscreen (fallback = stay a fixed overlay) + focus
+  // the stage so keydown events originate inside it. On teardown (exit,
+  // file switched mid-presentation, unmount) hand native fullscreen back
+  // — guarded to the stage WE own so a foreign element is never touched.
+  useEffect(() => {
+    if (!presenting) return;
+    const stage = presStageRef.current;
+    if (stage) {
+      if (
+        typeof document !== "undefined" &&
+        document.fullscreenEnabled &&
+        typeof stage.requestFullscreen === "function"
+      ) {
+        void stage.requestFullscreen().catch(() => undefined);
+      }
+      stage.focus();
+    }
+    return () => {
+      if (
+        typeof document !== "undefined" &&
+        document.fullscreenElement === presStageRef.current
+      ) {
+        void document.exitFullscreen().catch(() => undefined);
+      }
+    };
+  }, [presenting]);
+
+  // Native Esc exit: the browser leaves fullscreen → leave presentation
+  // with it (overlay-only mode never fires fullscreenchange).
+  useEffect(() => {
+    if (!presenting) return;
+    const onFullscreenChange = (): void => {
+      if (!document.fullscreenElement) exitPresentation();
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () =>
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, [presenting, exitPresentation]);
+
+  // Controls auto-hide: any mouse movement or pointer press (touch taps
+  // included) shows the strip again and restarts the timer. Keyboard users
+  // never lose it — focus-within keeps the strip visible (CSS below).
+  useEffect(() => {
+    if (!presenting) return;
+    const bump = (): void => {
+      setPresControls(true);
+      armPresHide();
+    };
+    window.addEventListener("mousemove", bump);
+    window.addEventListener("pointerdown", bump);
+    return () => {
+      window.removeEventListener("mousemove", bump);
+      window.removeEventListener("pointerdown", bump);
+    };
+  }, [presenting, armPresHide]);
+
+  // No stray hide-timer past unmount (a late fire would setState on a
+  // dead component for nothing).
+  useEffect(
+    () => () => {
+      if (presHideTimer.current !== null) {
+        window.clearTimeout(presHideTimer.current);
+        presHideTimer.current = null;
+      }
+    },
+    []
+  );
+
+  // Stage size (fit math) — measured by the ResizeObserver, which always
+  // fires once right after observe(), so no sync setState.
+  useEffect(() => {
+    if (!presenting) return;
+    const stage = presStageRef.current;
+    if (!stage) return;
+    const observer = new ResizeObserver(() => {
+      setPresSize({ w: stage.clientWidth, h: stage.clientHeight });
+    });
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [presenting]);
+
+  const presScale = useMemo(() => {
+    const base = pageSizes[presPage - 1];
+    if (!base || presSize.w <= 0 || presSize.h <= 0) return 1;
+    const disp = displaySize(base, 1, rotation);
+    return clamp(
+      Math.min(
+        (presSize.w - PRES_STAGE_PADDING * 2) / disp.w,
+        (presSize.h - PRES_STAGE_PADDING * 2) / disp.h
+      ),
+      0.05,
+      8
+    );
+  }, [pageSizes, presPage, presSize, rotation]);
+
+  const handlePresKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>): void => {
+      // Focus trap: Tab cycles inside the stage while presenting (the
+      // chrome behind it is inert).
+      if (event.key === "Tab") {
+        const root = presStageRef.current;
+        const focusables = root
+          ? Array.from(
+              root.querySelectorAll<HTMLElement>(
+                "button:not([disabled]), [href], input:not([disabled])"
+              )
+            )
+          : [];
+        if (focusables.length === 0) {
+          event.preventDefault();
+        } else {
+          const active = document.activeElement as HTMLElement | null;
+          const index = active ? focusables.indexOf(active) : -1;
+          const next = event.shiftKey
+            ? index <= 0
+              ? focusables.length - 1
+              : index - 1
+            : index === focusables.length - 1
+              ? 0
+              : index + 1;
+          event.preventDefault();
+          focusables[next].focus();
+        }
+        event.stopPropagation();
+        return;
+      }
+      // Space belongs to a focused control (button activation), never
+      // to page advance.
+      const target = event.target as HTMLElement | null;
+      const onControl =
+        target !== null &&
+        (target.tagName === "BUTTON" ||
+          target.tagName === "A" ||
+          target.tagName === "INPUT");
+      switch (event.key) {
+        case "Escape":
+          event.preventDefault();
+          exitPresentation();
+          break;
+        case "ArrowRight":
+        case "PageDown":
+          event.preventDefault();
+          presAdvance(1);
+          break;
+        case "ArrowLeft":
+        case "PageUp":
+          event.preventDefault();
+          presAdvance(-1);
+          break;
+        case "Home":
+          event.preventDefault();
+          presGo(1);
+          break;
+        case "End":
+          event.preventDefault();
+          presGo(numPages);
+          break;
+        case " ":
+          if (!onControl) {
+            event.preventDefault();
+            presAdvance(1);
+          }
+          break;
+        default:
+          break;
+      }
+      // Every key stops here — the viewer's own shortcuts (G, ±, R,
+      // Ctrl+F) stay inert until presentation mode exits cleanly.
+      event.stopPropagation();
+    },
+    [exitPresentation, numPages, presAdvance, presGo]
+  );
+
+  const handlePresClick = useCallback((): void => {
+    // Click the stage → next page; a fresh text selection never advances.
+    const selection =
+      typeof window !== "undefined" ? window.getSelection() : null;
+    if (selection && selection.toString().length > 0) return;
+    presAdvance(1);
+  }, [presAdvance]);
+
+  /** Presentation pages never touch the viewer's slot registry. */
+  const noopRegisterSlot = useCallback((): void => undefined, []);
+
   /* ---- actions ---- */
   const printFile = useCallback(() => {
     if (!file) return;
@@ -1158,6 +1443,10 @@ export function ViewSurface({
       ? "thumbs"
       : sidebar;
 
+  /** Presentation chrome: prev / indicator / exit, floating + auto-hide. */
+  const presCtrlBtn =
+    "flex size-10 items-center justify-center rounded-full text-white/85 outline-none transition-colors hover:bg-white/15 focus-visible:ring-[3px] focus-visible:ring-white/60 disabled:pointer-events-none disabled:opacity-40";
+
   return (
     <div
       ref={rootRef}
@@ -1167,6 +1456,10 @@ export function ViewSurface({
       role="application"
       aria-label={t("view.a11yViewer")}
     >
+      {/* display:contents keeps the flex layout; `inert` blanks the whole
+          viewer (focus + a11y + pointer) while the presentation stage is
+          up — exiting restores everything exactly as it was. */}
+      <div className="contents" inert={presenting || undefined}>
       {/* ---------------- file meta strip ---------------- */}
       <div className="flex items-center gap-2.5 border-b border-border bg-muted/40 px-3 py-2">
         <FileText className="size-4 shrink-0 text-primary" aria-hidden="true" />
@@ -1373,6 +1666,15 @@ export function ViewSurface({
           )}
         >
           <Moon className="size-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={enterPresentation}
+          title={t("view.present")}
+          aria-label={t("view.present")}
+          className={cn(iconBtn, "grid shrink-0 place-items-center")}
+        >
+          <Presentation className="size-4" aria-hidden="true" />
         </button>
 
         <span className="ml-auto flex items-center gap-1.5">
@@ -1669,6 +1971,98 @@ export function ViewSurface({
           )
         )}
       </div>
+      </div>
+
+      {/* ---------------- presentation stage ----------------
+          One page at a time, fitted to the screen. Native fullscreen when
+          the browser allows it, a fixed overlay otherwise; Esc exits both.
+          All viewer chrome is inert above; this stage owns every key. */}
+      {presenting ? (
+        <div
+          ref={presStageRef}
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("view.presStage")}
+          onKeyDown={handlePresKeyDown}
+          onClick={handlePresClick}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black outline-none"
+        >
+          <ViewerPage
+            key="pres-page"
+            pageNumber={clamp(presPage, 1, Math.max(1, numPages))}
+            docRef={docRef}
+            docEpoch={docEpoch}
+            scale={presScale}
+            rotation={rotation}
+            base={pageSizes[presPage - 1] ?? { w: 612, h: 792, rot: 0 }}
+            dark={dark}
+            matches={EMPTY_MATCHES}
+            activeMatchId={null}
+            registerSlot={noopRegisterSlot}
+            scrollRootRef={presStageRef}
+          />
+
+          {/* floating control strip — auto-hides, focus-within keeps it */}
+          <div
+            onClick={(event) => event.stopPropagation()}
+            className={cn(
+              "absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-white/15 bg-black/75 px-2 py-1.5 text-white shadow-lg backdrop-blur transition-opacity duration-300",
+              "focus-within:pointer-events-auto focus-within:opacity-100",
+              presControls
+                ? "opacity-100"
+                : "pointer-events-none opacity-0"
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => presAdvance(-1)}
+              disabled={presPage <= 1}
+              title={t("view.toolbarPrev")}
+              aria-label={t("view.toolbarPrev")}
+              className={presCtrlBtn}
+            >
+              <ChevronLeft className="size-5" aria-hidden="true" />
+            </button>
+            <span
+              aria-live="polite"
+              aria-label={t("view.presPageOf", {
+                page: clamp(presPage, 1, Math.max(1, numPages)),
+                pages: numPages,
+              })}
+              className="min-w-16 px-1.5 text-center text-xs font-semibold tabular-nums"
+            >
+              {clamp(presPage, 1, Math.max(1, numPages))} / {numPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => presAdvance(1)}
+              disabled={presPage >= numPages}
+              title={t("view.toolbarNext")}
+              aria-label={t("view.toolbarNext")}
+              className={presCtrlBtn}
+            >
+              <ChevronRight className="size-5" aria-hidden="true" />
+            </button>
+            <span
+              className="mx-1 hidden h-5 w-px bg-white/20 sm:block"
+              aria-hidden="true"
+            />
+            <span className="hidden pr-1 text-[10px] text-white/60 sm:inline">
+              {t("view.presHint")}
+            </span>
+            <button
+              type="button"
+              onClick={exitPresentation}
+              title={t("view.presExit")}
+              aria-label={t("view.presExit")}
+              className={presCtrlBtn}
+            >
+              <Minimize2 className="size-4.5" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

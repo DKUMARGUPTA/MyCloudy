@@ -67,6 +67,7 @@ import {
   deleteIndices,
   duplicateIndices,
   evenIndices,
+  gridStats,
   gridThumbMaxDim,
   insertBlankAfter,
   moveEntry,
@@ -74,6 +75,7 @@ import {
   oddIndices,
   parseGridOption,
   parseGridRange,
+  parseNumberListOption,
   rotateIndices,
   serializeGrid,
   type GridPage,
@@ -105,8 +107,8 @@ const CELL_GAP = 12;
 const CELL_FOOTER = 0; // cells size themselves via aspect-ratio
 const OVERSCAN_ROWS = 2;
 const DEFAULT_ASPECT = 0.707; // A4 portrait while the real aspect loads
-/** Rotate batch cap — mirrors maxFiles in tools/rotate-pdf-pages/config.ts. */
-const ROTATE_MAX_FILES = 20;
+/** Batch cap — mirrors maxFiles in the four family tool configs. */
+const GRID_MAX_FILES = 20;
 
 /** Toolbar buttons stay 44px touch targets (a11y hard rule). */
 const TOOL_BTN =
@@ -124,10 +126,9 @@ export function GridSurface({
 }: ToolSurfaceProps & { preset: GridPreset }) {
   const { t } = useI18n();
   const { toast } = useToast();
-  // Batch rotate (ENH-2): the rotate preset is the family's multi-file
-  // member — it keeps ONE edited grid per workspace file. Other presets
-  // stay strictly single-file (files[0]).
-  const batch = preset === "rotate";
+  // Batch (R2-a — rotate was the pattern-setter, now the whole family):
+  // every PageGrid preset keeps ONE edited grid per workspace file (and,
+  // for extract, ONE selection per file). The list UI appears at 2+ files.
   const [activeFileIndex, setActiveFileIndex] = useState(0);
   const activeIndex = Math.min(
     activeFileIndex,
@@ -135,13 +136,9 @@ export function GridSurface({
   );
   const activeRef = files.length > 0 ? files[activeIndex] : null;
   const activeId = activeRef?.id ?? null;
-  const file = batch
-    ? activeRef?.file ?? null
-    : files.length > 0
-      ? files[0].file
-      : null;
-  /** Batch list UI appears once there IS a batch (rotate + 2+ files). */
-  const showBatchList = batch && files.length > 1;
+  const file = activeRef?.file ?? null;
+  /** Batch list UI appears once there IS a batch (2+ files). */
+  const showBatchList = files.length > 1;
 
   const {
     pages,
@@ -169,11 +166,14 @@ export function GridSurface({
     aspect: number;
   } | null>(null);
 
-  /* ---- batch per-file stores (rotate only) ----
+  /* ---- batch per-file stores ----
      Refs are the source of truth: async detection completions must never
      clobber grids edited in between; `batchTick` forces the file-list
-     re-render (rows read the refs during render, after the tick). */
+     re-render (rows read the refs during render, after the tick).
+     `selectionsByFileRef` mirrors the pattern for the extract preset —
+     one serialized selection ("[0,2]" wire string) per file. */
   const gridsByFileRef = useRef<Record<string, string>>({});
+  const selectionsByFileRef = useRef<Record<string, string>>({});
   const docInfoByFileRef = useRef<
     Record<string, { count: number; aspect: number }>
   >({});
@@ -195,7 +195,8 @@ export function GridSurface({
 
   /* ---------------- CTA gating (event-context sync, no effect-setState) */
 
-  /** Batch gate: every workspace file needs a stored, non-empty grid. */
+  /** Batch gate: every workspace file needs a stored, non-empty grid —
+   *  and (extract only) its own selection with at least one page. */
   const syncBatchBlocked = useCallback(
     (currentFiles: ToolFileRef[]) => {
       for (const item of currentFiles) {
@@ -209,27 +210,25 @@ export function GridSurface({
           setRunBlocked("grid.ctaAllRemoved");
           return;
         }
+        if (preset === "extract") {
+          const selected = parseNumberListOption(
+            selectionsByFileRef.current[item.id]
+          );
+          if (selected.length === 0) {
+            setRunBlocked("grid.ctaSelectPages");
+            return;
+          }
+        }
       }
       setRunBlocked(null);
     },
-    [setRunBlocked]
+    [preset, setRunBlocked]
   );
 
-  const syncBlocked = useCallback(
-    (nextPages: GridPage[], nextSelection: ReadonlySet<number>) => {
-      if (batch) {
-        // The batch gate spans ALL files, not just the active grid.
-        syncBatchBlocked(filesRef.current);
-        return;
-      }
-      if (preset === "extract") {
-        setRunBlocked(nextSelection.size === 0 ? "grid.ctaSelectPages" : null);
-        return;
-      }
-      setRunBlocked(nextPages.length === 0 ? "grid.ctaAllRemoved" : null);
-    },
-    [preset, setRunBlocked, batch, syncBatchBlocked]
-  );
+  /* ---------------- Serialization helpers ---------------- */
+
+  const serializeSelection = (next: ReadonlySet<number>): string =>
+    JSON.stringify([...next].sort((a, b) => a - b));
 
   /* ---------------- Document detection (page count + aspect) ---------------- */
 
@@ -240,30 +239,35 @@ export function GridSurface({
     const install = (
       initial: GridPage[],
       count: number,
-      fileAspect: number
+      fileAspect: number,
+      initialSelection: ReadonlySet<number>
     ): void => {
       reset(initial);
       setDocInfo({ file, count, aspect: fileAspect });
-      setSelection(new Set());
+      setSelection(new Set(initialSelection));
       setFocusIndex(0);
       setAnchorIndex(null);
       onChange("grid", serializeGrid(initial));
-      onChange("selected", "[]");
+      onChange("selected", serializeSelection(initialSelection));
       onChange("originalCount", count);
-      syncBlocked(initial, new Set());
+      syncBatchBlocked(filesRef.current);
     };
 
-    // Batch: switch back to a known file → synchronous restore, no spinner.
+    // Switch back to a known file → synchronous restore, no spinner.
     const cached =
-      batch && activeId !== null
-        ? docInfoByFileRef.current[activeId]
-        : undefined;
-    if (batch && activeId !== null && cached !== undefined) {
+      activeId !== null ? docInfoByFileRef.current[activeId] : undefined;
+    if (activeId !== null && cached !== undefined) {
       const stored = gridsByFileRef.current[activeId] ?? "[]";
+      const storedSelection = selectionsByFileRef.current[activeId];
       install(
         parseGridOption(stored) ?? createInitialGrid(cached.count),
         cached.count,
-        cached.aspect
+        cached.aspect,
+        new Set(
+          storedSelection !== undefined
+            ? parseNumberListOption(storedSelection)
+            : []
+        )
       );
       return () => {
         cancelled = true;
@@ -273,34 +277,55 @@ export function GridSurface({
     void Promise.all([getPdfPageCount(file), getPdfPageAspect(file)])
       .then(([count, fileAspect]) => {
         if (cancelled) return;
-        if (batch && activeId !== null) {
+        if (activeId !== null) {
           docInfoByFileRef.current[activeId] = { count, aspect: fileAspect };
           if (gridsByFileRef.current[activeId] === undefined) {
             gridsByFileRef.current[activeId] =
               count >= 1 ? serializeGrid(createInitialGrid(count)) : "[]";
             onChange("grids", JSON.stringify(gridsByFileRef.current));
           }
+          if (
+            preset === "extract" &&
+            selectionsByFileRef.current[activeId] === undefined
+          ) {
+            selectionsByFileRef.current[activeId] = "[]";
+            onChange(
+              "selections",
+              JSON.stringify(selectionsByFileRef.current)
+            );
+          }
           setBatchTick((tick) => tick + 1);
           syncBatchBlocked(filesRef.current);
         }
         if (count < 1) {
           setDocInfo({ file, count: 0, aspect: DEFAULT_ASPECT });
-          syncBlocked([], new Set());
+          syncBatchBlocked(filesRef.current);
           return;
         }
         const storedNow =
-          batch && activeId !== null
-            ? gridsByFileRef.current[activeId]
-            : undefined;
+          activeId !== null ? gridsByFileRef.current[activeId] : undefined;
         const initial =
           storedNow !== undefined
             ? parseGridOption(storedNow) ?? createInitialGrid(count)
             : createInitialGrid(count);
-        install(initial, count, fileAspect);
+        const selectionNow =
+          preset === "extract" && activeId !== null
+            ? selectionsByFileRef.current[activeId]
+            : undefined;
+        install(
+          initial,
+          count,
+          fileAspect,
+          new Set(
+            selectionNow !== undefined
+              ? parseNumberListOption(selectionNow)
+              : []
+          )
+        );
       })
       .catch(() => {
         if (cancelled) return;
-        if (batch && activeId !== null) {
+        if (activeId !== null) {
           docInfoByFileRef.current[activeId] = {
             count: 0,
             aspect: DEFAULT_ASPECT,
@@ -309,21 +334,30 @@ export function GridSurface({
             gridsByFileRef.current[activeId] = "[]";
             onChange("grids", JSON.stringify(gridsByFileRef.current));
           }
+          if (
+            preset === "extract" &&
+            selectionsByFileRef.current[activeId] === undefined
+          ) {
+            selectionsByFileRef.current[activeId] = "[]";
+            onChange(
+              "selections",
+              JSON.stringify(selectionsByFileRef.current)
+            );
+          }
           setBatchTick((tick) => tick + 1);
           syncBatchBlocked(filesRef.current);
         }
         setDocInfo({ file, count: 0, aspect: DEFAULT_ASPECT });
-        syncBlocked([], new Set());
+        syncBatchBlocked(filesRef.current);
       });
     return () => {
       cancelled = true;
     };
-  }, [file, activeId, onChange, reset, syncBlocked, batch, syncBatchBlocked]);
+  }, [file, activeId, preset, onChange, reset, syncBatchBlocked]);
 
   /* ---------------- Batch: detect every file + prune on add/remove ------- */
 
   useEffect(() => {
-    if (!batch) return;
     let cancelled = false;
     void (async () => {
       for (const item of files) {
@@ -347,6 +381,13 @@ export function GridSurface({
             count >= 1 ? serializeGrid(createInitialGrid(count)) : "[]";
           onChange("grids", JSON.stringify(gridsByFileRef.current));
         }
+        if (
+          preset === "extract" &&
+          selectionsByFileRef.current[item.id] === undefined
+        ) {
+          selectionsByFileRef.current[item.id] = "[]";
+          onChange("selections", JSON.stringify(selectionsByFileRef.current));
+        }
         setBatchTick((tick) => tick + 1);
         syncBatchBlocked(filesRef.current);
       }
@@ -354,13 +395,13 @@ export function GridSurface({
     return () => {
       cancelled = true;
     };
-  }, [files, batch, onChange, syncBatchBlocked]);
+  }, [files, preset, onChange, syncBatchBlocked]);
 
   // Files added/removed: prune per-file state for the ones that are gone,
-  // keep options.grids aligned, and re-run the batch gate (a fresh file
-  // blocks the CTA as "detecting" until its grid is stored).
+  // keep options.grids / options.selections aligned, and re-run the batch
+  // gate (a fresh file blocks the CTA as "detecting" until its grid is
+  // stored).
   useEffect(() => {
-    if (!batch) return;
     const ids = new Set(files.map((item) => item.id));
     let pruned = false;
     for (const id of Object.keys(gridsByFileRef.current)) {
@@ -370,16 +411,28 @@ export function GridSurface({
         pruned = true;
       }
     }
+    for (const id of Object.keys(selectionsByFileRef.current)) {
+      if (!ids.has(id)) {
+        delete selectionsByFileRef.current[id];
+        pruned = true;
+      }
+    }
     if (pruned) {
       // Deferred via microtask (house pattern): synchronous setState in an
       // effect body trips react-hooks/set-state-in-effect.
       queueMicrotask(() => {
         onChange("grids", JSON.stringify(gridsByFileRef.current));
+        if (preset === "extract") {
+          onChange(
+            "selections",
+            JSON.stringify(selectionsByFileRef.current)
+          );
+        }
         setBatchTick((tick) => tick + 1);
       });
     }
     syncBatchBlocked(files);
-  }, [files, batch, onChange, syncBatchBlocked]);
+  }, [files, preset, onChange, syncBatchBlocked]);
 
   /* ---------------- Viewport measurement (virtualization) ---------------- */
 
@@ -406,14 +459,25 @@ export function GridSurface({
   /* ---------------- Mutations (all flow through apply/commit) ---------------- */
 
   /** Batch: persist the ACTIVE file's grid into the per-file store (the
-   *  whole-batch gate re-runs via syncBlocked in every caller). Skipped
-   *  while this file's detection is still in flight — a transient grid
-   *  from the previously active file must never land under this id. */
+   *  whole-batch gate re-runs via syncBatchBlocked in every caller).
+   *  Skipped while this file's detection is still in flight — a transient
+   *  grid from the previously active file must never land under this id. */
   const syncActiveGrid = (next: GridPage[]): void => {
-    if (!batch || activeId === null) return;
+    if (activeId === null) return;
     if (docInfoByFileRef.current[activeId] === undefined) return;
     gridsByFileRef.current[activeId] = serializeGrid(next);
     onChange("grids", JSON.stringify(gridsByFileRef.current));
+    setBatchTick((tick) => tick + 1);
+  };
+
+  /** Extract batch: persist the ACTIVE file's selection into the per-file
+   *  store (same in-flight guard as syncActiveGrid — a transient selection
+   *  from the previously active file must never land under this id). */
+  const syncActiveSelection = (next: ReadonlySet<number>): void => {
+    if (preset !== "extract" || activeId === null) return;
+    if (docInfoByFileRef.current[activeId] === undefined) return;
+    selectionsByFileRef.current[activeId] = serializeSelection(next);
+    onChange("selections", JSON.stringify(selectionsByFileRef.current));
     setBatchTick((tick) => tick + 1);
   };
 
@@ -428,9 +492,6 @@ export function GridSurface({
     }
   };
 
-  const serializeSelection = (next: ReadonlySet<number>): string =>
-    JSON.stringify([...next].sort((a, b) => a - b));
-
   const apply = (next: GridPage[], nextSelection?: Set<number>) => {
     const clamped =
       nextSelection ??
@@ -441,13 +502,15 @@ export function GridSurface({
     onChange("grid", serializeGrid(next));
     onChange("selected", serializeSelection(clamped));
     syncActiveGrid(next);
-    syncBlocked(next, clamped);
+    syncActiveSelection(clamped);
+    syncBatchBlocked(filesRef.current);
   };
 
   const changeSelection = (next: Set<number>) => {
     setSelection(next);
     onChange("selected", serializeSelection(next));
-    syncBlocked(pages, next);
+    syncActiveSelection(next);
+    syncBatchBlocked(filesRef.current);
   };
 
   const selectedIndices = useMemo(
@@ -500,7 +563,8 @@ export function GridSurface({
     onChange("grid", serializeGrid(restored));
     onChange("selected", serializeSelection(clamped));
     syncActiveGrid(restored);
-    syncBlocked(restored, clamped);
+    syncActiveSelection(clamped);
+    syncBatchBlocked(filesRef.current);
   };
 
   const handleRedo = () => {
@@ -516,7 +580,8 @@ export function GridSurface({
     onChange("grid", serializeGrid(redone));
     onChange("selected", serializeSelection(clamped));
     syncActiveGrid(redone);
-    syncBlocked(redone, clamped);
+    syncActiveSelection(clamped);
+    syncBatchBlocked(filesRef.current);
   };
 
   /* ---------------- Selection interactions ---------------- */
@@ -718,18 +783,21 @@ export function GridSurface({
     );
   });
 
-  /* ---------------- Batch list rows (rotate multi-file) ---------------- */
+  /* ---------------- Batch list rows (family multi-file) ---------------- */
 
   // batchTick is a dependency on purpose: the refs are the storage, the
   // tick re-syncs this state after every store mutation. Ref reads happen
   // inside the effect (never during render) — react-hooks/refs compliant.
+  // The per-file badge is preset-tuned: rotate → rotated pages, rearrange
+  // → pages not in their original position, remove → removed pages,
+  // extract → selected pages.
   const [batchRows, setBatchRows] = useState<
     Array<{
       id: string;
       name: string;
       size: number;
       info: { count: number; aspect: number } | undefined;
-      rotated: number;
+      badge: { count: number; key: string; titleKey: string } | null;
       isActive: boolean;
     }>
   >([]);
@@ -741,20 +809,65 @@ export function GridSurface({
         const stored = gridsByFileRef.current[item.id];
         const grid =
           stored !== undefined ? parseGridOption(stored) : null;
-        const rotated = grid
-          ? grid.filter((page) => page.rotation !== 0).length
-          : 0;
+        let badge: { count: number; key: string; titleKey: string } | null =
+          null;
+        if (preset === "rotate") {
+          const rotated = grid
+            ? grid.filter((page) => page.rotation !== 0).length
+            : 0;
+          if (rotated > 0) {
+            badge = {
+              count: rotated,
+              key: "grid.batchRotated",
+              titleKey: "grid.batchRotatedTitle",
+            };
+          }
+        } else if (preset === "rearrange") {
+          const moved = grid
+            ? grid.filter((page, i) => page.source !== i).length
+            : 0;
+          if (moved > 0) {
+            badge = {
+              count: moved,
+              key: "grid.batchMoved",
+              titleKey: "grid.batchMovedTitle",
+            };
+          }
+        } else if (preset === "remove") {
+          const removed =
+            grid && info ? gridStats(grid, info.count).removed : 0;
+          if (removed > 0) {
+            badge = {
+              count: removed,
+              key: "grid.batchRemoved",
+              titleKey: "grid.batchRemovedTitle",
+            };
+          }
+        } else {
+          const storedSelection = selectionsByFileRef.current[item.id];
+          const selected =
+            storedSelection !== undefined
+              ? parseNumberListOption(storedSelection).length
+              : 0;
+          if (selected > 0) {
+            badge = {
+              count: selected,
+              key: "grid.batchSelected",
+              titleKey: "grid.batchSelectedTitle",
+            };
+          }
+        }
         return {
           id: item.id,
           name: item.file.name,
           size: item.file.size,
           info,
-          rotated,
+          badge,
           isActive: index === activeIndex,
         };
       })
     );
-  }, [files, batchTick, activeIndex]);
+  }, [files, batchTick, activeIndex, preset]);
 
   /* ---------------- Render ---------------- */
 
@@ -774,7 +887,7 @@ export function GridSurface({
       className="flex flex-col gap-3"
     >
       {/* File header — the surface replaces the FileList for grid tools.
-          Rotate batch mode swaps it for the per-file switcher list. */}
+          Batch mode (2+ files) swaps it for the per-file switcher list. */}
       {showBatchList ? (
         <div className="flex flex-col gap-2 rounded-card border border-border bg-card p-3">
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -840,12 +953,12 @@ export function GridSurface({
                             })}`}
                     </span>
                   </span>
-                  {row.rotated > 0 ? (
+                  {row.badge ? (
                     <span
                       className="shrink-0 rounded-chip bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400"
-                      title={t("grid.batchRotatedTitle")}
+                      title={t(row.badge.titleKey)}
                     >
-                      {t("grid.batchRotated", { count: row.rotated })}
+                      {t(row.badge.key, { count: row.badge.count })}
                     </span>
                   ) : null}
                   {row.isActive ? (
@@ -1271,20 +1384,18 @@ export function GridSurface({
         )}
       </div>
 
-      {/* Batch add-more (rotate) — same compact zone + full shell pipeline
+      {/* Batch add-more — same compact zone + full shell pipeline
           as the image grid surfaces. With a single file this is the only
           way to grow the batch without going back to the landing. */}
-      {batch ? (
-        <DropZone
-          labelKey="grid.addMore"
-          multiple
-          maxFiles={ROTATE_MAX_FILES}
-          acceptKind="pdf"
-          onAccept={addFiles}
-          currentCount={files.length}
-          className="py-2"
-        />
-      ) : null}
+      <DropZone
+        labelKey="grid.addMore"
+        multiple
+        maxFiles={GRID_MAX_FILES}
+        acceptKind="pdf"
+        onAccept={addFiles}
+        currentCount={files.length}
+        className="py-2"
+      />
     </section>
   );
 }
