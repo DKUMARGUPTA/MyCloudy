@@ -4315,3 +4315,24 @@ Work Log:
 Stage Summary:
 - All three enhancements verified green by orchestrator: split 113/0, view-outline 20/0, rotate 38/0; tsc 0 errors.
 - rotate-pdf-pages is now the pattern-setter for batching the rest of the pagegrid family (rearrange/remove/extract) in a future round.
+
+---
+Task ID: AUDIT-1-FINAL
+Agent: orchestrator (main session)
+Task: Deep audit round 1 complete — consolidated verification, browser QA, commit + push.
+
+Work Log:
+- Static sweep: all 97 tool workspaces render, 0 console/page errors (scripts/audit-sweep.sh, reusable).
+- 4 parallel audit agents (AUD-A/B/C/D): OK 78 / MINOR 15 / BUG 4.
+- 4 parallel fix agents landed the BUGs: FIX-1a signature guards (sign/reqsig/vps), FIX-1b ocr encrypted, FIX-1c annotate/edit encrypted, FIX-1d EXIF orientation (imagegrid/write-pdf/heic).
+- 3 more batches: FIX-2 (i18n/copy/brand, MyCloudy→DocoPDF sweep), FIX-3 (6 logic fixes incl. ReDoS budget), ENH-1 (memory guards: 2048px collage cap, 250MP render budget, CP1252 recovery).
+- ENH-2 agent hit context deadline AFTER landing all 3 features (split naming, view outline, rotate batch) — orchestrator verified (smokes 113/0, 20/0, 38/0) + appended its worklog entry.
+- 2 lint follow-ups by orchestrator: batchRows useMemo→useState+useEffect (react-hooks/refs), prune setBatchTick→queueMicrotask (react-hooks/set-state-in-effect, house pattern).
+- Final gates: tsc 0, lint 0, i18n 4293=4293, 26-smoke consolidated battery ~2,400 checks 0 failed.
+- Browser QA: dev server restarted; rotate batch E2E — 2 files via DataTransfer → 2 outputs (fx-rotated.pdf, extract-fixture-rotated.pdf); view-pdf outline toggle clean; 0 console/page errors. Screenshot: public/qa/audit1-rotate-batch.png.
+- Commit + annotated tag audit-1-hardening + push to GitHub (main + 10 tags).
+
+Stage Summary:
+- Audit round 1 COMPLETE: 4 BUGs fixed, 15 minors fixed, 6 enhancements live. 97/97 tools remain live and green.
+- Remaining audit backlog (next rounds): batch multi-file for rearrange/remove/extract (rotate is the pattern-setter now); dead-code cleanup (tools/imgconv, tools/imgconvert, lock/unlock dead engines, duplicate libheif bundle); pdf-to-jpg preview loading cosmetic; view-pdf presentation mode; split named-zip UX; UBL 2.1 in xml-invoice; collage quality slider.
+- REMINDER: user should rotate the chat-exposed GitHub PAT (pending since RB batches).
