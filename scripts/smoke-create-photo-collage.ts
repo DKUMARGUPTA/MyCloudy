@@ -35,6 +35,7 @@ import {
   LAYOUTS,
   MARGIN_PT,
   MAX_CAPTION_CHARS,
+  PHOTO_LONG_EDGE_CAP,
   backgroundHex,
   cellRectInArea,
   cellRectPx,
@@ -50,6 +51,7 @@ import {
   pagePixelSize,
   pagePtSize,
   parseCollageOption,
+  photoDecodeCap,
   photosPerPage,
   sanitizeHexColor,
   sanitizeStyle,
@@ -312,6 +314,37 @@ function part1(): void {
   assert(hexLuminance("#ffffff") > hexLuminance("#1c1917"), "hexLuminance ordering");
   assert(inkHex("#ffffff") === "#1c1917" && inkHex("#1c1917") === "#faf9f7", "inkHex flips with background");
 
+  /* ---- decode cap (RAM guard, ENH-1) ---- */
+  for (const layout of LAYOUTS) {
+    for (const format of ["a4", "letter", "square", "photo4x6"] as const) {
+      for (const orientation of ["portrait", "landscape"] as const) {
+        const style: CollageStyle = {
+          ...DEFAULT_STYLE,
+          layout: layout.id,
+          format,
+          orientation,
+        };
+        const px = pagePixelSize(style);
+        const cap = photoDecodeCap(style);
+        let maxCell = 0;
+        for (const cell of layoutById(layout.id).cells) {
+          maxCell = Math.max(maxCell, cell.w * px.w, cell.h * px.h);
+        }
+        assert(
+          cap >= Math.ceil(maxCell) && cap >= PHOTO_LONG_EDGE_CAP,
+          `photoDecodeCap: ${format}/${orientation}/${layout.id} covers the largest cell`,
+          { cap, maxCell }
+        );
+      }
+    }
+  }
+  // The largest built-in cell (A4 portrait duo full-height ≈ 1684 px)
+  // sits below the generous 2048 floor → normal photos stay zero-copy.
+  assert(
+    photoDecodeCap({ ...DEFAULT_STYLE, layout: "duo", format: "a4" }) === 2048,
+    "photoDecodeCap: A4 duo full-height cell < 2048 → floor applies"
+  );
+
   /* ---- captions + names ---- */
   assertEqual(defaultCaptionFor("IMG_2048 (1).JPG"), "IMG_2048 (1)", "defaultCaptionFor strips extension");
   assert(
@@ -340,6 +373,11 @@ function part1(): void {
 interface DrawImageOp {
   kind: "image";
   source: ShimBitmap | ShimCanvas;
+  /** Source dims snapshotted at record time — browsers snapshot pixels at
+   *  drawImage call time, and the worker may release (0×0-resize) a
+   *  consumed canvas right after drawing from it. */
+  srcW: number;
+  srcH: number;
   args: number[];
   tx: number;
   ty: number;
@@ -375,6 +413,8 @@ interface ShimBitmap {
   width: number;
   height: number;
   _raw: Buffer;
+  /** Set by the worker's memory-guard close() — the regression signal. */
+  closed: boolean;
   close(): void;
 }
 
@@ -470,6 +510,8 @@ class ShimCtx {
     this.canvas.ops.push({
       kind: "image",
       source,
+      srcW: source.width,
+      srcH: source.height,
       args,
       ...this.state,
     });
@@ -477,14 +519,36 @@ class ShimCtx {
 }
 
 class ShimCanvas {
-  width: number;
-  height: number;
+  #width: number;
+  #height: number;
   ops: ShimOp[] = [];
   private raw: Promise<Buffer> | null = null;
 
   constructor(width: number, height: number) {
-    this.width = width;
-    this.height = height;
+    this.#width = width;
+    this.#height = height;
+  }
+
+  /*
+   * The worker's releaseSource() drops a consumed canvas by resizing it
+   * to 0×0. In a real browser drawImage is synchronous, so that is safe;
+   * in this shim the recorded ops rasterize lazily — so a resize to zero
+   * must FIRST flush the pending raster (which captures its size up
+   * front), exactly like the browser already had the pixels.
+   */
+  get width(): number {
+    return this.#width;
+  }
+  get height(): number {
+    return this.#height;
+  }
+  set width(value: number) {
+    if (value <= 0 && this.ops.length > 0 && !this.raw) void this._ensureRaw();
+    this.#width = value;
+  }
+  set height(value: number) {
+    if (value <= 0 && this.ops.length > 0 && !this.raw) void this._ensureRaw();
+    this.#height = value;
   }
 
   getContext(kind: string): ShimCtx | null {
@@ -498,13 +562,18 @@ class ShimCanvas {
   }
 
   private async _rasterize(): Promise<Buffer> {
+    // Capture the size up front: a zero-size release may already have
+    // flushed this rasterization (see the width setter) — everything
+    // below must use the dims the canvas had when its ops were recorded.
+    const W = this.width;
+    const H = this.height;
     // Background: the first full-canvas rect (if any), else transparent.
     let background = { r: 0, g: 0, b: 0, alpha: 0 };
     for (const op of this.ops) {
       if (
         op.kind === "rect" &&
         op.x === 0 && op.y === 0 &&
-        Math.round(op.w) === this.width && Math.round(op.h) === this.height
+        Math.round(op.w) === W && Math.round(op.h) === H
       ) {
         background = parseColor(op.fill);
         break;
@@ -512,8 +581,8 @@ class ShimCanvas {
     }
     const base = await sharp({
       create: {
-        width: this.width,
-        height: this.height,
+        width: W,
+        height: H,
         channels: 4,
         background,
       },
@@ -525,7 +594,7 @@ class ShimCanvas {
     const place = async (op: RectOp | TextOp): Promise<void> => {
       if (op.kind === "rect") {
         const svg = Buffer.from(
-          `<svg width="${this.width}" height="${this.height}" xmlns="http://www.w3.org/2000/svg"><rect x="${roundSafe(op.x + op.tx)}" y="${roundSafe(op.y + op.ty)}" width="${Math.max(1, Math.round(op.w))}" height="${Math.max(1, Math.round(op.h))}" fill="${op.fill}"/></svg>`
+          `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg"><rect x="${roundSafe(op.x + op.tx)}" y="${roundSafe(op.y + op.ty)}" width="${Math.max(1, Math.round(op.w))}" height="${Math.max(1, Math.round(op.h))}" fill="${op.fill}"/></svg>`
         );
         layers.push({ input: await sharp(svg).png().toBuffer() });
       } else {
@@ -539,7 +608,7 @@ class ShimCanvas {
           .replace(/>/g, "&gt;");
         const family = "sans-serif";
         const svg = Buffer.from(
-          `<svg width="${this.width}" height="${this.height}" xmlns="http://www.w3.org/2000/svg"><text x="${roundSafe(op.x + op.tx)}" y="${roundSafe(op.y + op.ty)}" font-family="${family}" font-size="${size}" fill="${op.fill}" text-anchor="${anchor}" dominant-baseline="${dominant}">${escaped}</text></svg>`
+          `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg"><text x="${roundSafe(op.x + op.tx)}" y="${roundSafe(op.y + op.ty)}" font-family="${family}" font-size="${size}" fill="${op.fill}" text-anchor="${anchor}" dominant-baseline="${dominant}">${escaped}</text></svg>`
         );
         layers.push({ input: await sharp(svg).png().toBuffer() });
       }
@@ -553,8 +622,8 @@ class ShimCanvas {
       }
       // Image op
       const sourceRaw = await sourcePixels(op.source);
-      const srcW = op.source.width;
-      const srcH = op.source.height;
+      const srcW = op.srcW;
+      const srcH = op.srcH;
       let layer: Buffer;
       let left: number;
       let top: number;
@@ -607,7 +676,7 @@ class ShimCanvas {
 
     if (layers.length === 0) return base;
     return await sharp(base, {
-      raw: { width: this.width, height: this.height, channels: 4 },
+      raw: { width: W, height: H, channels: 4 },
     })
       .composite(layers)
       .raw()
@@ -662,6 +731,9 @@ function roundSafe(value: number): number {
 
 type Posted = Record<string, unknown> & { type: string; runId: string };
 const inbox: Posted[] = [];
+/** Every bitmap the worker decoded this run — close() flags are the
+ *  memory-guard regression signal (full-res sources must be released). */
+const createdBitmaps: ShimBitmap[] = [];
 const workerGlobal = globalThis as unknown as {
   postMessage: (msg: unknown) => void;
   onmessage: ((event: { data: unknown }) => void) | null;
@@ -686,14 +758,17 @@ function installShims(): void {
       .ensureAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
-    return {
+    const bitmap: ShimBitmap = {
       width: info.width,
       height: info.height,
       _raw: data,
+      closed: false,
       close(): void {
-        /* no-op in the shim */
+        this.closed = true;
       },
     };
+    createdBitmaps.push(bitmap);
+    return bitmap;
   };
 }
 
@@ -743,6 +818,7 @@ async function runWorker(
   options: Record<string, string | number | boolean>
 ): Promise<RunOutcome> {
   inbox.length = 0;
+  createdBitmaps.length = 0;
   workerGlobal.onmessage!({
     data: { type: "run", runId: "smoke", files, options, assets: [] },
   });
@@ -944,6 +1020,72 @@ async function part2(): Promise<void> {
   const pdf8 = await bytesOf(run8);
   const reopened8 = await PDFDocument.load(pdf8);
   assertEqual(reopened8.getPageCount(), 1, "run 8: 3 photos default quad = 1 page");
+
+  /* ---- 8. memory guard: oversized photo downscaled + released (ENH-1) ---- */
+  const bigBytes = await makePng(3000, 2000, [12, 92, 160], "BIG");
+  const bigFile = new FakeFile("big.png", bigBytes);
+  const smallFile = fixtures[2]; // 256×256 garden — under the cap
+  const run9 = await runWorker([bigFile, smallFile], {
+    collage: serializeCollage({
+      photos: [[0, 90], [1, 0]],
+      style: { ...DEFAULT_STYLE, layout: "duo" },
+      exportFormat: "pdf",
+      locale: "en",
+    }),
+  });
+  assert(run9.error === null, "run 9: oversized-photo run no error", run9.error);
+  assertEqual(createdBitmaps.length, 2, "run 9: two photos decoded");
+  assert(
+    createdBitmaps[0].width === 3000 && createdBitmaps[0].height === 2000,
+    "run 9: oversized photo decoded at full resolution",
+    { w: createdBitmaps[0].width, h: createdBitmaps[0].height }
+  );
+  assert(
+    createdBitmaps[0].closed,
+    "run 9: full-res bitmap released after the cap downscale (mobile OOM guard)"
+  );
+  assert(
+    !createdBitmaps[1].closed,
+    "run 9: under-cap bitmap stays open (zero-copy, visually identical path)"
+  );
+  const pdf9 = await bytesOf(run9);
+  assert(
+    Buffer.from(pdf9.slice(0, 5)).toString("latin1").startsWith("%PDF-"),
+    "run 9: valid PDF after downscale + rotate"
+  );
+  const reopened9 = await PDFDocument.load(pdf9);
+  assertEqual(reopened9.getPageCount(), 1, "run 9: duo 2 photos = 1 page");
+  let jpeg9 = 0;
+  for (const [, obj] of reopened9.context.enumerateIndirectObjects()) {
+    if (
+      obj instanceof PDFRawStream &&
+      String(obj.dict.get(PDFName.of("Subtype"))) === "/Image" &&
+      String(obj.dict.get(PDFName.of("Filter"))).includes("DCTDecode")
+    ) {
+      jpeg9 += 1;
+    }
+  }
+  assertEqual(jpeg9, 1, "run 9: one embedded JPEG page image");
+
+  /* ---- 9. downscaled pixels still composite (visual sanity) ---- */
+  const run10 = await runWorker([bigFile], {
+    collage: serializeCollage({
+      photos: [[0, 0]],
+      style: { ...DEFAULT_STYLE, layout: "duo-stack", background: "white" },
+      exportFormat: "jpg",
+      locale: "en",
+    }),
+  });
+  assert(run10.error === null, "run 10: jpg run no error", run10.error);
+  assert(createdBitmaps[0].closed, "run 10: oversized bitmap released");
+  const jpg10 = await bytesOf(run10);
+  const stats = await sharp(Buffer.from(jpg10)).stats();
+  assert(
+    stats.channels.length >= 3 &&
+      stats.channels[2].mean > stats.channels[0].mean + 40,
+    "run 10: downscaled photo keeps its colour (blue-dominant fixture)",
+    stats.channels.map((c) => Math.round(c.mean))
+  );
 }
 
 async function main(): Promise<void> {

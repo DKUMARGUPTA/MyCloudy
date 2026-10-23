@@ -325,8 +325,8 @@ async function renderBook(
   });
   // the worker's metadata sequence, verbatim
   const baseName = outputBaseName(book.title || "f.epub", lang);
-  pdfDoc.setProducer("MyCloudy");
-  pdfDoc.setCreator("MyCloudy");
+  pdfDoc.setProducer("DocoPDF");
+  pdfDoc.setCreator("DocoPDF");
   pdfDoc.setTitle(baseName);
   if (book.author !== "") pdfDoc.setAuthor(book.author);
   pdfDoc.setCreationDate(new Date());
@@ -820,8 +820,8 @@ console.log("── 8. REAL renders (worker's exact render.ts) ─────�
   check("EN: PDF Title from dc:title", metaDoc.getTitle() === "The Falcon Chronicle", metaDoc.getTitle());
   check("EN: PDF Author from dc:creator", metaDoc.getAuthor() === "Ananya Verma", metaDoc.getAuthor());
   check(
-    "EN: producer/creator MyCloudy",
-    (metaDoc.getProducer() ?? "") === "MyCloudy" && (metaDoc.getCreator() ?? "") === "MyCloudy",
+    "EN: producer/creator DocoPDF",
+    (metaDoc.getProducer() ?? "") === "DocoPDF" && (metaDoc.getCreator() ?? "") === "DocoPDF",
     { producer: metaDoc.getProducer(), creator: metaDoc.getCreator() }
   );
 

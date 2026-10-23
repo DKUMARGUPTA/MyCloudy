@@ -32,7 +32,7 @@ import { drawHtmlPdf, type HtmlFontSet } from "./render";
  *     the self-hosted Noto Sans Devanagari subset (fontkit subset:true,
  *     Regular only — hierarchy honestly comes from size);
  *  4. drawHtmlPdf — the exact render.ts the smoke script drives;
- *  5. save with producer/creator "MyCloudy" and the title-derived name.
+ *  5. save with producer/creator "DocoPDF" and the title-derived name.
  *
  * Options: pageSize ("a4"|"letter"), margin ("normal"|"narrow"),
  * baseFontSize ("small"|"normal"|"large"), showLinks (boolean) and
@@ -91,27 +91,27 @@ async function run(request: WorkerRunRequest): Promise<void> {
   try {
     const file = request.files[0];
     if (!file) {
-      post({ type: "error", runId, code: "h2p.errNoFile" });
+      post({ type: "error", runId, code: "html.errNoFile" });
       return;
     }
 
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (inputTooLarge(bytes.byteLength)) {
-      post({ type: "error", runId, code: "h2p.errTooLarge", detail: file.name });
+      post({ type: "error", runId, code: "html.errTooLarge", detail: file.name });
       return;
     }
     post({ type: "progress", runId, pct: 15, stage: "reading" });
 
     const text = decodeHtmlBytes(bytes);
     if (!looksLikeHtml(text)) {
-      post({ type: "error", runId, code: "h2p.errNotHtml", detail: file.name });
+      post({ type: "error", runId, code: "html.errNotHtml", detail: file.name });
       return;
     }
 
     // parse + boundary coercion (tampered/oversized docs clamp here)
     const doc = parseHtmlRun(JSON.stringify(parseHtml(text)));
     if (doc.blocks.length === 0) {
-      post({ type: "error", runId, code: "h2p.errNoDoc", detail: file.name });
+      post({ type: "error", runId, code: "html.errNoDoc", detail: file.name });
       return;
     }
     post({ type: "progress", runId, pct: 40, stage: "processing" });
@@ -148,8 +148,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const report = drawHtmlPdf(pdfDoc, fonts, doc, opts);
     post({ type: "progress", runId, pct: 88, stage: "saving" });
 
-    pdfDoc.setProducer("MyCloudy");
-    pdfDoc.setCreator("MyCloudy");
+    pdfDoc.setProducer("DocoPDF");
+    pdfDoc.setCreator("DocoPDF");
     const baseName = outputBaseName(doc.title || file.name, lang);
     pdfDoc.setTitle(baseName);
     pdfDoc.setCreationDate(new Date());

@@ -783,7 +783,7 @@ async function main(): Promise<void> {
           "XMP fx:ConformanceLevel is the requested EN 16931",
           tagText(xmp, "fx:ConformanceLevel") === "EN 16931"
         );
-        check("XMP pdf:Producer is MyCloudy", tagText(xmp, "pdf:Producer").includes("MyCloudy"));
+        check("XMP pdf:Producer is DocoPDF", tagText(xmp, "pdf:Producer").includes("DocoPDF"));
         check("XMP has no pdfaid lies stamped", !xmp.includes("pdfaid"));
       }
     }

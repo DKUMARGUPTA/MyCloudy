@@ -5,6 +5,7 @@ import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
+import { hasExistingSignature } from "../digital-signature/model";
 import { fileBaseName } from "../stamp-common/layout";
 
 /**
@@ -21,6 +22,10 @@ import { fileBaseName } from "../stamp-common/layout";
  * a run that only picks a zoom leaves every other preference exactly as
  * the file had it. The file arrives by structured clone and the result
  * Blob goes back the same way. Never touches the network.
+ *
+ * A cryptographically signed input is refused honestly: the catalog
+ * edits re-save the whole file, which would break the existing
+ * signature (the digital-signature hasExistingSignature guard).
  */
 
 function post(response: WorkerResponse): void {
@@ -168,6 +173,10 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 10, stage: "reading" });
   const bytes = new Uint8Array(await file.arrayBuffer());
+  if (hasExistingSignature(bytes)) {
+    post({ type: "error", runId, code: "tool.errorAlreadySigned" });
+    return;
+  }
   const doc = await PDFDocument.load(bytes, {
     ignoreEncryption: false,
     updateMetadata: false,

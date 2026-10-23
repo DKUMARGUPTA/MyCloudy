@@ -555,7 +555,7 @@ console.log("── 5. build shape (flow, synthetic) ─────────
   check("starts with <!doctype html>", html.startsWith("<!doctype html>\n"));
   check("charset meta present", html.includes('<meta charset="utf-8"/>'));
   check("viewport meta present", html.includes('name="viewport"'));
-  check("generator meta says MyCloudy", html.includes('name="generator" content="MyCloudy"'));
+  check("generator meta says DocoPDF", html.includes('name="generator" content="DocoPDF"'));
   check("title escaped", html.includes("<title>T &amp; T</title>"));
   check("body class flow", html.includes('<body class="flow">'));
   check("h1 with escaped content", html.includes("<h1>Title &amp; &lt;Things&gt;</h1>"));

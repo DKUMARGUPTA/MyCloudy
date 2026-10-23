@@ -442,12 +442,23 @@ export function AnnotateSurface(
     [annos]
   );
 
-  const runGated = !viewsReady || pageError !== null;
+  // CTA gate with the honest reason (AUD-A FIX-1c): a password-protected
+  // or corrupt file must block the run with its own key — not the
+  // generic "Reading…" message that never resolves. The export worker
+  // refuses encrypted sources independently (defense in depth).
+  const runBlockedKey =
+    pageError === "password"
+      ? "ann.passwordProtected"
+      : pageError === "corrupt"
+        ? "ann.corruptTitle"
+        : !viewsReady
+          ? "ann.notReady"
+          : annos.length === 0
+            ? "ann.noAnnos"
+            : null;
   useEffect(() => {
-    setRunBlocked(
-      runGated ? "ann.notReady" : annos.length === 0 ? "ann.noAnnos" : null
-    );
-  }, [runGated, annos.length, setRunBlocked]);
+    setRunBlocked(runBlockedKey);
+  }, [runBlockedKey, setRunBlocked]);
 
   // --- Annotation actions -----------------------------------------------------
   const patchAnno = useCallback(

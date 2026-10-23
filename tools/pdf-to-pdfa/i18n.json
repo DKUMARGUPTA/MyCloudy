@@ -72,7 +72,7 @@
       "limSkip": "streams could not be opened for color normalization",
       "limSh": "shading fills (sh) left as-is",
       "tagging": "Tagging (structure tree) is not required at the PDF/A-1b/2b/3b levels — that is the -a (accessible) level; this tool produces -b and adds no tags.",
-      "footer": "Produced on-device by MyCloudy — this report lists the changes that were actually made; it is not a certified ISO 19005 validation.",
+      "footer": "Produced on-device by DocoPDF — this report lists the changes that were actually made; it is not a certified ISO 19005 validation.",
       "pageWord": "Page"
     }
   },
@@ -149,7 +149,7 @@
       "limSkip": "स्ट्रीम रंग-सामान्यीकरण के लिए नहीं खुलीं",
       "limSh": "शेडिंग फ़िल (sh) जैसे हैं छोड़े",
       "tagging": "PDF/A-1b/2b/3b स्तर पर टैगिंग (संरचना वृक्ष) ज़रूरी नहीं है — वह PDF/A-a स्तर की बात है; यह टूल -b बनाता है और टैग नहीं जोड़ता।",
-      "footer": "MyCloudy में डिवाइस पर बनाया गया — यह रिपोर्ट उन बदलावों की सूची है जो सचमुच हुए; कोई प्रमाणित ISO 19005 सत्यापन नहीं।",
+      "footer": "DocoPDF में डिवाइस पर बनाया गया — यह रिपोर्ट उन बदलावों की सूची है जो सचमुच हुए; कोई प्रमाणित ISO 19005 सत्यापन नहीं।",
       "pageWord": "पृष्ठ"
     }
   }

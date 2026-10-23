@@ -12,6 +12,7 @@ import {
   pagePixelSize,
   pagePtSize,
   parseCollageOption,
+  photoDecodeCap,
   type CollageStyle,
 } from "./model";
 import {
@@ -135,7 +136,12 @@ async function decodePhoto(file: File): Promise<ImageBitmap> {
         0,
         0
       );
-      return await createImageBitmap(canvas);
+      const bitmap = await createImageBitmap(canvas);
+      // The canvas was only a bridge to the bitmap — drop its backing
+      // store right away (drawImage already copied the pixels).
+      canvas.width = 0;
+      canvas.height = 0;
+      return bitmap;
     } catch (error) {
       if (error instanceof TiffError) fail(tiffErrorCode(error), file.name);
       throw error;
@@ -148,17 +154,76 @@ async function decodePhoto(file: File): Promise<ImageBitmap> {
   }
 }
 
-/** Decodes + quarter-turn rotates one photo (canvas rotation, 0 = no copy). */
-async function preparePhoto(file: File, rotation: number): Promise<CollageSource> {
+/** Releases a decoded raster source (bitmap close / canvas zero-size). */
+function releaseSource(source: ImageBitmap | OffscreenCanvas): void {
+  if (typeof (source as ImageBitmap).close === "function") {
+    (source as ImageBitmap).close();
+    return;
+  }
+  // OffscreenCanvas has no close(); a 0×0 resize drops the backing
+  // store (safe after every drawImage that consumed it is done).
+  const canvas = source as OffscreenCanvas;
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
+/**
+ * Bounds one decoded photo to the decode cap (the mobile OOM guard):
+ * photos within the cap pass through untouched — zero copies, full cell
+ * resolution; anything larger is downscaled once through a canvas while
+ * the full-res bitmap is released immediately, so a 50-photo run never
+ * holds 50 full-resolution bitmaps at once.
+ */
+function downscaleToCap(
+  bitmap: ImageBitmap,
+  cap: number
+): ImageBitmap | OffscreenCanvas {
+  const longEdge = Math.max(bitmap.width, bitmap.height);
+  if (longEdge <= cap || bitmap.width <= 0 || bitmap.height <= 0) {
+    return bitmap;
+  }
+  const scale = cap / longEdge;
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return bitmap; // honest fallback: keep the full-res decode
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(
+    bitmap,
+    0,
+    0,
+    bitmap.width,
+    bitmap.height,
+    0,
+    0,
+    width,
+    height
+  );
+  if (typeof bitmap.close === "function") bitmap.close();
+  return canvas;
+}
+
+/** Decodes, cap-downscales + quarter-turn rotates one photo (0 = no copy). */
+async function preparePhoto(
+  file: File,
+  rotation: number,
+  cap: number
+): Promise<CollageSource> {
   const bitmap = await decodePhoto(file);
-  const oriented = orientedSource(bitmap, rotation, (w, h) => {
+  // Memory guard: bound each photo to the cell-size cap right after
+  // decode and release the full-res source before the next file is
+  // touched (50 photos would otherwise all sit in RAM at full size).
+  const scaled = downscaleToCap(bitmap, cap);
+  const oriented = orientedSource(scaled, rotation, (w, h) => {
     const canvas = new OffscreenCanvas(w, h);
     const ctx = canvas.getContext("2d") as CollageCtx | null;
     if (!ctx) fail("tool.images.errorDecode", file.name);
     return { canvas, ctx };
   });
-  // Rotation 0 hands the SAME bitmap back — it stays open for drawing.
-  if (oriented !== bitmap && typeof bitmap.close === "function") bitmap.close();
+  // Rotation 0 hands the SAME source back — it stays open for drawing.
+  if (oriented !== scaled) releaseSource(scaled);
   return oriented;
 }
 
@@ -196,10 +261,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   /* ---------------- decode + rotate every photo ---------------- */
   post({ type: "progress", runId, pct: 3, stage: "reading", detail: { pages: option.photos.length } });
+  // Cell-size decode cap — photos above it are downscaled at decode so
+  // the run never holds every full-res bitmap at once (mobile OOM guard).
+  const decodeCap = photoDecodeCap(style);
   const images: CollageSource[] = [];
   for (let i = 0; i < option.photos.length; i += 1) {
     const [source, rotation] = option.photos[i];
-    images.push(await preparePhoto(files[source], rotation));
+    images.push(await preparePhoto(files[source], rotation, decodeCap));
     if (i % 3 === 2 || i === option.photos.length - 1) {
       post({
         type: "progress",

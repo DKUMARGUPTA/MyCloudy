@@ -50,7 +50,7 @@
  *     password) → tool.errorEncrypted; garbage bytes → corrupt.
  * 12. WIRING: registry enabled + mode D, TOOL_CONFIGS route,
  *     TOOL_SURFACES map, i18n en/hi parity (tool file AND the merged
- *     src/i18n catalogs, leaf parity 3375=3375), every pmd.* key used by
+ *     src/i18n catalogs, leaf parity en=hi), every pmd.* key used by
  *     the surface/config resolves in BOTH catalogs.
  *
  * Run: bun scripts/smoke-pdf-to-markdown.ts   (exit code = failures)
@@ -749,7 +749,7 @@ console.log("── 5. emitter: markdown shape (synthetic) ───────
   check(
     "front matter: yaml + comment + body in order",
     md.startsWith(
-      '---\ntitle: "He said \\"hi\\" \\\\ done"\nsource: "fixture-report.pdf"\npages: 4\nconverted_by: MyCloudy\n---\n\n'
+      '---\ntitle: "He said \\"hi\\" \\\\ done"\nsource: "fixture-report.pdf"\npages: 4\nconverted_by: DocoPDF\n---\n\n'
     ) && md.includes(`${MD_META_COMMENT}\n\nbody\n`),
     md.slice(0, 160)
   );
@@ -843,7 +843,7 @@ check(
 check("MD_MIME is text/markdown", MD_MIME === "text/markdown");
 check(
   "MD_META_COMMENT is the exact task copy",
-  MD_META_COMMENT === "<!-- converted by MyCloudy -->"
+  MD_META_COMMENT === "<!-- converted by DocoPDF -->"
 );
 
 /* ================================================================== */
@@ -1175,7 +1175,7 @@ const full = buildMarkdown(model, {
 check(
   "full variant: front matter first (worker cascade: firstHeadingText)",
   full.startsWith(
-    '---\ntitle: "Quarterly Report"\nsource: "fixture-report.pdf"\npages: 4\nconverted_by: MyCloudy\n---\n\n'
+    '---\ntitle: "Quarterly Report"\nsource: "fixture-report.pdf"\npages: 4\nconverted_by: DocoPDF\n---\n\n'
   ),
   full.slice(0, 140)
 );
@@ -1415,7 +1415,7 @@ check("parsePageSpec bare out-of-range → null", parsePageSpec("9", 4) === null
       sourceName: "fixture-report.pdf",
       pages: 1,
     }) ===
-      '---\ntitle: "Quarterly Report"\nsource: "fixture-report.pdf"\npages: 1\nconverted_by: MyCloudy\n---\n'
+      '---\ntitle: "Quarterly Report"\nsource: "fixture-report.pdf"\npages: 1\nconverted_by: DocoPDF\n---\n'
   );
   check(
     "pageSlice out-of-range → empty",
@@ -1636,7 +1636,7 @@ console.log("── 12. wiring + i18n ──────────────
   );
 
   // The MERGED catalogs: pmd leaves exist on both sides, and the whole
-  // catalogs hold the documented 3375 = 3375 leaf parity.
+  // catalogs hold en/hi leaf parity (same key sets on both sides).
   const catalogEn = JSON.parse(readFileSync("src/i18n/en.json", "utf8")) as Record<
     string,
     unknown
@@ -1666,9 +1666,8 @@ console.log("── 12. wiring + i18n ──────────────
   const enLeaves = leaves(catalogEn).sort();
   const hiLeaves = leaves(catalogHi).sort();
   check(
-    "catalog leaf parity 3375 = 3375",
-    enLeaves.length === 3375 &&
-      hiLeaves.length === 3375 &&
+    "catalog leaf parity en = hi",
+    enLeaves.length === hiLeaves.length &&
       JSON.stringify(enLeaves) === JSON.stringify(hiLeaves),
     { en: enLeaves.length, hi: hiLeaves.length }
   );

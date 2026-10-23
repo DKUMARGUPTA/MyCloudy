@@ -36,6 +36,18 @@ export const R = (x: number): number => Math.round(Number(x.toFixed(6)));
 /** Parse a user string into integer paise/cents ("" → 0, garbage → 0). */
 export const P = (v: string): number => R((parseFloat(v) || 0) * 100);
 
+/**
+ * Qty/rate numeric reading clamped to a FINITE NON-NEGATIVE multiplier.
+ * P's `|| 0` already eats NaN (garbage), but the typed "-5" and pasted
+ * "1e999" parse to -5 / Infinity — left alone they poison every total
+ * downstream with negative or ±∞ money. Clamp at the coercion boundary
+ * (the same policy the discount/advance clamps already enforce).
+ */
+export const Q = (v: string): number => {
+  const n = parseFloat(v);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
 /* ------------------------------------------------------------------ */
 /* State shape (mirrors the standalone app's `S`)                       */
 /* ------------------------------------------------------------------ */
@@ -171,7 +183,9 @@ export function calc(s: InvoiceState): InvoiceCalc {
     ...i,
     // tb/rt/cg/sg/ig/t are zero-initialized here and filled per-line in
     // the pro-rata loop below — the annotation type needs them present.
-    amt: R((parseFloat(i.q) || 0) * P(i.r)),
+    // Q() clamps each side (NaN / negative / ±Infinity → 0) so the line
+    // amount is always finite money; R(Q(r)·100) is P(r) with the clamp.
+    amt: R(Q(i.q) * R(Q(i.r) * 100)),
     tb: 0,
     rt: 0,
     cg: 0,

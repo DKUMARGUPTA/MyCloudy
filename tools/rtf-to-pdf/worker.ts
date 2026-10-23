@@ -22,7 +22,7 @@ import { drawRtfPdf, type RtfFonts } from "./render";
  *     self-hosted Noto Sans Devanagari (fontkit subset:true) — the
  *     create-resume/stamp-common recipe;
  *  3. drawRtfPdf — the exact render.ts the smoke script drives;
- *  4. save with producer "MyCloudy" and the localized file name.
+ *  4. save with producer "DocoPDF" and the localized file name.
  *
  * Options: pageSize ("auto"|"a4"|"letter"), margin
  * ("auto"|"normal"|"narrow") and locale ("en"|"hi" — the localized
@@ -109,8 +109,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const report = drawRtfPdf(pdfDoc, fonts, doc, opts);
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
-    pdfDoc.setProducer("MyCloudy");
-    pdfDoc.setCreator("MyCloudy");
+    pdfDoc.setProducer("DocoPDF");
+    pdfDoc.setCreator("DocoPDF");
     pdfDoc.setTitle(outputBaseName(file.name, locale));
     pdfDoc.setCreationDate(new Date());
 

@@ -19,11 +19,19 @@
  *    the production TIFF reader (tools/imgconv/tiff) as the oracle:
  *    page count, dimensions, pixel-exact RGBA, LZW/none compression
  *    tags, DPI rationals via the independent minimal parser.
+ * 4. Rendered-pixel RAM budget (ENH-1): the shared worker checks
+ *    RenderPixelBudget BEFORE every page render (canvas-encode and
+ *    TIFF branches alike) and refuses runs past ~250 accumulated
+ *    megapixels with the honest tool.errorRenderBudget error.
  *
  * Usage: bun scripts/smoke-pdf-to-tiff-webp.ts
  */
 import { readFileSync } from "node:fs";
 import { TiffBuilder } from "../tools/pdf-to-images/tiff-writer";
+import {
+  RenderPixelBudget,
+  RENDER_PIXEL_BUDGET,
+} from "../tools/pdfjs-common/pixel-budget";
 import { decodeTiffPages, type TiffRgbaPage } from "../tools/imgconv/tiff";
 import { config as webpConfig } from "../tools/pdf-to-webp/config";
 import { config as tiffConfig } from "../tools/pdf-to-tiff/config";
@@ -347,6 +355,79 @@ async function main(): Promise<void> {
     const decodedNone: TiffRgbaPage[] = decodeTiffPages(bytes);
     check("none: reader round-trip", decodedNone.length === 1);
   }
+
+  /* ---------------- 8. rendered-pixel RAM budget (ENH-1) ---------------- */
+  console.log("── 8. rendered-pixel RAM budget (ENH-1) ────────");
+  check(
+    "default cap is 250 MP (≈ 119 letter pages @150 DPI)",
+    RENDER_PIXEL_BUDGET === 250_000_000
+  );
+  const budget = new RenderPixelBudget(1_000);
+  check("page that fits is consumed", budget.tryConsume(600, 1) === true);
+  check(
+    "accumulation is exact",
+    budget.consumed === 600 && budget.remaining === 400
+  );
+  check(
+    "a page over the REMAINING budget is refused atomically",
+    budget.tryConsume(401, 1) === false && budget.consumed === 600
+  );
+  check(
+    "landing exactly on the cap still fits",
+    budget.tryConsume(400, 1) === true && budget.remaining === 0
+  );
+  check(
+    "zero/negative areas refused without consuming",
+    !new RenderPixelBudget(100).tryConsume(0, 50) &&
+      !new RenderPixelBudget(100).tryConsume(50, 0) &&
+      !new RenderPixelBudget(100).tryConsume(-1, 5)
+  );
+  check(
+    "a single monster page above the cap is refused (DPI 8 poster)",
+    !new RenderPixelBudget(250_000_000).tryConsume(20_000, 20_000)
+  );
+  check(
+    "letter @300 DPI pages fit ~29-30 times (the honest ceiling)",
+    (() => {
+      const b = new RenderPixelBudget();
+      let fits = 0;
+      while (b.tryConsume(2550, 3300)) fits += 1;
+      return fits >= 29 && fits <= 30;
+    })()
+  );
+
+  const budgetWorkerSrc = readFileSync("tools/pdf-to-images/worker.ts", "utf8");
+  check(
+    "shared worker imports the pixel budget",
+    /import \{ RenderPixelBudget \} from "\.\.\/pdfjs-common\/pixel-budget"/.test(
+      budgetWorkerSrc
+    )
+  );
+  check(
+    "budget is created once per run (accumulates across files)",
+    /const budget = new RenderPixelBudget\(\);/.test(budgetWorkerSrc)
+  );
+  check(
+    "the tryConsume refusal fires BEFORE the page render",
+    /if \(!budget\.tryConsume\(width, height\)\)\s*\{[\s\S]*?tool\.errorRenderBudget[\s\S]*?\}[\s\S]*await page\.render/.test(
+      budgetWorkerSrc
+    )
+  );
+  check(
+    "the shared check covers the TIFF branch too",
+    budgetWorkerSrc.indexOf("budget.tryConsume") < budgetWorkerSrc.indexOf("if (isTiff)")
+  );
+
+  check(
+    "tool.errorRenderBudget in en",
+    typeof en.tool?.errorRenderBudget === "string" &&
+      en.tool.errorRenderBudget.length > 10
+  );
+  check(
+    "tool.errorRenderBudget in hi",
+    typeof hi.tool?.errorRenderBudget === "string" &&
+      hi.tool.errorRenderBudget.length > 10
+  );
 
   /* ---------------- summary ---------------- */
   console.log("");

@@ -66,6 +66,7 @@ import {
 } from "pdf-lib";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 
+import { hasExistingSignature } from "../tools/digital-signature/model";
 import {
   MAX_SPOTS,
   NOTE_KEYS,
@@ -1182,7 +1183,7 @@ console.log("── 2. REAL E2E through the worker (self-shimmed) ────�
       })()
     );
     check("pack note: Title = the request subject", noteDoc.getTitle() === "Agreement - please sign", noteDoc.getTitle());
-    check("pack note: Producer MyCloudy", noteDoc.getProducer() === "MyCloudy", noteDoc.getProducer());
+    check("pack note: Producer DocoPDF", noteDoc.getProducer() === "DocoPDF", noteDoc.getProducer());
     const noteDump = objDump(noteDoc);
     check("pack note (EN): nothing embedded (base-14 Helvetica path)", !noteDump.includes("FontFile2"));
     const noteContent = pageContentLatin1(noteDoc, 0);
@@ -1263,6 +1264,42 @@ console.log("── 2. REAL E2E through the worker (self-shimmed) ────�
     [new File([encrypted as BlobPart], "locked.pdf")]
   );
   check("worker reject: encrypted → tool.errorEncrypted", encRes.type === "error" && encRes.code === "tool.errorEncrypted", encRes);
+
+  // already-signed input → honest refusal (pdf-lib re-save would silently
+  // invalidate the existing signature's /ByteRange — the AUD-C FIX)
+  const signedSrc = await PDFDocument.create();
+  signedSrc.addPage([300, 300]);
+  // A real-looking PPKLite sig dict, saved WITHOUT object streams (real
+  // signed PDFs always carry the sig dict as plain bytes, same as the
+  // house digital-signature tool's own output).
+  signedSrc.context.register(
+    signedSrc.context.obj({
+      Type: "Sig",
+      Filter: "Adobe.PPKLite",
+      SubFilter: "adbe.pkcs7.detached",
+      ByteRange: [0, 100, 200, 8],
+      Contents: "00",
+    })
+  );
+  const signedInput = await signedSrc.save({ useObjectStreams: false });
+  check(
+    "worker reject: signed fixture really carries a signature",
+    hasExistingSignature(signedInput),
+    "fixture not detected — object streams hid the sig dict"
+  );
+  const signedRes = await drive(
+    207,
+    {
+      sigFields: true,
+      request: makeRequest({ details: { recipientName: "X" }, spots: [{ page: 0, x: 0.5, y: 0.5 }] }),
+    },
+    [new File([signedInput as BlobPart], "signed.pdf")]
+  );
+  check(
+    "worker reject: already-signed input → tool.errorAlreadySigned (no silent re-save)",
+    signedRes.type === "error" && signedRes.code === "tool.errorAlreadySigned",
+    signedRes
+  );
 
   // page-count clamp E2E: spot page 99 on a 2-page doc lands on page 2
   const clampRes = await drive(
@@ -1353,6 +1390,10 @@ console.log("── 8. i18n + config + wiring ───────────�
     "errorEncrypted" in catEn.tool && "errorCorrupt" in catEn.tool && "errorGeneric" in catEn.tool &&
       "errorEncrypted" in catHi.tool && "errorCorrupt" in catHi.tool && "errorGeneric" in catHi.tool
   );
+  check(
+    "i18n: shared tool.errorAlreadySigned exists in both catalogs (signature guard)",
+    "errorAlreadySigned" in catEn.tool && "errorAlreadySigned" in catHi.tool
+  );
 
   // ---- config.ts ------------------------------------------------------
   const configSrc = readFileSync("tools/request-signature/config.ts", "utf8");
@@ -1386,11 +1427,16 @@ console.log("── 8. i18n + config + wiring ───────────�
   check("worker: flatten scope is forms-only", workerSrc.includes('scope: "forms-only"'));
   check("worker: only reacts to type run", workerSrc.includes('data?.type !== "run"'));
   check("worker: on-device zip via zipPack", workerSrc.includes("zipPack"));
+  check(
+    "worker: refuses already-signed inputs (hasExistingSignature guard)",
+    workerSrc.includes("hasExistingSignature(bytes)") &&
+      workerSrc.includes('"tool.errorAlreadySigned"')
+  );
 
   // ---- render.ts ----------------------------------------------------------
   const renderSrc = readFileSync("tools/request-signature/render.ts", "utf8");
-  check("render: Producer MyCloudy (house brand)", renderSrc.includes('setProducer("MyCloudy")'));
-  check("render: no off-brand producer left", !renderSrc.includes("DocoPDF"));
+  check("render: Producer DocoPDF (house brand)", renderSrc.includes('setProducer("DocoPDF")'));
+  check("render: no off-brand producer left", !renderSrc.includes("MyCloudy"));
 
   // ---- wiring ---------------------------------------------------------------
   const configsSrc = readFileSync("src/lib/tools/configs.ts", "utf8");

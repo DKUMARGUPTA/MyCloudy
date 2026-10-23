@@ -946,8 +946,8 @@ console.log("── 11. REAL render E2E (renderCanvasPdf + pdf.js) ────�
   const enSize = enPdf.getPage(0).getSize();
   near("EN: A4 width 595.28pt", enSize.width, 595.28, 0.05);
   near("EN: A4 height 841.89pt", enSize.height, 841.89, 0.05);
-  eq("EN: producer MyCloudy", enPdf.getProducer(), "MyCloudy");
-  eq("EN: creator MyCloudy", enPdf.getCreator(), "MyCloudy");
+  eq("EN: producer DocoPDF", enPdf.getProducer(), "DocoPDF");
+  eq("EN: creator DocoPDF", enPdf.getCreator(), "DocoPDF");
   eq("EN: title = doc number", enPdf.getTitle(), "INV-9");
   const enDump = objDump(enPdf);
   check("EN: base-14 Helvetica referenced", enDump.includes("Helvetica"));
@@ -1213,7 +1213,7 @@ console.log("── 12. Worker E2E (self-shimmed globalThis) ──────�
     eq("worker HI: detail.images = 1", detail?.images, 1);
     eq("worker HI: detail.elementCount = 5", detail?.elementCount, 5);
     eq("worker HI: detail.fontsEmbedded = noto", detail?.fontsEmbedded, "noto");
-    eq("worker HI: producer MyCloudy", reloaded.getProducer(), "MyCloudy");
+    eq("worker HI: producer DocoPDF", reloaded.getProducer(), "DocoPDF");
   }
 
   // EN-only run — nothing embedded + the date-fallback file name

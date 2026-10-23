@@ -28,6 +28,10 @@ import {
   makeSnippet,
   MAX_MATCHES_PER_FILE,
   MAX_PREVIEW_MATCHES,
+  newMatchBudget,
+  PatternTooComplexError,
+  REGEX_STEP_BUDGET,
+  REGEX_TIME_BUDGET_MS,
   resolveSearchOptions,
   SEARCH_IDS,
   type Matcher,
@@ -424,9 +428,102 @@ eq(
   const hiKeys = Object.keys(sections.hi.search ?? {}).sort();
   eq(enKeys.length > 0, true, "search.en section exists");
   eq(enKeys, hiKeys, "search en↔hi key parity");
-  for (const key of ["errorEmptyQuery", "errorBadRegex", "openPage", "firstFileNote"]) {
+  for (const key of ["errorEmptyQuery", "errorBadRegex", "errorPatternTooComplex", "openPage", "firstFileNote"]) {
     check(enKeys.includes(key), `search.${key} present`);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 9. ReDoS guard: per-page regex budget                              */
+/* ------------------------------------------------------------------ */
+
+{
+  // A normal regex on a big page must NEVER trip the default budget
+  // (no false positives — the cap is ~5× any realistic page text).
+  const bigText = "a".repeat(50_000);
+  const many = findMatches(bigText, regexMatcher("a"));
+  eq(many.length, 50_000, "default budget: 50k one-char matches, no throw");
+  eq(
+    findMatches("needle in a haystack".repeat(2000), regexMatcher("haystack")).length,
+    2000,
+    "default budget: normal scan on ~42 KB text"
+  );
+
+  // Step budget exhaustion — deterministic, tiny custom budget.
+  let threw: unknown = null;
+  try {
+    findMatches("a".repeat(100), regexMatcher("a"), {
+      stepsLeft: 5,
+      deadline: Date.now() + 10_000,
+    });
+  } catch (error) {
+    threw = error;
+  }
+  check(
+    threw instanceof PatternTooComplexError,
+    "step budget exhaustion → PatternTooComplexError"
+  );
+  eq(threw instanceof Error && threw.name, "PatternTooComplexError", "typed error name");
+
+  // Wall-clock deadline already in the past → fires on the first exec check.
+  threw = null;
+  try {
+    findMatches("a".repeat(100), regexMatcher("a"), {
+      stepsLeft: 1_000_000,
+      deadline: Date.now() - 1,
+    });
+  } catch (error) {
+    threw = error;
+  }
+  check(
+    threw instanceof PatternTooComplexError,
+    "expired deadline → PatternTooComplexError on the first check"
+  );
+
+  // A REAL slow (catastrophic-ish) pattern with a tiny injected deadline:
+  // (a+)+b against 28 a's + 'c' backtracks ~2^27 ways inside exec #1
+  // (hundreds of ms even on a fast engine — far past the 1 ms deadline),
+  // so the check after that exec must refuse the rest of the page.
+  threw = null;
+  try {
+    findMatches("a".repeat(28) + "c", regexMatcher("(a+)+b"), {
+      stepsLeft: 1_000_000,
+      deadline: Date.now() + 1,
+    });
+  } catch (error) {
+    threw = error;
+  }
+  check(
+    threw instanceof PatternTooComplexError,
+    "slow backtracking pattern + tiny deadline → refused"
+  );
+
+  // Text mode is a linear indexOf scan — budget never applies.
+  let textOk = true;
+  try {
+    findMatches(bigText, textMatcher("a"), {
+      stepsLeft: 3,
+      deadline: Date.now() - 1,
+    });
+  } catch {
+    textOk = false;
+  }
+  check(textOk, "text mode ignores the budget (linear scan)");
+
+  // Constants + error classification wiring.
+  eq(REGEX_STEP_BUDGET, 2_000_000, "default step budget is 2M");
+  eq(REGEX_TIME_BUDGET_MS, 2_000, "default time budget is 2s per page");
+  const budget = newMatchBudget(77, 99);
+  eq(
+    budget.stepsLeft === 77 && budget.deadline > Date.now() + 50,
+    true,
+    "newMatchBudget carries the caps"
+  );
+  eq(
+    classifySearchError("PatternTooComplexError: pattern too complex"),
+    "search.errorPatternTooComplex",
+    "classifySearchError maps the guard message"
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed (of ${checkNo})`);

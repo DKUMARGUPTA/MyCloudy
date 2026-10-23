@@ -11,7 +11,7 @@
  * key is a secret you keep for exactly as long as you use it.
  */
 
-const P12_EVENT = "mycloudy:ds-p12-change";
+const P12_EVENT = "docopdf:ds-p12-change";
 
 let current: File | null = null;
 

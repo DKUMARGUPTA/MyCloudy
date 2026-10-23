@@ -71,8 +71,8 @@ export const config: ToolConfig = {
       id: "metaComment",
       label: { en: "Provenance comment", hi: "स्रोत टिप्पणी" },
       hint: {
-        en: "Adds <!-- converted by MyCloudy --> at the top of the file",
-        hi: "फ़ाइल के ऊपर <!-- converted by MyCloudy --> टिप्पणी जोड़ता है",
+        en: "Adds <!-- converted by DocoPDF --> at the top of the file",
+        hi: "फ़ाइल के ऊपर <!-- converted by DocoPDF --> टिप्पणी जोड़ता है",
       },
       default: false,
     },
@@ -134,8 +134,8 @@ export const config: ToolConfig = {
         hi: "स्विच क्या करती हैं — हर पेज अलग फ़ाइल, रेखा, हेडर?",
       },
       a: {
-        en: "Pages picks a subset (1-3, 5, 8- with an open end). \"One file per page\" writes a separate .md per selected page instead of one document — handy for notes per chapter; the result screen also offers everything as a ZIP. \"Rules between pages\" adds a --- thematic break where each PDF page starts, keeping page boundaries visible in one file. The provenance comment adds <!-- converted by MyCloudy --> at the top; YAML front matter adds a --- block with title, source and page count for static-site generators (both are off by default — the .md stays clean).",
-        hi: "पेज में सबसेट चुनें (1-3, 5, 8- खुले सिरे के साथ)। \"हर पेज की अलग फ़ाइल\" एक दस्तावेज़ की जगह हर चुने पेज का अलग .md लिखती है — हर अध्याय के नोट्स के लिए सही; रिज़ल्ट स्क्रीन सबकुछ ZIP में भी देती है। \"पेजों के बीच रेखा\" हर PDF पेज की शुरुआत पर --- विभाजक रखती है, ताकि एक फ़ाइल में पेज की हद दिखती रहे। स्रोत टिप्पणी ऊपर <!-- converted by MyCloudy --> जोड़ती है; YAML फ़्रंट मैटर स्टैटिक-साइट जनरेटर के लिए title, source और पेज-गिनती वाला --- ब्लॉक देता है (दोनों डिफ़ॉल्ट में बंद — .md साफ़ रहती है)।",
+        en: "Pages picks a subset (1-3, 5, 8- with an open end). \"One file per page\" writes a separate .md per selected page instead of one document — handy for notes per chapter; the result screen also offers everything as a ZIP. \"Rules between pages\" adds a --- thematic break where each PDF page starts, keeping page boundaries visible in one file. The provenance comment adds <!-- converted by DocoPDF --> at the top; YAML front matter adds a --- block with title, source and page count for static-site generators (both are off by default — the .md stays clean).",
+        hi: "पेज में सबसेट चुनें (1-3, 5, 8- खुले सिरे के साथ)। \"हर पेज की अलग फ़ाइल\" एक दस्तावेज़ की जगह हर चुने पेज का अलग .md लिखती है — हर अध्याय के नोट्स के लिए सही; रिज़ल्ट स्क्रीन सबकुछ ZIP में भी देती है। \"पेजों के बीच रेखा\" हर PDF पेज की शुरुआत पर --- विभाजक रखती है, ताकि एक फ़ाइल में पेज की हद दिखती रहे। स्रोत टिप्पणी ऊपर <!-- converted by DocoPDF --> जोड़ती है; YAML फ़्रंट मैटर स्टैटिक-साइट जनरेटर के लिए title, source और पेज-गिनती वाला --- ब्लॉक देता है (दोनों डिफ़ॉल्ट में बंद — .md साफ़ रहती है)।",
       },
     },
     {

@@ -524,7 +524,7 @@ console.log("── 6. rejection vectors ─────────────
   );
   check("garbage bytes rejected at the gate", !looksLikeHtml(garbage) && garbage.length > 0);
 
-  // empty html → no blocks → the worker errors (h2p.errNoDoc)
+  // empty html → no blocks → the worker errors (html.errNoDoc)
   const emptyHtml = parseHtml("<html><head><title>e</title></head><body></body></html>");
   check("empty html → zero blocks (worker error path)", emptyHtml.blocks.length === 0 && emptyHtml.title === "e");
 

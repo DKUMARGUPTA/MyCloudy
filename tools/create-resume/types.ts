@@ -1,5 +1,5 @@
 /**
- * Create resume — document model (CR-66, the 66th MyCloudy tool).
+ * Create resume — document model (CR-66, the 66th DocoPDF tool).
  *
  * The ResumeDoc is a plain, serializable tree: a header (identity +
  * optional circular photo), an ORDERED list of sections (each typed by

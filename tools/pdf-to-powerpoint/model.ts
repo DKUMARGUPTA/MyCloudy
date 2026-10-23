@@ -40,7 +40,7 @@ import type { RunDetail } from "@/lib/workers/protocol";
  *     _rels/.rels, ppt/presentation.xml (+ rels), slideMaster + rels +
  *     theme, slideLayout + rels, one slideN.xml (+ rels) per page,
  *     optional ppt/media/imageN.png for page-images mode, docProps
- *     core.xml + app.xml (creator "MyCloudy"). NO external pptx
+ *     core.xml + app.xml (creator "DocoPDF"). NO external pptx
  *     library — and the parts are shaped exactly for the mirror tool
  *     powerpoint-to-pdf's parsePptx to read back (the smoke proves it).
  *
@@ -976,8 +976,8 @@ function coreXml(title: string): string {
     'xmlns:dcterms="http://purl.org/dc/terms/" ' +
     'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' +
     `<dc:title>${safe}</dc:title>` +
-    "<dc:creator>MyCloudy</dc:creator>" +
-    '<cp:lastModifiedBy>MyCloudy</cp:lastModifiedBy>' +
+    "<dc:creator>DocoPDF</dc:creator>" +
+    '<cp:lastModifiedBy>DocoPDF</cp:lastModifiedBy>' +
     "</cp:coreProperties>"
   );
 }
@@ -986,7 +986,7 @@ function appXml(): string {
   return (
     `${XML_DECL}` +
     '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">' +
-    "<Application>MyCloudy</Application>" +
+    "<Application>DocoPDF</Application>" +
     "</Properties>"
   );
 }

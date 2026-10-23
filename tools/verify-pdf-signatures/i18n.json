@@ -85,7 +85,7 @@
       "nAttached": "The CMS is not detached — its integrity relationship to the PDF bytes cannot be checked by digest comparison.",
       "nNoSignedAttrs": "No signedAttrs in the SignerInfo — the messageDigest integrity check is unavailable (the signature covers the content directly).",
       "nVerifyError": "WebCrypto could not process the signature (unsupported key type or encoding).",
-      "generatedBy": "Generated on-device by MyCloudy — nothing was uploaded.",
+      "generatedBy": "Generated on-device by DocoPDF — nothing was uploaded.",
       "honestyTitle": "NOT CHECKED (honesty)",
       "honestyBody": "No CRL/OCSP revocation check, no chain-of-trust validation, no timestamp (TSA) verification and no PAdES long-term validation were performed — there is no trust store on this device to check against. A self-signed certificate shows as untrusted-but-valid. A verdict of VALID means exactly: the signature verifies cryptographically, the signed byte ranges are intact and the coverage is complete — nothing more.",
 
@@ -205,7 +205,7 @@
       "nAttached": "CMS डिटैच्ड नहीं है — डाइजेस्ट तुलना से उसका PDF बाइट्स से अखंडता संबंध नहीं जाँचा जा सकता।",
       "nNoSignedAttrs": "SignerInfo में कोई signedAttrs नहीं — messageDigest अखंडता जाँच उपलब्ध नहीं (हस्ताक्षर सीधे सामग्री को कवर करता है)।",
       "nVerifyError": "WebCrypto हस्ताक्षर प्रोसेस नहीं कर सका (असमर्थित कुंजी प्रकार या एन्कोडिंग)।",
-      "generatedBy": "MyCloudy द्वारा डिवाइस पर बनाया गया — कुछ भी अपलोड नहीं हुआ।",
+      "generatedBy": "DocoPDF द्वारा डिवाइस पर बनाया गया — कुछ भी अपलोड नहीं हुआ।",
       "honestyTitle": "जाँचा नहीं गया (ईमानदारी से)",
       "honestyBody": "कोई CRL/OCSP निरस्तीकरण जाँच नहीं, कोई चेन-ऑफ़-ट्रस्ट जाँच नहीं, कोई टाइमस्टैम्प (TSA) सत्यापन नहीं और न PAdES दीर्घकालिक सत्यापन हुआ — इस डिवाइस पर जाँचने लायक कोई ट्रस्ट स्टोर नहीं है। सेल्फ़-साइन्ड सर्टिफ़िकेट अविश्वसनीय-पर-वैध दिखता है। वैध का फ़ैसला ठीक इतना ही है: हस्ताक्षर क्रिप्टोग्राफ़िक रूप से सही है, हस्ताक्षरित बाइट-रेंज अछूती हैं और कवरेज पूरा है — इससे ज़्यादा कुछ नहीं।",
 

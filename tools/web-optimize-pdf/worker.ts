@@ -38,6 +38,15 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const params = resolveParams(options as Record<string, unknown>);
   const outputs: { name: string; mime: string; blob: Blob }[] = [];
 
+  // Aggregated run detail (multi-file honest sums, compress-pdf pattern).
+  let totalPages = 0;
+  let beforeBytesTotal = 0;
+  let afterBytesTotal = 0;
+  let streamsRecompressedTotal = 0;
+  let objectStreamsTotal = 0;
+  let anyMetadataStripped = false;
+  let unreferencedTotal = 0;
+
   for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
     const file = files[fileIndex];
     post({
@@ -110,29 +119,39 @@ async function run(request: WorkerRunRequest): Promise<void> {
       blob: new Blob([saved as BlobPart], { type: "application/pdf" }),
     });
 
-    const beforeBytes = bytes.length;
-    const afterBytes = saved.length;
-    const savedPct =
-      beforeBytes > 0
-        ? Math.round((1 - afterBytes / beforeBytes) * 1000) / 10
-        : 0;
-    post({
-      type: "result",
-      runId,
-      outputs,
-      detail: {
-        files: outputs.length,
-        pages: pageCount,
-        beforeBytes,
-        afterBytes,
-        savedPct,
-        streamsRecompressed,
-        objectStreamsCount,
-        metadataStripped,
-        unreferencedObjects: garbage.removed,
-      },
-    });
+    totalPages += pageCount;
+    beforeBytesTotal += bytes.length;
+    afterBytesTotal += saved.length;
+    streamsRecompressedTotal += streamsRecompressed;
+    objectStreamsTotal += objectStreamsCount;
+    anyMetadataStripped = anyMetadataStripped || metadataStripped;
+    unreferencedTotal += garbage.removed;
   }
+
+  // ONE result per run, posted AFTER the loop (FIX-3: posting inside the
+  // per-file loop with an accumulating outputs array meant duplicate
+  // result messages — each carrying every output so far — the moment
+  // maxFiles grows past 1; the pool settles on the first one it sees).
+  const savedPct =
+    beforeBytesTotal > 0
+      ? Math.round((1 - afterBytesTotal / beforeBytesTotal) * 1000) / 10
+      : 0;
+  post({
+    type: "result",
+    runId,
+    outputs,
+    detail: {
+      files: outputs.length,
+      pages: totalPages,
+      beforeBytes: beforeBytesTotal,
+      afterBytes: afterBytesTotal,
+      savedPct,
+      streamsRecompressed: streamsRecompressedTotal,
+      objectStreamsCount: objectStreamsTotal,
+      metadataStripped: anyMetadataStripped,
+      unreferencedObjects: unreferencedTotal,
+    },
+  });
 }
 
 self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {

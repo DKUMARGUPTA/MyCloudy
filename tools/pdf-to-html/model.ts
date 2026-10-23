@@ -902,14 +902,14 @@ export function buildHtml(
     "<head>\n" +
     '<meta charset="utf-8"/>\n' +
     '<meta name="viewport" content="width=device-width, initial-scale=1"/>\n' +
-    '<meta name="generator" content="MyCloudy"/>\n' +
+    '<meta name="generator" content="DocoPDF"/>\n' +
     `<title>${escapeHtml(opts.title.slice(0, 120).trim())}</title>\n` +
     `<style>\n${BASE_CSS}\n${modeCss}\n</style>\n` +
     "</head>\n" +
     `<body class="${opts.mode}">\n` +
     body +
     "\n</body>\n" +
-    "<!-- Converted from PDF by MyCloudy — 100% on-device -->\n" +
+    "<!-- Converted from PDF by DocoPDF — 100% on-device -->\n" +
     "</html>\n"
   );
 }

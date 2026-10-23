@@ -40,7 +40,7 @@ import { drawEpubPdf, type EpubFontSet } from "./render";
  *  4. drawEpubPdf — the exact render.ts the smoke script drives:
  *     cover page, chapters on fresh pages, inserted TOC with exact
  *     page numbers, optional folios;
- *  5. save with producer/creator "MyCloudy", PDF title/author from
+ *  5. save with producer/creator "DocoPDF", PDF title/author from
  *     the OPF metadata, and the title-derived download name.
  *
  * Options: pageSize ("a4"|"letter"), margin ("normal"|"narrow"|"wide"),
@@ -182,8 +182,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     });
     post({ type: "progress", runId, pct: 88, stage: "saving" });
 
-    pdfDoc.setProducer("MyCloudy");
-    pdfDoc.setCreator("MyCloudy");
+    pdfDoc.setProducer("DocoPDF");
+    pdfDoc.setCreator("DocoPDF");
     const baseName = outputBaseName(book.title || file.name, lang);
     pdfDoc.setTitle(baseName);
     if (book.author !== "") pdfDoc.setAuthor(book.author);

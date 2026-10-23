@@ -32,6 +32,12 @@ import {
  *     merged with pdf-lib next to the passed-through originals.
  *  4. Text output: UTF-8 .txt with the same page markers as pdf-to-txt.
  *
+ *  Encrypted inputs are refused upfront (tool.errorEncrypted) in every
+ *  mode (FIX-1b / AUD-C): pdf.js opens owner-restricted files (empty user
+ *  password) transparently, but pdf-lib cannot decrypt — a pass-through
+ *  would copy still-encrypted content streams into a fresh document that
+ *  carries no /Encrypt dictionary, silently corrupting those pages.
+ *
  * Tesseract itself runs as a nested classic worker (blob-wrapped
  * importScripts of the self-hosted worker.min.js — allowed by CSP
  * `worker-src 'self' blob:`) and is kept as a warm singleton so a second
@@ -249,7 +255,6 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const markPages = options.pageMarks === true;
 
   post({ type: "progress", runId, pct: 2, stage: "reading" });
-  const pdfjs = await loadPdfjsInWorker();
 
   const outputs: { name: string; mime: string; blob: Blob }[] = [];
   let totalPages = 0;
@@ -265,6 +270,32 @@ async function run(request: WorkerRunRequest): Promise<void> {
       .slice(0, 120);
 
     const data = new Uint8Array(await file.arrayBuffer());
+
+    // FIX-1b (AUD-C): encrypted-input guard — every mode, before any
+    // pdf-lib pass-through/save can touch the bytes. The probe is
+    // STRUCTURAL (pdf-lib parses the trailer and reports isEncrypted),
+    // never a raw-bytes "/Encrypt" sniff, so a plain document that merely
+    // contains the literal text "/Encrypt 26 0 R" cannot be refused by
+    // mistake. A load failure here is not a refusal — files pdf-lib cannot
+    // parse keep flowing through the pdf.js paths below, which report
+    // corrupt/encrypted as before.
+    let srcProbe: PDFDocument | null = null;
+    try {
+      srcProbe = await PDFDocument.load(data, {
+        ignoreEncryption: true,
+        updateMetadata: false,
+      });
+    } catch {
+      // Not parseable by pdf-lib at all — never refuse on a guess.
+    }
+    if (srcProbe !== null && srcProbe.isEncrypted) {
+      post({ type: "error", runId, code: "tool.errorEncrypted" });
+      return;
+    }
+
+    // pdf.js loads lazily per file (memoized singleton) so the guard above
+    // can refuse an encrypted file before any pdf.js machinery runs.
+    const pdfjs = await loadPdfjsInWorker();
     const doc = await pdfjs.getDocument({
       data,
       // Worker-safe canvas factory — image pages need createElement
@@ -358,8 +389,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
       // Searchable PDF: original pages pass through, scanned pages are
       // rebuilt by tesseract's PDF renderer (raster + invisible logical
       // text layer), merged in document order with pdf-lib.
+      // The upfront guard already parsed (and cleared) this source — reuse
+      // that probe instead of a second full parse. srcProbe === null (not
+      // parseable by pdf-lib) keeps the legacy behavior: try the load and
+      // let a throw surface as tool.errorCorrupt via the run() catch.
       const srcDoc = needsOcr.some((need) => !need)
-        ? await PDFDocument.load(data, { ignoreEncryption: true })
+        ? (srcProbe ??
+          (await PDFDocument.load(data, { ignoreEncryption: true })))
         : null;
       const outDoc = await PDFDocument.create();
 

@@ -19,6 +19,10 @@ import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream, StandardFonts, rgb } from "pdf-lib";
 import type { EditorObject, PageView } from "../tools/edit-pdf/model";
+import {
+  lockPdf,
+  type LockRequest,
+} from "../tools/lock-common/security";
 
 let passed = 0;
 let failed = 0;
@@ -423,6 +427,60 @@ async function main(): Promise<void> {
   });
   assert(bad.error !== null, "corrupt: error posted");
   assertEqual(bad.error?.code, "tool.errorCorrupt", "corrupt error code");
+
+  /* ---- encrypted source → honest refusal (FIX-1c regression) ---- */
+  // Real AES-256 fixture (the lock-pdf engine). The worker loads with
+  // ignoreEncryption:true, so without the isEncrypted guard it would
+  // draw onto still-encrypted streams and re-save a corrupted file —
+  // the UI gate is the only cover today; this keeps the worker honest.
+  const lockReq = (over: Partial<LockRequest> = {}): LockRequest => ({
+    userPw: "open123",
+    ownerPw: "",
+    alg: "aes256",
+    permissions: {
+      printing: true,
+      copying: false,
+      modifying: false,
+      annotating: true,
+      fillingForms: true,
+      contentAccessibility: true,
+    },
+    ...over,
+  });
+  const encryptedBytes = (await lockPdf(await makeSourcePdf(), lockReq())).bytes;
+  const encRun = await runWorker(
+    new FakeFile("locked.pdf", encryptedBytes),
+    {
+      ekey: "f4",
+      "e:f4": JSON.stringify({ objects: [], pageViews: [], assetOrder: [] }),
+    }
+  );
+  assert(encRun.result === null, "encrypted: no result/output emitted");
+  assert(encRun.error !== null, "encrypted: error posted");
+  assertEqual(
+    encRun.error?.code,
+    "tool.errorEncrypted",
+    "encrypted error code (PDF_PASSWORD branch now reachable)"
+  );
+
+  // Owner-only variant (empty USER password): pdf.js opens it fine — the
+  // surface stays usable — so the worker refusal is the only backstop.
+  const ownerOnlyBytes = (
+    await lockPdf(await makeSourcePdf(), lockReq({ userPw: "", ownerPw: "owner999" }))
+  ).bytes;
+  const ownerRun = await runWorker(
+    new FakeFile("owner-only.pdf", ownerOnlyBytes),
+    {
+      ekey: "f5",
+      "e:f5": JSON.stringify({ objects: [], pageViews: [], assetOrder: [] }),
+    }
+  );
+  assert(ownerRun.result === null, "owner-only encrypted: no result emitted");
+  assertEqual(
+    ownerRun.error?.code,
+    "tool.errorEncrypted",
+    "owner-only encrypted error code"
+  );
 
   /* ---- summary ---- */
   console.log(`\n${passed} passed, ${failed} failed`);

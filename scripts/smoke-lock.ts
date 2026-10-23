@@ -6,6 +6,7 @@
  */
 import {
   PDFDocument,
+  PDFString,
   StandardFonts,
 } from "@cantoo/pdf-lib";
 import {
@@ -257,6 +258,62 @@ console.log("11. estimateTypedBits");
   ok(digits < 50, "pure digits capped", String(digits));
   const aaa = estimateTypedBits("aaaaaaaa");
   ok(aaa <= 6, "single-char repeat ≤6 bits", String(aaa));
+}
+
+/* 12 — verifyUnlocked is STRUCTURAL (FIX-3): a plain document whose TEXT
+ * literally contains "/Encrypt 26 0 R" (this project's own docs do!) must
+ * PASS — the old raw-substring scan false-positived and refused a legit
+ * unlock. A real encrypted file must still be refused. */
+console.log("12. verifyUnlocked structural check");
+{
+  const decoy = await PDFDocument.create();
+  const font = await decoy.embedFont(StandardFonts.Helvetica);
+  const page = decoy.addPage([612, 792]);
+  page.drawText("We discuss /Encrypt dictionaries in chapter 4.", {
+    x: 50,
+    y: 700,
+    size: 12,
+    font,
+  });
+  // Content streams compress, so plant the literal as a PLAIN PDFString in
+  // the Info dict — uncompressed bytes in every writer, exactly the shape
+  // that used to trip the raw `includes("/Encrypt")` scan.
+  const info = decoy.context.register(
+    decoy.context.obj({
+      Subject: PDFString.of("/Encrypt 26 0 R /Filter /Standard"),
+    })
+  );
+  decoy.context.trailerInfo.Info = info;
+  const decoyBytes = await decoy.save({ useObjectStreams: false });
+  ok(
+    Buffer.from(decoyBytes).toString("latin1").includes("/Encrypt 26 0 R"),
+    "fixture: raw bytes carry the literal '/Encrypt 26 0 R' substring"
+  );
+  let decoyCode: string | null = null;
+  try {
+    await verifyUnlocked(decoyBytes);
+  } catch (e) {
+    decoyCode = codeOf(e);
+  }
+  ok(
+    decoyCode === null,
+    "plain doc with literal '/Encrypt' bytes → verifyUnlocked PASSES (no false positive)",
+    decoyCode ?? ""
+  );
+
+  // Control: a genuinely encrypted file is still refused (structural).
+  const sample = await makeSample(false);
+  const { bytes: locked } = await lockPdf(sample, baseReq());
+  let lockedCode: string | null = null;
+  try {
+    await verifyUnlocked(locked);
+  } catch (e) {
+    lockedCode = codeOf(e);
+  }
+  ok(
+    lockedCode === "tool.errorAlreadyEncrypted",
+    "genuinely encrypted bytes → still refused (trailer /Encrypt seen)"
+  );
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

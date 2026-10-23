@@ -6,6 +6,7 @@ import type {
   WorkerRunRequest,
   WorkerResponse,
 } from "@/lib/workers/protocol";
+import { hasExistingSignature } from "../digital-signature/model";
 import { loadStampFonts } from "../stamp-common/worker-lib";
 import {
   FlattenFormsError,
@@ -53,6 +54,7 @@ import type { RequestPackRun } from "./types";
  * Error mapping:
  *   reqsig.errNoSpots      no usable signature spot in the payload
  *   reqsig.errFlatten      the form could not be flattened (honest stop)
+ *   tool.errorAlreadySigned input already carries a digital signature
  *   tool.errorEncrypted    password-protected input
  *   tool.errorCorrupt       unreadable / pageless PDF
  *   tool.errorGeneric       no file / unexpected failure
@@ -82,6 +84,16 @@ async function run(request: WorkerRunRequest): Promise<void> {
     bytes = new Uint8Array(await file.arrayBuffer());
   } catch {
     post({ type: "error", runId, code: "tool.errorCorrupt" });
+    return;
+  }
+
+  // The prepared pack re-saves the whole input through pdf-lib — that
+  // shifts every byte offset and silently invalidates an existing
+  // cryptographic signature's /ByteRange. Honest refusal (the
+  // digital-signature guard recipe): ask for signatures on the
+  // unsigned original, never re-save a signed one.
+  if (hasExistingSignature(bytes)) {
+    post({ type: "error", runId, code: "tool.errorAlreadySigned" });
     return;
   }
 

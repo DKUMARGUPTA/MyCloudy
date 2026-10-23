@@ -32,6 +32,9 @@
  *     for a same-aspect page, letterboxed for a portrait page.
  *  9. Rejection vectors — an @cantoo-encrypted PDF (pdf.js asks for a
  *     password) → tool.errorEncrypted; garbage bytes → tool.errorCorrupt.
+ * 10. Rendered-pixel RAM budget (ENH-1) — the images-mode loop checks
+ *     RenderPixelBudget BEFORE each page render and posts the honest
+ *     tool.errorRenderBudget refusal (i18n in BOTH catalogs).
  *
  * Run: bun scripts/smoke-pdf-to-powerpoint.ts
  */
@@ -60,6 +63,10 @@ import {
 } from "../tools/pdf-to-powerpoint/model";
 import { parsePptx } from "../tools/powerpoint-to-pdf/model";
 import { parsePageSpec } from "../src/lib/workers/protocol";
+import {
+  RenderPixelBudget,
+  RENDER_PIXEL_BUDGET,
+} from "../tools/pdfjs-common/pixel-budget";
 
 let pass = 0;
 let fail = 0;
@@ -666,8 +673,8 @@ check(
 
 const core = text(entries.get("docProps/core.xml"));
 check("docProps title", core.includes("Quarterly Report"));
-check("docProps creator MyCloudy", core.includes("<dc:creator>MyCloudy</dc:creator>"));
-check("app.xml Application MyCloudy", text(entries.get("docProps/app.xml")).includes("<Application>MyCloudy</Application>"));
+check("docProps creator DocoPDF", core.includes("<dc:creator>DocoPDF</dc:creator>"));
+check("app.xml Application DocoPDF", text(entries.get("docProps/app.xml")).includes("<Application>DocoPDF</Application>"));
 
 /* (b) slide XML parsing */
 const slide1 = text(entries.get("ppt/slides/slide1.xml"));
@@ -1099,6 +1106,65 @@ console.log("── 9. rejection vectors (encrypted / garbage) ─────�
   check(
     "mapping helper: everything else → corrupt",
     pdfErrorMessageToCode("Invalid PDF structure") === "tool.errorCorrupt"
+  );
+}
+
+/* ================================================================== */
+console.log("── 10. images-mode RAM budget (ENH-1) ──────────────────");
+/* ================================================================== */
+{
+  check(
+    "default budget cap is 250 MP",
+    RENDER_PIXEL_BUDGET === 250_000_000
+  );
+  const small = new RenderPixelBudget(1_000);
+  check("budget consumes pages that fit", small.tryConsume(600, 1) === true);
+  check("budget consumed is exact", small.consumed === 600);
+  check(
+    "page over the remaining budget refused, nothing consumed",
+    small.tryConsume(401, 1) === false && small.consumed === 600
+  );
+  check(
+    "a page that lands exactly on the cap fits",
+    small.tryConsume(400, 1) === true && small.consumed === 1_000 && small.remaining === 0
+  );
+  check(
+    "anything after a full budget is refused",
+    small.tryConsume(1, 1) === false
+  );
+  check(
+    "degenerate sizes refused without consuming",
+    new RenderPixelBudget(1_000).tryConsume(0, 10) === false &&
+      !new RenderPixelBudget(1_000).tryConsume(10, 0) &&
+      !new RenderPixelBudget(1_000).tryConsume(-5, 4)
+  );
+  check(
+    "a single page above the cap alone is refused",
+    !new RenderPixelBudget(2_500_000).tryConsume(2_501, 1_000)
+  );
+
+  const workerSrc = readFileSync("tools/pdf-to-powerpoint/worker.ts", "utf8");
+  check(
+    "worker imports the shared pixel budget",
+    /import \{ RenderPixelBudget \} from "\.\.\/pdfjs-common\/pixel-budget"/.test(
+      workerSrc
+    )
+  );
+  check(
+    "images-mode budget check precedes the page render",
+    /if \(!budget\.tryConsume\(width, height\)\)\s*\{[\s\S]*?tool\.errorRenderBudget[\s\S]*?\}[\s\S]*await page\.render/.test(
+      workerSrc
+    )
+  );
+
+  const en = JSON.parse(readFileSync("src/i18n/en.json", "utf8"));
+  const hi = JSON.parse(readFileSync("src/i18n/hi.json", "utf8"));
+  check(
+    "tool.errorRenderBudget present in BOTH catalogs",
+    typeof en.tool?.errorRenderBudget === "string" &&
+      typeof hi.tool?.errorRenderBudget === "string" &&
+      en.tool.errorRenderBudget.length > 10 &&
+      hi.tool.errorRenderBudget.length > 10
   );
 }
 

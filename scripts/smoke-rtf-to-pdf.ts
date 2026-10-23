@@ -29,6 +29,7 @@ import {
   type RtfRun,
 } from "../tools/rtf-to-pdf/model";
 import { drawRtfPdf, type RtfFonts } from "../tools/rtf-to-pdf/render";
+import { sniffKind } from "../tools/convert-to-pdf/detect";
 
 let pass = 0;
 let fail = 0;
@@ -440,6 +441,46 @@ console.log("── 5. REAL renders (worker's exact render.ts) ─────�
     "}";
   const longOut = await render(longRtf, false);
   check("long doc breaks pages", longOut.pages >= 3, longOut.pages);
+}
+
+console.log("── 6. universal-converter RTF routing (detect.ts) ──────");
+{
+  // FIX-3 regression: a .rtf dropped on "Convert to PDF" is plain text, so
+  // before the magic sniff it fell through to txt — routing to txt-to-pdf,
+  // which prints raw control words. sniffKind must pin the {\rtf magic and
+  // hand the file to THIS tool.
+  const rtf = sniffKind(
+    bytesOf("{\\rtf1\\ansi\\pard hello \\b bold\\b0\\par}"),
+    "letter.rtf"
+  );
+  check("rtf magic → kind rtf", rtf.kind === "rtf", rtf.kind);
+  check("rtf label key", rtf.labelKey === "conv.kindRtf", rtf.labelKey);
+
+  // BOM-prefixed RTF (TextEdit writes these) still sniffs as RTF.
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf, ...bytesOf("{\\rtf1 hi}")]);
+  check("BOM + rtf magic → kind rtf", sniffKind(bom, "x.rtf").kind === "rtf");
+
+  // Honest neighbours: plain text stays txt, an SVG stays svg — the new
+  // branch must not over-trigger.
+  check(
+    "plain text → txt",
+    sniffKind(bytesOf("hello world"), "a.txt").kind === "txt"
+  );
+  check(
+    "svg → svg",
+    sniffKind(bytesOf('<svg xmlns="http://www.w3.org/2000/svg"></svg>'), "a.svg").kind ===
+      "svg"
+  );
+  check(
+    "text mentioning rtf mid-body → txt",
+    sniffKind(bytesOf("we talk about {\\rtf only later"), "a.txt").kind === "txt"
+  );
+  const bogus = sniffKind(bytesOf("hello not an rtf"), "renamed.rtf");
+  check(
+    "content wins over .rtf name (no magic → txt)",
+    bogus.kind === "txt",
+    bogus.kind
+  );
 }
 
 console.log(

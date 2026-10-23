@@ -154,7 +154,7 @@
       "nUaAltOk": "Alternate text entries found in the structure tree.",
       "nUaAltWarn": "No /Alt entries found in the structure tree (light scan).",
       "nUaAltFail": "No structure tree — no /Alt scan possible.",
-      "generatedBy": "Generated on-device by MyCloudy — nothing was uploaded.",
+      "generatedBy": "Generated on-device by DocoPDF — nothing was uploaded.",
       "honestyTitle": "NOT CHECKED (honesty)",
       "honestyBody": "This is an honest subset of ISO 19005 rule families, inspired by veraPDF's categories — not the full standard and not a certified validation. Roughly 15 rule families are checked; a COMPLIANT verdict means every check in this subset passed, nothing more. The PDF/UA rows are advisory hints only (full PDF/UA validation is not performed). Take archive-grade decisions to a certified validator."
     }
@@ -314,7 +314,7 @@
       "nUaAltOk": "संरचना-वृक्ष में वैकल्पिक पाठ प्रविष्टियाँ मिलीं।",
       "nUaAltWarn": "संरचना-वृक्ष में कोई /Alt प्रविष्टि नहीं मिली (हल्का स्कैन)।",
       "nUaAltFail": "कोई संरचना-वृक्ष नहीं — /Alt स्कैन संभव नहीं।",
-      "generatedBy": "MyCloudy द्वारा डिवाइस पर बनाई गई — कुछ भी अपलोड नहीं हुआ।",
+      "generatedBy": "DocoPDF द्वारा डिवाइस पर बनाई गई — कुछ भी अपलोड नहीं हुआ।",
       "honestyTitle": "जाँच नहीं हुई (ईमानदारी)",
       "honestyBody": "यह ISO 19005 के नियम-परिवारों का ईमानदार उपसमुच्चय है, veraPDF की श्रेणियों से प्रेरित — पूरा मानक नहीं, प्रमाणित वैलिडेशन भी नहीं। लगभग 15 नियम-परिवार जाँचे गए; COMPLIENT का मतलब केवल इतना है कि इस उपसमुच्चय की हर जाँच पास हुई, इससे ज़्यादा कुछ नहीं। PDF/UA की पंक्तियाँ केवल सलाहकारी संकेत हैं (पूरी PDF/UA जाँच नहीं होती)। अभिलेख-स्तर के निर्णय प्रमाणित वैलिडेटर से कराएँ।"
     }

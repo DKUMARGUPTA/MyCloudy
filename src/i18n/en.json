@@ -329,10 +329,11 @@
     "keepTabOpen": "Tip: keep this tab open. You can keep using the site in another tab.",
     "errorTitle": "Something went wrong",
     "errorGeneric": "The tool hit an unexpected error. Please try again. {detail}",
-    "errorInvalidPages": "That page selection isn't valid. Use ranges like 1-3, 5.",
+    "errorInvalidPages": "That page selection isn't valid. Use ranges like 1-3, 5. {detail}",
     "errorEncrypted": "This PDF is password-protected. Unlock it first, then try again.",
     "errorCorrupt": "This PDF couldn't be read — it may be damaged",
     "errorWebpUnsupported": "This browser can't create WEBP images. Use PDF to PNG instead — Chrome, Edge and Firefox support WEBP.",
+    "errorRenderBudget": "Too many pages at this resolution to convert in one go — lower the DPI or split the PDF first, then try again.",
     "notFoundTitle": "This tool isn't live yet",
     "notFoundDesc": "It's on the roadmap. Browse the toolbox meanwhile.",
     "notFoundAction": "Browse all tools",
@@ -379,7 +380,8 @@
     "errorEncode": "The scan could not be rendered.",
     "confidence": "OCR confidence {n}%",
     "errorOcrModel": "The OCR engine could not load — check your connection and try again.",
-    "errorOcrEmpty": "No text was recognized — try 300 DPI or a clearer scan."
+    "errorOcrEmpty": "No text was recognized — try 300 DPI or a clearer scan.",
+    "errorAlreadySigned": "This PDF already carries a digital signature — saving changes here would break it. Use Digital signature to add another one."
   },
   "result": {
     "title": "Your file is ready!",
@@ -610,7 +612,13 @@
     "shortcutEsc": "Clear selection",
     "toastNoUndo": "Nothing to undo",
     "toastNoRedo": "Nothing to redo",
-    "fromPage": "from page {page}"
+    "fromPage": "from page {page}",
+    "batchTitle": "{count, plural, =1 {1 file} other {# files}}",
+    "batchHint": "The grid below edits the selected file — run once for all of them.",
+    "batchEditing": "Editing",
+    "batchRotated": "{count, plural, =1 {1 rotated} other {# rotated}}",
+    "batchRotatedTitle": "Pages rotated in this file",
+    "addMore": "Add more PDFs"
   },
   "igrid": {
     "surfaceLabel": "Image grid",
@@ -1087,7 +1095,6 @@
     "sidebarLabel": "Document sidebar",
     "thumbsTab": "Pages",
     "outlineTab": "Outline",
-    "outlineEmpty": "This PDF has no bookmarks.",
     "continueTitle": "Continue with:",
     "continue": {
       "merge-pdf": "Merge",
@@ -1379,7 +1386,8 @@
     "otherFiles": "Other files",
     "otherFilesNote": "{count} files queued — the run searches all of them.",
     "errorEmptyQuery": "Type what to search for first.",
-    "errorBadRegex": "That regex isn't valid — fix the syntax and try again."
+    "errorBadRegex": "That regex isn't valid — fix the syntax and try again.",
+    "errorPatternTooComplex": "This regex is too complex to search safely — simplify it (avoid nested quantifiers like (a+)+) and try again."
   },
   "txt2pdf": {
     "how1": "Add one or more text files — .txt, .md, .csv or .log. They never leave your device.",
@@ -1665,6 +1673,7 @@
     "kindBmp": "BMP image",
     "kindTiff": "TIFF image",
     "kindSvg": "SVG graphic",
+    "kindRtf": "Rich text document",
     "kindTxt": "Plain text file",
     "kindHtml": "HTML page",
     "kindDocx": "Word document",
@@ -1677,7 +1686,7 @@
   "convFrom": {
     "how1": "Drop a PDF — it opens straight into the converter hub, entirely on your device.",
     "how2": "Pick the output you need — images, text, or editable formats.",
-    "how3": "Live targets convert instantly; the rest carry honest Soon and Server badges.",
+    "how3": "Pick the output you need — every target converts instantly on your device.",
     "reading": "Reading your file…",
     "yourFile": "Your file",
     "fileIsPdf": "PDF document",
@@ -2878,6 +2887,11 @@
     "errCorruptDesc": "{detail} looks damaged or is not a spreadsheet we can parse.",
     "errEmptyTitle": "Nothing to convert",
     "errEmptyDesc": "{detail} has no readable sheets.",
+    "errorNoFile": "No file was received — add your .xlsx and try again.",
+    "errorLegacy": "{detail} uses the old binary .xls format. Open it in Excel, Google Sheets or LibreOffice, save as .xlsx, then try again.",
+    "errorNotXlsx": "{detail} is not a readable .xlsx / .xlsm file. Re-save it from Excel (2007+) and try again.",
+    "errorCorrupt": "{detail} couldn't be read — it looks damaged or isn't a spreadsheet we can parse.",
+    "errorEmpty": "{detail} has no readable sheets to convert.",
     "reading": "Reading workbook…",
     "fileTitle": "Workbook",
     "sheetsChip": "{count, plural, =1 {1 sheet} other {# sheets}}",
@@ -3105,6 +3119,8 @@
     "htmlChip": "HTML page",
     "errNoFile": "No file was received — add your .html and try again.",
     "errNoDoc": "No readable content found in this HTML — is there any text between the tags?",
+    "errNotHtml": "That file has no tags or doctype — HTML to PDF needs a .html / .htm page.",
+    "errTooLarge": "This HTML file is larger than the 20 MB limit.",
     "errNotHtmlTitle": "Not an HTML file",
     "errNotHtmlDesc": "That file has no tags or doctype. HTML to PDF needs a .html / .htm page (content extraction, not a browser engine).",
     "errTooLargeTitle": "File too large",
@@ -3970,7 +3986,7 @@
     "cFailed": "failed",
     "checks": "CHECKS",
     "totals": "TOTALS RECONCILIATION",
-    "generatedBy": "Generated on-device by MyCloudy — nothing was uploaded.",
+    "generatedBy": "Generated on-device by DocoPDF — nothing was uploaded.",
     "honestyTitle": "NOT CHECKED (honesty)",
     "honestyBody": "This is a structural + EN 16931-flavored semantic check, not a full XSD schema validation, not a signature/e-seal verification, and not a complete business-rule validation. The checks above are the whole scope.",
     "kRoot": "Root element is CrossIndustryInvoice (CII)",
@@ -4193,7 +4209,7 @@
     "nAttached": "The CMS is not detached — its integrity relationship to the PDF bytes cannot be checked by digest comparison.",
     "nNoSignedAttrs": "No signedAttrs in the SignerInfo — the messageDigest integrity check is unavailable (the signature covers the content directly).",
     "nVerifyError": "WebCrypto could not process the signature (unsupported key type or encoding).",
-    "generatedBy": "Generated on-device by MyCloudy — nothing was uploaded.",
+    "generatedBy": "Generated on-device by DocoPDF — nothing was uploaded.",
     "honestyTitle": "NOT CHECKED (honesty)",
     "honestyBody": "No CRL/OCSP revocation check, no chain-of-trust validation, no timestamp (TSA) verification and no PAdES long-term validation were performed — there is no trust store on this device to check against. A self-signed certificate shows as untrusted-but-valid. A verdict of VALID means exactly: the signature verifies cryptographically, the signed byte ranges are intact and the coverage is complete — nothing more.",
     "cardTitle": "Signature {index}",
@@ -4352,7 +4368,7 @@
     "limSkip": "streams could not be opened for color normalization",
     "limSh": "shading fills (sh) left as-is",
     "tagging": "Tagging (structure tree) is not required at the PDF/A-1b/2b/3b levels — that is the -a (accessible) level; this tool produces -b and adds no tags.",
-    "footer": "Produced on-device by MyCloudy — this report lists the changes that were actually made; it is not a certified ISO 19005 validation.",
+    "footer": "Produced on-device by DocoPDF — this report lists the changes that were actually made; it is not a certified ISO 19005 validation.",
     "pageWord": "Page"
   },
   "vpa": {
@@ -4497,7 +4513,7 @@
     "nUaAltOk": "Alternate text entries found in the structure tree.",
     "nUaAltWarn": "No /Alt entries found in the structure tree (light scan).",
     "nUaAltFail": "No structure tree — no /Alt scan possible.",
-    "generatedBy": "Generated on-device by MyCloudy — nothing was uploaded.",
+    "generatedBy": "Generated on-device by DocoPDF — nothing was uploaded.",
     "honestyTitle": "NOT CHECKED (honesty)",
     "honestyBody": "This is an honest subset of ISO 19005 rule families, inspired by veraPDF's categories — not the full standard and not a certified validation. Roughly 15 rule families are checked; a COMPLIANT verdict means every check in this subset passed, nothing more. The PDF/UA rows are advisory hints only (full PDF/UA validation is not performed). Take archive-grade decisions to a certified validator."
   }

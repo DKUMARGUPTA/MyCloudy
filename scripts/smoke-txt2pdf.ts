@@ -46,11 +46,17 @@ import {
   type TxtLayoutResult,
   type TxtOptions,
 } from "../tools/txt-to-pdf/engine";
+import {
+  countReplacementChars,
+  decodeWindows1252,
+  hasValidUtf8MultibyteSequence,
+  recoverCp1252Text,
+} from "../tools/txt-to-pdf/encoding";
 
 let passed = 0;
 let failed = 0;
 
-function check(name: string, ok: boolean, detail = ""): void {
+function check(name: string, ok: boolean, detail?: unknown): void {
   if (ok) {
     passed += 1;
     console.log(`  ✓ ${name}`);
@@ -231,6 +237,175 @@ const arabic = readTextFile(enc.encode("مرحبا بالعالم"));
 check(
   "Arabic → typed unsupported verdict with the code point",
   arabic.kind === "unsupported" && arabic.codePoint === 0x0645
+);
+
+/* ------------------------------------------------------------------ */
+/* 3b. CP1252/Latin-1 recovery (ENH-1)                                 */
+/* ------------------------------------------------------------------ */
+
+console.log("CP1252/Latin-1 mojibake recovery");
+/** Latin-1/CP1252 fixture bytes — chars must be ≤ U+00FF. */
+const latin1 = (s: string): Uint8Array => new Uint8Array(Buffer.from(s, "latin1"));
+const utf8Of = (b: Uint8Array): string =>
+  new TextDecoder("utf-8", { fatal: false }).decode(b);
+
+// Notepad classic: mostly ASCII with a few é/ï — the replacement rate
+// stays under the 10% binary sniff, and used to export as "caf\uFFFD".
+const notepad = readTextFile(
+  latin1(
+    "This note was saved on an old Windows machine, please read carefully.\n" +
+      "Caf\xe9 na\xefve r\xe9sum\xe9s are fine.\n"
+  )
+);
+check(
+  "CP1252 accents recovered (no U+FFFD left)",
+  notepad.kind === "ok" &&
+    notepad.text ===
+      "This note was saved on an old Windows machine, please read carefully.\n" +
+      "Café naïve résumés are fine.\n",
+  notepad.kind === "ok" ? JSON.stringify(notepad.text) : notepad
+);
+
+// CP1252-only punctuation bytes (0x80-0x9F) — curly quotes, em dash, €.
+const quotes = readTextFile(
+  latin1(
+    "Just a plain old memo with a few smart marks.\n" +
+      "He said \x93hi\x94 \x97 cost \x805 today.\n"
+  )
+);
+check(
+  "CP1252 smart quotes / em dash / euro recovered",
+  quotes.kind === "ok" &&
+    quotes.text ===
+      "Just a plain old memo with a few smart marks.\n" +
+      "He said “hi” — cost €5 today.\n",
+  quotes.kind === "ok" ? JSON.stringify(quotes.text) : quotes
+);
+
+// Latin-1 (0xA0-0xFF) — identical bytes, same recovery.
+const latin1File = readTextFile(
+  latin1("A short weather and copyright line for today.\nd\xe9j\xe0 vu, \xa9 2024, 30\xb0C\n")
+);
+check(
+  "Latin-1 high bytes recovered",
+  latin1File.kind === "ok" &&
+    latin1File.text ===
+      "A short weather and copyright line for today.\ndéjà vu, © 2024, 30°C\n",
+  latin1File.kind === "ok" ? JSON.stringify(latin1File.text) : latin1File
+);
+
+// Accents that only appear AFTER the 4 KB sniff window: the head is
+// clean ASCII, the full-text scan still recovers them.
+const late = readTextFile(latin1(`${"x".repeat(5000)} caf\xe9`));
+check(
+  "accents past the 4 KB sniff window still recovered",
+  late.kind === "ok" && late.text.endsWith("café") &&
+    !late.text.includes("\uFFFD"),
+  late.kind === "ok" ? JSON.stringify(late.text.slice(-8)) : late
+);
+
+// Honest non-triggers:
+// 1. A real UTF-8 file with a stray invalid byte keeps its UTF-8 reading
+//    (valid multi-byte sequences present → not single-byte encoded).
+const damaged = readTextFile(
+  new Uint8Array([...enc.encode("plain text with é"), 0xff])
+);
+check(
+  "UTF-8 with a stray bad byte is NOT re-decoded (typed unsupported, é intact)",
+  damaged.kind === "unsupported" && damaged.codePoint === 0xfffd,
+  damaged
+);
+check(
+  "…and the pre-damage text is still correct UTF-8",
+  damaged.kind === "unsupported" ||
+    utf8Of(new Uint8Array([...enc.encode("plain text with é"), 0xff])).startsWith(
+      "plain text with é"
+    )
+);
+
+// 2. Double-encoded text (bytes C3 83 C2 A9 = UTF-8 of "Ã©") decodes
+//    cleanly to "Ã©" — re-reading as CP1252 would only make it worse, so
+//    the recovery must leave it untouched.
+const doubleEncoded = readTextFile(
+  new Uint8Array([0xc3, 0x83, 0xc2, 0xa9])
+);
+check(
+  "double-encoded \"Ã©\" left untouched (no U+FFFD to fix)",
+  doubleEncoded.kind === "ok" && doubleEncoded.text === "Ã©",
+  doubleEncoded.kind === "ok" ? JSON.stringify(doubleEncoded.text) : doubleEncoded
+);
+
+// 3. Pure ASCII and real Hindi UTF-8 never switch.
+check(
+  "pure ASCII stays untouched",
+  recoverCp1252Text(enc.encode("hello"), "hello") === "hello"
+);
+const hindiRound = readTextFile(enc.encode("नमस्ते दुनिया"));
+check(
+  "Hindi UTF-8 stays untouched",
+  hindiRound.kind === "ok" && hindiRound.text === "नमस्ते दुनिया",
+  hindiRound.kind === "ok" ? hindiRound.text : hindiRound
+);
+
+// 4. The binary sniff verdict is unchanged.
+check(
+  ">10% replacement chars in the head still → binary",
+  readTextFile(new Uint8Array(200).fill(0x80)).kind === "binary"
+);
+
+/* ---- helper unit battery ---- */
+check(
+  "countReplacementChars",
+  countReplacementChars("a\uFFFDb\uFFFD") === 2 &&
+    countReplacementChars("abc") === 0
+);
+check(
+  "hasValidUtf8MultibyteSequence: 2/3/4-byte forms detected",
+  hasValidUtf8MultibyteSequence(enc.encode("é")) &&
+    hasValidUtf8MultibyteSequence(enc.encode("हिंदी")) &&
+    hasValidUtf8MultibyteSequence(enc.encode("𝄞"))
+);
+check(
+  "hasValidUtf8MultibyteSequence: overlong C0 80 / E0 80 80 rejected",
+  !hasValidUtf8MultibyteSequence(new Uint8Array([0xc0, 0x80])) &&
+    !hasValidUtf8MultibyteSequence(new Uint8Array([0xe0, 0x80, 0x80]))
+);
+check(
+  "hasValidUtf8MultibyteSequence: surrogate ED A0 80 rejected",
+  !hasValidUtf8MultibyteSequence(new Uint8Array([0xed, 0xa0, 0x80]))
+);
+check(
+  "hasValidUtf8MultibyteSequence: > U+10FFFF F4 90 80 80 rejected",
+  !hasValidUtf8MultibyteSequence(new Uint8Array([0xf4, 0x90, 0x80, 0x80]))
+);
+check(
+  "hasValidUtf8MultibyteSequence: truncated tail not a sequence",
+  !hasValidUtf8MultibyteSequence(new Uint8Array([0xc3])) &&
+    !hasValidUtf8MultibyteSequence(new Uint8Array([0xe0, 0xa4]))
+);
+check(
+  "decodeWindows1252: byte 0xE9 → é, 0x80 → €",
+  decodeWindows1252(new Uint8Array([0xe9])) === "é" &&
+    decodeWindows1252(new Uint8Array([0x80])) === "€"
+);
+check(
+  "recoverCp1252Text: C1 bytes decode to controls, é recovered (spec best-fit)",
+  recoverCp1252Text(latin1("a\x81\x8db\xe9"), utf8Of(latin1("a\x81\x8db\xe9"))) ===
+    "a\u0081\u008dbé"
+);
+check(
+  "recoverCp1252Text: lone C1 byte also strictly cleaner (U+0081 < U+FFFD)",
+  recoverCp1252Text(
+    new Uint8Array([0x81]),
+    utf8Of(new Uint8Array([0x81]))
+  ) === "\u0081"
+);
+check(
+  "recoverCp1252Text: multibyte present keeps UTF-8",
+  recoverCp1252Text(
+    new Uint8Array([...enc.encode("é"), 0xff]),
+    utf8Of(new Uint8Array([...enc.encode("é"), 0xff]))
+  ) === utf8Of(new Uint8Array([...enc.encode("é"), 0xff]))
 );
 
 /* ------------------------------------------------------------------ */

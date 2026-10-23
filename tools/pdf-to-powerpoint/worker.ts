@@ -7,6 +7,7 @@ import {
   loadPdfjsInWorker,
   workerDocumentShim,
 } from "../pdfjs-common/worker-lib";
+import { RenderPixelBudget } from "../pdfjs-common/pixel-budget";
 import {
   buildPptx,
   coerceRunOptions,
@@ -113,6 +114,10 @@ async function run(request: WorkerRunRequest): Promise<void> {
     let pptx: Uint8Array;
     let emptySlides = 0;
     if (opts.mode === "images") {
+      // RAM budget: every PNG page is held in RAM until buildPptx zips
+      // — refuse BEFORE a render that would blow the pixel cap instead
+      // of OOMing a phone (the pdf-to-images guard, ENH-1).
+      const budget = new RenderPixelBudget();
       const images: Uint8Array[] = [];
       const aspects: number[] = [];
       for (let i = 0; i < pageNumbers.length; i += 1) {
@@ -122,6 +127,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
         const renderViewport = page.getViewport({ scale });
         const width = Math.max(1, Math.round(renderViewport.width));
         const height = Math.max(1, Math.round(renderViewport.height));
+
+        if (!budget.tryConsume(width, height)) {
+          page.cleanup();
+          post({ type: "error", runId, code: "tool.errorRenderBudget" });
+          return;
+        }
 
         const canvas = new OffscreenCanvas(width, height);
         const context = canvas.getContext("2d");

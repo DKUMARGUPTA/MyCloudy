@@ -29,6 +29,10 @@ export interface AsmDoc {
   id: number;
   name: string;
   pages: AsmPageRef[];
+  /** Workspace file id this column was created from ("new document"
+   * columns have none). Client-only — never serialized; the surface uses
+   * it to attribute per-column probe failures (unreadable/encrypted). */
+  sourceFileId?: string;
 }
 
 /** Output document produced by the plan (pure data — the worker executes it). */
@@ -66,6 +70,7 @@ export function createDocFromFile(
     id: nextDocId(),
     name: baseFileName(fileName),
     pages,
+    sourceFileId: fileId,
   };
 }
 

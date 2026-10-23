@@ -606,6 +606,97 @@ async function main(): Promise<void> {
     check("non-PDF bytes → tool.errorCorrupt", code === "tool.errorCorrupt", code);
   }
 
+  console.log("\n── 11. worker drive: ONE result per run ─────────────────");
+  {
+    // FIX-3 regression: the worker used to post {type:"result"} INSIDE the
+    // per-file loop with an ACCUMULATING outputs array — duplicate result
+    // messages the moment maxFiles grows past 1. Drive the REAL worker
+    // (self/postMessage shim, sign-pdf recipe) with TWO files and pin:
+    // exactly one result, both outputs on it, aggregated detail.
+    const workerGlobal = globalThis as unknown as {
+      postMessage: (msg: unknown) => void;
+      onmessage: ((event: { data: unknown }) => void) | null;
+    };
+    const inbox: (Record<string, unknown> & { type: string })[] = [];
+    workerGlobal.postMessage = (msg: unknown): void => {
+      inbox.push(msg as Record<string, unknown> & { type: string });
+    };
+    (globalThis as unknown as Record<string, unknown>).self = workerGlobal;
+    await import("../tools/web-optimize-pdf/worker");
+    check(
+      "worker: module loaded, onmessage registered",
+      typeof workerGlobal.onmessage === "function"
+    );
+
+    const drive = async (runId: number, files: File[]): Promise<void> => {
+      const before = inbox.length;
+      workerGlobal.onmessage!({
+        data: { type: "run", runId, toolId: "web-optimize-pdf", options: {}, files },
+      });
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const terminal = inbox
+          .slice(before)
+          .some((m) => m.type === "result" || m.type === "error");
+        if (terminal) return;
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      throw new Error(`worker run ${runId} did not finish`);
+    };
+
+    const fileA = new File([bloaty as BlobPart], "a.pdf");
+    const docB = await PDFDocument.create();
+    docB.addPage([300, 300]);
+    docB.addPage([300, 300]);
+    const bytesB = await docB.save({ useObjectStreams: false });
+    const fileB = new File([bytesB as BlobPart], "b.pdf");
+
+    await drive(9101, [fileA, fileB]);
+    const msgs = inbox.filter((m) => m.type !== "progress");
+    const results = msgs.filter((m) => m.type === "result");
+    check("two-file run: exactly ONE result message", results.length === 1, results.length);
+    check("two-file run: no error messages", msgs.every((m) => m.type !== "error"));
+    const result = results[0] as {
+      outputs?: { name?: string }[];
+      detail?: Record<string, unknown>;
+    };
+    check(
+      "result carries BOTH outputs",
+      result.outputs?.length === 2 &&
+        result.outputs[0]?.name === "a-web.pdf" &&
+        result.outputs[1]?.name === "b-web.pdf",
+      JSON.stringify(result.outputs?.map((o) => o.name))
+    );
+    check("detail.files === 2", result.detail?.files === 2, result.detail?.files);
+    check("detail.pages aggregated (3 + 2)", result.detail?.pages === 5, result.detail?.pages);
+    check(
+      "detail.beforeBytes is the SUM of both inputs",
+      result.detail?.beforeBytes === bloaty.length + bytesB.length,
+      `${result.detail?.beforeBytes} vs ${bloaty.length + bytesB.length}`
+    );
+    check(
+      "detail.afterBytes equals the sum of real output blob sizes",
+      result.detail?.afterBytes ===
+        (result.outputs as unknown as { blob: Blob }[]).reduce(
+          (sum, o) => sum + o.blob.size,
+          0
+        ),
+      `${result.detail?.afterBytes}`
+    );
+
+    // Single-file control: the common path still posts one result, one output.
+    await drive(9102, [fileA]);
+    const single = inbox
+      .filter((m) => m.type === "result" && m.runId === 9102);
+    check("single-file control: exactly ONE result", single.length === 1, single.length);
+    const singleOut = single[0] as { outputs?: { name?: string }[] };
+    check(
+      "single-file control: ONE output named after the file",
+      singleOut.outputs?.length === 1 && singleOut.outputs[0]?.name === "a-web.pdf",
+      JSON.stringify(singleOut.outputs?.map((o) => o.name))
+    );
+  }
+
   console.log(
     `\nweb-optimize-pdf smoke: ${pass} passed, ${fail} failed` +
       (fail ? "\n  " + failures.join("\n  ") : " — ALL GREEN")

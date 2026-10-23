@@ -58,7 +58,7 @@ import {
  * SOURCE already carried PDF/A markers.
  */
 
-const PRODUCER = "MyCloudy (mycloudy.in)";
+const PRODUCER = "DocoPDF";
 
 function post(response: WorkerResponse): void {
   self.postMessage(response);

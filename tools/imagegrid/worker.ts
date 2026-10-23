@@ -8,6 +8,7 @@ import {
 import type { OptionValues } from "@/lib/tools/config-types";
 import { parseImageGridOption } from "./model";
 import { decodeHeicToBitmap } from "@/lib/heic/heic-decode";
+import { readJpegOrientation } from "@/lib/images/jpeg-exif";
 import { isTiffBytes, TiffFile, TiffError } from "../imgconv/tiff";
 
 /**
@@ -16,8 +17,10 @@ import { isTiffBytes, TiffFile, TiffError } from "../imgconv/tiff";
  * structured clone, pdf-lib embeds them, the PDF Blob goes straight back.
  *
  * Quality policy (honest, no silent re-compression):
- * - unrotated JPG/PNG (and unrotated SVG rasters) → the ORIGINAL bytes are
- *   embedded (zero quality loss)
+ * - unrotated JPG/PNG (and unrotated SVG rasters) — and JPGs whose EXIF
+ *   orientation is 1 or missing — → the ORIGINAL bytes are embedded
+ *   (zero quality loss); EXIF-rotated JPGs (≠ 1) bake the rotation first
+ *   so the page and the pixels agree (no sideways/distorted output)
  * - rotated images, or WEBP/GIF/HEIC/TIFF sources → decoded (createImageBitmap,
  *   self-hosted libheif WASM as the HEIC fallback so Chromium works too, and
  *   the clean-room TIFF reader tools/imgconv/tiff.ts for scans/faxes), drawn
@@ -172,21 +175,30 @@ async function prepareImage(
   const kind = sniffImageKind(raw.slice(0, 16));
   const rotated = rotation !== 0;
 
-  // Fast path: original bytes, untouched.
+  // Fast path: original bytes, untouched. JPEGs with an EXIF
+  // orientation ≠ 1 (most portrait phone photos) are excluded: their
+  // stored pixels are unrotated while every dimension probe sees the
+  // oriented bitmap — embedding the raw bytes into an oriented-shaped
+  // page draws them sideways AND distorted. Those route through the
+  // decode path, where imageOrientation "from-image" bakes the EXIF
+  // rotation into the re-encoded bitmap.
   if (!rotated && (kind === "jpeg" || kind === "png")) {
-    const size =
-      kind === "png"
-        ? pngSize(raw)
-        : await bitmapSize(file, onError).catch(() => null);
-    if (size) {
-      return {
-        kind,
-        bytes: raw,
-        width: size.width,
-        height: size.height,
-        ptW: size.width,
-        ptH: size.height,
-      };
+    const orientation = kind === "jpeg" ? readJpegOrientation(raw) : 1;
+    if (orientation === 1) {
+      const size =
+        kind === "png"
+          ? pngSize(raw)
+          : await bitmapSize(file, onError).catch(() => null);
+      if (size) {
+        return {
+          kind,
+          bytes: raw,
+          width: size.width,
+          height: size.height,
+          ptW: size.width,
+          ptH: size.height,
+        };
+      }
     }
   }
 
@@ -194,9 +206,12 @@ async function prepareImage(
     onError("tool.images.errorUnsupported", file.name);
   }
 
-  // Decode path (rotation or transcode). HEIC: native decode first
-  // (Safari), then the self-hosted libheif WASM so Chromium/Edge/Firefox
-  // work too — the honest error only fires when both fail.
+  // Decode path (rotation, transcode, or EXIF orientation ≠ 1).
+  // "from-image" applies EXIF orientation — the decoded bitmap is
+  // upright and its width/height are the DISPLAYED (oriented) ones.
+  // HEIC: native decode first (Safari), then the self-hosted libheif
+  // WASM so Chromium/Edge/Firefox work too — the honest error only
+  // fires when both fail.
   let bitmap: ImageBitmap;
   if (kind === "heic") {
     bitmap = await decodeHeicWithFallback(file, raw, onError);
@@ -205,7 +220,8 @@ async function prepareImage(
       bitmap = await createImageBitmap(
         kind === "jpeg" || kind === "png"
           ? new Blob([raw as unknown as BlobPart], { type: `image/${kind}` })
-          : file
+          : file,
+        { imageOrientation: "from-image" }
       );
     } catch {
       onError("tool.images.errorDecode", file.name);

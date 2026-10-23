@@ -66,6 +66,13 @@ export interface HeicRgba {
   rgba: Uint8ClampedArray<ArrayBuffer>;
 }
 
+/**
+ * Pixel-count cap for one HEIC decode (~80 MP — same policy as the
+ * imgconv HEIF_MAX_PIXELS). 48 MP sensors are the consumer top end;
+ * the RGBA allocation stays ≈320 MB worst case.
+ */
+export const HEIC_MAX_PIXELS = 80_000_000;
+
 /** Decode the primary image of a HEIC/HEIF file into raw RGBA pixels. */
 export async function decodeHeic(bytes: Uint8Array): Promise<HeicRgba> {
   const libheif = await loadLibheif();
@@ -83,8 +90,10 @@ export async function decodeHeic(bytes: Uint8Array): Promise<HeicRgba> {
   const image = images[0];
   const width = image.get_width();
   const height = image.get_height();
-  if (!width || !height || width * height > 268_435_456) {
-    // >1 gigapixel is never a real photo — guard the allocation.
+  // True pixel-count cap (FIX-1d): NOT a width-squared heuristic — a
+  // 20000×50 panorama passes while 16000×16000 (256 MP ≈ 1 GB RGBA)
+  // is refused.
+  if (!width || !height || width * height > HEIC_MAX_PIXELS) {
     throw new Error("heic-decode-failed");
   }
 

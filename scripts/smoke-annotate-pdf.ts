@@ -30,6 +30,10 @@ import {
   rgb,
 } from "pdf-lib";
 import type { Annotation, MarkupAnno, Quad } from "../tools/annotate-pdf/model";
+import {
+  lockPdf,
+  type LockRequest,
+} from "../tools/lock-common/security";
 
 let passed = 0;
 let failed = 0;
@@ -631,6 +635,54 @@ async function main(): Promise<void> {
   });
   assert(bad.error !== null, "corrupt: error posted");
   assertEqual(bad.error?.code, "tool.errorCorrupt", "corrupt error code");
+
+  /* ---- encrypted source → honest refusal (FIX-1c regression) ---- */
+  // Real AES-256 fixture (the lock-pdf engine). Before FIX-1c the
+  // worker loaded it with ignoreEncryption, appended plaintext annots
+  // and re-saved → mixed-encryption output no reader can open.
+  const lockReq = (over: Partial<LockRequest> = {}): LockRequest => ({
+    userPw: "open123",
+    ownerPw: "",
+    alg: "aes256",
+    permissions: {
+      printing: true,
+      copying: false,
+      modifying: false,
+      annotating: true,
+      fillingForms: true,
+      contentAccessibility: true,
+    },
+    ...over,
+  });
+  const encryptedBytes = (await lockPdf(await makeSourcePdf(), lockReq())).bytes;
+  const encRun = await runWorker(
+    new FakeFile("locked.pdf", encryptedBytes),
+    { akey: "p4", "a:p4": JSON.stringify({ annos: [] }) }
+  );
+  assert(encRun.result === null, "encrypted: no result/output emitted");
+  assert(encRun.error !== null, "encrypted: error posted");
+  assertEqual(
+    encRun.error?.code,
+    "tool.errorEncrypted",
+    "encrypted error code (PDF_PASSWORD)"
+  );
+
+  // Owner-only variant (empty USER password): pdf.js opens it
+  // transparently so the surface looks fine — the worker must still
+  // refuse (this is the exact silent-corruption path from AUD-A).
+  const ownerOnlyBytes = (
+    await lockPdf(await makeSourcePdf(), lockReq({ userPw: "", ownerPw: "owner999" }))
+  ).bytes;
+  const ownerRun = await runWorker(
+    new FakeFile("owner-only.pdf", ownerOnlyBytes),
+    { akey: "p5", "a:p5": JSON.stringify({ annos: [] }) }
+  );
+  assert(ownerRun.result === null, "owner-only encrypted: no result emitted");
+  assertEqual(
+    ownerRun.error?.code,
+    "tool.errorEncrypted",
+    "owner-only encrypted error code"
+  );
 
   /* ---- summary ---- */
   console.log(`\n${passed} passed, ${failed} failed`);

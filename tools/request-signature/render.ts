@@ -538,7 +538,7 @@ export function buildNotePdf(
   );
 
   doc.setTitle(d.subject !== "" ? d.subject : labelOf(run, "title"));
-  doc.setProducer("MyCloudy");
+  doc.setProducer("DocoPDF");
   doc.setCreationDate(new Date());
 
   return { pages: doc.getPageCount() };

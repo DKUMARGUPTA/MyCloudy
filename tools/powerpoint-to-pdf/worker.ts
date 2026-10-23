@@ -29,7 +29,7 @@ import { drawPptxPdf } from "./render";
  *     ANY Devanagari char (or a Devanagari notes heading) switches to
  *     the self-hosted Noto Sans Devanagari (fontkit subset:true);
  *  3. drawPptxPdf — the exact render.ts the smoke script drives;
- *  4. save with producer/creator "MyCloudy" and the localized file name.
+ *  4. save with producer/creator "DocoPDF" and the localized file name.
  *
  * Options: pageSize ("slide-native"|"a4"|"letter"), margin
  * ("normal"|"narrow"), notes (speaker-notes pages), fit (fill the page
@@ -141,8 +141,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
     const baseName = outputBaseName(file.name, lang);
-    pdfDoc.setProducer("MyCloudy");
-    pdfDoc.setCreator("MyCloudy");
+    pdfDoc.setProducer("DocoPDF");
+    pdfDoc.setCreator("DocoPDF");
     pdfDoc.setTitle(baseName);
     pdfDoc.setCreationDate(new Date());
 

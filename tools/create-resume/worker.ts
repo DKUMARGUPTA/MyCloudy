@@ -19,7 +19,7 @@ import { drawResumePdf } from "./render";
  *     possible), while ANY Devanagari char switches to the self-hosted
  *     Noto Sans Devanagari (fontkit subset:true);
  *  3. drawResumePdf — the exact render.ts the smoke script drives;
- *  4. save with producer "MyCloudy" and the localized file name.
+ *  4. save with producer "DocoPDF" and the localized file name.
  *
  * All display labels arrive pre-resolved in `labels` (the surface's
  * t()), so the PDF text matches the UI language exactly.
@@ -52,8 +52,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const report = await drawResumePdf(doc, font, resume, { boldFont });
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
-    doc.setProducer("MyCloudy");
-    doc.setCreator("MyCloudy");
+    doc.setProducer("DocoPDF");
+    doc.setCreator("DocoPDF");
     doc.setTitle(
       (resume.d.header.fullName || "Resume").slice(0, 120)
     );

@@ -36,6 +36,7 @@ import {
   gstOK,
   nextNo,
   parseInvoiceRun,
+  Q,
   upiPayload,
   words,
   warnings,
@@ -247,6 +248,51 @@ eq(
 );
 eq(words(0, "EUR"), "Euros Zero Only", "zero words");
 eq(words(5, "GBP"), "Pounds Zero and Five Pence Only", "paise-only words");
+
+/* Vector G — hostile qty/rate clamps (FIX-3): typed "-5" and pasted "1e999"
+ * must coerce to 0 at the money boundary — never negative or ±Infinity
+ * totals. HTML min="0" on the inputs is only a hint; the engine is the law.
+ */
+{
+  const s = baseState({
+    ro: false,
+    items: [
+      { d: "neg", h: "", q: "-5", r: "100", g: "0" },
+      { d: "inf-q", h: "", q: "1e999", r: "2", g: "0" },
+      { d: "inf-r", h: "", q: "2", r: "1e999", g: "0" },
+      { d: "nan", h: "", q: "abc", r: "xyz", g: "0" },
+      { d: "ok", h: "", q: "3", r: "50", g: "0" },
+    ],
+  });
+  const c = calc(s);
+  eq(c.L.map((l) => l.amt), [0, 0, 0, 0, 15000], "hostile lines → 0, clean line keeps 15000 p");
+  eq(c.sub, 15000, "subtotal stays finite");
+  eq(c.tb, 15000, "taxable stays finite");
+  eq(c.tot, 15000, "grand total finite (no -x / ±∞)");
+  eq(
+    Number.isFinite(c.tot) && Number.isFinite(c.bal) && Number.isFinite(c.ro),
+    true,
+    "every total Number.isFinite"
+  );
+}
+{
+  // Q primitive vectors (the coercion the smoke pins directly).
+  eq(Q("-5"), 0, "Q(-5) → 0");
+  eq(Q("1e999"), 0, "Q(1e999) → 0 (Infinity clamped)");
+  eq(Q("-1e999"), 0, "Q(-1e999) → 0");
+  eq(Q("abc"), 0, "Q(garbage) → 0");
+  eq(Q(""), 0, "Q(empty) → 0");
+  eq(Q("0"), 0, "Q(0) → 0");
+  eq(Q("2.5"), 2.5, "Q(2.5) → 2.5 (fractional qty survives)");
+  eq(Q("2.5 hrs"), 2.5, "Q(free-form suffix) → 2.5 (verbatim text, clamped math)");
+  // Rounding semantics preserved: amt = R(qty × R(rate·100)) — rate still
+  // quantizes to paise BEFORE the multiply (Vector A/B prove the clean path).
+  const s = baseState({
+    ro: false,
+    items: [{ d: "B", h: "", q: "1", r: "33.335", g: "0" }],
+  });
+  eq(calc(s).L[0].amt, 3334, "clamped path keeps Vector A's 33.335 → 3334 paise rounding");
+}
 
 console.log("── 2. GSTIN + numbering + warnings ─────────────────────");
 

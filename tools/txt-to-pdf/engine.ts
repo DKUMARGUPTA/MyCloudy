@@ -1,5 +1,6 @@
 import type { OptionValues } from "@/lib/tools/config-types";
 
+import { recoverCp1252Text } from "./encoding";
 import {
   blockScript,
   findUnsupportedCodePoint,
@@ -87,6 +88,12 @@ const SNIFF_WINDOW = 4096;
  * Decodes UTF-8 (BOM stripped, malformed sequences tolerated) and sniffs
  * for binary content: a NUL byte in the first 4 KB or >10% U+FFFD
  * replacement chars in the first 4 KB, plus an explicit %PDF- magic.
+ *
+ * CP1252/Latin-1 recovery (ENH-1): a single-byte Western file with few
+ * accents survives the sniff as U+FFFD mojibake — when the evidence is
+ * strong (replacement chars present, no valid multi-byte UTF-8 in the
+ * bytes, windows-1252 strictly cleaner) the file is re-decoded as
+ * windows-1252 instead. See ./encoding.ts for the exact rules.
  */
 export function readTextFile(bytes: Uint8Array): TextFileVerdict {
   if (bytes.length >= 4) {
@@ -107,7 +114,10 @@ export function readTextFile(bytes: Uint8Array): TextFileVerdict {
   if (head.length > 0 && replacements / head.length > 0.1) {
     return { kind: "binary" };
   }
-  const text = decoded.replace(/^\ufeff/, "");
+  // Mojibake recovery: re-decode as windows-1252 when the bytes are
+  // single-byte Western, not genuinely UTF-8 (rules in ./encoding.ts).
+  const recovered = recoverCp1252Text(bytes, decoded);
+  const text = recovered.replace(/^\ufeff/, "");
   if (text.replace(/\s/g, "").length === 0) return { kind: "empty" };
   const unsupported = findUnsupportedCodePoint(text);
   if (unsupported !== null) {

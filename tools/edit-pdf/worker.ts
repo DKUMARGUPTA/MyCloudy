@@ -657,6 +657,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
       /password|encrypt/i.test(message) ? "PDF_PASSWORD" : "PDF_PARSE"
     );
   }
+  // Same guard as annotate-pdf: ignoreEncryption parses encrypted files
+  // without decrypting them — drawing onto still-encrypted streams and
+  // re-saving corrupts the output (pdf-lib never decrypts). The surface
+  // gates the CTA today; keep the worker honest for any future caller.
+  if (doc.isEncrypted) {
+    throw new Error("PDF_PASSWORD");
+  }
   const pages = doc.getPages();
   const views: PageView[] = pages.map((_, i) => pageViews[i] ?? pageViews[0] ?? {
     x0: 0,

@@ -443,8 +443,8 @@ async function buildGreen(opts: GreenOpts = {}): Promise<Uint8Array> {
   doc.registerFontkit(fontkit);
   doc.setTitle("Green Archive");
   doc.setAuthor("Probe Author");
-  doc.setProducer("MyCloudy Test");
-  doc.setCreator("MyCloudy Test");
+  doc.setProducer("DocoPDF Test");
+  doc.setCreator("DocoPDF Test");
   const page = doc.addPage([595.28, 841.89]);
   const font = await doc.embedFont(NOTO, { subset: true });
   page.drawText("Green PDF/A smoke", { x: 50, y: 700, size: 14, font });
@@ -453,7 +453,7 @@ async function buildGreen(opts: GreenOpts = {}): Promise<Uint8Array> {
     xmpPacket(2, "B", {
       title: "Green Archive",
       creator: "Probe Author",
-      producer: "MyCloudy Test",
+      producer: "DocoPDF Test",
     }),
     opts.flateXmp === true
   );
@@ -501,7 +501,7 @@ const greenBytes = await buildGreen();
   );
   check(
     "green: XMP scrape (part/conformance/dc:title/dc:creator/producer)",
-    r.xmp.present && r.xmp.part === 2 && r.xmp.conformance === "B" && r.xmp.dcTitle === "Green Archive" && r.xmp.dcCreator === "Probe Author" && r.xmp.producer === "MyCloudy Test" && r.xmp.parseError === null
+    r.xmp.present && r.xmp.part === 2 && r.xmp.conformance === "B" && r.xmp.dcTitle === "Green Archive" && r.xmp.dcCreator === "Probe Author" && r.xmp.producer === "DocoPDF Test" && r.xmp.parseError === null
   );
   check("green: page count + healthy xref", r.pageCount === 1 && !r.recoveryUsed && r.recoveryReason === null);
   check("green: xmp check detail is the claim", detailOf(r, "xmp") === "2B");
@@ -595,8 +595,8 @@ console.log("── 4. fonts vectors (std-14 exemption, forms, caps) ───�
 
 async function buildHelv(pagesN: number): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
-  doc.setProducer("MyCloudy Test");
-  stampXmp(doc, xmpPacket(1, "B", { title: "Helv", producer: "MyCloudy Test" }));
+  doc.setProducer("DocoPDF Test");
+  stampXmp(doc, xmpPacket(1, "B", { title: "Helv", producer: "DocoPDF Test" }));
   for (let i = 0; i < pagesN; i += 1) {
     setRawPage(
       doc,
@@ -1101,7 +1101,7 @@ console.log("── 9. buildReportText (EN fallback + HI labels) ─────
   const lines = text.split("\n");
   check(
     "report: header banner",
-    lines[0] === "=".repeat(64) && lines[1] === "MyCloudy — PDF/A conformance report (honest subset)" && lines[2] === "=".repeat(64)
+    lines[0] === "=".repeat(64) && lines[1] === "DocoPDF — PDF/A conformance report (honest subset)" && lines[2] === "=".repeat(64)
   );
   check(
     "report: file line with humanized bytes",
@@ -1147,7 +1147,7 @@ console.log("── 9. buildReportText (EN fallback + HI labels) ─────
       text
         .replace(/\s+/g, " ")
         .includes("The PDF/UA rows are advisory hints only (full PDF/UA validation is not performed).") &&
-      text.endsWith("Generated on-device by MyCloudy — nothing was uploaded.\n")
+      text.endsWith("Generated on-device by DocoPDF — nothing was uploaded.\n")
   );
   check(
     "report: deterministic (no timestamps)",
@@ -1200,7 +1200,7 @@ console.log("── 9. buildReportText (EN fallback + HI labels) ─────
   const hiText = buildReportText(r, meta, hiLabels);
   check(
     "report(HI): localized title + file + summary + verdict",
-    hiText.includes("MyCloudy — PDF/A अनुरूपता रिपोर्ट (ईमानदार उपसमुच्चय)") &&
+    hiText.includes("DocoPDF — PDF/A अनुरूपता रिपोर्ट (ईमानदार उपसमुच्चय)") &&
       hiText.includes("फ़ाइल: green.pdf") &&
       hiText.includes("सारांश: 14 पास, 1 चेतावनियाँ, 2 फ़ेल") &&
       hiText.includes("फ़ैसला: अनुरूप")

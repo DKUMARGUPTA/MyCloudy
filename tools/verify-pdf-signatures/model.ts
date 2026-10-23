@@ -2194,7 +2194,7 @@ export const REPORT_LABELS_EN: ReportLabels = {
   "vps.nAttached": "The CMS is not detached — its integrity relationship to the PDF bytes cannot be checked by digest comparison.",
   "vps.nNoSignedAttrs": "No signedAttrs in the SignerInfo — the messageDigest integrity check is unavailable (the signature covers the content directly).",
   "vps.nVerifyError": "WebCrypto could not process the signature (unsupported key type or encoding).",
-  "vps.generatedBy": "Generated on-device by MyCloudy — nothing was uploaded.",
+  "vps.generatedBy": "Generated on-device by DocoPDF — nothing was uploaded.",
   "vps.honestyTitle": "NOT CHECKED (honesty)",
   "vps.honestyBody":
     "No CRL/OCSP revocation check, no chain-of-trust validation, no timestamp (TSA) verification and no PAdES long-term validation were performed — there is no trust store on this device to check against. A self-signed certificate shows as untrusted-but-valid. A verdict of VALID means exactly: the signature verifies cryptographically, the signed byte ranges are intact and the coverage is complete — nothing more.",
@@ -2220,7 +2220,7 @@ export function buildReportText(
 ): string {
   const out: string[] = [];
   out.push("=".repeat(64));
-  out.push(`MyCloudy — ${L(labels, "vps.title")}`);
+  out.push(`DocoPDF — ${L(labels, "vps.title")}`);
   out.push("=".repeat(64));
   out.push(`${L(labels, "vps.file")}: ${meta.fileName} (${humanBytes(meta.bytes)})`);
 

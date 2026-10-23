@@ -6,6 +6,7 @@
  */
 
 import { decodeHeicToBitmap } from "@/lib/heic/heic-decode";
+import { readJpegOrientation } from "@/lib/images/jpeg-exif";
 
 export interface WAsset {
   key: string;
@@ -71,14 +72,28 @@ function bitmapToPngFile(bitmap: ImageBitmap, name: string): Promise<File> {
  * natively) after a decode probe — a corrupt file must fail HERE, not at
  * export time; everything else (WEBP/HEIC/GIF/BMP/…) is decoded — HEIC
  * through the self-hosted libheif WASM — and re-encoded as PNG.
+ *
+ * EXIF honesty (FIX-1d): a JPG with an EXIF orientation ≠ 1 would keep
+ * its ORIGINAL (unrotated) bytes for the PDF while every dimension
+ * probe / <img> preview reports the ORIENTED size — preview and output
+ * disagree (WYSIWYG break). Such JPGs are decoded with
+ * imageOrientation "from-image" (rotation baked in) and re-encoded as
+ * PNG ONCE — those same bytes serve BOTH the preview and the embed.
  */
 export async function addImageFile(file: File): Promise<WAsset> {
   const type = (file.type || "").toLowerCase();
   let usable = file;
+  const exifRotated =
+    type === "image/jpeg" &&
+    readJpegOrientation(
+      new Uint8Array(await file.slice(0, 131_072).arrayBuffer())
+    ) !== 1;
   if (type !== "image/jpeg" && type !== "image/png") {
     let bitmap: ImageBitmap | null = null;
     try {
-      bitmap = await createImageBitmap(file);
+      bitmap = await createImageBitmap(file, {
+        imageOrientation: "from-image",
+      });
     } catch {
       bitmap = null;
     }
@@ -89,10 +104,26 @@ export async function addImageFile(file: File): Promise<WAsset> {
     if (!bitmap) throw new Error("undecodable-image");
     usable = await bitmapToPngFile(bitmap, file.name || "image");
     bitmap.close();
+  } else if (exifRotated) {
+    // Same normalisation as above, but only for EXIF-rotated JPGs: bake
+    // the rotation in so preview dims == embedded dims == upright pixels.
+    let bitmap: ImageBitmap | null = null;
+    try {
+      bitmap = await createImageBitmap(file, {
+        imageOrientation: "from-image",
+      });
+    } catch {
+      bitmap = null;
+    }
+    if (!bitmap) throw new Error("undecodable-image");
+    usable = await bitmapToPngFile(bitmap, file.name || "image");
+    bitmap.close();
   }
   let w = 600;
   let h = 400;
-  const probe = await createImageBitmap(usable).catch(() => null);
+  const probe = await createImageBitmap(usable, {
+    imageOrientation: "from-image",
+  }).catch(() => null);
   if (probe) {
     w = probe.width;
     h = probe.height;

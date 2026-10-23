@@ -94,6 +94,19 @@ export class BadRegexError extends Error {
   }
 }
 
+/**
+ * Thrown by findMatches when a user regex blows past the per-page work
+ * budget (step count or wall clock) — the ReDoS guard. A pattern that
+ * backtracks catastrophically must fail with THIS typed error, never hang
+ * the pool worker (or the main-thread live preview).
+ */
+export class PatternTooComplexError extends Error {
+  constructor() {
+    super("pattern too complex");
+    this.name = "PatternTooComplexError";
+  }
+}
+
 export interface Matcher {
   mode: SearchMode;
   caseSensitive: boolean;
@@ -132,6 +145,31 @@ export function buildMatcher(query: string, init: MatcherInit): Matcher {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Regex safety budget (ReDoS guard)                                  */
+/* ------------------------------------------------------------------ */
+
+/** Per-page exec() step cap (each exec charges 1 + match length). */
+export const REGEX_STEP_BUDGET = 2_000_000;
+/** Per-page wall-clock cap in ms (checked every 64 execs). */
+export const REGEX_TIME_BUDGET_MS = 2_000;
+
+/** Mutable, page-scoped work budget for one findMatches() call. */
+export interface MatchBudget {
+  /** Remaining steps; ≤ 0 → PatternTooComplexError. */
+  stepsLeft: number;
+  /** Absolute Date.now() deadline; passed → PatternTooComplexError. */
+  deadline: number;
+}
+
+/** Fresh per-page budget (worker + surface preview + smoke all use this). */
+export function newMatchBudget(
+  stepBudget: number = REGEX_STEP_BUDGET,
+  timeBudgetMs: number = REGEX_TIME_BUDGET_MS
+): MatchBudget {
+  return { stepsLeft: stepBudget, deadline: Date.now() + timeBudgetMs };
+}
+
 /** True for a character that participates in a word (Unicode letters/digits/_). */
 function isWordChar(ch: string | undefined): boolean {
   if (ch === undefined || ch === "") return false;
@@ -150,14 +188,38 @@ function wholeWordBoundary(
   );
 }
 
-/** All non-overlapping matches of `matcher` in `text`, left to right. */
-export function findMatches(text: string, matcher: Matcher): MatchRange[] {
+/** All non-overlapping matches of `matcher` in `text`, left to right.
+ *
+ * Regex runs under a per-page budget (`budget`, fresh by default): every
+ * exec() call charges 1 + match-length steps, the wall clock is checked
+ * every 64 execs AND once after the chain ends (a catastrophic pattern
+ * usually fails to match, so the expensive exec returns null and only
+ * the after-chain check sees it) — blow past either cap and
+ * PatternTooComplexError is thrown instead of hanging. The exec()-to-exec()
+ * boundary is the only window JS gives us to interrupt a backtracking
+ * chain in-thread; a single exec that itself never returns is the pool
+ * cancel()/terminate() escape hatch (pool.ts kills the worker instantly).
+ * Text mode is a linear indexOf scan and needs no budget. */
+export function findMatches(
+  text: string,
+  matcher: Matcher,
+  budget: MatchBudget = newMatchBudget()
+): MatchRange[] {
   if (text.length === 0) return [];
   if (matcher.mode === "regex" && matcher.regex !== null) {
     const out: MatchRange[] = [];
     const regex = matcher.regex;
     regex.lastIndex = 0;
+    let execs = 0;
     for (let m = regex.exec(text); m !== null; m = regex.exec(text)) {
+      execs += 1;
+      budget.stepsLeft -= 1 + m[0].length;
+      if (
+        budget.stepsLeft <= 0 ||
+        ((execs & 63) === 1 && Date.now() > budget.deadline)
+      ) {
+        throw new PatternTooComplexError();
+      }
       if (m[0].length === 0) {
         // Zero-length matches carry no hit text — skip forward, never loop.
         regex.lastIndex += 1;
@@ -165,6 +227,13 @@ export function findMatches(text: string, matcher: Matcher): MatchRange[] {
         continue;
       }
       out.push({ index: m.index, length: m[0].length });
+    }
+    // A catastrophic pattern usually FAILS to match — the expensive exec
+    // returns null and the loop body above never sees it. One final clock
+    // check after the chain ends bounds that case too (the page either
+    // took longer than the whole budget or it didn't).
+    if (Date.now() > budget.deadline) {
+      throw new PatternTooComplexError();
     }
     return out;
   }
@@ -302,10 +371,14 @@ export function joinPageText(items: RawTextItem[]): string {
 
 /**
  * Map a thrown pdf.js error message to the i18n key the shell toast shows
- * (same families as pdf-to-txt): password → encrypted, otherwise corrupt.
- * Empty query / bad regex are caught earlier, before any file is read.
+ * (same families as pdf-to-txt): password → encrypted, the ReDoS guard's
+ * message → pattern-too-complex, otherwise corrupt. Empty query / bad
+ * regex are caught earlier, before any file is read.
  */
 export function classifySearchError(message: string): string {
   if (/password/i.test(message)) return "tool.errorEncrypted";
+  if (/pattern too complex/i.test(message)) {
+    return "search.errorPatternTooComplex";
+  }
   return "tool.errorCorrupt";
 }

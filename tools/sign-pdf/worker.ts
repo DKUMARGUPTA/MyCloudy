@@ -4,6 +4,7 @@ import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
+import { hasExistingSignature } from "../digital-signature/model";
 import { fileBaseName } from "../stamp-common/layout";
 import {
   type PageGeom,
@@ -65,6 +66,15 @@ async function run(request: WorkerRunRequest): Promise<void> {
   let doc: PDFDocument;
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
+    // A visual countersign on an already-signed contract is the classic
+    // trap: pdf-lib's full re-save shifts every byte offset and silently
+    // invalidates the existing signature's /ByteRange. Honest refusal
+    // (the digital-signature guard recipe) — a second cryptographic
+    // signature must go through the Digital signature tool instead.
+    if (hasExistingSignature(bytes)) {
+      post({ type: "error", runId, code: "tool.errorAlreadySigned" });
+      return;
+    }
     doc = await PDFDocument.load(bytes, {
       ignoreEncryption: false,
       updateMetadata: false,

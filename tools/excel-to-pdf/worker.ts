@@ -26,7 +26,7 @@ import { drawWorkbookPdf } from "./render";
  *     self-hosted Noto Sans Devanagari subset, pure-WinAnsi data
  *     stays on the base-14 Helvetica pair (nothing embedded);
  *  4. drawWorkbookPdf — the exact render.ts the smoke script drives;
- *  5. save with producer "MyCloudy" and the localized output name.
+ *  5. save with producer "DocoPDF" and the localized output name.
  *
  * All display labels arrive pre-resolved in the options (the surface's
  * t()): the footer template and the fallback file word. When the
@@ -50,7 +50,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   try {
     const file = request.files[0];
     if (!file) {
-      post({ type: "error", runId, code: "tool.errorGeneric" });
+      post({ type: "error", runId, code: "xls.errorNoFile" });
       return;
     }
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -119,8 +119,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     );
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
-    doc.setProducer("MyCloudy");
-    doc.setCreator("MyCloudy");
+    doc.setProducer("DocoPDF");
+    doc.setCreator("DocoPDF");
     doc.setTitle(
       selected.length === 1 ? selected[0].name : safeOutputBase(file.name, "")
     );
@@ -159,4 +159,3 @@ async function run(request: WorkerRunRequest): Promise<void> {
 self.onmessage = (event: MessageEvent<WorkerRunRequest>): void => {
   if (event.data?.type === "run") void run(event.data);
 };
-self.addEventListener("error", (e) => console.log("WORKER-ERR", String(e.message)));

@@ -21,6 +21,7 @@ import {
   calc,
   fd,
   formatMoney,
+  Q,
   typeDef,
   upiPayload,
   words,
@@ -423,7 +424,7 @@ function renderItems(d: RenderDeps): void {
       else if (col.key === "desc") val = "";
       else if (col.key === "hsn") val = l.h;
       else if (col.key === "qty") val = String(l.q);
-      else if (col.key === "rate") val = d.fmt(Math.round((parseFloat(l.r) || 0) * 100));
+      else if (col.key === "rate") val = d.fmt(Math.round(Q(l.r) * 100));
       else if (col.key === "tb") val = d.fmt(l.tb);
       else if (col.key === "gp") val = l.rt + "%";
       else if (col.key === "amt") val = d.fmt(l.amt);

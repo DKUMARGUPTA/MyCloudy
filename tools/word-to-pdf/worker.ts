@@ -21,7 +21,7 @@ import { drawDocxPdf } from "./render";
  *     switches to the self-hosted Noto Sans Devanagari (fontkit
  *     subset:true) — the create-resume/stamp-common recipe;
  *  3. drawDocxPdf — the exact render.ts the smoke script drives;
- *  4. save with producer "MyCloudy" and the localized file name.
+ *  4. save with producer "DocoPDF" and the localized file name.
  *
  * Options: pageSize ("a4"|"letter"), margin ("normal"|"narrow") and
  * fileWord (the localized fallback word for a nameless file).
@@ -88,8 +88,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const report = drawDocxPdf(pdfDoc, font, boldFont, doc, opts);
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
-    pdfDoc.setProducer("MyCloudy");
-    pdfDoc.setCreator("MyCloudy");
+    pdfDoc.setProducer("DocoPDF");
+    pdfDoc.setCreator("DocoPDF");
     pdfDoc.setTitle(outputPdfName(file.name, fileWord).replace(/\.pdf$/i, ""));
     pdfDoc.setCreationDate(new Date());
 

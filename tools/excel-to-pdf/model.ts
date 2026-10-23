@@ -1,5 +1,5 @@
 /**
- * Excel to PDF — pure model (RB1-c, the 69th MyCloudy tool). No DOM, no
+ * Excel to PDF — pure model (RB1-c, the 69th DocoPDF tool). No DOM, no
  * pdf-lib, no storage: an OOXML (.xlsx/.xlsm) reader built on fflate's
  * unzipSync plus a dependency-free XML tokenizer (no DOMParser in
  * workers), the worker-boundary option coercion and the font-pick

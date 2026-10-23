@@ -34,7 +34,7 @@ import type { RunDetail } from "@/lib/workers/protocol";
  *     italic-dominant. Honest: no indent/italics → plain paragraph.
  *  6. Emission — blocks joined with \n\n; consecutive same-kind list
  *     items share a single \n; optional "---" between PDF pages; optional
- *     "<!-- converted by MyCloudy -->" comment; optional YAML front
+ *     "<!-- converted by DocoPDF -->" comment; optional YAML front
  *     matter. Literal line-start markdown (* # _ [ + > - and ordered
  *     markers) is backslash-escaped; HTML entities are NEVER used (raw
  *     UTF-8 — Hindi passes through, with the visual→logical Devanagari
@@ -144,7 +144,7 @@ const LINK_SLACK = 1.5;
 
 export const MD_MIME = "text/markdown";
 /** The optional provenance comment (exact task copy). */
-export const MD_META_COMMENT = "<!-- converted by MyCloudy -->";
+export const MD_META_COMMENT = "<!-- converted by DocoPDF -->";
 
 /** Letter class that keeps its script intact across a line break
  * (no regex property escapes — the house iOS-safe rule). */
@@ -869,7 +869,7 @@ function runsOut(runs: readonly LineRun[]): MdRun[] {
 export interface BuildMarkdownOptions {
   /** "---" thematic breaks between PDF pages (single-output mode). */
   pageRules?: boolean;
-  /** "<!-- converted by MyCloudy -->" at the very top. */
+  /** "<!-- converted by DocoPDF -->" at the very top. */
   metaComment?: boolean;
   /** YAML front matter block at the very top (before the comment). */
   frontMatter?: boolean;
@@ -1017,7 +1017,7 @@ export function buildMarkdown(
     if (title.length > 0) head += `title: ${yamlQuote(title)}\n`;
     if (source.length > 0) head += `source: ${yamlQuote(source)}\n`;
     head += `pages: ${Math.max(1, opts.pages ?? doc.pageMarks.length)}\n`;
-    head += "converted_by: MyCloudy\n---\n\n";
+    head += "converted_by: DocoPDF\n---\n\n";
   }
   if (opts.metaComment === true) {
     head += `${MD_META_COMMENT}\n\n`;

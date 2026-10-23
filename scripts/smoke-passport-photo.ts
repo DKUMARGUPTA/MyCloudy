@@ -870,7 +870,7 @@ function part1(): void {
   const infoPlan = computeSheetPlan(india, "photo4x6", { infoLine: true });
   assertEqual(
     infoLineText(india, infoPlan),
-    "35x45mm - 300 DPI - 6 copies - MyCloudy",
+    "35x45mm - 300 DPI - 6 copies - DocoPDF",
     "info line: exact ASCII text"
   );
   assert(
@@ -880,7 +880,7 @@ function part1(): void {
   const single = { ...india, wMM: 100, hMM: 100 };
   assertEqual(
     infoLineText(single, computeSheetPlan(single, "a4", { infoLine: true })),
-    "100x100mm - 300 DPI - 4 copies - MyCloudy",
+    "100x100mm - 300 DPI - 4 copies - DocoPDF",
     "info line: 4 copies on A4 custom"
   );
   const one = resolveSize("custom", 50, 75);
@@ -891,7 +891,7 @@ function part1(): void {
   );
   assertEqual(
     infoLineText(one, computeSheetPlan(one, "photo4x6", { infoLine: true })),
-    "50x75mm - 300 DPI - 1 copy - MyCloudy",
+    "50x75mm - 300 DPI - 1 copy - DocoPDF",
     "info line: singular 'copy' when copies === 1"
   );
 }
@@ -1103,7 +1103,7 @@ function part2(): void {
   );
   const info = sctx.ops.find((o) => o.op === "fillText");
   assert(
-    info !== undefined && info.args[0] === "35x45mm - 300 DPI - 6 copies - MyCloudy" && near(info.args[1] as number, SHEET_W / 2),
+    info !== undefined && info.args[0] === "35x45mm - 300 DPI - 6 copies - DocoPDF" && near(info.args[1] as number, SHEET_W / 2),
     "sheet preview: info line centred",
     info?.args
   );
@@ -1631,7 +1631,7 @@ async function part3(): Promise<void> {
   const strokeCount1 = (stream1.match(/\bh\nS\n/g) ?? []).length;
   assertEqual(strokeCount1, 6, "run 1: one stroke path per copy");
   assert(!stream1.includes("NaN") && !stream1.includes("Infinity"), "run 1: no NaN/Infinity coords");
-  const infoHex1 = Buffer.from("35x45mm - 300 DPI - 6 copies - MyCloudy")
+  const infoHex1 = Buffer.from("35x45mm - 300 DPI - 6 copies - DocoPDF")
     .toString("hex")
     .toUpperCase();
   assert(

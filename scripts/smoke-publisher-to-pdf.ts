@@ -1162,12 +1162,12 @@ console.log("── 6. Worker E2E (self-shimmed globalThis) ──────�
     check("worker EN: %PDF magic", outBytes[0] === 0x25 && outBytes[1] === 0x50);
     // updateMetadata:false — pdf-lib's load() otherwise STAMPS its own
     // producer over the file's (the smoke-epub-to-pdf recipe); the worker
-    // saved Producer/Creator "MyCloudy" and that is what must be read back.
+    // saved Producer/Creator "DocoPDF" and that is what must be read back.
     const reloaded = await PDFDocument.load(outBytes, { updateMetadata: false });
     check("worker EN: page count matches detail", reloaded.getPageCount() === enRes.detail?.pages, [reloaded.getPageCount(), enRes.detail?.pages]);
     check("worker EN: no FontFile2 (Helvetica path)", !objDump(reloaded).includes("FontFile2"));
-    check("worker EN: producer MyCloudy", reloaded.getProducer() === "MyCloudy", reloaded.getProducer());
-    check("worker EN: creator MyCloudy", reloaded.getCreator() === "MyCloudy", reloaded.getCreator());
+    check("worker EN: producer DocoPDF", reloaded.getProducer() === "DocoPDF", reloaded.getProducer());
+    check("worker EN: creator DocoPDF", reloaded.getCreator() === "DocoPDF", reloaded.getCreator());
     const parseAgain = parsePub(new Uint8Array(await enFile.arrayBuffer()));
     check(
       "worker EN: detail paragraphs/chars/streams mirror the model",
@@ -1373,7 +1373,7 @@ console.log("── 8. Wiring + i18n parity ────────────
 
   const workerSrc = readFileSync("tools/publisher-to-pdf/worker.ts", "utf8");
   check("worker: maps PubError codes onto pub.*", workerSrc.includes("instanceof PubError") && workerSrc.includes("`pub.${"));
-  check("worker: Producer/Creator MyCloudy", workerSrc.includes('"MyCloudy"'));
+  check("worker: Producer/Creator DocoPDF", workerSrc.includes('"DocoPDF"'));
   for (const id of ["pageSize", "margin", "fontSize", "fileWord"]) {
     check(`worker: reads option "${id}"`, workerSrc.includes(`options.${id}`));
   }

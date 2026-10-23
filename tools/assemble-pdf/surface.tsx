@@ -31,10 +31,12 @@ import {
   ArrowRightToLine,
   FileStack,
   Loader2,
+  LockKeyhole,
   Plus,
   Redo2,
   SquarePlus,
   Trash2,
+  TriangleAlert,
   Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -171,6 +173,13 @@ export function AssembleSurface({
     total: number;
   } | null>(null);
 
+  /** Source files whose page probe FAILED, and why — the per-column error
+   * state (FIX-3/AUD-A: an unreadable/encrypted file used to show a silent
+   * 0-page column with no hint until the run). */
+  const [probeFailures, setProbeFailures] = useState<
+    Map<string, "encrypted" | "unreadable">
+  >(new Map());
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
@@ -227,8 +236,28 @@ export function AssembleSurface({
         let count = 0;
         try {
           count = Math.max(0, await getPdfPageCount(item.file));
-        } catch {
+        } catch (cause) {
           count = 0; // honest empty column; shell sniffing rejected junk already
+          // …but never a SILENT one: record WHY the probe failed so the
+          // column can say so (encrypted vs damaged — pdf.js PasswordException
+          // distinguishes them, the search-pdf probe pattern).
+          const causeName =
+            cause !== null &&
+            typeof cause === "object" &&
+            "cause" in cause &&
+            (cause as { cause: unknown }).cause !== null &&
+            typeof (cause as { cause: unknown }).cause === "object"
+              ? String(
+                  (cause as { cause: { name?: unknown } }).cause.name
+                )
+              : "";
+          const kind: "encrypted" | "unreadable" =
+            causeName === "PasswordException" ? "encrypted" : "unreadable";
+          setProbeFailures((prev) => {
+            const next = new Map(prev);
+            next.set(item.id, kind);
+            return next;
+          });
         }
         created.push(createDocFromFile(item.file.name, item.id, count));
         setReading((prev) =>
@@ -444,6 +473,11 @@ export function AssembleSurface({
               docIndex={docIndex}
               docCount={docs.length}
               files={files}
+              failure={
+                doc.pages.length === 0 && doc.sourceFileId !== undefined
+                  ? probeFailures.get(doc.sourceFileId)
+                  : undefined
+              }
               onRename={(name) =>
                 apply((prev) => renameDoc(prev, doc.id, name), false)
               }
@@ -509,6 +543,7 @@ function DocColumn({
   docIndex,
   docCount,
   files,
+  failure,
   onRename,
   onReverse,
   onClear,
@@ -520,6 +555,9 @@ function DocColumn({
   docIndex: number;
   docCount: number;
   files: { id: string; file: File }[];
+  /** Set when this column's SOURCE file failed its page probe — the
+   * per-column error state ("encrypted" | "unreadable"), else undefined. */
+  failure?: "encrypted" | "unreadable";
   onRename: (name: string) => void;
   onReverse: () => void;
   onClear: () => void;
@@ -598,9 +636,33 @@ function DocColumn({
           )}
         >
           {doc.pages.length === 0 ? (
-            <p className="m-auto max-w-28 text-center text-[11px] leading-relaxed text-muted-foreground">
-              {t("asm.emptyDoc")}
-            </p>
+            failure ? (
+              /* Per-column error state: the source file failed its probe —
+               * never a silent 0-page column (FIX-3/AUD-A). Keys reuse the
+               * annotate-pdf family (ann.*), the house cross-namespace
+               * pattern (this surface already reuses grid.*). */
+              <p
+                className={cn(
+                  "m-auto flex max-w-32 flex-col items-center gap-1.5 text-center text-[11px] font-medium leading-relaxed",
+                  failure === "encrypted"
+                    ? "text-amber-700 dark:text-amber-300"
+                    : "text-destructive"
+                )}
+              >
+                {failure === "encrypted" ? (
+                  <LockKeyhole className="size-4 shrink-0" aria-hidden="true" />
+                ) : (
+                  <TriangleAlert className="size-4 shrink-0" aria-hidden="true" />
+                )}
+                {failure === "encrypted"
+                  ? t("ann.passwordProtected")
+                  : t("ann.corruptTitle")}
+              </p>
+            ) : (
+              <p className="m-auto max-w-28 text-center text-[11px] leading-relaxed text-muted-foreground">
+                {t("asm.emptyDoc")}
+              </p>
+            )
           ) : (
             doc.pages.map((page, index) => (
               <AsmCell

@@ -33,7 +33,7 @@
  *     the FULL Devanagari CII (2 line items, 18% tax, prepaid) → pdf.js
  *     reload: page count, invoice number/buyer/items/totals needles,
  *     Indian-grouping figures, FontFile2 + Identity-H embedded,
- *     Producer/Creator MyCloudy, stable-substring Devanagari, margins;
+ *     Producer/Creator DocoPDF, stable-substring Devanagari, margins;
  *     the EN-only EUR run (nothing embedded, SEPA label); the 81-line
  *     truncation run (capped at 80, printed note, Widget 0081 absent);
  *     Letter geometry; rejection drives (no file, garbage, not-xml,
@@ -1411,8 +1411,8 @@ console.log("── 7. REAL E2E through the worker (self-shimmed) ────�
     const dump = objDump(reloaded);
     check("worker full: Noto FontFile2 embedded (fetch shim served the TTF)", dump.includes("FontFile2"));
     check("worker full: Identity-H CID encoding", dump.includes("/Identity-H"));
-    check("worker full: producer MyCloudy", reloaded.getProducer() === "MyCloudy", reloaded.getProducer());
-    check("worker full: creator MyCloudy", reloaded.getCreator() === "MyCloudy", reloaded.getCreator());
+    check("worker full: producer DocoPDF", reloaded.getProducer() === "DocoPDF", reloaded.getProducer());
+    check("worker full: creator DocoPDF", reloaded.getCreator() === "DocoPDF", reloaded.getCreator());
     check("worker full: title carries the invoice number", reloaded.getTitle() === "Invoice RE-2026-0042", reloaded.getTitle());
     check("worker full: author is the seller", reloaded.getAuthor() === "शर्मा ट्रेडिंग कंपनी", reloaded.getAuthor());
 
@@ -1731,7 +1731,7 @@ console.log("── 8. i18n + config + wiring strings ────────�
   check("worker: reads the fileWord option", workerSrc.includes("request.options.fileWord"));
   check("worker: honest empty-CII error", workerSrc.includes("xinv.errEmpty"));
   const renderSrc = readFileSync("tools/xml-invoice-to-pdf/render.ts", "utf8");
-  check("render: Producer MyCloudy", renderSrc.includes('setProducer("MyCloudy")'));
+  check("render: Producer DocoPDF", renderSrc.includes('setProducer("DocoPDF")'));
   check("render: repeated table header on continuation pages", renderSrc.includes("drawTableHeader(c, plan.cols)"));
 }
 

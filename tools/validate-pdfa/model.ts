@@ -2455,7 +2455,7 @@ export const REPORT_LABELS_EN: ReportLabels = {
   "vpa.nUaAltOk": "Alternate text entries found in the structure tree.",
   "vpa.nUaAltWarn": "No /Alt entries found in the structure tree (light scan).",
   "vpa.nUaAltFail": "No structure tree — no /Alt scan possible.",
-  "vpa.generatedBy": "Generated on-device by MyCloudy — nothing was uploaded.",
+  "vpa.generatedBy": "Generated on-device by DocoPDF — nothing was uploaded.",
   "vpa.honestyTitle": "NOT CHECKED (honesty)",
   "vpa.honestyBody":
     "This is an honest subset of ISO 19005 rule families, inspired by veraPDF's categories — not the full standard and not a certified validation. Roughly 15 rule families are checked; a COMPLIANT verdict means every check in this subset passed, nothing more. The PDF/UA rows are advisory hints only (full PDF/UA validation is not performed). Take archive-grade decisions to a certified validator.",
@@ -2491,7 +2491,7 @@ export function buildReportText(
 ): string {
   const out: string[] = [];
   out.push("=".repeat(64));
-  out.push(`MyCloudy — ${L(labels, "vpa.title")}`);
+  out.push(`DocoPDF — ${L(labels, "vpa.title")}`);
   out.push("=".repeat(64));
   out.push(`${L(labels, "vpa.file")}: ${meta.fileName} (${humanBytes(meta.bytes)})`);
 

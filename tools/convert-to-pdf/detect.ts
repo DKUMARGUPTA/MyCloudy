@@ -18,6 +18,7 @@ export type SniffKind =
   | "bmp"
   | "tiff"
   | "svg"
+  | "rtf"
   | "txt"
   | "html"
   | "docx"
@@ -44,6 +45,7 @@ const LABEL_KEYS: Record<SniffKind, string> = {
   bmp: "conv.kindBmp",
   tiff: "conv.kindTiff",
   svg: "conv.kindSvg",
+  rtf: "conv.kindRtf",
   txt: "conv.kindTxt",
   html: "conv.kindHtml",
   docx: "conv.kindDocx",
@@ -192,6 +194,12 @@ function sniffKindValue(bytes: Uint8Array, name: string): SniffKind {
       .decode(bytes)
       .replace(/^\uFEFF/, "")
       .trimStart();
+    // RTF is plain text, so it reaches this branch — but it always opens
+    // with the literal {\rtf magic (BOM already stripped above), the same
+    // signature tools/rtf-to-pdf's rtfMagicOk pins. Sniff it BEFORE the
+    // svg/html/txt ladder or a dropped .rtf falls through to txt-to-pdf,
+    // which would print raw control words instead of formatted text.
+    if (head.startsWith("{\\rtf")) return "rtf";
     const lower = head.slice(0, 256).toLowerCase();
     const isSvg =
       lower.startsWith("<svg") ||

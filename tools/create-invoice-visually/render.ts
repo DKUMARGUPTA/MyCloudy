@@ -217,8 +217,8 @@ export async function renderCanvasPdf(
 
   // ---- metadata + save ----------------------------------------------
   const title = run.d.docNumber || (run.locale === "hi" ? "इनवॉइस" : "Invoice");
-  doc.setProducer("MyCloudy");
-  doc.setCreator("MyCloudy");
+  doc.setProducer("DocoPDF");
+  doc.setCreator("DocoPDF");
   doc.setTitle(title.slice(0, 120));
   doc.setCreationDate(new Date());
 

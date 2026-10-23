@@ -441,7 +441,7 @@ async function buildSignedPdf(o: FixtureOpts): Promise<BuiltFixture> {
       parts.push(text);
       pos += text.length;
     };
-    put("\n% MyCloudy verify smoke fixture signature seed xyzzy\n");
+    put("\n% DocoPDF verify smoke fixture signature seed xyzzy\n");
     put(
       `${catalogObj} 0 obj\n<<\n/Type /Catalog\n/AcroForm ${acroNum} 0 R\n${catalogRest}>>\nendobj\n\n`,
       "catalog"
@@ -615,8 +615,8 @@ console.log("── 0. fixtures (node:crypto keys, certs, signed PDFs) ───
   const NB = new Date(Date.UTC(2025, 0, 1, 0, 0, 0));
   const NA = new Date(Date.UTC(2028, 0, 1, 0, 0, 0));
   const caCert = buildCert({
-    commonName: "MyCloudy Test CA",
-    org: "MyCloudy",
+    commonName: "DocoPDF Test CA",
+    org: "DocoPDF",
     country: "IN",
     serial: BigInt(0x1001),
     notBefore: NB,
@@ -627,7 +627,7 @@ console.log("── 0. fixtures (node:crypto keys, certs, signed PDFs) ───
   });
   const signerCert = buildCert({
     commonName: "Test Signer",
-    org: "MyCloudy Labs",
+    org: "DocoPDF Labs",
     orgUnit: "Quality",
     country: "IN",
     email: "signer@mycloudy.test",
@@ -640,7 +640,7 @@ console.log("── 0. fixtures (node:crypto keys, certs, signed PDFs) ───
   });
   const expiredCert = buildCert({
     commonName: "Test Signer",
-    org: "MyCloudy Labs",
+    org: "DocoPDF Labs",
     orgUnit: "Quality",
     country: "IN",
     serial: BigInt(0x1a2b3c4d5e6f),
@@ -652,7 +652,7 @@ console.log("── 0. fixtures (node:crypto keys, certs, signed PDFs) ───
   });
   const notYetCert = buildCert({
     commonName: "Test Signer",
-    org: "MyCloudy Labs",
+    org: "DocoPDF Labs",
     orgUnit: "Quality",
     country: "IN",
     serial: BigInt(0x1a2b3c4d5e6f),
@@ -681,9 +681,9 @@ console.log("── 0. fixtures (node:crypto keys, certs, signed PDFs) ───
     "cert: signer parses with CA issuer, not self-signed",
     signerParsed !== null &&
       signerParsed.selfSigned === false &&
-      signerParsed.issuerCn === "MyCloudy Test CA" &&
+      signerParsed.issuerCn === "DocoPDF Test CA" &&
       signerParsed.subject.cn === "Test Signer" &&
-      signerParsed.subject.o === "MyCloudy Labs" &&
+      signerParsed.subject.o === "DocoPDF Labs" &&
       signerParsed.subject.ou === "Quality" &&
       signerParsed.subject.c === "IN" &&
       signerParsed.subject.email === "signer@mycloudy.test" &&
@@ -778,7 +778,7 @@ console.log("── 0. fixtures (node:crypto keys, certs, signed PDFs) ───
   check(
     "fixture: green bytes are a PDF with an incremental update",
     sniffPdfBytes(green.bytes) &&
-      toLatin(green.bytes).includes("%MyCloudy") === false &&
+      toLatin(green.bytes).includes("%DocoPDF") === false &&
       toLatin(green.bytes).includes("adbe.pkcs7.detached")
   );
   check(
@@ -1011,7 +1011,7 @@ console.log("── 3. parseCms (real CMS + broken variants) ──────�
 {
   const cms = parseCms(new Uint8Array(FIXTURES.standaloneCms));
   check("parseCms: no parse error", cms.parseError === null);
-  check("parseCms: both certificates", cms.certs.length === 2 && cms.certs[0]!.subject.cn === "Test Signer" && cms.certs[1]!.subject.cn === "MyCloudy Test CA");
+  check("parseCms: both certificates", cms.certs.length === 2 && cms.certs[0]!.subject.cn === "Test Signer" && cms.certs[1]!.subject.cn === "DocoPDF Test CA");
   check("parseCms: digestAlgorithms SET", cms.digestAlgoOids.length === 1 && cms.digestAlgoOids[0] === OID_SHA256);
   check("parseCms: detached (no eContent)", cms.eContentPresent === false);
   const signer = cms.signers[0]!;
@@ -1109,12 +1109,12 @@ console.log("── 4. green path E2E (CA-signed fixture) ───────�
   const cert = p.cert!;
   check(
     "green: certificate subject (CN/O/OU/C/email)",
-    cert.commonName === "Test Signer" && cert.organization === "MyCloudy Labs" &&
+    cert.commonName === "Test Signer" && cert.organization === "DocoPDF Labs" &&
       cert.organizationalUnit === "Quality" && cert.country === "IN" &&
       cert.email === "signer@mycloudy.test"
   );
   check("green: certificate serial hex", cert.serialHex === "0x1a2b3c4d5e6f");
-  check("green: issuer CN", cert.issuerCommonName === "MyCloudy Test CA");
+  check("green: issuer CN", cert.issuerCommonName === "DocoPDF Test CA");
   check(
     "green: validity window valid at the injected now",
     cert.notBeforeIso === "2025-01-01 00:00 UTC" && cert.notAfterIso === "2028-01-01 00:00 UTC" && cert.validityNow === "valid"
@@ -1325,15 +1325,15 @@ console.log("── 8. buildReportText (EN fallback + hi labels) ─────
   const greenReport = await analyzeSignatures(FIXTURES.green.bytes, NOW);
   const meta = { fileName: "green-signed.pdf", bytes: FIXTURES.green.bytes.length };
   const en = buildReportText(greenReport, meta, {});
-  check("report: EN title + file line", en.includes("MyCloudy — PDF signature verification report") && en.includes("File: green-signed.pdf"));
+  check("report: EN title + file line", en.includes("DocoPDF — PDF signature verification report") && en.includes("File: green-signed.pdf"));
   check("report: document line (1 page · fields)", en.includes("Document: 1 pages") && en.includes("signature fields (1 signed, 0 unsigned)"));
   check("report: xref ok line", en.includes("xref: ok"));
   check("report: summary counts", en.includes("SUMMARY: 1") && en.includes("1 valid, 0 attention, 0 invalid"));
-  check("report: signer identity block", en.includes("Signer: Test Signer") && en.includes("Organization: MyCloudy Labs"));
-  check("report: serial + issuer", en.includes("Certificate serial: 0x1a2b3c4d5e6f") && en.includes("Issuer: MyCloudy Test CA"));
+  check("report: signer identity block", en.includes("Signer: Test Signer") && en.includes("Organization: DocoPDF Labs"));
+  check("report: serial + issuer", en.includes("Certificate serial: 0x1a2b3c4d5e6f") && en.includes("Issuer: DocoPDF Test CA"));
   check("report: crypto PASS + integrity INTACT", en.includes("Cryptographic verification: PASS (RSA-PKCS1v1_5)") && en.includes("INTACT — computed digest matches messageDigest"));
   check("report: coverage line", en.includes("Modified after signing: no (0 trailing bytes)") && en.includes("/ByteRange: [0 "));
-  check("report: honesty footer + generated-by", en.includes("NOT CHECKED (honesty)") && en.includes("No CRL/OCSP revocation check") && en.includes("Generated on-device by MyCloudy"));
+  check("report: honesty footer + generated-by", en.includes("NOT CHECKED (honesty)") && en.includes("No CRL/OCSP revocation check") && en.includes("Generated on-device by DocoPDF"));
 
   const hiLabels = Object.fromEntries(
     Object.entries((toolI18n as { hi: { vps: Record<string, string> } }).hi.vps).map(([k, v]) => [`vps.${k}`, v])
@@ -1341,7 +1341,7 @@ console.log("── 8. buildReportText (EN fallback + hi labels) ─────
   const hi = buildReportText(greenReport, meta, hiLabels);
   check(
     "report: Hindi labels end to end",
-    hi.includes("MyCloudy — PDF हस्ताक्षर सत्यापन रिपोर्ट") &&
+    hi.includes("DocoPDF — PDF हस्ताक्षर सत्यापन रिपोर्ट") &&
       hi.includes("हस्ताक्षरकर्ता: Test Signer") &&
       hi.includes("क्रिप्टोग्राफ़िक पुष्टि: पास") &&
       hi.includes("अछूता")

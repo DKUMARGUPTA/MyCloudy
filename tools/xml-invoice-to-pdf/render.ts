@@ -644,8 +644,8 @@ export function drawParsedInvoice(
   });
 
   // ---- document metadata -------------------------------------------
-  doc.setProducer("MyCloudy");
-  doc.setCreator("MyCloudy");
+  doc.setProducer("DocoPDF");
+  doc.setCreator("DocoPDF");
   doc.setTitle(
     sanitizeText(
       (inv.meta.number !== "" ? "Invoice " + inv.meta.number : labelOf(labels, "ttl", "Invoice")),

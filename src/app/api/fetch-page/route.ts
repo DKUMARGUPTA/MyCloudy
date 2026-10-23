@@ -49,7 +49,7 @@ const bodySchema = z.object({
 });
 
 /** honest crawler-style UA: identifies the tool, no fake browser claim */
-const USER_AGENT = "Mozilla/5.0 (compatible; MyCloudyBot/1.0; webpage-to-pdf)";
+const USER_AGENT = "Mozilla/5.0 (compatible; DocoPDFBot/1.0; webpage-to-pdf)";
 
 const ACCEPT = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1";
 

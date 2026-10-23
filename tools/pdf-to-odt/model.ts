@@ -31,7 +31,7 @@ import { strToU8, zipSync } from "fflate";
  *  5. buildOdt — a REAL minimal OpenDocument package via fflate
  *     zipSync: mimetype FIRST and STORED (level 0, the ODF rule),
  *     META-INF/container.xml (OCF-style locator at content.xml),
- *     content.xml (office:meta dc:title + meta:generator "MyCloudy",
+ *     content.xml (office:meta dc:title + meta:generator "DocoPDF",
  *     automatic styles T1/T2/T3, office:body/office:text),
  *     styles.xml (Standard / Text_20_Body / Heading_20_1-6 common
  *     styles + Bold_20_Span / Italic_20_Span / BoldItalic_20_Span —
@@ -719,7 +719,7 @@ function stylesXml(style: OdtStyleInfo): string {
 
 /**
  * meta.xml — the standard OpenDocument metadata part (dc:title from the
- * PDF's own info dictionary, meta:generator MyCloudy).
+ * PDF's own info dictionary, meta:generator DocoPDF).
  */
 function metaXml(title: string): string {
   return (
@@ -730,7 +730,7 @@ function metaXml(title: string): string {
     'office:version="1.3">' +
     "<office:meta>" +
     `<dc:title>${xmlEscape(title)}</dc:title>` +
-    "<meta:generator>MyCloudy</meta:generator>" +
+    "<meta:generator>DocoPDF</meta:generator>" +
     "</office:meta>" +
     "</office:document-meta>"
   );
@@ -836,7 +836,7 @@ function contentXml(blocks: readonly OdtBlock[], title: string): string {
     'office:version="1.3">' +
     "<office:meta>" +
     `<dc:title>${xmlEscape(title)}</dc:title>` +
-    "<meta:generator>MyCloudy</meta:generator>" +
+    "<meta:generator>DocoPDF</meta:generator>" +
     "</office:meta>" +
     "<office:automatic-styles>" +
     '<style:style style:name="T1" style:family="text" ' +

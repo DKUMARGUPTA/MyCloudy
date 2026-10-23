@@ -15,8 +15,10 @@ import {
  * Loads the single input PDF, computes the authoritative split plan (the
  * same pure module the panel previews with), copies each part into a new
  * document and posts real progress. Size mode verifies every part against
- * real saved bytes and splits oversized parts in half. Never touches the
- * network; receives/sends File and Blob objects only.
+ * real saved bytes and splits oversized parts in half. Every output part
+ * is NAMED AFTER ITS CONTENT — its actual page range ("pages-1-5",
+ * "part-2-pages-6-9") — with the ZIP-style "-2" suffix on collisions.
+ * Never touches the network; receives/sends File and Blob objects only.
  *
  * Options (all optional — the panel owns the interactive values):
  *   mode: "range" | "everyN" | "bookmarks" | "size" | "visual" | "oddEven" | "blanks"
@@ -52,6 +54,23 @@ function readMode(options: OptionValues): SplitMode {
   return typeof raw === "string" && (MODES as string[]).includes(raw)
     ? (raw as SplitMode)
     : "range";
+}
+
+/**
+ * "3-7" for a contiguous ascending run (1-based, display form), "3" for a
+ * single page, null when the pages are scattered (e.g. the merged union of
+ * "1-3, 8" in one-file-per-range OFF mode — a range-shaped name would lie).
+ */
+function pageSpan(pages: number[]): string | null {
+  if (pages.length === 0) return null;
+  let prev = pages[0];
+  for (let i = 1; i < pages.length; i += 1) {
+    if (pages[i] !== prev + 1) return null;
+    prev = pages[i];
+  }
+  const from = pages[0] + 1;
+  const to = pages[pages.length - 1] + 1;
+  return from === to ? `${from}` : `${from}-${to}`;
 }
 
 function toBlob(bytes: Uint8Array): Blob {
@@ -247,21 +266,47 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 95, stage: "saving" });
 
-  // Naming pass (PRD: "<name>_part1.pdf"; odd/even keeps its own suffix).
+  // Naming pass — every part is named AFTER ITS CONTENT so "which file has
+  // pages 8-12" is readable at download time:
+  //   range mode        → "<base>-pages-1-5.pdf" (each user range = one file,
+  //                       matching how extract names one-per-file outputs)
+  //   chunk modes       → "<base>-part-2-pages-5-8.pdf" (every N / bookmarks /
+  //                       size / visual / blanks — part number keeps order)
+  //   odd/even          → keeps its semantic "_odd"/"_even" suffix
+  //   lone scattered    → keeps the legacy "<base>-split.pdf"
+  // Duplicate ranges ("1-5, 1-5") get the SAME "-2" disambiguation the
+  // shared ZIP bundler (zipOutputs) applies before the extension.
+  const used = new Set<string>();
   const outputs = built.map((part, index) => {
+    const span = pageSpan(part.pages);
     let name: string;
     if (
       mode === "oddEven" &&
       (part.label === "odd" || part.label === "even")
     ) {
       name = `${base}_${part.label}.pdf`;
+    } else if (span !== null && (built.length === 1 || mode === "range")) {
+      name = `${base}-pages-${span}.pdf`;
+    } else if (span !== null) {
+      name = `${base}-part-${index + 1}-pages-${span}.pdf`;
     } else if (built.length === 1) {
       name = `${base}-split.pdf`;
     } else {
       name = `${base}_part${index + 1}.pdf`;
     }
+    let unique = name;
+    let counter = 2;
+    while (used.has(unique)) {
+      const dot = unique.lastIndexOf(".");
+      unique =
+        dot > 0
+          ? `${unique.slice(0, dot)}-${counter}${unique.slice(dot)}`
+          : `${unique}-${counter}`;
+      counter += 1;
+    }
+    used.add(unique);
     return {
-      name,
+      name: unique,
       mime: "application/pdf",
       blob: toBlob(part.bytes),
     };

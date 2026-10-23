@@ -854,7 +854,7 @@ export function buildSrgbIccProfile(): Uint8Array {
     ];
   };
   const descTag = (): number[] => {
-    const ascii = "sRGB IEC61966-2.1 (MyCloudy hand-rolled)";
+    const ascii = "sRGB IEC61966-2.1 (DocoPDF hand-rolled)";
     const bytes = [...sigBytes("desc"), 0, 0, 0, 0];
     bytes.push(...beU32(ascii.length + 1));
     for (const ch of ascii) bytes.push(ch.charCodeAt(0));
@@ -1372,6 +1372,6 @@ export function buildReportText(
   out.push("");
   out.push(L("tagging", hi ? "PDF/A-1b/2b/3b स्तर पर टैगिंग (संरचना ट्री) ज़रूरी नहीं है — वह PDF/A-a स्तर की बात है; यह टूल -b बनाता है और टैग नहीं जोड़ता।" : "Tagging (structure tree) is not required at the PDF/A-1b/2b/3b levels — that is the -a (accessible) level; this tool produces -b and adds no tags."));
   out.push("");
-  out.push(L("footer", hi ? "MyCloudy में डिवाइस पर बनाया गया — यह रिपोर्ट उन बदलावों की सूची है जो सचमुच हुए; कोई प्रमाणित ISO 19005 सत्यापन नहीं।" : "Produced on-device by MyCloudy — this report lists the changes that were actually made; it is not a certified ISO 19005 validation."));
+  out.push(L("footer", hi ? "DocoPDF में डिवाइस पर बनाया गया — यह रिपोर्ट उन बदलावों की सूची है जो सचमुच हुए; कोई प्रमाणित ISO 19005 सत्यापन नहीं।" : "Produced on-device by DocoPDF — this report lists the changes that were actually made; it is not a certified ISO 19005 validation."));
   return out.join("\n") + "\n";
 }

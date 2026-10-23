@@ -13,6 +13,7 @@ import {
   joinPageText,
   makeSnippet,
   MAX_MATCHES_PER_FILE,
+  PatternTooComplexError,
   resolveSearchOptions,
   type RawTextItem,
   type Snippet,
@@ -211,6 +212,18 @@ self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
   const data = event.data;
   if (data?.type !== "run") return;
   run(data).catch((error: unknown) => {
+    // ReDoS guard: the per-page budget in findMatches throws this typed
+    // error the moment a user regex exceeds its step/time cap — fail
+    // honestly instead of hanging the pool worker. (An exec that never
+    // returns at all is the pool cancel()/terminate() escape hatch.)
+    if (error instanceof PatternTooComplexError) {
+      post({
+        type: "error",
+        runId: data.runId,
+        code: "search.errorPatternTooComplex",
+      });
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     post({
       type: "error",

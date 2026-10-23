@@ -1180,7 +1180,7 @@ export function buildInvoiceJson(
     };
   }
   const body = {
-    extractedBy: "MyCloudy pdf-to-e-invoice (on-device)",
+    extractedBy: "DocoPDF pdf-to-e-invoice (on-device)",
     extractionPath:
       summary.path === "A"
         ? "embedded-xml"

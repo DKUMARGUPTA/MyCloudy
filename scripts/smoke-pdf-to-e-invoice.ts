@@ -889,8 +889,8 @@ console.log("── 10. invoice.json download body ─────────�
     taxes: { rate: string }[];
   };
   check(
-    "json A: extractedBy MyCloudy + embedded-xml path + attachment",
-    jsonA.extractedBy.includes("MyCloudy") &&
+    "json A: extractedBy DocoPDF + embedded-xml path + attachment",
+    jsonA.extractedBy.includes("DocoPDF") &&
       jsonA.extractionPath === "embedded-xml" &&
       jsonA.attachment === "factur-x.xml" &&
       jsonA.ciiRecognized === true,

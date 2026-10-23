@@ -29,7 +29,8 @@
       "otherFiles": "Other files",
       "otherFilesNote": "{count} files queued — the run searches all of them.",
       "errorEmptyQuery": "Type what to search for first.",
-      "errorBadRegex": "That regex isn't valid — fix the syntax and try again."
+      "errorBadRegex": "That regex isn't valid — fix the syntax and try again.",
+      "errorPatternTooComplex": "This regex is too complex to search safely — simplify it (avoid nested quantifiers like (a+)+) and try again."
     }
   },
   "hi": {
@@ -62,7 +63,8 @@
       "otherFiles": "बाक़ी फ़ाइलें",
       "otherFilesNote": "{count} फ़ाइलें कतार में हैं — चलाने पर सभी में खोज होगी।",
       "errorEmptyQuery": "पहले लिखें क्या खोजना है।",
-      "errorBadRegex": "यह regex सही नहीं है — सिंटैक्स ठीक करके फिर कोशिश करें।"
+      "errorBadRegex": "यह regex सही नहीं है — सिंटैक्स ठीक करके फिर कोशिश करें।",
+      "errorPatternTooComplex": "यह regex सुरक्षित खोज के लिए बहुत जटिल है — इसे सरल करें ((a+)+ जैसे नेस्टेड क्वांटिफ़ायर से बचें) और फिर कोशिश करें।"
     }
   }
 }

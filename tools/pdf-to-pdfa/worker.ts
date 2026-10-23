@@ -87,7 +87,7 @@ import type { PdfaChangeReport, PdfaDetail } from "./types";
  *   tool.errorCorrupt / tool.errorGeneric             load failure / no file
  */
 
-const PRODUCER = "MyCloudy (mycloudy.in)";
+const PRODUCER = "DocoPDF";
 
 /** Action /S names forbidden in PDF/A at every level (types.ts §7). */
 const FORBIDDEN_ACTIONS = new Set([
@@ -1193,7 +1193,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   );
   intent.set(
     PDFName.of("Info"),
-    PDFString.of("sRGB IEC61966-2.1 (MyCloudy hand-rolled from IEC 61966-2-1)")
+    PDFString.of("sRGB IEC61966-2.1 (DocoPDF hand-rolled from IEC 61966-2-1)")
   );
   intent.set(PDFName.of("DestOutputProfile"), iccRef);
   const intents = PDFArray.withContext(doc.context);

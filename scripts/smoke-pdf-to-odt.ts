@@ -755,8 +755,8 @@ check(
   content.includes("<dc:title>Falcon Quarterly Report</dc:title>")
 );
 check(
-  "meta:generator MyCloudy",
-  content.includes("<meta:generator>MyCloudy</meta:generator>")
+  "meta:generator DocoPDF",
+  content.includes("<meta:generator>DocoPDF</meta:generator>")
 );
 check(
   "automatic styles T1/T2/T3 with parent chains",
@@ -857,7 +857,7 @@ check("meta.xml is well-formed", xmlWellFormed(metaPart));
 check(
   "meta.xml carries the same dc:title + generator",
   metaPart.includes("<dc:title>Falcon Quarterly Report</dc:title>") &&
-    metaPart.includes("<meta:generator>MyCloudy</meta:generator>")
+    metaPart.includes("<meta:generator>DocoPDF</meta:generator>")
 );
 
 /* ================================================================== */

@@ -38,7 +38,7 @@ import { drawHtmlPdf, type HtmlFontSet } from "../html-to-pdf/render";
  *     char switches everything to the self-hosted Noto Devanagari
  *     subset (fontkit, subset: true);
  *  4. drawHtmlPdf — the exact render.ts the smoke script drives;
- *  5. save with producer/creator "MyCloudy"; the name comes from the
+ *  5. save with producer/creator "DocoPDF"; the name comes from the
  *     page's <title>, falling back to the hostname (dots → dashes,
  *     ASCII by URL construction).
  *
@@ -213,8 +213,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     post({ type: "progress", runId, pct: 88, stage: "saving" });
 
     /* ---------- 5. save + name ---------- */
-    pdfDoc.setProducer("MyCloudy");
-    pdfDoc.setCreator("MyCloudy");
+    pdfDoc.setProducer("DocoPDF");
+    pdfDoc.setCreator("DocoPDF");
     const baseName = pickBaseName(doc.title, page.finalUrl, lang);
     pdfDoc.setTitle(baseName);
     pdfDoc.setCreationDate(new Date());

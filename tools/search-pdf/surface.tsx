@@ -26,6 +26,7 @@ import {
   joinPageText,
   makeSnippet,
   MAX_PREVIEW_MATCHES,
+  PatternTooComplexError,
   resolveSearchOptions,
   type RawTextItem,
   type Snippet,
@@ -78,6 +79,8 @@ export function SearchSurface({
   const [extract, setExtract] = useState<ExtractState | null>(null);
   const [matches, setMatches] = useState<PreviewMatch[] | null>(null);
   const [totalFound, setTotalFound] = useState(0);
+  /** Live-preview blew the per-page regex budget (ReDoS guard). */
+  const [patternTooComplex, setPatternTooComplex] = useState(false);
 
   /** Per-file page texts — written/read inside callbacks only, never render. */
   const textCacheRef = useRef<Map<File, string[]>>(new Map());
@@ -182,6 +185,7 @@ export function SearchSurface({
         if (!cancelled) {
           setMatches(null);
           setTotalFound(0);
+          setPatternTooComplex(false);
         }
       });
       return () => {
@@ -202,20 +206,33 @@ export function SearchSurface({
       if (matcher === null) return;
       const found: PreviewMatch[] = [];
       let total = 0;
-      for (let page = 1; page <= texts.length; page += 1) {
-        const pageText = texts[page - 1];
-        for (const match of findMatches(pageText, matcher)) {
-          total += 1; // true count keeps running past the preview cap
-          if (found.length < MAX_PREVIEW_MATCHES) {
-            found.push({
-              page,
-              snippet: makeSnippet(pageText, match, context),
-            });
+      try {
+        for (let page = 1; page <= texts.length; page += 1) {
+          const pageText = texts[page - 1];
+          for (const match of findMatches(pageText, matcher)) {
+            total += 1; // true count keeps running past the preview cap
+            if (found.length < MAX_PREVIEW_MATCHES) {
+              found.push({
+                page,
+                snippet: makeSnippet(pageText, match, context),
+              });
+            }
           }
         }
+      } catch (error) {
+        // ReDoS guard: the per-page budget bounded the main-thread work —
+        // show the honest hint instead of half-frozen results. The RUN
+        // stays enabled: the worker runs the same budgeted matcher and
+        // reports the same typed error if it really is too complex.
+        if (!(error instanceof PatternTooComplexError)) throw error;
+        setMatches(null);
+        setTotalFound(0);
+        setPatternTooComplex(true);
+        return;
       }
       setMatches(found);
       setTotalFound(total);
+      setPatternTooComplex(false);
     }, SEARCH_DEBOUNCE_MS);
     return () => {
       cancelled = true;
@@ -338,6 +355,14 @@ export function SearchSurface({
         <p className="flex items-start gap-2 rounded-card border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs leading-relaxed text-amber-800 dark:text-amber-300">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
           {t("search.regexInvalid")}
+        </p>
+      ) : null}
+
+      {/* ReDoS guard echo: the pattern exceeded the per-page work budget */}
+      {textsReady && patternTooComplex ? (
+        <p className="flex items-start gap-2 rounded-card border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs leading-relaxed text-amber-800 dark:text-amber-300">
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          {t("search.errorPatternTooComplex")}
         </p>
       ) : null}
 

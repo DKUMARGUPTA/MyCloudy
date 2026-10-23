@@ -639,14 +639,14 @@ export function sheetOutputName(locale: PassportLocale): string {
 
 /**
  * The sheet's bottom-margin info line — ASCII only (Helvetica, print
- * shops), capped tight. Example: "35x45mm - 300 DPI - 6 copies - MyCloudy".
+ * shops), capped tight. Example: "35x45mm - 300 DPI - 6 copies - DocoPDF".
  */
 export function infoLineText(size: ResolvedSize, plan: SheetPlan): string {
   const w = Math.round(size.wMM);
   const h = Math.round(size.hMM);
   const text = `${w}x${h}mm - ${PHOTO_DPI} DPI - ${plan.copies} ${
     plan.copies === 1 ? "copy" : "copies"
-  } - MyCloudy`;
+  } - DocoPDF`;
   return text.slice(0, 80);
 }
 

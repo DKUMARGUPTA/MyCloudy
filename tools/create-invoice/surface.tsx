@@ -76,7 +76,7 @@ import {
   nextNo,
   parseInvoiceRun,
   plus,
-  P,
+  Q,
   today,
   typeDef,
   upiPayload,
@@ -1003,7 +1003,7 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
                     <td className="r">{l.q}</td>
                     {!c.np ? (
                       <>
-                        <td className="r">{fmt(P(l.r))}</td>
+                        <td className="r">{fmt(Math.round(Q(l.r) * 100))}</td>
                         {c.g && !c.nt ? (
                           <>
                             <td className="r">{fmt(l.tb)}</td>

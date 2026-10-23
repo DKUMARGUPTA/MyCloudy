@@ -9,10 +9,19 @@
  *   3. sizes: w fraction is honored in user points (display units = pts)
  *   4. placementTargets for this/all/odd/even/range + invalid range
  *   5. parsePlacementsOption defensive behavior
+ *   6. REAL worker run (self-shimmed): an already-signed input is
+ *      refused with tool.errorAlreadySigned — pdf-lib's re-save would
+ *      silently break the existing signature (AUD-C FIX); an unsigned
+ *      input still stamps normally (guard never false-positives)
  *
  * Run: bun scripts/smoke-sign.ts
  */
 
+import { readFileSync } from "node:fs";
+
+import { PDFDocument } from "pdf-lib";
+
+import { hasExistingSignature } from "../tools/digital-signature/model";
 import {
   displayFracToUserPoint,
   displaySizeOf,
@@ -25,7 +34,9 @@ import {
 let pass = 0;
 let fail = 0;
 
-function check(name: string, ok: boolean, detail = ""): void {
+// detail widened to unknown (FIX-1b note): the worker-guard checks below
+// pass the raw response object for failure output.
+function check(name: string, ok: boolean, detail: unknown = ""): void {
   if (ok) {
     pass += 1;
     console.log(`  ✓ ${name}`);
@@ -226,5 +237,102 @@ console.log("parsePlacementsOption:");
   check("capped at 60", many.length === 60);
 }
 
+// ---------------------------------------------------------------------------
+console.log("worker guard: already-signed input (self-shimmed real worker):");
+{
+  const workerGlobal = globalThis as unknown as {
+    postMessage: (msg: unknown) => void;
+    onmessage: ((event: { data: unknown }) => void) | null;
+  };
+  const inbox: (Record<string, unknown> & { type: string })[] = [];
+  workerGlobal.postMessage = (msg: unknown): void => {
+    inbox.push(msg as Record<string, unknown> & { type: string });
+  };
+  (globalThis as unknown as Record<string, unknown>).self = workerGlobal;
+  await import("../tools/sign-pdf/worker");
+  check(
+    "worker: module loaded, onmessage registered",
+    typeof workerGlobal.onmessage === "function"
+  );
+
+  const drive = async (
+    runId: number,
+    bytes: Uint8Array,
+    assets: File[]
+  ): Promise<Record<string, unknown> & { type: string }> => {
+    const before = inbox.length;
+    workerGlobal.onmessage!({
+      data: {
+        type: "run",
+        runId,
+        toolId: "sign-pdf",
+        options: {
+          sigkey: "f1",
+          "p:f1": JSON.stringify([
+            { id: "p1", sigId: "s1", cx: 0.5, cy: 0.5, w: 0.3, rot: 0, op: 1, pages: "all" },
+          ]),
+        },
+        files: [new File([bytes as BlobPart], "contract.pdf")],
+        assets,
+      },
+    });
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const terminal = inbox
+        .slice(before)
+        .find((m) => m.type === "result" || m.type === "error");
+      if (terminal) return terminal;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error(`worker run ${runId} did not finish`);
+  };
+
+  // The signed fixture: a plain-bytes PPKLite signature dictionary —
+  // re-saving it through pdf-lib would shift every byte offset and
+  // silently break the /ByteRange (the exact AUD-C bug this guard fixes).
+  // Real signed PDFs (and the house digital-signature tool) always carry
+  // the sig dict as plain bytes, never inside an object stream.
+  const signed = await PDFDocument.create();
+  signed.addPage([300, 200]);
+  signed.context.register(
+    signed.context.obj({
+      Type: "Sig",
+      Filter: "Adobe.PPKLite",
+      SubFilter: "adbe.pkcs7.detached",
+      ByteRange: [0, 100, 200, 8],
+      Contents: "00",
+    })
+  );
+  const signedBytes = await signed.save({ useObjectStreams: false });
+  check(
+    "fixture: hasExistingSignature sees the sig dict",
+    hasExistingSignature(signedBytes)
+  );
+
+  const sigAsset = new File(
+    [readFileSync("public/qa/rikb-signature.png")],
+    "sig-s1.png",
+    { type: "image/png" }
+  );
+
+  const res = await drive(1, signedBytes, [sigAsset]);
+  check(
+    "worker: already-signed input → tool.errorAlreadySigned (no silent re-save)",
+    res.type === "error" && res.code === "tool.errorAlreadySigned",
+    res
+  );
+
+  // Positive control: the same run on an UNSIGNED input still succeeds —
+  // the guard must never break the normal visual-signing path.
+  const clean = await PDFDocument.create();
+  clean.addPage([300, 200]);
+  const cleanBytes = await clean.save();
+  check("control: unsigned fixture is not flagged", !hasExistingSignature(cleanBytes));
+  const okRes = await drive(2, cleanBytes, [sigAsset]);
+  check("control: unsigned input still produces a result", okRes.type === "result", okRes);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+// Explicit exit: importing a worker module keeps bun's event loop alive
+// (house convention — every worker-driving smoke force-exits).
+process.exit(fail > 0 ? 1 : 0);

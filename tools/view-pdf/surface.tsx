@@ -54,11 +54,12 @@ import { cn } from "@/lib/utils";
  * ToolShell workspace. Everything happens on-device with the self-hosted
  * pdf.js: lazy page rendering (only pages near the viewport stay in
  * memory), a selectable text layer, full-text search with on-page
- * highlight boxes, thumbnails + outline sidebar, zoom 25-400% with
- * fit-width / fit-page, single-page and two-page spread, 90° view
- * rotation and a dark reading mode. Printing and downloading act on the
- * ORIGINAL file bytes; the password prompt for encrypted files is
- * resolved entirely in the browser.
+ * highlight boxes, thumbnails + outline sidebar (the outline tab is
+ * HIDDEN entirely when the document has no bookmarks — no empty-state
+ * noise), zoom 25-400% with fit-width / fit-page, single-page and
+ * two-page spread, 90° view rotation and a dark reading mode. Printing
+ * and downloading act on the ORIGINAL file bytes; the password prompt
+ * for encrypted files is resolved entirely in the browser.
  */
 
 /* ------------------------------ constants ------------------------------ */
@@ -678,7 +679,7 @@ export function ViewSurface({
         await walk(raw, 0);
         if (!cancelled) setOutline(rows.slice(0, 200));
       } catch {
-        /* no outline — sidebar simply shows the empty state */
+        /* no outline — the tab stays hidden (no empty state) */
       }
     })().catch((error: unknown) => {
       if (cancelled) return;
@@ -1148,6 +1149,15 @@ export function ViewSurface({
   const iconBtn =
     "size-9 shrink-0 rounded-btn outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40";
 
+  /** Effective sidebar tab. The outline tab is only rendered for documents
+   *  that actually have bookmarks, so a stale "outline" selection (file
+   *  switched to a bookmark-less one) falls back to thumbnails here —
+   *  derived during render, no setState cascade. */
+  const activeTab: "thumbs" | "outline" | null =
+    sidebar === "outline" && outline.length === 0
+      ? "thumbs"
+      : sidebar;
+
   return (
     <div
       ref={rootRef}
@@ -1490,7 +1500,10 @@ export function ViewSurface({
 
       {/* ---------------- sidebar + pages ---------------- */}
       <div className="relative flex min-h-[70vh]">
-        {/* sidebar (thumbnails / outline) */}
+        {/* sidebar (thumbnails / outline). The outline tab only exists when
+            the document actually HAS bookmarks — hidden entirely otherwise
+            (no empty-state noise). While a doc with an outline is being
+            replaced by one without, `activeTab` falls back to thumbs. */}
         {sidebar !== null ? (
           <aside
             className="absolute inset-y-0 left-0 z-20 flex w-44 flex-col border-r border-border bg-background/95 backdrop-blur md:static md:z-auto md:w-48 md:bg-transparent md:backdrop-blur-none"
@@ -1500,10 +1513,10 @@ export function ViewSurface({
               <button
                 type="button"
                 onClick={() => setSidebar("thumbs")}
-                aria-pressed={sidebar === "thumbs"}
+                aria-pressed={activeTab === "thumbs"}
                 className={cn(
                   "flex flex-1 items-center justify-center gap-1 rounded-btn px-2 py-1.5 text-[11px] font-semibold outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
-                  sidebar === "thumbs"
+                  activeTab === "thumbs"
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground"
                 )}
@@ -1511,22 +1524,24 @@ export function ViewSurface({
                 <List className="size-3.5" aria-hidden="true" />
                 {t("view.thumbsTab")}
               </button>
-              <button
-                type="button"
-                onClick={() => setSidebar("outline")}
-                aria-pressed={sidebar === "outline"}
-                className={cn(
-                  "flex flex-1 items-center justify-center gap-1 rounded-btn px-2 py-1.5 text-[11px] font-semibold outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
-                  sidebar === "outline"
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground"
-                )}
-              >
-                <ListTree className="size-3.5" aria-hidden="true" />
-                {t("view.outlineTab")}
-              </button>
+              {outline.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setSidebar("outline")}
+                  aria-pressed={activeTab === "outline"}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-1 rounded-btn px-2 py-1.5 text-[11px] font-semibold outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                    activeTab === "outline"
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground"
+                  )}
+                >
+                  <ListTree className="size-3.5" aria-hidden="true" />
+                  {t("view.outlineTab")}
+                </button>
+              ) : null}
             </div>
-            {sidebar === "thumbs" ? (
+            {activeTab === "thumbs" ? (
               <div className="flex-1 overflow-y-auto p-2 scrollbar-thin">
                 <div className="grid grid-cols-1 gap-1.5">
                   {Array.from({ length: numPages }, (_, i) => (
@@ -1544,31 +1559,25 @@ export function ViewSurface({
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto p-2 scrollbar-thin">
-                {outline.length === 0 ? (
-                  <p className="px-2 py-6 text-center text-[11px] leading-relaxed text-muted-foreground">
-                    {t("view.outlineEmpty")}
-                  </p>
-                ) : (
-                  <ul className="space-y-0.5">
-                    {outline.map((row, index) => (
-                      <li key={`${row.page}-${index}`}>
-                        <button
-                          type="button"
-                          onClick={() => goToPage(row.page)}
-                          className="flex w-full items-baseline gap-1.5 rounded-btn px-2 py-1.5 text-left text-[11px] leading-snug outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                          style={{ paddingLeft: `${8 + row.depth * 12}px` }}
-                        >
-                          <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-                            {row.title}
-                          </span>
-                          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                            {row.page}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <ul className="space-y-0.5">
+                  {outline.map((row, index) => (
+                    <li key={`${row.page}-${index}`}>
+                      <button
+                        type="button"
+                        onClick={() => goToPage(row.page)}
+                        className="flex w-full items-baseline gap-1.5 rounded-btn px-2 py-1.5 text-left text-[11px] leading-snug outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                        style={{ paddingLeft: `${8 + row.depth * 12}px` }}
+                      >
+                        <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                          {row.title}
+                        </span>
+                        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                          {row.page}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </aside>

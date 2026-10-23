@@ -99,7 +99,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
         type: "error",
         runId,
         code: "tool.errorInvalidPages",
-        detail: trimmed,
+        detail: `${file.name}: ${trimmed}`,
       });
       return;
     }

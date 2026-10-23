@@ -23,7 +23,7 @@ import { drawPubPdf } from "./render";
  *     Devanagari character switches to the self-hosted Noto Sans
  *     Devanagari (fontkit subset:true) — the create-resume recipe;
  *  4. drawPubPdf — the exact render.ts the smoke script drives;
- *  5. save with producer/creator "MyCloudy" and the localized name.
+ *  5. save with producer/creator "DocoPDF" and the localized name.
  *
  * Options: pageSize ("a4"|"letter"), margin ("normal"|"narrow"),
  * fontSize (8–18, default 10.5) and fileWord (the localized fallback
@@ -108,8 +108,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     });
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
-    pdfDoc.setProducer("MyCloudy");
-    pdfDoc.setCreator("MyCloudy");
+    pdfDoc.setProducer("DocoPDF");
+    pdfDoc.setCreator("DocoPDF");
     pdfDoc.setTitle(outputPdfName(file.name, fileWord).replace(/\.pdf$/i, ""));
     pdfDoc.setCreationDate(new Date());
 

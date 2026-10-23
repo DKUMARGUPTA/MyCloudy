@@ -287,10 +287,35 @@ export async function verifyLocked(
   }
 }
 
-/** Unlock verify: zero "/Encrypt" anywhere in the bytes + plain reopens. */
+/**
+ * Unlock verify: the rebuilt output must carry no /Encrypt in its TRAILER
+ * (structural parse, the FIX-1b ocr-pdf probe pattern) + plain reopens.
+ *
+ * Why structural: the old raw-bytes `text.includes("/Encrypt")` scan
+ * false-positives when a document's TEXT literally contains "/Encrypt
+ * 26 0 R" (this project's own docs do) — a perfectly unlocked file was
+ * wrongly reported as still-encrypted. The parse reads the actual trailer
+ * (`context.trailerInfo.Encrypt` via `isEncrypted`); only when pdf-lib
+ * cannot parse the bytes at all do we fall back to the raw substring
+ * scan, and the plain reload below stays the final authority either way.
+ */
 export async function verifyUnlocked(bytes: Uint8Array): Promise<void> {
-  const text = new TextDecoder("latin1").decode(bytes);
-  if (text.includes("/Encrypt")) {
+  let structural: boolean | null = null;
+  try {
+    const probe = await PDFDocument.load(bytes, {
+      ignoreEncryption: true,
+      updateMetadata: false,
+    });
+    structural = probe.isEncrypted;
+  } catch {
+    structural = null; // unparseable — fall back to the raw scan below
+  }
+  if (structural === null) {
+    const text = new TextDecoder("latin1").decode(bytes);
+    if (text.includes("/Encrypt")) {
+      throw new SecurityError("tool.errorAlreadyEncrypted");
+    }
+  } else if (structural) {
     throw new SecurityError("tool.errorAlreadyEncrypted");
   }
   await PDFDocument.load(bytes, { updateMetadata: false });

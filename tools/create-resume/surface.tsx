@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Create resume surface (CR-66 — the 66th MyCloudy tool). ATS-friendly
+ * Create resume surface (CR-66 — the 66th DocoPDF tool). ATS-friendly
  * resume builder, 100% on-device (mode D), EN + हिंदी.
  *
  * Landing (create-card / create-fillable-pdf-form precedent — no files,

@@ -23,19 +23,20 @@ import { sniffKind, type SniffResult } from "../convert-to-pdf/detect";
  * the convert-to-pdf hub. The workspace file is verified by magic bytes
  * (the DropZone already enforces PDF, but chain handoffs can carry
  * anything — the sniff keeps the hub honest), then a target grid routes
- * to the exact tool with the file in hand (onChain). Live targets convert
- * on the device; the rest carry Soon / Server badges. The only file read
- * is a 512-byte slice, in memory.
+ * to the exact tool with the file in hand (onChain). Every target
+ * converts on the device. The only file read is a 512-byte slice, in
+ * memory.
  */
 
 /** Curated from-PDF targets — ids verified against the registry
- *  (read-only import); disabled ones still render, with honest badges. */
+ *  (read-only import); all twelve are live, on-device tools. */
 const FROM_PDF_TARGETS: readonly string[] = [
   "pdf-to-jpg",
   "pdf-to-png",
   "pdf-to-txt",
   "pdf-to-webp",
   "pdf-to-tiff",
+  "pdf-to-svg",
   "pdf-to-word",
   "pdf-to-powerpoint",
   "pdf-to-excel",
@@ -45,8 +46,8 @@ const FROM_PDF_TARGETS: readonly string[] = [
 ];
 
 /** One route card: registry name + description + honest badges. Clicking
- *  always fires onChain — the shell navigates for live tools and shows
- *  the coming-soon toast for the rest. */
+ *  always fires onChain — the shell navigates to the target tool with the
+ *  file in hand. */
 function TargetCard({
   tool,
   onChain,

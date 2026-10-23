@@ -515,6 +515,34 @@ export function containFit(
   return { x: (dw - w) / 2, y: (dh - h) / 2, w, h };
 }
 
+/* ------------------------- decode cap (RAM) ------------------------- */
+
+/**
+ * Long-edge pixel cap for decoded collage photos (the mobile OOM guard).
+ * The export raster is 2 px/pt, so the largest cell ANY template can
+ * draw — a full-height duo/filmstrip cell on A4 ≈ 1684 px — sits
+ * comfortably below 2048: normal photos keep full cell resolution
+ * (zero copies), while 50 × 12-megapixel phone shots can never be held
+ * in RAM at full size at once.
+ */
+export const PHOTO_LONG_EDGE_CAP = 2048;
+
+/**
+ * Per-photo decode cap in px for the chosen style: at least the generous
+ * default, never below the largest cell the template can draw at export
+ * resolution (future page formats stay honest — a photo is never decoded
+ * to less than its cell can display).
+ */
+export function photoDecodeCap(style: CollageStyle): number {
+  const cells = layoutById(style.layout).cells;
+  const px = pagePixelSize(style);
+  let maxCellLongEdge = 0;
+  for (const cell of cells) {
+    maxCellLongEdge = Math.max(maxCellLongEdge, cell.w * px.w, cell.h * px.h);
+  }
+  return Math.ceil(Math.max(PHOTO_LONG_EDGE_CAP, maxCellLongEdge));
+}
+
 /* --------------------------- backgrounds ---------------------------- */
 
 /**

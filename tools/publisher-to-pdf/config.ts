@@ -12,7 +12,7 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  *  - what does not: the visual layout — columns, images, shapes,
  *    colors, fonts and exact page composition are NOT carried over;
  *  - the better path for full fidelity: export a PDF from Publisher
- *    itself (File → Save as PDF), then use the other MyCloudy tools.
+ *    itself (File → Save as PDF), then use the other DocoPDF tools.
  *
  * The surface (tools/publisher-to-pdf/surface.tsx) owns the input
  * flow: a drop zone that sniffs the OLE2 magic, a live
@@ -112,8 +112,8 @@ export const config: ToolConfig = {
         hi: "मुझे लेआउट बिल्कुल वैसा ही चाहिए जैसा डिज़ाइन किया गया है — क्या करूँ?",
       },
       a: {
-        en: "Export a PDF directly from Publisher (File → Save As → PDF) — that keeps every column, image and shape pixel-perfect, because Publisher itself draws it. Then use MyCloudy's other PDF tools (compress, merge, page numbers…) on that file. This tool is for the cases where you only have the .pub and Publisher is not available — it rescues the words, not the design.",
-        hi: "पब्लिशर से सीधे PDF निकाल लें (File → Save As → PDF) — उसमें हर कॉलम, तस्वीर और आकृति पिक्सेल-सटीक रहती है, क्योंकि उसे पब्लिशर खुद बनाता है। फिर MyCloudy के बाक़ी PDF टूल (कंप्रेस, मर्ज, पेज नंबर…) उसी फ़ाइल पर चलाएँ। यह टूल उन हालात के लिए है जब आपके पास सिर्फ़ .pub है और पब्लिशर नहीं — यह शब्दों को बचाता है, डिज़ाइन को नहीं।",
+        en: "Export a PDF directly from Publisher (File → Save As → PDF) — that keeps every column, image and shape pixel-perfect, because Publisher itself draws it. Then use DocoPDF's other PDF tools (compress, merge, page numbers…) on that file. This tool is for the cases where you only have the .pub and Publisher is not available — it rescues the words, not the design.",
+        hi: "पब्लिशर से सीधे PDF निकाल लें (File → Save As → PDF) — उसमें हर कॉलम, तस्वीर और आकृति पिक्सेल-सटीक रहती है, क्योंकि उसे पब्लिशर खुद बनाता है। फिर DocoPDF के बाक़ी PDF टूल (कंप्रेस, मर्ज, पेज नंबर…) उसी फ़ाइल पर चलाएँ। यह टूल उन हालात के लिए है जब आपके पास सिर्फ़ .pub है और पब्लिशर नहीं — यह शब्दों को बचाता है, डिज़ाइन को नहीं।",
       },
     },
     {

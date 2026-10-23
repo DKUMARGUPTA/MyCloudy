@@ -8,9 +8,12 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  * is intentionally empty — the worker defaults every option defensively and
  * the panel owns the interactive values.
  *
- * Output naming (PRD): "<name>_part1.pdf"; odd/even → "<name>_odd/_even.pdf".
- * Multiple files are handed to the shared ResultView which offers the ZIP
- * download (fflate) plus individual downloads.
+ * Output naming: every part is named after the pages it actually holds —
+ * range mode "<name>-pages-1-5.pdf", chunk modes (every N / bookmarks /
+ * size / visual / blanks) "<name>-part-2-pages-6-9.pdf", odd/even keeps
+ * "<name>_odd/_even.pdf". Multiple files are handed to the shared
+ * ResultView which offers the ZIP download (fflate) plus individual
+ * downloads.
  */
 export const config: ToolConfig = {
   toolId: "split-pdf",
@@ -32,8 +35,8 @@ export const config: ToolConfig = {
       hi: "चलाने से पहले लाइव प्रीव्यू दिखाता है कि कौन-सा पेज किस फ़ाइल में जाएगा।",
     },
     {
-      en: "Multiple parts download as a ZIP with a list of individual files — naming stays clean (part1, part2…).",
-      hi: "कई भाग ZIP में और अलग-अलग फ़ाइलों की सूची में मिलते हैं — नाम साफ़ रहते हैं (part1, part2…)।",
+      en: "Multiple parts download as a ZIP with a list of individual files — every part is named after the pages it holds (pages-1-5, part-2-pages-6-9…).",
+      hi: "कई भाग ZIP में और अलग-अलग फ़ाइलों की सूची में मिलते हैं — हर भाग का नाम उसके पेजों पर होता है (pages-1-5, part-2-pages-6-9…)।",
     },
     {
       en: "Everything happens on your device — your PDF never leaves the browser.",

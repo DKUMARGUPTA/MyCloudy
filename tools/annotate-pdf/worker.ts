@@ -134,6 +134,15 @@ async function run(request: WorkerRunRequest): Promise<void> {
       /password|encrypt/i.test(message) ? "PDF_PASSWORD" : "PDF_PARSE"
     );
   }
+  // ignoreEncryption parses encrypted files without decrypting anything:
+  // pdf.js opens owner-restricted PDFs transparently, so the surface can
+  // reach this run with an encrypted source. Appending plaintext
+  // annotations and re-saving would emit a mixed-encryption file no
+  // reader can open. pdf-lib cannot decrypt — refuse honestly
+  // (tool.errorEncrypted → "unlock it first, then try again").
+  if (doc.isEncrypted) {
+    throw new Error("PDF_PASSWORD");
+  }
   const pages = doc.getPages();
   const annos = sanitizeAnnotations(blob?.annos, pages.length);
 

@@ -1152,7 +1152,7 @@ export const REPORT_LABELS_EN: ReportLabels = {
   "vei.note": "note",
   "vei.totals": "TOTALS RECONCILIATION",
   "vei.missing": "(missing)",
-  "vei.generatedBy": "Generated on-device by MyCloudy — nothing was uploaded.",
+  "vei.generatedBy": "Generated on-device by DocoPDF — nothing was uploaded.",
   "vei.honestyTitle": "NOT CHECKED (honesty)",
   "vei.honestyBody":
     "This is a structural + EN 16931-flavored semantic check, not a full XSD schema validation, not a signature/e-seal verification, and not a complete business-rule validation. The checks above are the whole scope.",
@@ -1228,7 +1228,7 @@ export function buildReportText(
   const out: string[] = [];
 
   out.push("=".repeat(64));
-  out.push(`MyCloudy — ${L(labels, "vei.title")}`);
+  out.push(`DocoPDF — ${L(labels, "vei.title")}`);
   out.push("=".repeat(64));
   out.push(`${L(labels, "vei.file")}: ${meta.fileName} (${humanBytes(meta.bytes)})`);
   out.push(

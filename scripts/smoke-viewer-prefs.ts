@@ -10,6 +10,8 @@
  */
 import { PDFArray, PDFDocument, PDFName, PDFNumber } from "pdf-lib";
 
+import { hasExistingSignature } from "../tools/digital-signature/model";
+
 let passed = 0;
 let failed = 0;
 
@@ -352,6 +354,40 @@ async function main(): Promise<void> {
     });
     const doc = await reload(outcome);
     assertEqual(catalogValue(doc, "PageLayout"), "/OneColumn", "replace: old layout replaced");
+  }
+
+  /* 12. Cryptographically signed input → honest refusal (re-saving
+   *     through pdf-lib would silently break the existing signature). */
+  {
+    const signed = await PDFDocument.create();
+    signed.addPage([300, 200]);
+    // A real-looking PPKLite signature dictionary. Saved WITHOUT object
+    // streams — real signed PDFs always carry the sig dict as plain
+    // bytes (the house digital-signature tool saves the same way), so
+    // the latin1 scan in hasExistingSignature sees /SubFilter /adbe.pkcs7.
+    signed.context.register(
+      signed.context.obj({
+        Type: "Sig",
+        Filter: "Adobe.PPKLite",
+        SubFilter: "adbe.pkcs7.detached",
+        ByteRange: [0, 100, 200, 8],
+        Contents: "00",
+      })
+    );
+    const signedBytes = await signed.save({ useObjectStreams: false });
+    assert(
+      hasExistingSignature(signedBytes),
+      "signed fixture: hasExistingSignature sees the sig dict"
+    );
+    const outcome = await runWorker(new FakeFile("sig.pdf", signedBytes), {
+      zoom: "100",
+    });
+    assert(outcome.result === null, "signed: no result", outcome.result);
+    assertEqual(
+      outcome.error?.code,
+      "tool.errorAlreadySigned",
+      "signed: honest error code"
+    );
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

@@ -8,6 +8,7 @@ import {
   loadPdfjsInWorker,
   workerDocumentShim,
 } from "../pdfjs-common/worker-lib";
+import { RenderPixelBudget } from "../pdfjs-common/pixel-budget";
 import { TiffBuilder } from "./tiff-writer";
 
 /**
@@ -57,6 +58,10 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const pdfjs = await loadPdfjsInWorker();
   const outputs: { name: string; mime: string; blob: Blob }[] = [];
   let renderedPages = 0;
+  // Run-wide RAM budget: every output page (encoded blob or raw TIFF
+  // strip) accumulates until the result step — refuse BEFORE a render
+  // that would blow the pixel cap instead of OOMing a phone (ENH-1).
+  const budget = new RenderPixelBudget();
 
   for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
     const file = files[fileIndex];
@@ -96,6 +101,15 @@ async function run(request: WorkerRunRequest): Promise<void> {
       const viewport = page.getViewport({ scale });
       const width = Math.max(1, Math.round(viewport.width));
       const height = Math.max(1, Math.round(viewport.height));
+
+      // Budget check BEFORE the render (and the canvas alloc): the
+      // accumulated pages + this one must stay under the pixel cap.
+      if (!budget.tryConsume(width, height)) {
+        page.cleanup();
+        doc.cleanup();
+        post({ type: "error", runId, code: "tool.errorRenderBudget" });
+        return;
+      }
 
       const canvas = new OffscreenCanvas(width, height);
       const context = canvas.getContext("2d");

@@ -17,6 +17,13 @@ import {
  * All four family tools (rotate / rearrange / remove / extract) run THIS
  * worker; only the naming and the extract filter differ.
  *
+ * Batch mode (rotate-pdf-pages only — the family's multi-file member, the
+ * pattern-setter for later batches): when `options.grids` carries a map of
+ * { [workspace file id]: gridWireString }, every input file is rebuilt from
+ * ITS OWN grid (iLovePDF/Smallpdf-style batch rotate). The map must cover
+ * every file — a malformed or partial map is a hard error, never a silent
+ * fall-back to applying one file's grid to all files.
+ *
  * Device-only (PRD §2.3): pdf-lib in a Web Worker, File/Blob in and out,
  * zero network. Real per-page progress is posted while rebuilding.
  */
@@ -38,8 +45,64 @@ function safeBaseName(name: string): string {
   return cleaned.length > 0 ? cleaned.slice(0, 120) : "document";
 }
 
+/**
+ * Parses the per-file grids map for batch runs:
+ * { [workspace file id]: gridWireString } — the same per-file-options shape
+ * merge-pdf uses for its range map. Returns null when malformed.
+ */
+function parseGridsOption(raw: unknown): Map<string, GridPage[]> | null {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed)
+  ) {
+    return null;
+  }
+  const map = new Map<string, GridPage[]>();
+  for (const [key, value] of Object.entries(
+    parsed as Record<string, unknown>
+  )) {
+    if (typeof value !== "string") return null;
+    const grid = parseGridOption(value);
+    if (grid === null) return null;
+    map.set(key, grid);
+  }
+  return map.size > 0 ? map : null;
+}
+
 function post(response: WorkerResponse): void {
   self.postMessage(response);
+}
+
+/**
+ * Disambiguates output names across the whole run — the SAME "-2" pattern
+ * the shared ZIP bundler (zipOutputs) applies before the extension. Two
+ * workspace files can share a base name ("scan.pdf" twice); distinct base
+ * names keep their clean single-file form ("a-rotated.pdf").
+ */
+function makeUniqueNamer(): (name: string) => string {
+  const used = new Set<string>();
+  return (name: string): string => {
+    let unique = name;
+    let counter = 2;
+    while (used.has(unique)) {
+      const dot = unique.lastIndexOf(".");
+      unique =
+        dot > 0
+          ? `${unique.slice(0, dot)}-${counter}${unique.slice(dot)}`
+          : `${unique}-${counter}`;
+      counter += 1;
+    }
+    used.add(unique);
+    return unique;
+  };
 }
 
 /** Entries this run should emit: the whole grid, or the extract selection. */
@@ -107,7 +170,7 @@ async function buildOutput(
 }
 
 async function run(request: WorkerRunRequest): Promise<void> {
-  const { runId, toolId, options, files } = request;
+  const { runId, toolId, options, files, fileIds } = request;
   const grid = parseGridOption(options.grid);
   if (grid === null) {
     post({ type: "error", runId, code: "tool.errorCorrupt" });
@@ -120,15 +183,48 @@ async function run(request: WorkerRunRequest): Promise<void> {
     return;
   }
 
+  // Batch mode (rotate only): per-file grids keyed by workspace file id.
+  const gridsRaw = options.grids;
+  let gridMap: Map<string, GridPage[]> | null = null;
+  if (
+    toolId === "rotate-pdf-pages" &&
+    typeof gridsRaw === "string" &&
+    gridsRaw.length > 0
+  ) {
+    gridMap = parseGridsOption(gridsRaw);
+    if (gridMap === null) {
+      // Malformed map — refuse rather than guessing (never apply one
+      // file's grid to every file silently).
+      post({ type: "error", runId, code: "tool.errorCorrupt" });
+      return;
+    }
+  }
+
   const { entries, onePerPage } = resolved;
   const suffix = OUTPUT_SUFFIX[toolId] ?? "-pages";
   const outputs: { name: string; mime: string; blob: Blob }[] = [];
+  const uniqueName = makeUniqueNamer();
+  let pagesTotal = 0;
 
   const totalFiles = files.length;
   for (let fileIndex = 0; fileIndex < totalFiles; fileIndex += 1) {
     const file = files[fileIndex];
     const base = safeBaseName(file.name);
-    const fileSpan = totalFiles > 1 ? `-${fileIndex + 1}` : "";
+
+    // Batch rotate: each file rebuilds from ITS OWN grid.
+    let fileEntries: GridPage[] | null = entries;
+    if (gridMap !== null) {
+      const fileId = fileIds?.[fileIndex];
+      fileEntries =
+        fileId !== undefined ? (gridMap.get(fileId) ?? null) : null;
+      if (fileEntries === null || fileEntries.length === 0) {
+        // Missing/empty grid for this file — refuse the whole run (the
+        // surface gates this before the CTA; worker stays defense-in-depth).
+        post({ type: "error", runId, code: "tool.errorInvalidPages" });
+        return;
+      }
+    }
+    pagesTotal += fileEntries.length;
 
     post({
       type: "progress",
@@ -152,15 +248,15 @@ async function run(request: WorkerRunRequest): Promise<void> {
           ((fileIndex + fraction) / totalFiles) * 92
         ),
         stage: "processing",
-        detail: { page, pages: entries.length },
+        detail: { page, pages: fileEntries.length },
       });
     };
 
     if (onePerPage) {
-      for (let index = 0; index < entries.length; index += 1) {
-        const saved = await buildOutput(source, [entries[index]], runId, emit);
+      for (let index = 0; index < fileEntries.length; index += 1) {
+        const saved = await buildOutput(source, [fileEntries[index]], runId, emit);
         outputs.push({
-          name: `${base}_page${index + 1}${fileSpan}.pdf`,
+          name: uniqueName(`${base}_page${index + 1}.pdf`),
           mime: "application/pdf",
           blob: new Blob([saved as unknown as BlobPart], {
             type: "application/pdf",
@@ -168,7 +264,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
         });
       }
     } else {
-      const saved = await buildOutput(source, entries, runId, emit);
+      const saved = await buildOutput(source, fileEntries, runId, emit);
       post({
         type: "progress",
         runId,
@@ -176,7 +272,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
         stage: "saving",
       });
       outputs.push({
-        name: `${base}${suffix}${fileSpan}.pdf`,
+        name: uniqueName(`${base}${suffix}.pdf`),
         mime: "application/pdf",
         blob: new Blob([saved as unknown as BlobPart], {
           type: "application/pdf",
@@ -189,7 +285,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     type: "result",
     runId,
     outputs,
-    detail: { files: outputs.length, pages: entries.length },
+    detail: { files: outputs.length, pages: pagesTotal },
   });
 }
 

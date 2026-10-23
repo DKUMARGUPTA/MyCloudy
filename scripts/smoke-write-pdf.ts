@@ -17,11 +17,19 @@
  * Type0 font for the Devanagari subset, detail counts — plus the honest
  * error codes (empty doc, corrupt JSON, missing image asset).
  *
+ * Part 3 (asset store, FIX-1d regression): addImageFile with a
+ * sharp-backed OffscreenCanvas / createImageBitmap shim (EXIF
+ * auto-orient, like a browser). A JPEG with EXIF orientation 6 must be
+ * normalised ONCE — oriented dims (20×40, not raw 40×20) with re-encoded
+ * PNG bytes serving BOTH preview and embed — while orientation-1 /
+ * no-EXIF JPEGs and PNGs keep the ORIGINAL bytes (byte-exact passthrough).
+ *
  * Run: bun scripts/smoke-write-pdf.ts
  */
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFStream } from "pdf-lib";
+import sharp from "sharp";
 
 import {
   W_PAGE_SIZES,
@@ -868,13 +876,225 @@ async function main(): Promise<void> {
     assert(result !== undefined, "worker: garbage block dropped, run succeeds");
   }
 
-  const total = passed;
-  const totalFailed = failed;
+  const after2 = passed;
+  const after2Failed = failed;
   console.log(
-    `\nPart 2 (real worker): ${total - part1Passed} passed, ${totalFailed - part1Failed} failed`
+    `\nPart 2 (real worker): ${after2 - part1Passed} passed, ${after2Failed - part1Failed} failed`
   );
+
+  await part3();
+  console.log(
+    `\nPart 3 (asset store EXIF): ${passed - after2} passed, ${failed - after2Failed} failed`
+  );
+
   console.log(`\nTOTAL: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Part 3 — the asset store (EXIF-orientation honesty, FIX-1d)         */
+/* ------------------------------------------------------------------ */
+
+interface ShimBitmap {
+  width: number;
+  height: number;
+  close(): void;
+  _raw: Buffer;
+}
+
+class StoreCanvas {
+  width: number;
+  height: number;
+  #buf: Buffer;
+  #ctx: StoreContext | null = null;
+  constructor(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+    this.#buf = Buffer.alloc(width * height * 4);
+  }
+  getContext(_kind: "2d"): StoreContext | null {
+    this.#ctx = this.#ctx ?? new StoreContext(this.width, this.height, this.#buf);
+    return this.#ctx;
+  }
+  async convertToBlob(options: {
+    type: string;
+    quality?: number;
+  }): Promise<Blob> {
+    const pipeline = sharp(this.#buf, {
+      raw: { width: this.width, height: this.height, channels: 4 },
+    });
+    const bytes =
+      options.type === "image/png"
+        ? await pipeline.png().toBuffer()
+        : await pipeline
+            .jpeg({ quality: Math.round((options.quality ?? 0.92) * 100) })
+            .toBuffer();
+    return new Blob([new Uint8Array(bytes)], { type: options.type });
+  }
+}
+
+class StoreContext {
+  #width: number;
+  #height: number;
+  #buf: Buffer;
+  constructor(width: number, height: number, buf: Buffer) {
+    this.#width = width;
+    this.#height = height;
+    this.#buf = buf;
+  }
+  async drawImage(
+    bitmap: ShimBitmap,
+    dx: number,
+    dy: number,
+    dw?: number,
+    dh?: number
+  ): Promise<void> {
+    const outW = Math.max(1, Math.round(dw ?? bitmap.width));
+    const outH = Math.max(1, Math.round(dh ?? bitmap.height));
+    const layer = await sharp(bitmap._raw, {
+      raw: { width: bitmap.width, height: bitmap.height, channels: 4 },
+    })
+      .resize(outW, outH, { fit: "fill" })
+      .png()
+      .toBuffer();
+    const out = await sharp(this.#buf, {
+      raw: { width: this.#width, height: this.#height, channels: 4 },
+    })
+      .composite([{ input: layer, left: Math.round(dx), top: Math.round(dy) }])
+      .raw()
+      .toBuffer();
+    this.#buf.set(out.subarray(0, this.#buf.length));
+  }
+}
+
+async function part3(): Promise<void> {
+  // Install the raster shims AFTER the worker import (Part 2's worker
+  // never touches canvas — nothing changes for it).
+  const globals = globalThis as unknown as Record<string, unknown>;
+  globals.OffscreenCanvas = StoreCanvas;
+  // Browser default ("from-image") — EXIF orientation applied by the
+  // decoder; sharp's argument-less .rotate() does exactly that.
+  globals.createImageBitmap = async (
+    source: Blob | File,
+    _options?: unknown
+  ): Promise<ShimBitmap> => {
+    const bytes = Buffer.from(await source.arrayBuffer());
+    const { data, info } = await sharp(bytes)
+      .rotate()
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    return {
+      width: info.width,
+      height: info.height,
+      _raw: data,
+      close(): void {
+        /* no-op in the shim */
+      },
+    };
+  };
+
+  const store = await import("../tools/write-pdf/asset-store");
+
+  const svg = Buffer.from(
+    `<svg width="40" height="20" xmlns="http://www.w3.org/2000/svg"><rect width="40" height="20" fill="#3050c8"/></svg>`
+  );
+  const jpegO6 = new Uint8Array(
+    await sharp(svg).withMetadata({ orientation: 6 }).jpeg().toBuffer()
+  );
+  const jpegO1 = new Uint8Array(
+    await sharp(svg).withMetadata({ orientation: 1 }).jpeg().toBuffer()
+  );
+  const jpegPlain = new Uint8Array(await sharp(svg).jpeg().toBuffer());
+  const pngBytes = new Uint8Array(await sharp(svg).resize(30, 10).png().toBuffer());
+
+  const fileOf = (name: string, bytes: Uint8Array, type: string): File =>
+    new File([new Uint8Array(bytes)], name, { type });
+
+  /* ---- THE FIX: EXIF orientation 6 normalised once, preview == embed ---- */
+  {
+    const upload = fileOf("portrait-o6.jpg", jpegO6, "image/jpeg");
+    const asset = await store.addImageFile(upload);
+    assertEqual([asset.w, asset.h], [20, 40], "asset: orientation 6 → ORIENTED dims 20×40");
+    const stored = new Uint8Array(await asset.file.arrayBuffer());
+    assert(
+      stored[0] === 0x89 && stored[1] === 0x50,
+      "asset: orientation 6 re-encoded as PNG",
+      [stored[0], stored[1]]
+    );
+    assert(
+      !Buffer.from(stored).equals(Buffer.from(jpegO6)),
+      "asset: orientation 6 is not the raw JPEG bytes"
+    );
+    const decoded = await sharp(Buffer.from(stored)).raw().toBuffer({ resolveWithObject: true });
+    assertEqual(
+      [decoded.info.width, decoded.info.height],
+      [20, 40],
+      "asset: stored PNG decodes upright (WYSIWYG: preview dims == embed dims)"
+    );
+    store.removeAsset(asset.key);
+  }
+
+  /* ---- orientation 1: byte-exact passthrough ---- */
+  {
+    const upload = fileOf("upright-o1.jpg", jpegO1, "image/jpeg");
+    const asset = await store.addImageFile(upload);
+    assertEqual([asset.w, asset.h], [40, 20], "asset: orientation 1 dims 40×20");
+    assert(
+      asset.file === upload,
+      "asset: orientation 1 keeps the ORIGINAL File (no re-encode)"
+    );
+    const stored = new Uint8Array(await asset.file.arrayBuffer());
+    assert(
+      Buffer.from(stored).equals(Buffer.from(jpegO1)),
+      "asset: orientation 1 bytes untouched"
+    );
+    store.removeAsset(asset.key);
+  }
+
+  /* ---- no EXIF: byte-exact passthrough ---- */
+  {
+    const upload = fileOf("plain.jpg", jpegPlain, "image/jpeg");
+    const asset = await store.addImageFile(upload);
+    assertEqual([asset.w, asset.h], [40, 20], "asset: no-EXIF dims 40×20");
+    assert(asset.file === upload, "asset: no-EXIF keeps the ORIGINAL File");
+    store.removeAsset(asset.key);
+  }
+
+  /* ---- PNG: byte-exact passthrough ---- */
+  {
+    const upload = fileOf("flat.png", pngBytes, "image/png");
+    const asset = await store.addImageFile(upload);
+    assertEqual([asset.w, asset.h], [30, 10], "asset: PNG dims 30×10");
+    assert(asset.file === upload, "asset: PNG keeps the ORIGINAL File");
+    store.removeAsset(asset.key);
+  }
+
+  /* ---- order + snapshot lifecycle ---- */
+  {
+    const a = await store.addImageFile(fileOf("a.jpg", jpegO1, "image/jpeg"));
+    const b = await store.addImageFile(fileOf("b.jpg", jpegO6, "image/jpeg"));
+    assertEqual(
+      store.collectAssetsInOrder([b.key, a.key]).map((f) => f.name),
+      ["b.jpg.png", "a.jpg"],
+      "asset: collect order follows keys (b normalised to PNG, a untouched)"
+    );
+    store.clearAssets();
+    assertEqual(store.getAssetsSnapshot().length, 0, "asset: clear empties snapshot");
+  }
+
+  /* ---- honest failure ---- */
+  {
+    let threw = "";
+    try {
+      await store.addImageFile(
+        fileOf("garbage.jpg", new Uint8Array(64).fill(0x51), "image/jpeg")
+      );
+    } catch (error) {
+      threw = error instanceof Error ? error.message : String(error);
+    }
+    assertEqual(threw, "undecodable-image", "asset: garbage → undecodable-image");
+  }
 }
 
 void main().catch((error: unknown) => {

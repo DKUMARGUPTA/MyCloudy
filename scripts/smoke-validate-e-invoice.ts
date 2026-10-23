@@ -931,7 +931,7 @@ async function main(): Promise<void> {
       meta,
       {}
     );
-    check("title header", text.startsWith("=".repeat(64) + "\nMyCloudy — e-invoice validation report"));
+    check("title header", text.startsWith("=".repeat(64) + "\nDocoPDF — e-invoice validation report"));
     check("file line", text.includes("File: sample-invoice.xml (1.2 KB)"));
     check("input line xml mode", text.includes("Input: CII XML (direct)"));
     check("verdict line", text.includes("VERDICT: PASS"));
@@ -939,7 +939,7 @@ async function main(): Promise<void> {
     check("check row with mark", text.includes("[PASS] Root element is CrossIndustryInvoice (CII)"));
     check("totals table", text.includes("TOTALS RECONCILIATION") && text.includes("2500.00   TaxBasisTotalAmount") && text.includes("2975.00   GrandTotalAmount") && text.includes("2475.00   DuePayableAmount"));
     check("currency row", text.includes("currency: EUR"));
-    check("honesty footer present", text.includes("NOT CHECKED (honesty)") && text.includes("Generated on-device by MyCloudy — nothing was uploaded."));
+    check("honesty footer present", text.includes("NOT CHECKED (honesty)") && text.includes("Generated on-device by DocoPDF — nothing was uploaded."));
 
     const pdfMeta = {
       fileName: "factur.pdf",
@@ -967,7 +967,7 @@ async function main(): Promise<void> {
       meta,
       labels
     );
-    check("label overrides respected", labeled.includes("MyCloudy — Prüfbericht") && labeled.includes("[PASS] Wurzelelement") && labeled.includes("VERDICT: BESTANDEN"));
+    check("label overrides respected", labeled.includes("DocoPDF — Prüfbericht") && labeled.includes("[PASS] Wurzelelement") && labeled.includes("VERDICT: BESTANDEN"));
     check("unknown keys fall back to English", labeled.includes("13 passed, 0 warnings, 0 failed"));
     check(
       "deterministic: same input → byte-identical report",
@@ -1248,7 +1248,7 @@ async function main(): Promise<void> {
         hiRes.outputs[0]!.name
       );
       const text = await blobText(hiRes.outputs[0]!.blob);
-      check("hi run: Hindi title in the report", text.includes("MyCloudy — ई-इनवॉइस वैलिडेशन रिपोर्ट"), text.slice(0, 120));
+      check("hi run: Hindi title in the report", text.includes("DocoPDF — ई-इनवॉइस वैलिडेशन रिपोर्ट"), text.slice(0, 120));
       check("hi run: Hindi check row", text.includes("[PASS] रूट एलिमेंट CrossIndustryInvoice (CII) है"));
       check("hi run: Hindi verdict word", text.includes("VERDICT: पास"));
       check("hi run: untranslated keys fall back to English", text.includes("TOTALS RECONCILIATION"));

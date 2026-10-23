@@ -2,10 +2,10 @@ import type { ToolConfig } from "@/lib/tools/config-types";
 
 /**
  * Universal "Convert from PDF" hub (PRD §7.9): drop a PDF, pick a target
- * format, get routed to the exact tool — JPG/PNG/Text convert instantly on
- * the device, Office and web formats carry honest "Soon"/"Server" badges
- * until their phases ship. Viewer-style: no run step, no options; the
- * workspace surface (target grid) IS the product.
+ * format, get routed to the exact tool — all twelve targets (JPG, PNG, WEBP,
+ * TIFF, SVG, text, Word, Excel, PowerPoint, HTML, Markdown, ODT) are live
+ * and convert entirely on the device. Viewer-style: no run step, no
+ * options; the workspace surface (target grid) IS the product.
  */
 export const config: ToolConfig = {
   toolId: "convert-from-pdf",
@@ -16,16 +16,16 @@ export const config: ToolConfig = {
   options: [],
   features: [
     {
-      en: "One PDF in, every target out — JPG, PNG, text, WEBP, TIFF, Word, Excel, PowerPoint, HTML, Markdown and more.",
-      hi: "एक PDF अंदर, हर टारगेट बाहर — JPG, PNG, टेक्स्ट, WEBP, TIFF, वर्ड, एक्सल, पावरपॉइंट, HTML, मार्कडाउन और भी।",
+      en: "One PDF in, every target out — JPG, PNG, WEBP, TIFF, SVG, text, Word, Excel, PowerPoint, HTML, Markdown and ODT.",
+      hi: "एक PDF अंदर, हर टारगेट बाहर — JPG, PNG, WEBP, TIFF, SVG, टेक्स्ट, वर्ड, एक्सल, पावरपॉइंट, HTML, मार्कडाउन और ODT।",
     },
     {
-      en: "JPG, PNG and text extraction run 100% on your device today — instant, offline-capable, never uploaded.",
-      hi: "JPG, PNG और टेक्स्ट निकालना आज पूरी तरह डिवाइस पर चलता है — तुरंत, ऑफ़लाइन भी, कभी अपलोड नहीं।",
+      en: "Everything runs 100% on your device — instant, offline-capable, never uploaded.",
+      hi: "सब कुछ 100% आपके डिवाइस पर चलता है — तुरंत, ऑफ़लाइन भी, कभी अपलोड नहीं।",
     },
     {
-      en: "Honest badges everywhere: \"Soon\" shows the real roadmap phase; \"Server\" marks the targets that will need server processing.",
-      hi: "हर जगह ईमानदार बैज: \"जल्द\" असली रोडमैप चरण दिखाता है; \"सर्वर\" उन टारगेट को मार्क करता है जिन्हें सर्वर चाहिए।",
+      en: "Every target is live today — the on-device badge is the honest contract: no servers, nothing waiting for a later phase.",
+      hi: "हर टारगेट आज लाइव है — डिवाइस-पर बैज सच्चा वादा है: कोई सर्वर नहीं, किसी बाद के चरण का इंतज़ार नहीं।",
     },
     {
       en: "Your PDF stays on the device — picking a target hands the very same file over, no re-selection and no upload.",
@@ -39,28 +39,28 @@ export const config: ToolConfig = {
         hi: "आज कौन से टारगेट चलते हैं?",
       },
       a: {
-        en: "PDF to JPG, PDF to PNG and PDF to Text are live and fully on-device. Every other target shows its honest roadmap phase — Office exports and web formats arrive later, on the server where noted.",
-        hi: "PDF से JPG, PDF से PNG और PDF से टेक्स्ट अभी लाइव हैं और पूरी तरह डिवाइस पर चलते हैं। बाक़ी हर टारगेट अपना ईमानदार रोडमैप चरण दिखाता है — ऑफ़िस एक्सपोर्ट और वेब फ़ॉर्मैट बाद में, जहाँ लिखा है वहाँ सर्वर पर आएँगे।",
+        en: "All twelve — JPG, PNG, WEBP, TIFF, SVG, text, Word, Excel, PowerPoint, HTML, Markdown and ODT are live and fully on-device. Nothing here waits for a server or a later phase.",
+        hi: "बारहों — JPG, PNG, WEBP, TIFF, SVG, टेक्स्ट, वर्ड, एक्सल, पावरपॉइंट, HTML, मार्कडाउन और ODT सब लाइव हैं और पूरी तरह डिवाइस पर चलते हैं। यहाँ किसी को सर्वर या बाद के चरण का इंतज़ार नहीं करना पड़ता।",
       },
     },
     {
       q: {
-        en: "Why do Word, Excel and PowerPoint need a server?",
-        hi: "वर्ड, एक्सल और पावरपॉइंट को सर्वर क्यों चाहिए?",
+        en: "Do the Word, Excel and PowerPoint exports need a server?",
+        hi: "क्या वर्ड, एक्सल और पावरपॉइंट एक्सपोर्ट को सर्वर चाहिए?",
       },
       a: {
-        en: "Building real, editable Office files from a PDF needs layout and table reconstruction that only server-grade libraries do well. Those tools will ask before uploading and delete your file right after — with the badge, you always know where a job runs.",
-        hi: "PDF से असली, एडिट करने लायक़ ऑफ़िस फ़ाइलें बनाने के लिए लेआउट और टेबल की दोबारा रचना चाहिए — यह सिर्फ़ सर्वर-दर्जे की लाइब्रेरी अच्छे से कर पाती हैं। वे टूल अपलोड से पहले पूछेंगे और काम के तुरंत बाद फ़ाइल डिलीट कर देंगे — बैज की वजह से आप हमेशा जानते हैं कि काम कहाँ हो रहा है।",
+        en: "No — they're rebuilt right here on your device from the PDF's own text and layout, and they work offline. They're honest rule-based conversions (each tool notes what carries over and what doesn't), not pixel-perfect desktop-Office replicas — but nothing is ever uploaded.",
+        hi: "नहीं — वे PDF के अपने टेक्स्ट और लेआउट से यहीं आपके डिवाइस पर बनते हैं और ऑफ़लाइन चलते हैं। ये ईमानदार नियम-आधारित रूपांतरण हैं (हर टूल बताता है क्या आता है, क्या नहीं), पिक्सेल-सटीक डेस्कटॉप-ऑफ़िस प्रतिकृतियाँ नहीं — लेकिन कुछ भी कभी अपलोड नहीं होता।",
       },
     },
     {
       q: {
         en: "Is my scanned PDF handled?",
-        hi: "क्या मेरी स्कैन की हुई PDF का इंतज़ा� है?",
+        hi: "क्या मेरी स्कैन की हुई PDF का इंतज़ाम है?",
       },
       a: {
-        en: "For JPG, PNG and text, yes — pages render exactly as they are. Scanned pages have no text layer, so text extraction returns little; OCR arrives in a later phase and will be marked clearly when it does.",
-        hi: "JPG, PNG और टेक्स्ट के लिए हाँ — पेज जैसे हैं वैसे ही बनते हैं। स्कैन किए पेजों में टेक्स्ट लेयर नहीं होती, इसलिए टेक्स्ट कम निकलता है; OCR बाद के चरण में आएगा और आते समय साफ़ चिह्नित होगा।",
+        en: "Image targets render scanned pages exactly as they are. Scans have no text layer, so text, Office and web exports return little — run the PDF OCR tool on the file first, then convert the recognised version here.",
+        hi: "इमेज टारगेट स्कैन किए पेज वैसे ही बनाते हैं जैसे वे हैं। स्कैन में टेक्स्ट लेयर नहीं होती, इसलिए टेक्स्ट, ऑफ़िस और वेब एक्सपोर्ट कम देते हैं — पहले उस फ़ाइल पर PDF OCR टूल चलाएँ, फिर पहचाना हुआ वर्ज़न यहाँ बदलें।",
       },
     },
   ],

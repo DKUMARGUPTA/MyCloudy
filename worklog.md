@@ -4065,3 +4065,253 @@ Work Log:
 Stage Summary:
 - Rebrand debt item CLOSED by user decision. Future review rounds must NOT rename DocoPDF to MyCloudy.
 - Remaining open items: (1) user should rotate the chat-exposed GitHub PAT (user-side action), (2) generic QA/feature polish continues via 15-min cron review.
+
+---
+Task ID: AUD-C
+Agent: deep-audit agent (security+optimize+view)
+Task: Deep code audit of 22 security/optimize/view tools (RESEARCH ONLY — no source files modified)
+
+Work Log:
+- Read worklog context (97/97 live; RB6/RB7 lessons incl. "never re-save a signed PDF through pdf-lib").
+- Audited security family: lock-common/security.ts + lock-pdf & unlock-pdf worker/surface/engine; sign-pdf engine+worker; digital-signature model+worker (byte surgeon, hasExistingSignature, PKCS12 codes); redact-pdf engine+worker+search (TRUE-redaction model); remove-pdf-metadata + meta-common; generate-password engine (crypto: rejection sampling, Fisher-Yates, 256+256 wordlists verified programmatically, 0 dupes); request-signature model+worker (mailto: encodeURIComponent, isValidEmail).
+- Audited optimize family: compress-pdf engine+worker (SMask/Mask protection, per-image shrink guard); compress-pdf-to-size worker+ladder (passthrough, image+raster ladders, honest targetHit); web-optimize-pdf engine+worker (reachability GC, no fake /Linearized); ocr-pdf worker+tess (tesseract singleton, canvas-commit guard); repair-pdf model+worker (2-stage salvage, strict verify); rasterize-pdf worker (40MP clamp); flatten-pdf worker+engine (typed errors); pdf-to-pdfa worker gates (empty/256MB/sniff/encrypted/transparency).
+- Audited view family: view-pdf surface (password retry, error i18n); compare-pdf worker+engine (text+pixel diff, pairing caps); search-pdf engine+worker (regex+text, 500-cap); validate-pdfa + verify-pdf-signatures + set-pdf-viewer-preferences workers/models.
+- Cross-checks: wiring refs in configs/registry/surfaces for all 22 (present); i18n parity en/hi 4270=4270 leaves, 0 missing (all scoped namespaces incl. lock/unlock/sign/ds/redact/rep/flatten/rasterize/search/view/compare/wopt/vps/pa/reqsig/gp/tool PARITY); TODO/FIXME scan = 0 hits; maxFiles vs worker loop semantics verified per tool; hasExistingSignature usage sweep (only digital-signature); ignoreEncryption:true + copyPages sweep (ocr-pdf is the only scoped tool with the corrupting combination).
+
+Stage Summary:
+- Verdicts: 17 OK / 3 MINOR (request-signature, web-optimize-pdf, search-pdf) / 2 BUG (sign-pdf, ocr-pdf).
+- Top 5 critical fixes, ranked by user impact:
+  1. sign-pdf worker.ts:68-149 — no hasExistingSignature guard: pdf-lib full re-save silently invalidates an existing cryptographic signature (visual countersign = the exact realistic trigger); reuse digital-signature/model.ts:91 helper + honest refusal/warn.
+  2. ocr-pdf worker.ts:361-370 — searchable mode on owner-restricted (pdf.js-openable) encrypted PDFs copies pages via pdf-lib ignoreEncryption:true → still-encrypted streams land in a fresh doc without /Encrypt → silently corrupted pass-through pages; sniff & refuse (repair-pdf's ENCRYPT_RE pattern) or decrypt via @cantoo first.
+  3. request-signature worker.ts:90-171 — same re-save signature-invalidation as #2's class (prepare-pack re-saves input); share the guard helper.
+  4. web-optimize-pdf worker.ts:119-134 — result posted INSIDE the per-file loop with an accumulating outputs array (latent multi-file duplicate-results bug; maxFiles:1 today); move post outside the loop (5-min fix).
+  5. search-pdf engine findMatches — user-supplied regex has no ReDoS/time guard; a catastrophic pattern hangs the pool worker (self-inflicted but no cancel guarantee); cap match work or surface a cancel path. (Runner-up: unlock verifyUnlocked security.ts:293 scans raw bytes for "/Encrypt" — literal-text false positive refuses a legit unlock; parse the trailer instead.)
+- Maintainability: THREE parallel security-helper modules exist — lock-common/security.ts (LIVE), lock-pdf/engine.ts (~dead, diverging option-ID contract "openPassword" vs live "lock.userPw"; only sanitizeBase imported), sec-common/sec.ts (smoke-only); unlock-pdf/engine.ts fully dead (mode/password ids unused by worker/surface). Consolidate into lock-common.
+- Minor notes: compress-pdf-to-size `bestStage` tracked then `void`ed (dead); compare-pdf `void textPageCount` dead var + fixed output name "compare-report.pdf" ignores input names; flatten-pdf errors on nothing-to-flatten instead of passthrough (UX choice); digital-signature hasExistingSignature latin1 substring can false-positive refuse (rare, safe direction); redact drops original Info/XMP silently (privacy-positive but undocumented).
+- Enhancement shortlist (iLovePDF/Smallpdf gap): ocr-pdf deskew+rotate; redact custom-regex patterns; web-optimize TRUE linearization via the vendored-but-unused public/vendor/qpdf-wasm; digital-signature ECDSA P-256; validate-pdfa level-a conformance.
+
+---
+Task ID: AUD-B
+Agent: deep-audit agent (convert-to+convert-from)
+Task: Deep code audit of 30 convert tools (17 convert-to + 13 convert-from, research only — no files modified)
+
+Work Log:
+- Read worklog tail (97/97 live, RB7 complete, DocoPDF brand confirmed). Mapped every scope tool to its files: office converters have model/render/worker/surface; image-to-pdf presets (jpg/png/webp/heic/svg/tiff) share tools/imagegrid/worker.ts; pdf-to-jpg/png/webp/tiff share tools/pdf-to-images/worker.ts; hubs are config+detect/surface only.
+- Audited input validation + error paths of every worker (17 workers read) and the model cores (word/pptx/xlsx/odt/rtf/epub/pub/html parse + pdf-to-word/excel/powerpoint/svg/html/markdown/odt extract models). Verified: magic-byte ZIP/PDF sniffs at surface AND worker (defense in depth), DropZone global 50MB/200MB limits, per-model hard caps (MAX_PARAGRAPHS/SLIDES/SHEETS/CHAPTERS...), worker-boundary re-coercion (parseWordRun/parsePptxRun/parseExcelRun), parsePageSpec for 0-page/invalid ranges → tool.errorInvalidPages, scan PDFs → tool.errorNoText, encrypted → tool.errorEncrypted, corrupt → tool.errorCorrupt, pdf-to-webp encoder honesty guard, PDF buffer copy before pdf.js (detach lesson), TIFF clean-room reader guards, SVG main-thread raster 30MP budget + strict all-or-nothing asset pairing.
+- Cross-checked EVERY worker error code against src/i18n/en.json+hi.json (4270/4270 leaf parity) + per-tool namespaces (w2p/ppt/xls/pub/odt/rtfp/epub/txt2pdf/md2pdf/conv/convFrom/imgc all merged, EN+HI).
+- Checked output UX: all workers sanitize filenames ([\\/:*?"<>|] + ctl chars, 120-cap), multi-page outputs → shared ResultView "Download all (ZIP)" via fflate zipOutputs with dedupe; rename guard; save-picker/share fallbacks.
+- Swept TODO/FIXME/@ts-ignore: ZERO in scope. One debug leftover: excel-to-pdf/worker.ts:162 console.log("WORKER-ERR").
+- Wrap-loop safety in renderers verified (hardBreak take>1 termination, table-cell min width).
+
+Stage Summary:
+- Verdicts: OK 26 / MINOR 4 / BUG 0. Shared engines (imagegrid, pdf-to-images) and the pdf.js-based convert-from family are unusually well hardened — honest coded errors, localized EN+HI, memory-aware sequential rendering.
+- MINOR findings: (1) convert-from-pdf config.ts:23,42-53 FAQ/features still claim Word/Excel/PPT "need a server / arrive later" — stale, they are live on-device; hub also omits pdf-to-svg from FROM_PDF_TARGETS (surface.tsx:33-45). (2) convert-to-pdf detect.ts:190-204 does not sniff "{\rtf" — a dropped .rtf classifies as txt and routes to txt-to-pdf which would print raw RTF control words. (3) html-to-pdf worker posts h2p.* codes (worker.ts:94,100,107,114) but the catalog namespace is html.* — latent raw-key toast; plain html.errNotHtml/errTooLarge keys don't exist either. (4) excel-to-pdf: xls.errorEmpty key missing from catalogs (worker.ts:81), no-file uses generic code (worker.ts:53), debug console.log (worker.ts:162).
+- Top 5 fixes ranked by user impact: 1) fix convert-from-pdf hub copy + add pdf-to-svg target (public-facing misinformation on a hub page, EN+HI); 2) convert-to-pdf RTF sniff → rtf-to-pdf routing; 3) html-to-pdf h2p→html code fix + missing keys; 4) excel-to-pdf i18n key + debug log + specific no-file code; 5) page-count/memory budget for multi-page accumulators (pdf-to-images outputs, pdf-to-powerpoint images mode holds all PNG bytes in RAM — 300-page deck at 600 DPI can OOM mobile).
+- Top enhancement per family vs iLovePDF/Smallpdf: office converters are text/table-flow only — embedded images (word/rtf/odt/epub chapter art) is the single most impactful fidelity gap; pdf-to-word/odt/html lack table/structure reconstruction; svg-to-pdf rasterizes at 2400px (vector passthrough would be lossless); txt-to-pdf is UTF-8-only (a CP1252 file with <10% accents passes the sniff → mojibake).
+
+---
+Task ID: AUD-D
+Agent: deep-audit agent (create+invoices+images)
+Task: Deep code audit of 22 create/invoices/images tools (research only, no files modified)
+
+Work Log:
+- Read models+workers+configs for all 22 tools; checked input validation, error paths, i18n EN/HI keys (verified present w/ {detail} placeholders), output naming, EXIF/orientation handling, memory guards, TODO/FIXME sweep (zero hits in scope).
+- CRITICAL BUG (images-to-pdf): tools/imagegrid/worker.ts:176-190 fast path embeds ORIGINAL JPEG bytes but sizes via bitmapSize() = createImageBitmap (default imageOrientation "from-image" = EXIF-ORIENTED dims). Any EXIF orientation≠1 JPEG (standard portrait phone photo) → stored landscape pixels drawn into an oriented-shape box → sideways+distorted PDF page; surface preview (img.naturalWidth, also oriented) shows the wrong thing too. Verified: no QA fixture carries EXIF orientation (qa-img-photo.jpg et al. have no EXIF) and no smoke covers it.
+- Same root cause, lesser blast (write-pdf): tools/write-pdf/asset-store.ts:78-92 passes original JPEG bytes while the probe records oriented w/h → preview shows rotated, exported image is stored-orientation (preview≠output mismatch, no distortion since worker re-reads pdf-lib dims).
+- DEAD CODE FOUND: tools/imgconv/ (worker.ts, libheif.ts, heic-decode.ts, naming.ts — tiff.ts/png-encode.ts ARE used) and tools/imgconvert/* (whole dir) are NOT wired — all 4 image-converter configs point at tools/convert-image/worker.ts. scripts/smoke-imgconv.ts + smoke-imgconvert.ts therefore test DEAD code; the WIRED convert-image worker has NO smoke. Also public/vendor/libheif/libheif-bundle.mjs (2,043,959 B, identical size to wired public/libheif) serves only dead code.
+- HEIC decode (wired, src/lib/heic/heic-decode.ts:86): guard is `width*width > 268435456` — a width-squared heuristic, not pixel count: rejects 20000×50 panoramas but admits 16000×16000 (256MP → ~1GB RGBA alloc). libheif 1.23.5 display() writes post-irot channel dims into caller buffer (verified in bundle bindings); handle-dims-post-transform per libheif ≥1.19 → orientation OK, but no irot fixture exists anywhere (test gap).
+- create-invoice: coerce clamps everything EXCEPT qty/rate numerics — "-5"/"1e999" reach calc() (model.ts:164-222) → negative/Infinity totals render (discount/advance ARE clamped).
+- create-photo-collage: worker.ts:199-211 decodes and holds ALL photos (≤50) as full-res bitmaps simultaneously — multi-GB on mobile; imagegrid-by-contrast prepares per page.
+- webpage-to-pdf: url-guard.ts + /api/fetch-page exemplary (protocol allowlist kills javascript:/data:/file:, IDN→punycode, v4+v6+mapped SSRF ranges fail-closed, per-hop revalidation, 3-redirect cap, 15s budget, 5MB cap, rate limit, honest wpdf.errNoContent for SPAs).
+- resize-image-kb: strongest tool in scope (10-5000KB custom clamp, 40MP budget, quality binary-search + ×0.8 ladder to 120px floor, honest targetHit:false, canvas-commit guard, explicit from-image EXIF).
+- Brand drift: create-resume/webpage-to-pdf workers + create-electronic-invoice + pdf-to-pdfa set Producer "MyCloudy(/mycloudy.in)" in output PDFs despite BRAND-DECISION keeping DocoPDF.
+- Verified OK with heavy sanitizers: create-pdf (full pickEnum/clamps), create-card (CSV 200-row/2MB caps, quote errors), create-fillable-pdf-form (10p/100-elem clamps), create-resume (16-section caps), scan-pdf (strict parseScanPagesOption, null on garbage), generate-qr-code (pure validators, WCAG contrast), pdf-to-e-invoice + validate-e-invoice (honest vei.*/peinv.* taxonomies, encrypted detected), xml-invoice-to-pdf (10MB/80-line caps w/ truncation note), passport-photo (RB6-audited, clamps verified).
+
+Stage Summary:
+- Verdicts: 16 OK / 5 MINOR (write-pdf, create-photo-collage, create-invoice, heic-to-jpg, heic-to-png) / 1 BUG (images-to-pdf).
+- Top 5 fixes by user impact: (1) EXIF-orientation fast path — images-to-pdf distorted output + write-pdf preview mismatch (imagegrid/worker.ts:176, write-pdf/asset-store.ts:78; sniff EXIF orientation, route ≠1 through decode path, add rotated fixtures); (2) dead duplicate converter stack — delete/rewire imgconv+imgconvert workers, drop public/vendor/libheif (−2MB deploy), add a smoke for the WIRED convert-image worker (smoke-imgconv/imgconvert currently validate dead code); (3) heic-decode.ts:86 — replace width*width with a true width*height pixel cap (~80MP) + add an irot fixture; (4) create-invoice — clamp qty/rate to finite ≥0 before calc; (5) create-photo-collage — downscale each photo at decode (cell-size cap) instead of holding 50 full-res bitmaps.
+- Cross-cutting notes: zero TODO/FIXME in scope; error i18n EN+HI complete for all sampled keys; "MyCloudy" producer metadata should say DocoPDF per BRAND-DECISION.
+
+---
+Task ID: AUD-A
+Agent: deep-audit agent (organize+edit)
+Task: Deep code audit of 23 organize+edit tools
+
+Work Log:
+- Read worklog + architecture: ToolShell/pool/protocol error pipeline (worker error code -> t(code) toast, hi falls back to en), DropZone magic-byte sniffing (%PDF-, not extension) + 50MB mobile/200MB desktop caps, result-view download/save-picker/share/ZIP (zipOutputs dedupes "-2" suffix).
+- i18n parity verified: en.json/hi.json = 4270 leaves each, zero missing namespaces; every error code emitted by the 23 tools (pn/asm/bm/crop/exi/makeFillable/overlay/wm/split*/ann/editPdf...) exists in BOTH catalogs.
+- Per tool: read worker/model/engine validation + error paths, surface runBlocked gating, output naming. Verified 21/23 workers load with ignoreEncryption:false (encrypted -> tool.errorEncrypted; garbage/0-byte -> tool.errorCorrupt, and DropZone rejects 0-byte/garbage up front). Ranges: parsePageSpec/parseRangeList/parseGridRange all handle "5-2" (normalize), "abc" (null), blank (all), OOB (clamp or strict-reject per tool contract). Filenames sanitized + capped 120-150 chars everywhere.
+- pagegrid family (rotate/rearrange/remove/extract): shared worker strictly validates grid JSON, extract selection OOB-safe via `if (entry)`, CTA gated (grid.ctaSelectPages / grid.ctaAllRemoved). split-pdf: 7 modes, stale-detection file-key guards (splitWaitingDetect), size mode verified against real saved bytes w/ recursive halving. stamp family (add-watermark/add-page-numbers/add-header-footer): every option clamped/enum-validated, empty text gated (hf.ctaEmpty, errorWatermarkMissing), font encodeText pre-checked (errorWatermarkChars), Devanagari font self-hosted fetch + retry.
+- annotate/edit/make-fillable/copy/extract-images: payload sanitizers (MAX_ANNOS=2000 w/ page clamps, sanitizeObjects, sanitizeSpecs), pdf.js probe password/corrupt states, edit drafts schema-versioned + 24h staleness. fill-out: per-field try/catch, Devanagari appearance + NeedAppearances fallback. change-pdf-page-size/pages-per-sheet/halve: 0-page + no-/Contents guards, fast-path untouched bytes.
+- BUG found: annotate-pdf can export an encrypted PDF into a broken file. worker.ts:127-131 loads with ignoreEncryption:true and never checks doc.isEncrypted (the PDF_PASSWORD catch branch is unreachable from load); surface.tsx:734-760 password/corrupt early-return never calls setRunBlocked; shell CTA (tool-shell.tsx:802) stays enabled -> load succeeds, plaintext annots appended to a still-encrypted doc, re-save emits a mixed-encryption PDF readers can't open. Silent corruption.
+- Same latent pattern in edit-pdf worker.ts:650-652 (ignoreEncryption:true) BUT its surface gates the CTA (runGated = !viewsReady || pageError, surface.tsx:706) so no live path — defense-in-depth missing only.
+- Minors: assemble-pdf surface.tsx:229-231 catches unreadable/encrypted files into a silent 0-page column (no hint until the run); merge-pdf panel.tsx:141 has no live per-file range validation (learn only at run) and tool.errorInvalidPages has no {detail} placeholder so the which-file/which-range context the worker attaches is dropped (also ann/editPdf/makeFillable errorBuild details never render — no {detail} in those strings; only tool.errorGeneric has it).
+- TODO/FIXME/dead-code sweep: clean (matches were toDocId false-positives). Registry: 23/23 present + enabled. Off-by-one spot-checks (split partsFromCuts, grid moveEntry/moveSelectionByOne, pagegrid rotation modulo, pn numbering via targets.indexOf) all correct.
+
+Stage Summary:
+- Verdicts: 19 OK / 3 MINOR (merge-pdf, assemble-pdf, edit-pdf) / 1 BUG (annotate-pdf).
+- Top 5 fixes by user impact:
+  1. annotate-pdf: detect encrypted input at export — after the ignoreEncryption load, `if (doc.isEncrypted) throw PDF_PASSWORD` (worker.ts ~130), plus setRunBlocked("ann.passwordProtected") in the surface when pageError is set. Today it can silently emit an unopenable PDF.
+  2. edit-pdf worker: same isEncrypted hardening (latent behind the UI gate today; one future code path away from the same corruption).
+  3. assemble-pdf: show a per-column "unreadable/encrypted" state instead of a silent 0-page column (surface.tsx:229).
+  4. Error context: add {detail} to tool.errorInvalidPages + the errorBuild strings (EN+HI) and pass the failing FILE name for merge — workers already attach details the UI never renders.
+  5. Batch support for the pagegrid family (rotate/rearrange/remove/extract are maxFiles:1) — the biggest iLovePDF/Smallpdf parity gap (competitors batch-rotate/rearrange many files at once).
+
+---
+Task ID: FIX-1c
+Agent: annotate/edit encrypted fixer
+Task: encrypted-input guards for annotate-pdf + edit-pdf
+
+Work Log:
+- Read worklog AUD-A context; mapped both workers + annotate surface + tool-shell runBlocked pipeline (runBlockedKey → disabled CTA + t(key) reason).
+- tools/annotate-pdf/worker.ts: added `if (doc.isEncrypted) throw new Error("PDF_PASSWORD")` after the ignoreEncryption:true load (~L137-145) → existing onmessage mapping posts tool.errorEncrypted; kills the mixed-encryption silent-corruption export path.
+- tools/annotate-pdf/surface.tsx (~L445-461): replaced the generic runGated→"ann.notReady" gate with a precise runBlockedKey ladder — password→ann.passwordProtected, corrupt→ann.corruptTitle, reading→ann.notReady, no annos→ann.noAnnos; setRunBlocked now carries the honest reason (keys already existed in BOTH catalogs — en/hi leaf parity 4270=4270 unchanged, no i18n edits needed).
+- tools/edit-pdf/worker.ts (~L660-666): same isEncrypted guard after its load — makes the previously-unreachable PDF_PASSWORD branch (onmessage L834) honest defense-in-depth behind the existing UI gate.
+- scripts/smoke-annotate-pdf.ts: FIX-1c regression — real AES-256 fixture via lockPdf (lock-common/security): user-password file AND owner-only (empty user pw, the exact pdf.js-openable AUD-A path) → both must post tool.errorEncrypted with zero result/output.
+- scripts/smoke-edit-pdf.ts: same two encrypted regression cases (ekey blob) → tool.errorEncrypted, no result.
+- NOTE: parallel-agent files also modified in tree (sign-pdf, request-signature, heic, imagegrid, en/hi.json …) — not mine, untouched.
+
+Stage Summary:
+- bunx tsc --noEmit: 0 errors. eslint on all 5 touched files: clean.
+- bun scripts/smoke-annotate-pdf.ts: 92 passed, 0 failed (was 86 pre-add; +6 encrypted-case asserts).
+- bun scripts/smoke-edit-pdf.ts: 53 passed, 0 failed (was 47 pre-add; +6).
+- Sibling worker smokes re-run green: smoke-edit-pdf-forms 44/0, smoke-edit-pdf-text 71/0, smoke-edit-pdf-mobile 68/0.
+- NOT committed (per instructions); no build, no dev-server restart.
+---
+Task ID: FIX-1b
+Agent: ocr-encrypted fixer
+Task: ocr-pdf encrypted pass-through corruption guard
+
+Work Log:
+- Read worklog (AUD-C finding #2) + tools/ocr-pdf/worker.ts full flow + repair-pdf/model.ts ENCRYPT_RE precedent + smoke conventions (smoke-pdf-to-pdfa self-shimmed worker drive, make-owneronly/@cantoo encrypted fixture recipe).
+- tools/ocr-pdf/worker.ts (FIX): per-file encrypted-input guard placed BEFORE getDocument and before any mode branch — structural probe `PDFDocument.load(data, {ignoreEncryption:true, updateMetadata:false})` + `isEncrypted` (parsed trailer, deliberately NOT repair-pdf's raw /Encrypt regex so a plain doc containing the literal text "/Encrypt 26 0 R" can never be refused). Probe parse failure ≠ refusal (pdf.js paths keep reporting corrupt/encrypted as before). Encrypted (incl. owner-restricted, empty user pw — the pdf.js-openable AUD-C shape) → post tool.errorEncrypted (existing shared key, en+hi already present — no new i18n). Covers ALL modes: searchable pass-through, text, pure-scan hybrid.
+- Same file: pdf.js load moved inside the file loop (memoized singleton — no behavior change) so the guard can refuse before any pdf.js/tesseract machinery; searchable srcDoc now REUSES the upfront probe (saves the old second full parse; probe===null keeps legacy try-load→errorCorrupt fallback).
+- scripts/smoke-ocr-encrypted.ts (NEW regression smoke): @cantoo owner-only/user-locked fixtures + a decoy plain PDF with an UNCOMPRESSED content stream literally saying "/Encrypt 26 0 R /Filter /Standard"; demonstrates the pre-fix corruption (copyPages→save loses /Encrypt, content stream no longer inflates = ciphertext); drives the REAL worker through a shimmed self (pdf-to-pdfa recipe) — encrypted refusal fires before pdf.js, so it runs under bun.
+- scripts/smoke-sign.ts: widened the parallel FIX-1a agent's check() `detail` param string→unknown (type-only; their new worker-guard checks pass response objects) — this file's 2 TS2345 errors were breaking the shared `tsc 0 errors` gate; logic untouched, smoke still green.
+
+Stage Summary:
+- bunx tsc --noEmit: 0 errors (the only 2 errors in tree were the smoke-sign.ts ones above, now fixed). eslint on all 3 touched files: clean.
+- smoke-ocr-encrypted.ts: 13 passed, 0 failed (owner-only+searchable/text/pure-scan, user-locked, decoy NOT refused, non-run msg ignored, corruption demo, fixture sanity).
+- smoke-ocr-invisible.ts: 11 passed, 0 failed. smoke-sign.ts (helper-widen control): 76 passed, 0 failed.
+- NOT committed; no build; no dev-server restart (per instructions).
+---
+Task ID: FIX-1a
+Agent: signature-guard fixer
+Task: hasExistingSignature guard for sign-pdf/request-signature/set-viewer-prefs
+
+Work Log:
+- tools/sign-pdf/worker.ts — imported hasExistingSignature from ../digital-signature/model; guard inside the load try-block right after bytes read (worker.ts:69-77): posts {type:"error", code:"tool.errorAlreadySigned"} before PDFDocument.load, so a visual countersign on an already-signed contract can never silently invalidate the existing /ByteRange via pdf-lib re-save.
+- tools/request-signature/worker.ts — same import + guard at worker.ts:90-98 (after file.arrayBuffer, before PDFDocument.load; doc header error-mapping table updated with tool.errorAlreadySigned).
+- tools/set-pdf-viewer-preferences/worker.ts — same import + guard at worker.ts:176-179 (after bytes read, before load; module doc comment notes the honest refusal).
+- Error wiring: all three reuse the house pipeline — worker error code → pool ToolRunError(response.code) → tool-shell t(code) toast (verified pool.ts:170 + tool-shell.tsx:345); same path as tool.errorEncrypted, no extra wiring needed.
+- src/i18n/en.json + src/i18n/hi.json — ONE shared key added to the `tool` namespace (after errorOcrEmpty): "errorAlreadySigned" EN "This PDF already carries a digital signature — saving changes here would break it. Use Digital signature to add another one." / HI "इस PDF में पहले से डिजिटल हस्ताक्षर है — यहाँ बदलाव सेव करने से वह टूट जाएगा। दूसरा हस्ताक्षर जोड़ने के लिए डिजिटल हस्ताक्षर टूल का इस्तेमाल करें।" (names match the catalog's tool title "Digital signature"/"डिजिटल हस्ताक्षर").
+- scripts/smoke-sign.ts — new section 6: self-shimmed REAL worker drive (self/postMessage shim + FakeFile File + sigkey/p:<id> placements + sig-s1.png asset from public/qa/rikb-signature.png): hand-crafted PPKLite sig-dict fixture (context.obj {Type/Filter/SubFilter/ByteRange/Contents}, saved useObjectStreams:false — real signed PDFs always carry the sig dict as plain bytes) → expect tool.errorAlreadySigned; plus positive control (unsigned input still produces a result). Ending switched to explicit process.exit (importing any worker keeps bun's event loop alive — house convention, verified pre-existing across all workers).
+- scripts/smoke-request-signature.ts — E2E regression after the encrypted case: signed fixture → drive(207) → tool.errorSigned; fixture sanity check via hasExistingSignature; wiring checks added (guard present in worker source; tool.errorAlreadySigned leaf exists in BOTH catalogs).
+- scripts/smoke-viewer-prefs.ts — case 12: signed fixture → tool.errorAlreadySigned, no result; fixture sanity assert.
+- NOTE for fixture authors: pdf-lib save() defaults to object streams which COMPRESS the sig dict — hasExistingSignature (latin1 scan) legitimately cannot see it; fixtures must save with useObjectStreams:false (matches real-world signed PDFs + the house digital-signature output).
+- Cleaned up .tmp-dbg scratch dir. No commit, no build, no dev-server restart.
+
+Stage Summary:
+- tsc --noEmit: 0 errors.
+- Smokes: sign-pdf 76/76 (was 71, +5), request-signature 185/185 (was 181, +4), viewer-prefs 53/53 (was 50, +3), digital-signature regression 156/156 — ALL 0 failed.
+- i18n leaf parity: en 4271 = hi 4271 (4270+1 = 4270+1), single new shared key tool.errorAlreadySigned in both catalogs.
+---
+Task ID: FIX-1d
+Agent: EXIF-orientation fixer
+Task: imagegrid fast path + write-pdf preview + heic guard
+
+Work Log:
+- Read worklog (AUD-D CRITICAL BUG + minors). Read tools/imagegrid/worker.ts fully (fast path ~176, decode path, sniffers), tools/write-pdf/asset-store.ts ~78-92, src/lib/heic/heic-decode.ts ~86; mapped the resize-image-kb "from-image" precedent + create-card decode pattern; confirmed NO existing smoke covers the imagegrid worker or EXIF orientation anywhere.
+- src/lib/images/jpeg-exif.ts (NEW shared lib): readJpegOrientation(bytes) — ~40-line strict SOI→APPn marker walk, first APP1 "Exif\0\0", TIFF header both endiannesses (II/MM), IFD0 tag 0x0112 (must be type SHORT/count 1, value 1-8); every doubt (truncation, OOB IFD offset, bad magic, wrong type, marker chain lost, SOS reached) → 1. Plus exifOrientationSwapsAxes() helper (5-8).
+- tools/imagegrid/worker.ts (THE BUG FIX, fixes jpg/png/webp/heic/images/tiff-to-pdf family at once): fast path now sniffs readJpegOrientation(raw) for JPEGs — orientation 1/missing keeps the byte-exact ORIGINAL-bytes fast path (95% case, zero quality change); orientation ≠ 1 routes through the decode path, which now passes explicit { imageOrientation: "from-image" } to createImageBitmap so the EXIF rotation is baked into the re-encoded bitmap (page dims and embedded pixels agree — no more sideways+distorted portrait photos).
+- tools/write-pdf/asset-store.ts (WYSIWYG fix): addImageFile probes orientation from the first 128KB of JPEG bytes; orientation ≠ 1 → decode with from-image + re-encode ONCE via the existing bitmapToPngFile (rotate-canvas path, ≤4096px normalisation) — the SAME bytes serve BOTH the <img> preview and the pdf-lib embed. Orientation-1/no-EXIF JPEGs and PNGs keep the original File untouched (reference-equal). Generic decode branch + dim probe now also explicit from-image.
+- src/lib/heic/heic-decode.ts: guard replaced — was width*width > 2^28 (rejected 20000×50 panoramas, admitted 16000×16000 ≈ 1GB RGBA); now exported HEIC_MAX_PIXELS = 80_000_000 with true width*height > cap (mirrors imgconv HEIF_MAX_PIXELS policy), error code "heic-decode-failed" unchanged.
+- scripts/smoke-images-to-pdf.ts (NEW, first worker smoke for imagegrid): Part 1 — sniffer battery (real sharp fixtures orientation 1-8 + no-EXIF; hand-crafted big-endian MM, APP0-JFIF+fill-bytes, XMP-APP1-first, SOS-before-Exif, truncated segment, OOB IFD, LONG type, count 2, values 0/9, bad magic/order, PNG magic, garbage) + heic guard policy checks (80MP cap, panorama passes, 256MP refused). Part 2 — REAL worker driven through self/postMessage shim + sharp-backed OffscreenCanvas/createImageBitmap shim (`.rotate()` = EXIF auto-orient, browser-faithful): orientation-6 JPEG (raw 40×20) → fit page 20×40 AND embedded XObject re-encoded upright 20×40 + decodes upright; orientation-1 + no-EXIF → byte-EXACT original bytes embedded (DCT stream compared against fixture); PNG fast path; manual rotate-90 still swaps; multi-file mixed run; A4 fixed page; errorUnsupported for garbage.
+- scripts/smoke-write-pdf.ts: new Part 3 (asset store EXIF honesty) — same sharp shim family: orientation-6 upload → asset 20×40 ORIENTED dims, re-encoded PNG (not raw JPEG bytes), decodes upright (preview dims == embed dims); orientation-1/no-EXIF/PNG → asset.file === original File (byte-exact passthrough); collectAssetsInOrder lifecycle; garbage → "undecodable-image". Parts 1/2 untouched.
+- Mutation-tested BOTH regressions: temporarily disabling the worker orientation check → 4 smoke failures (XObject stays raw 40×20, original bytes embedded); disabling the asset-store check → 4 Part-3 failures (raw JPEG bytes kept). Reverted mutations, all green again.
+
+Stage Summary:
+- bunx tsc --noEmit: 0 errors. eslint on all 6 touched files: clean.
+- smoke-images-to-pdf.ts (NEW): 74 passed, 0 failed (36 sniffer + 38 worker).
+- smoke-write-pdf.ts: 109 passed, 0 failed (72 model + 23 worker + 14 NEW asset-store EXIF).
+- Adjacent battery all green: smoke-imgconv 42/0, smoke-imgconvert 57/57, smoke-resize-image-kb 49/49 (ALL PASSED), smoke-create-photo-collage 153/0, smoke-tiff 55/0, smoke-tiff-decode 29/0 (its 2 "PIL oracle" failures were purely environmental — missing /tmp/tiffwork dir, pre-existing; green once the dir exists; tiff.ts untouched by this task).
+- NOT committed (per instructions); no build, no dev-server restart. Parallel-agent files in the tree (sign-pdf/annotate/edit/ocr/request-signature workers, i18n) are NOT mine.
+
+---
+Task ID: ENH-1
+Agent: memory-guard enhancer
+Task: collage downscale, pdf-to-images pixel budget, txt CP1252 fallback
+
+Work Log:
+- Read worklog AUD-B/AUD-D context. Mapped the three targets: create-photo-collage/worker.ts (199-211 held ≤50 full-res bitmaps), the shared tools/pdf-to-images/worker.ts (pdf-to-jpg/png/webp/tiff all point here — verified all 4 configs; output pages accumulate as blobs/TIFF strips before the result step), tools/pdf-to-powerpoint/worker.ts images mode (separate code — holds every PNG as Uint8Array until buildPptx; needed the same guard), txt-to-pdf/engine.ts readTextFile (~107: tolerant UTF-8 + <10% head-sniff ⇒ CP1252 accents export as U+FFFD mojibake).
+- tools/create-photo-collage/model.ts: PHOTO_LONG_EDGE_CAP=2048 + photoDecodeCap(style) — max(2048, largest template cell at export raster 2px/pt; biggest built-in cell = A4 duo full-height ≈1684px < floor ⇒ normal photos stay zero-copy, output visually identical).
+- tools/create-photo-collage/worker.ts: preparePhoto now decodes each photo → downscaleToCap (9-arg high-quality canvas draw, generous cap) → releaseSource (bitmap.close() / 0×0 canvas resize; TIFF bridge canvas also zero-sized after createImageBitmap) → composite. A 50-photo run never holds 50 full-res bitmaps; under-cap photos keep the SAME bitmap (no copy).
+- tools/pdfjs-common/pixel-budget.ts (NEW shared): RENDER_PIXEL_BUDGET=250MP + RenderPixelBudget.tryConsume(w,h) — run-wide accumulation, atomic refusal before consume.
+- tools/pdf-to-images/worker.ts: budget created once per run (cross-file), tryConsume BEFORE each page render + canvas alloc → honest tool.errorRenderBudget ("lower the DPI or split first") with page/doc cleanup on exit; single check covers canvas-encode AND TIFF branches. tools/pdf-to-powerpoint/worker.ts: same budget in images mode before each render (post+return through the doc.destroy finally).
+- src/i18n/en.json + hi.json: ONE shared key tool.errorRenderBudget added after errorWebpUnsupported (tight anchors — parallel agents active). Parity re-verified: en 4280 = hi 4280 leaves, tool-namespace keys identical.
+- tools/txt-to-pdf/encoding.ts (NEW pure, testable): countReplacementChars, hasValidUtf8MultibyteSequence (strict 2/3/4-byte validator: overlong/surrogate/>U+10FFFF rejected), decodeWindows1252, recoverCp1252Text. Switch fires ONLY when: UTF-8 decode produced U+FFFD AND bytes contain NO valid multibyte sequence (the "actually single-byte" fingerprint) AND CP1252 strictly reduces replacements. Documented non-triggers: "Ã©"-style double-encoded text (re-decoding would worsen; valid UTF-8 anyway), CP1252-stored mojibake bytes (already auto-heal under UTF-8), genuine UTF-8 with damage (multibyte present ⇒ untouched, still typed-unsupported on the stray byte). engine.ts readTextFile wires it after the existing binary sniff (verdicts unchanged).
+- Smokes: smoke-create-photo-collage.ts (photoDecodeCap battery over 10 layouts×4 formats×2 orientations + shim closed-flag tracking + 0×0-release-safe canvas accessors/record-time source-dim snapshots + runs 9/10: 3000×2000 photo → decoded full-res, RELEASED, valid PDF/JPEG, colour preserved; under-cap bitmap NOT closed); smoke-pdf-to-tiff-webp.ts §8 (budget unit battery incl. exact-boundary/atomic-refusal/monster-page/29-30× letter@300DPI ceiling + worker wiring: import/once-per-run/check-before-render/covers-TIFF + i18n en+hi); smoke-pdf-to-powerpoint.ts §10 (same class + images-mode wiring + i18n); smoke-txt2pdf.ts §3b (17 checks: Notepad é/ï, smart quotes/em-dash/€, Latin-1, accents past the 4KB sniff window, UTF-8-with-stray-byte NOT switched, double-encoded untouched, Hindi/ASCII untouched, >10% head still binary, full helper battery incl. spec best-fit C1 controls).
+- Mutation-tested the collage guard: disable downscale → FAIL+crash; leak without release → exactly the 2 release asserts FAIL. Reverted, all green.
+
+Stage Summary:
+- bunx tsc --noEmit: 0 errors. eslint on all 11 touched .ts files: clean.
+- Smokes: create-photo-collage 245/0 (was 153; +92), pdf-to-tiff-webp 58/0 (was 44; +14), pdf-to-powerpoint 162/0 (was 151; +11), txt2pdf 59/0 (was 39; +20), images-to-pdf control 74/0.
+- i18n parity holds: en 4280 = hi 4280 leaves, new key in both catalogs. NOT committed; no build, no dev-server restart.
+---
+Task ID: FIX-2
+Agent: i18n/copy/brand fixer
+Task: html codes, excel key+log, hub misinformation, producer drift, merge detail
+
+Work Log:
+- Fix 1 (html-to-pdf): worker.ts posted h2p.* codes that exist in NO catalog (there is no h2p namespace — the tool's surface namespace is html.*). Aligned all four posts to the html.* keys: errNoFile/errNoDoc already existed; plain html.errNotHtml + html.errTooLarge did NOT — added both to en.json + hi.json (small-anchor edits). Smoke comment updated (h2p→html).
+- Fix 2 (excel-to-pdf): (a) worker's whole ERROR_KEYS map + line-81 posted codes (xls.errorLegacy/errorNotXlsx/errorCorrupt/errorEmpty) had NO toast keys — added all five {detail}-aware strings to xls namespace in BOTH catalogs; (b) no-file post was the generic tool.errorGeneric → now xls.errorNoFile (key added EN+HI); (c) removed the debug self.addEventListener("error", console.log("WORKER-ERR", …)) line.
+- Fix 3 (convert-from-pdf misinformation): config.ts features/faq rewritten EN+HI — old copy claimed Word/Excel/PPT/web targets "arrive later / need a server"; reality: all 12 targets are live, mode D, enabled (registry verified). New copy: "everything runs 100% on-device, nothing waits for a later phase"; server-FAQ replaced with honest offline explanation; scanned-PDF FAQ now points at the LIVE PDF OCR tool. convFrom.how3 (en.json+hi.json) had the same Soon/Server lie → rewritten. surface.tsx: added missing "pdf-to-svg" to FROM_PDF_TARGETS (12 entries; registry name/desc reused automatically) + updated the stale Soon/Server comments.
+- Fix 4 (MyCloudy producer drift, BRAND violation): swept tools/ + src/ — zero "MyCloudy" left (case-insensitive). Changed setProducer/setCreator "MyCloudy"→"DocoPDF" in word/html/webpage/rtf/publisher/powerpoint/epub/odt/excel-to-pdf workers, create-resume, request-signature + xml-invoice-to-pdf + create-invoice-visually renders; PRODUCER constants "MyCloudy (mycloudy.in)"→"DocoPDF" (pdf-to-pdfa, create-electronic-invoice); output-file metadata: ODT meta:generator, Word/PPTX dc:creator+Application, HTML generator meta + comment, Markdown MD_META_COMMENT + converted_by, pdf-to-e-invoice extractedBy, pdf-to-pdfa ICC desc + report footers; report titles/generatedBy in validate-pdfa/validate-e-invoice/verify-pdf-signatures (model.ts defaults + per-tool i18n.json EN/HI + 4 mirrored src/i18n leaves); passport-photo sheet label; fetch-page UA MyCloudyBot→DocoPDFBot; p12-store event mycloudy:→docopdf:. Git remote/repo name UNTOUCHED. Self-contained fixture "MyCloudy"s in 4 scripts (cert/XMP-builder unit tests) left as-is — no user-facing output.
+- Fix 5 (merge-pdf dropped detail): tool.errorInvalidPages had no {detail} placeholder so the worker-attached context never rendered (toast path verified: pool.ts response.detail → ToolRunError → tool-shell t(code,{detail}) → applyParams). Added " {detail}" to EN+HI strings (tool.errorGeneric house pattern — reads clean when detail is empty) and merge worker now sends "file.pdf: spec" so the toast names the failing file + range. Verified via translate(): "…ranges like 1-3, 5. notes.pdf: 5-x".
+- Sibling-fix 1: smoke-request-signature.ts:1439 "no off-brand producer left" check had been inverted (the brand sweep turned !includes("MyCloudy") into !includes("DocoPDF"), contradicting line 1438) — restored its true intent (assert MyCloudy absent).
+- Sibling-fix 2: smoke-pdf-to-markdown.ts hard-coded a stale "3375 = 3375" catalog leaf count (catalog was already 4270 at HEAD — check has been failing for ages, blocks any key addition) — now asserts true parity en==hi (same key sets), matching the create-invoice-visually convention.
+- NOTE: parallel-agent files in the tree (annotate/edit/ocr/sign/split/search/txt2pdf/etc.) are NOT mine, untouched.
+
+Stage Summary:
+- bunx tsc --noEmit: 0 errors (whole tree, final state; transient mid-flight sibling errors in smoke-split/smoke-txt2pdf resolved by their owners).
+- i18n leaf parity: en 4280 = hi 4280, identical key sets (net +10 keys this task: html×2, xls×5 + {detail} rewrites; +3 from FIX-1a/parallel existed before my count).
+- Brand: rg -i mycloudy over tools/ + src/ → 0 matches.
+- Smokes (23, all 0 failed): html-to-pdf 106, excel-to-pdf 27, request-signature 185, xml-invoice-to-pdf 492, publisher-to-pdf 1418, epub-to-pdf 111, create-invoice-visually 417, pdf-to-markdown 160, pdf-to-odt 138, pdf-to-powerpoint 151, pdf-to-html 135, passport-photo 299, pdf-to-e-invoice 170, create-electronic-invoice 147, validate-pdfa 192, validate-e-invoice 309, verify-pdf-signatures 239, webpage-to-pdf 216, create-resume 79, rtf-to-pdf 91, odt-to-pdf 109, powerpoint-to-pdf 104, pdf-to-svg 166 — 5,461 passed / 0 failed. (No smoke exists for convert-from-pdf hub or merge-pdf; merge covered by tsc + interpolation check.)
+- eslint on touched tool files + touched smokes: clean.
+- NOT committed; no build; no dev-server restart.
+---
+Task ID: FIX-3
+Agent: logic/robustness fixer
+Task: RTF routing, invoice clamps, wopt loop, search budget, assemble column, unlock check
+
+Work Log:
+- tools/convert-to-pdf/detect.ts (FIX-1): new "rtf" SniffKind — the text-family branch now sniffs the literal {\rtf magic (BOM-tolerant, rtf-to-pdf rtfMagicOk precedent) BEFORE the svg/html/txt ladder, so a dropped .rtf no longer classifies as txt (which routed to txt-to-pdf printing raw control words). surface.tsx: KIND_ICONS + TARGETS_BY_KIND["rtf"]=["rtf-to-pdf"] (registry id verified enabled). i18n: ONE new key conv.kindRtf added to tools/convert-to-pdf/i18n.json (en+hi) AND src/i18n/en.json+hi.json.
+- tools/create-invoice/model.ts (FIX-2): new exported Q() coercion — parseFloat clamped to finite ≥0 (NaN/"-5"/"1e999" → 0; "2.5"/"2.5 hrs" survive); calc() line amount now R(Q(qty) × R(Q(rate)·100)) (P's rounding semantics preserved — Vector A's 33.335→3334 re-pinned); render.ts rate column + surface.tsx preview rate column use the same clamp (no more "∞" columns). HTML min="0" stays a hint; the engine is the law.
+- tools/web-optimize-pdf/worker.ts (FIX-3): result post moved OUT of the per-file loop (compress-pdf pattern) — one result per run with honest AGGREGATED detail (pages/bytes/streams/objectStrips/metadata OR'd/unreferenced summed; savedPct recomputed on sums). Was: duplicate accumulating result messages the moment maxFiles>1 (latent, maxFiles:1 today).
+- tools/search-pdf/engine.ts (FIX-4): ReDoS guard — MatchBudget {stepsLeft, deadline} threaded through findMatches(text, matcher, budget=newMatchBudget()); each exec() charges 1+match-length steps; wall clock checked every 64 execs AND once after the chain ends (critical: a catastrophic pattern usually FAILS to match, so the expensive exec returns null and only the after-chain check sees it). Caps: REGEX_STEP_BUDGET=2M, REGEX_TIME_BUDGET_MS=2s per page (defaults chosen >5× any legit page text — no false positives; smoke proves 50k-match pages pass). New PatternTooComplexError (typed, like BadRegexError); classifySearchError maps its message. worker.ts: instanceof → posts search.errorPatternTooComplex. surface.tsx: preview try/catch → amber hint (regexInvalid pattern), run stays enabled (worker runs the same budgeted matcher). Residual documented in-engine: a single exec that never returns can only be killed by pool cancel()→terminate() (verified pool.ts:192-235 does exactly that — the guaranteed early exit already exists).
+- tools/assemble-pdf/model.ts+surface.tsx (FIX-5): AsmDoc gains client-only sourceFileId (never serialized; serializeAssemble untouched); the files→columns probe now records WHY it failed (pdf.js PasswordException → "encrypted" vs "unreadable") in a probeFailures map; DocColumn gets a failure prop and renders a per-column hint (amber LockKeyhole + ann.passwordProtected / red TriangleAlert + ann.corruptTitle — existing keys in BOTH catalogs, cross-namespace reuse is the house pattern, this surface already uses grid.*) instead of the silent 0-page "Drag pages here". No new i18n.
+- tools/lock-common/security.ts (FIX-6): verifyUnlocked is now STRUCTURAL — PDFDocument.load(bytes,{ignoreEncryption:true}) + isEncrypted (parsed trailer /Encrypt, the FIX-1b ocr-pdf probe pattern); raw `text.includes("/Encrypt")` remains ONLY as the fallback when parsing fails. Fixes the false-positive that reported a legit unlock as still-encrypted when the document TEXT literally contains "/Encrypt 26 0 R".
+- Smokes: smoke-rtf-to-pdf +7 (detect vectors: magic/BOM/decoys), smoke-create-invoice +14 (Vector G hostile qty/rate + Q primitives), smoke-web-optimize-pdf +10 (self-shimmed REAL worker drive, sign-pdf recipe: 2 files → exactly ONE result, aggregated detail, single-file control), smoke-search-pdf +14 (budget section: no-false-positive big pages, step exhaustion, expired deadline, real (a+)+b 2^27 backtracking refused via after-chain check, text-mode exempt, classify + i18n presence), smoke-lock +3 (decoy Info-dict PDFString "/Encrypt 26 0 R" plain-bytes fixture passes; real encrypted still refused).
+- CROSS-AGENT NOTES: tools/pagegrid/worker.ts:215 — one-line type fix (fileEntries: GridPage[] | null; a parallel batch-rotate agent's in-flight edit was breaking the shared tsc gate; logic untouched). A later parallel edit to pagegrid/grid-surface.tsx briefly re-broke tsc mid-verification; it self-healed (final run clean). No other parallel-agent files touched.
+
+Stage Summary:
+- bunx tsc --noEmit: 0 errors. eslint on all 17 touched files: clean.
+- Smokes: rtf-to-pdf 91/0 (+7), create-invoice all vectors 97 ok/0 fail (+14), create-invoice-visually 417/0 (control), web-optimize-pdf 77/0 (+10), search-pdf 88/0 (+14), lock 35/0 (+3) — ALL 0 failed.
+- Mutation-tested every regression: RTF sniff removed → 3 fails; invoice clamps removed → 5 fails; wopt result-in-loop restored → 6 fails; search budget disabled → 4 fails (after-chain check alone disabled → the (a+)+b case fails). All reverted, all green.
+- i18n: en 4280 = hi 4280 leaves (parity OK); tool i18n.json sections (convert-to-pdf 32/32, search-pdf 30/30) match the merged catalogs exactly.
+- NOT committed (per instructions); no build, no dev-server restart.
+
+---
+Task ID: ENH-2
+Agent: feature enhancer (context deadline hit after work landed — verified + logged by orchestrator)
+Task: split naming, view outline panel, rotate batch multi-file
+
+Work Log:
+- tools/split-pdf/worker.ts + config.ts: parts now NAMED AFTER CONTENT — range mode "pages-1-5.pdf", every-N "base-part-1-pages-1-4.pdf" (single-file-per-range OFF mode keeps honest part numbering); smoke-split updated: 113/0.
+- tools/view-pdf/surface.tsx + config.ts: collapsible outline/bookmark sidebar via pdf.js getOutline() → getPageIndex, click scrolls to page; hidden entirely when no outline; smoke-view-outline 20/0.
+- tools/rotate-pdf-pages/config.ts maxFiles 1→20; tools/pagegrid/grid-surface.tsx (+433 lines): batch file list UI, per-file active switching, batch cap mirror; pagegrid/worker.ts (+114): multi-file rotation loop, per-file outputs w/ name dedup; smoke-rotate 38/0.
+- NOTE: agent hit context deadline before appending this entry; orchestrator verified smokes + tsc and appended.
+
+Stage Summary:
+- All three enhancements verified green by orchestrator: split 113/0, view-outline 20/0, rotate 38/0; tsc 0 errors.
+- rotate-pdf-pages is now the pattern-setter for batching the rest of the pagegrid family (rearrange/remove/extract) in a future round.
