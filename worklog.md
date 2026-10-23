@@ -4461,3 +4461,18 @@ Stage Summary:
 - i18n leaf parity: en 4340 = hi 4340, identical key sets; tool i18n.json sections mirror the merged catalogs (invoice 277/277, qr 94/94).
 - Browser QA (agent-browser, dev server :3000, DataTransfer recipe, 0 console/page errors throughout): create-invoice (MANDATORY) — 2 items (2×100.50 dp 10% + 1×33.335), preview showed Disc % column + discounted line totals (180.90/33.34) + honest totals chain (Subtotal ₹234.34 → Item discount −₹20.10 → Taxable ₹214.24 → CGST/SGST ₹19.28 → Total ₹253.00, all hand-computed matches); Duplicate on row 1 → identical row right below, preview re-computed (Subtotal ₹435.34, Item discount −₹40.20, Taxable ₹395.14, CGST/SGST ₹35.56, Round off −₹0.26, Total ₹466.00). Screenshot public/qa/audit3-invoice-discount.png. BONUS green: generate-qr-code batch mode (CSV via DataTransfer → "3 QR codes ready" + "1 rows skipped" honest chip, names Menu QR.png/Order.png/qr-3.png, Download ZIP (3 PNGs) enabled; screenshot public/qa/audit3-qr-batch.png); fill-out-pdf (fx.pdf → Export FDF/XFDF buttons live, crafted .fdf import → "3 of 10 filled" with unknown field honestly skipped; screenshot public/qa/audit3-fdf-import.png).
 - NOT committed (per instructions); no build, no dev-server restart.
+
+---
+Task ID: R3-FINAL
+Agent: orchestrator (main session)
+Task: Round 3 consolidated verification + commit + push.
+
+Work Log:
+- 3 enhancement agents completed (R3-a UX polish, R3-b privacy, R3-c features) — each verified their own work; orchestrator re-ran the shared gates.
+- Final gates: tsc 0, lint 0, i18n 4340=4340, consolidated 9-smoke battery all green (flatten 67, cts 43, view 31, metadata ALL, lock 48, verify-sig 243, fill ALL, invoice ALL, qr 89).
+- Commit + tag audit-3-hardening + push (main + 12 tags on GitHub).
+
+Stage Summary:
+- 3 audit rounds COMPLETE and pushed (audit-1/2/3-hardening). Cumulative: 4 BUGs + 21 fixes + 15 enhancements + 3.99MB dead-code purge + UBL 2.1 + batch pagegrid family.
+- Backlog remaining for future rounds: ocr deskew, repair xref-stream salvage, compress image dedup, epub/markdown/word image embedding, ocr→e-invoice chaining, resume templates, passport compliance report, pdf-to-word table reconstruction, html-to-pdf CSS box model.
+- REMINDER: user should rotate the chat-exposed GitHub PAT.
