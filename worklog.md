@@ -4051,3 +4051,17 @@ Stage Summary:
 - PROJECT COMPLETE: 97/97 tools live, 100% on-device, EN+हिंदी, every batch committed + tagged + pushed.
 - Smoke totals across final batches: RB4 2233, RB5 1535, RB6 875, RB7 304 checks — all 0 failed; 81 smoke scripts on disk.
 - Remaining debt (non-blocking): MyCloudy rebrand (~71 "DocoPDF" mentions in site chrome), PAT rotation reminder for user, optional cleanup of QA screenshot drift.
+
+---
+Task ID: BRAND-DECISION
+Agent: orchestrator (main session)
+Task: User decision on pending MyCloudy rebrand debt.
+
+Work Log:
+- User explicitly confirmed: "DocoPDF hi thik h" — keep DocoPDF as the product brand.
+- NO rebrand work needed. The ~71 "DocoPDF" mentions in site chrome are CORRECT as-is.
+- GitHub repo name (MyCloudy) and product brand (DocoPDF) may differ — that is accepted, not a bug.
+
+Stage Summary:
+- Rebrand debt item CLOSED by user decision. Future review rounds must NOT rename DocoPDF to MyCloudy.
+- Remaining open items: (1) user should rotate the chat-exposed GitHub PAT (user-side action), (2) generic QA/feature polish continues via 15-min cron review.
