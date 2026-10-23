@@ -65,6 +65,8 @@ import { PassportPhotoSurface } from "../../../tools/passport-photo/surface";
 import { RequestSignatureSurface } from "../../../tools/request-signature/surface";
 import { DigitalSignatureSurface } from "../../../tools/digital-signature/surface";
 import { VerifyPdfSignaturesSurface } from "../../../tools/verify-pdf-signatures/surface";
+import { ValidatePdfaSurface } from "../../../tools/validate-pdfa/surface";
+import { PdfToPdfaSurface } from "../../../tools/pdf-to-pdfa/surface";
 import { PN_SPEC } from "../../../tools/add-page-numbers/pn-options";
 import { HF_SPEC } from "../../../tools/add-header-footer/hf-options";
 
@@ -177,6 +179,8 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "request-signature": RequestSignatureSurface,
   "digital-signature": DigitalSignatureSurface,
   "verify-pdf-signatures": VerifyPdfSignaturesSurface,
+  "validate-pdfa": ValidatePdfaSurface,
+  "pdf-to-pdfa": PdfToPdfaSurface,
 };
 
 export function getToolSurface(

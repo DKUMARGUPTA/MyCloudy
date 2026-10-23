@@ -94,6 +94,8 @@ import { config as passportPhoto } from "../../../tools/passport-photo/config";
 import { config as requestSignature } from "../../../tools/request-signature/config";
 import { config as digitalSignature } from "../../../tools/digital-signature/config";
 import { config as verifyPdfSignatures } from "../../../tools/verify-pdf-signatures/config";
+import { config as validatePdfa } from "../../../tools/validate-pdfa/config";
+import { config as pdfToPdfa } from "../../../tools/pdf-to-pdfa/config";
 
 
 /**
@@ -199,6 +201,8 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [requestSignature.toolId]: requestSignature,
   [digitalSignature.toolId]: digitalSignature,
   [verifyPdfSignatures.toolId]: verifyPdfSignatures,
+  [validatePdfa.toolId]: validatePdfa,
+  [pdfToPdfa.toolId]: pdfToPdfa,
 };
 
 export function getToolConfig(toolId: string): ToolConfig | undefined {

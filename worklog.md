@@ -4010,3 +4010,27 @@ Stage Summary:
 - Cross-tool circle proven at smoke level: sign (digital-signature) → analyzeSignatures (verify-pdf-signatures sibling) reports intact + cryptoVerified.
 - RB7 next (the FINAL batch): pdf-to-pdfa + validate-pdfa → 97/97 ALL LIVE.
 - House lessons pinned: (1) model writes /Contents hex UPPERCASE — needle searches must uppercase both sides; (2) embedded Type0 fonts emit GLYPF IDs, not UTF-16 Unicode — Devanagari content checks must use pdf.js extraction or FontFile2+Identity-H assertions, never Unicode hex needles; (3) pdf-lib saves materialize empty /Annots arrays — never assert `=== undefined` on reload; (4) never re-save a signed PDF through pdf-lib — byte offsets shift and the old signature dies (Acrobat refuses for the same reason).
+
+---
+Task ID: RB7
+Agent: orchestrator (main session) + RB7-a/b builders + orchestrator finisher work
+Task: RB7 — the FINAL batch — pdf-to-pdfa + validate-pdfa — 95 → 97/97 ALL LIVE — commit + tag + PUSH.
+
+Work Log:
+- Parallel launches flaked (context deadline exceeded ×2) but disk-truth held: both builders landed; validate-pdfa got all 6 files + wiring in round 1; pdf-to-pdfa's model (54KB) + types landed round 1, app layer round 2.
+- validate-pdfa smoke (RB7-FIN-b2): 192/192 green — verdict cards, per-check PASS/FAIL/WARN, downloadable report, PDF/UA rows honest as advisory hints, level auto-detect from XMP.
+- pdf-to-pdfa (orchestrator finishing pass — the agent died mid-smoke): fixed 3 REAL WORKER BUGS + 3 smoke bugs:
+  (1) PDFName.asString() slash bug — the RB6 lesson AGAIN: BaseFont "/Helvetica" never matched the bare standard-14 map → every standard-14 font wrongly rejected as unembeddable; fixed with rawBaseFontOf() + bareNameOf() for action/subtype names too (OpenAction/Screen/JS-action strips were ALL dead before this).
+  (2) pdf-lib's PDFWriter.computeBufferSize HARDCODES %PDF-1.7 and ignores context.header — the version stamp was a silent no-op; fixed with a post-save 8-byte header patch (%PDF-1.4 for -1b).
+  (3) garbage PDFs "load" into a doc whose catalog is undefined — getPageCount() threw a raw TypeError → errorGeneric; guarded → honest errorCorrupt. Plus: pdf-lib's attach() registers the SAME filespec in BOTH /Names/EmbeddedFiles and /AF — 3b keep counted it twice; deduped via object-number set.
+  Smoke-side: async-await-in-sync-IIFE, out-of-range CMYK fixture (1 2 3 4 → intended 0.4 0.2 0 0), pattern-left-as-is expectation (model's honest note), Text-annot-kept (spec-correct: only the /A action is stripped, the annot survives), /AA ×2, PDFRawStream not in lookupMaybe overloads (PDFStream + instanceof narrowing), unfinished require0 stub, PdfaChangeReport import from types.
+- i18n: scripts/merge-rb7-i18n.ts — pa 73 + vpa 144 leaves ×2 → catalogs 4053→4270=4270 parity.
+- Verification: tsc 0 repo-wide; lint 0/0; smokes 304/304 (112 + 192).
+- Browser QA (agent-browser, DataTransfer methodology): pdf-to-pdfa — qa-text-sample.pdf + target 2b → "archive-pdfa-2b.pdf 283 KB" (hand-rolled sRGB ICC + LiberationSans substitute embedded) + archive-pdfa-2b-report.txt; validate-pdfa — plain.pdf → honest "Not compliant" verdict (10 passed · 2 warnings · 3 failed, no XMP) + PDF/UA advisory; Hindi UI green; mobile 390px no-overflow; ZERO console errors on both. Screenshots: public/qa/rb7-{pdfa-convert,validate-result,validate-mobile}.png.
+- Dev server died twice mid-batch → cold starts → clean 200s.
+
+Stage Summary:
+- **97/97 ALL TOOLS LIVE — THE PROGRAM IS COMPLETE.** Registry: 97 defs, 97 enabled:true, 0 pending. Every tool 100% on-device (mode D), EN+हिंदी, every batch committed + tagged (checkpoint-65/66/70/74/80/86/91/95/97) and pushed to GitHub.
+- Final smoke tally this session: RB6 875 checks + RB7 304 checks — all 0 failed.
+- The full cross-tool circle now works: create (invoice/resume/photo) → convert (office/PDF-A) → protect (lock/sign) → verify (signatures/PDF-A) — all in-browser, nothing uploaded.
+- Post-program debt (queued, not blocking): MyCloudy rebrand (site chrome still says DocoPDF ~71 mentions), user should ROTATE the chat-pasted GitHub PAT.
