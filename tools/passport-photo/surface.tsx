@@ -41,6 +41,7 @@ import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
 import { cn } from "@/lib/utils";
 import {
   ADJUST_MAX,
+  COUNTRY_SPECS,
   CUSTOM_MM_MAX,
   CUSTOM_MM_MIN,
   DEFAULT_STYLE,
@@ -51,6 +52,7 @@ import {
   WHITE_TOLERANCE_MAX,
   applyBrightnessContrast,
   applyWhiteBackground,
+  complianceReport,
   computeCropRect,
   computeSheetPlan,
   infoLineText,
@@ -180,6 +182,11 @@ export function PassportPhotoSurface({
   );
   const pixels = useMemo(() => photoPixelSize(size), [size]);
   const sheetBlocked = plan.copies < 1;
+  // R4-c: target-country guidance — pure model math, no photo analysis.
+  const compliance = useMemo(
+    () => complianceReport(size, style.country),
+    [size, style.country]
+  );
 
   /* ---------------- option sync (event-context only) ---------------- */
 
@@ -759,6 +766,83 @@ export function PassportPhotoSurface({
               px: pxNote,
             })}
           </p>
+
+          {/* R4-c: target-country selector + the honest compliance chip —
+              guidance UI only (no face detection, no verification). */}
+          <Label
+            htmlFor="pp-country"
+            className="mt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+          >
+            {t("pp.countryLabel")}
+          </Label>
+          <Select
+            value={style.country}
+            onValueChange={(value) =>
+              apply({ country: value as PassportStyle["country"] })
+            }
+          >
+            <SelectTrigger
+              id="pp-country"
+              className="h-11 min-h-11 w-full rounded-btn text-xs"
+              aria-label={t("pp.countryLabel")}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {COUNTRY_SPECS.map((c) => (
+                <SelectItem key={c.id} value={c.id} className="text-xs">
+                  {c.label[locale]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="rounded-btn border border-border bg-muted/30 p-3">
+            <p className="text-[11px] font-medium leading-relaxed text-foreground">
+              {t("pp.complianceSize", {
+                size: `${compliance.spec.wMM}×${compliance.spec.hMM}mm`,
+              })}
+              {" · "}
+              {t("pp.complianceFace", {
+                min: compliance.spec.faceMinPct,
+                max: compliance.spec.faceMaxPct,
+              })}
+            </p>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {t("pp.complianceBgLabel")}: {compliance.spec.bg[locale]}
+            </p>
+            {!compliance.matches ? (
+              <p className="mt-1.5 flex items-start gap-1.5 text-[11px] font-medium leading-relaxed text-amber-600 dark:text-amber-400">
+                <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                {t("pp.sizeMismatch", {
+                  size: `${Math.round(size.wMM)}×${Math.round(size.hMM)}mm`,
+                  spec: `${compliance.spec.wMM}×${compliance.spec.hMM}mm`,
+                })}
+              </p>
+            ) : null}
+            {!compliance.matches ? (
+              <Button
+                type="button"
+                variant="outline"
+                className={cn(TOOL_BTN, "mt-1.5")}
+                onClick={() => {
+                  const s = compliance.suggestion;
+                  if (s.sizeId === "custom") {
+                    apply({ sizeId: "custom", customW: s.wMM, customH: s.hMM });
+                    setCustomDraft({ w: String(s.wMM), h: String(s.hMM) });
+                  } else {
+                    apply({ sizeId: s.sizeId });
+                  }
+                }}
+              >
+                {t("pp.useStandard", {
+                  size: `${compliance.spec.wMM}×${compliance.spec.hMM}mm`,
+                })}
+              </Button>
+            ) : null}
+            <p className="mt-1.5 text-[10px] leading-relaxed text-muted-foreground">
+              {t("pp.countryNote")}
+            </p>
+          </div>
 
           <Label className="mt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {t("pp.sheetLabel")}

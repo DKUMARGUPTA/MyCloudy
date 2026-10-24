@@ -1,11 +1,22 @@
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
+import { PDFDocument, StandardFonts, type PDFFont, type PDFImage } from "pdf-lib";
+import { unzipSync } from "fflate";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
+import { embedDocumentImage } from "@/lib/pdf/embed-image";
 import { loadStampFonts } from "../stamp-common/worker-lib";
-import { needsNoto, outputPdfName, parseDocx, parseWordRun } from "./model";
+import {
+  MAX_IMAGES,
+  needsNoto,
+  outputPdfName,
+  parseDocx,
+  parseWordRun,
+  lookupMediaEntry,
+  resolveMediaPath,
+  type DocxImageBlock,
+} from "./model";
 import { drawDocxPdf } from "./render";
 
 /**
@@ -20,8 +31,13 @@ import { drawDocxPdf } from "./render";
  *     (base-14 Helvetica + HelveticaBold), while ANY Devanagari char
  *     switches to the self-hosted Noto Sans Devanagari (fontkit
  *     subset:true) — the create-resume/stamp-common recipe;
- *  3. drawDocxPdf — the exact render.ts the smoke script drives;
- *  4. save with producer "DocoPDF" and the localized file name.
+ *  3. images (audit R4-a): every image block's relId resolves through
+ *     document.xml.rels to its media/* zip part and embeds via the
+ *     shared helper (original bytes, downscale only for oversized,
+ *     ≤ MAX_IMAGES) — missing parts/unsupported formats degrade to an
+ *     honest skip count, never a crash or a silent drop;
+ *  4. drawDocxPdf — the exact render.ts the smoke script drives;
+ *  5. save with producer "DocoPDF" and the localized file name.
  *
  * Options: pageSize ("a4"|"letter"), margin ("normal"|"narrow") and
  * fileWord (the localized fallback word for a nameless file).
@@ -85,7 +101,36 @@ async function run(request: WorkerRunRequest): Promise<void> {
     }
     post({ type: "progress", runId, pct: 45, stage: "processing" });
 
-    const report = drawDocxPdf(pdfDoc, font, boldFont, doc, opts);
+    // images (audit R4-a): resolve relIds → media/* zip parts → embed
+    const images = new Map<string, PDFImage>();
+    if (doc.blocks.some((b) => b.kind === "image")) {
+      let zip: Record<string, Uint8Array> = {};
+      try {
+        zip = unzipSync(bytes) as Record<string, Uint8Array>;
+      } catch {
+        zip = {};
+      }
+      const relIds = [
+        ...new Set(
+          doc.blocks
+            .filter((b): b is DocxImageBlock => b.kind === "image")
+            .map((b) => b.relId)
+        ),
+      ].slice(0, MAX_IMAGES);
+      for (const relId of relIds) {
+        const target = doc.media[relId];
+        if (target === undefined) continue;
+        const path = resolveMediaPath(target);
+        if (path === "") continue;
+        const mediaBytes = lookupMediaEntry(zip, path);
+        if (mediaBytes === undefined) continue;
+        const embedded = await embedDocumentImage(pdfDoc, mediaBytes);
+        if (embedded === null) continue;
+        images.set(relId, embedded.image);
+      }
+    }
+
+    const report = drawDocxPdf(pdfDoc, font, boldFont, doc, opts, images);
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
     pdfDoc.setProducer("DocoPDF");
@@ -106,7 +151,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
           }),
         },
       ],
-      detail: { pages: report.pages, words: doc.wordCount },
+      detail: {
+        pages: report.pages,
+        words: doc.wordCount,
+        imagesEmbedded: report.imagesDrawn,
+        imagesSkipped: report.imagesSkipped + doc.imagesDropped,
+      },
     });
   } catch (error) {
     post({

@@ -23,10 +23,14 @@ import type {
  * link (blue text + numbered footnote + "Links" section at the end), break,
  * blockquote (indent + bar + muted text), thematicBreak, text,
  * linkReference/imageReference (resolved when a matching definition exists,
- * literal "[label]" otherwise), image (honest "[alt]" text — no raster
- * embedding in v1). Omissions documented in the tool FAQ + code: html
- * nodes skipped, GFM tables not parsed by core mdast (they surface as
- * plain paragraph text), no syntax coloring in code blocks.
+ * literal "[label]" otherwise), image (audit R4-a: a BLOCK-LEVEL image —
+ * a paragraph containing only the image — becomes an "image" block that
+ * the worker embeds when the user dropped a matching local file; inline
+ * images, remote http(s) URLs and unmatched files keep the honest
+ * "[alt]" text — no network, on-device promise). Omissions documented in
+ * the tool FAQ + code: html nodes skipped, GFM tables not parsed by core
+ * mdast (they surface as plain paragraph text), no syntax coloring in
+ * code blocks.
  *
  * Honest v1 font limits: Devanagari (or any non-WinAnsi block) renders in
  * the regular embedded Noto — no bold/italic/mono variants exist for it
@@ -117,6 +121,7 @@ export type MdBlock =
   | { kind: "paragraph"; runs: MdInlineRun[] }
   | { kind: "code"; lines: string[] }
   | { kind: "rule" }
+  | { kind: "image"; url: string; alt: string }
   | { kind: "quote"; children: MdBlock[] }
   | {
       kind: "listItem";
@@ -295,6 +300,29 @@ function codeLines(value: string): string[] {
   return lines;
 }
 
+/**
+ * A paragraph is a block-level image when its only phrasing child is one
+ * `image` node (or one `imageReference` that resolves to a definition).
+ * Returns the url + alt for the embed resolver, else null.
+ */
+function soleImageNode(
+  nodes: readonly PhrasingContent[],
+  ctx: ParseCtx
+): { url: string; alt: string } | null {
+  if (nodes.length !== 1) return null;
+  const node = nodes[0];
+  if (node.type === "image") {
+    return { url: node.url, alt: node.alt ?? "" };
+  }
+  if (node.type === "imageReference") {
+    const url = ctx.defs.get(node.identifier);
+    if (url !== undefined) {
+      return { url, alt: node.alt ?? "" };
+    }
+  }
+  return null;
+}
+
 function walkBlocks(
   nodes: readonly RootContent[],
   ctx: ParseCtx,
@@ -310,12 +338,21 @@ function walkBlocks(
           runs: inlineRuns(node.children, ctx),
         });
         break;
-      case "paragraph":
-        out.push({
-          kind: "paragraph",
-          runs: inlineRuns(node.children, ctx),
-        });
+      case "paragraph": {
+        // Block-level image: a paragraph whose ONLY child is one image
+        // (or one reference-resolved imageReference) — audit R4-a. The
+        // worker decides embed vs honest "[alt]" text at layout time.
+        const sole = soleImageNode(node.children, ctx);
+        if (sole !== null) {
+          out.push({ kind: "image", url: sole.url, alt: sole.alt });
+        } else {
+          out.push({
+            kind: "paragraph",
+            runs: inlineRuns(node.children, ctx),
+          });
+        }
         break;
+      }
       case "code":
         out.push({ kind: "code", lines: codeLines(node.value) });
         break;
@@ -454,16 +491,36 @@ export interface MdRectDraw {
   kind: RectKind;
 }
 
+/** One placed block image — page coords like the rects (pdf-lib, y up). */
+export interface MdImageDraw {
+  /** The markdown url the worker resolves back to the embedded image. */
+  url: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface MdPageDraw {
   runs: PositionedTextRun[];
   rects: MdRectDraw[];
+  /** Block images placed on this page (audit R4-a). */
+  images: MdImageDraw[];
   /** Warm paper theme paints a cream page background first. */
   warm: boolean;
 }
 
+/** Intrinsic pixel dims of one resolved image asset, keyed by url. */
+export type MdImageDims = Map<string, { width: number; height: number }>;
+
 export interface MdLayoutResult {
   pages: MdPageDraw[];
   linkCount: number;
+  /** Block images embedded into the layout (resolvable in `images`). */
+  imageCount: number;
+  /** Block images that fell back to honest "[alt]" text (remote,
+   *  unmatched or unsupported — never silently dropped). */
+  imagesSkipped: number;
 }
 
 /** h1…h6 sizes in pt. */
@@ -516,6 +573,7 @@ function firstLineAdvance(
       );
     case "code":
       return monoAdvance;
+    case "image":
     case "quote":
     case "paragraph":
     case "listItem":
@@ -527,7 +585,11 @@ function firstLineAdvance(
 export function layoutMd(
   parsed: ParsedMarkdown,
   options: MdOptions,
-  measure: MeasureRun
+  measure: MeasureRun,
+  /** Intrinsic dims of the images the caller embedded (worker) — an
+   *  image block whose url is absent here degrades to the honest
+   *  "[alt]" text paragraph (remote/unmatched/unsupported). */
+  images?: MdImageDims
 ): MdLayoutResult {
   const { blocks, links } = parsed;
   const size = PAGE_SIZES[options.pageSize];
@@ -542,14 +604,22 @@ export function layoutMd(
   };
   const flow = new PageFlow(geometry);
   const pages: MdPageDraw[] = [
-    { runs: [], rects: [], warm: options.theme === "warm" },
+    { runs: [], rects: [], images: [], warm: options.theme === "warm" },
   ];
   const ensurePage = (index: number): MdPageDraw => {
     while (pages.length <= index) {
-      pages.push({ runs: [], rects: [], warm: options.theme === "warm" });
+      pages.push({
+        runs: [],
+        rects: [],
+        images: [],
+        warm: options.theme === "warm",
+      });
     }
     return pages[index];
   };
+
+  let imageCount = 0;
+  let imagesSkipped = 0;
 
   const bodyAdvance = options.bodySize * BODY_LINE_HEIGHT;
   const monoAdvance = options.monoSize * MONO_LINE_HEIGHT;
@@ -801,6 +871,50 @@ export function layoutMd(
         );
         break;
       }
+      case "image": {
+        const dims = images?.get(block.url);
+        if (!dims || dims.width <= 0 || dims.height <= 0) {
+          // Honest fallback — the exact "[alt]" paragraph v1 printed for
+          // every image (remote URLs keep it forever: no network).
+          gapBefore(bodyGap);
+          placeRuns(
+            [{ ...baseRun(`[${block.alt}]`), italic: true }],
+            contentLeft(),
+            flow.contentWidth - indent,
+            options.bodySize,
+            bodyAdvance
+          );
+          imagesSkipped += 1;
+          placedAny = true;
+          break;
+        }
+        // Atomic block: px-as-pt natural size (imagegrid's fit pages),
+        // capped at the content box, never upscaled, never split.
+        const maxW = Math.max(24, flow.contentWidth - indent);
+        const scale = Math.min(
+          1,
+          maxW / dims.width,
+          flow.contentHeight / dims.height
+        );
+        const w = dims.width * scale;
+        const h = dims.height * scale;
+        if (flow.pageHasContent && !flow.fits(h)) flow.breakPage();
+        gapBefore(bodyGap);
+        const page = ensurePage(flow.pageIndex);
+        const top = flow.contentTopY();
+        page.images.push({
+          url: block.url,
+          x: contentLeft(),
+          y: top - h,
+          w,
+          h,
+        });
+        flow.consume(h);
+        gapBefore(bodyGap * 0.5);
+        imageCount += 1;
+        placedAny = true;
+        break;
+      }
       case "code": {
         placeCodeBlock(block.lines);
         break;
@@ -947,5 +1061,51 @@ export function layoutMd(
     }
   }
 
-  return { pages, linkCount: links.length };
+  return { pages, linkCount: links.length, imageCount, imagesSkipped };
+}
+
+/**
+ * Unique image urls in document order (the worker's embed list).
+ * Inside quotes/list items images stay honest text, so only top-level
+ * blocks are walked — matching what layoutMd can actually embed.
+ */
+export function collectImageUrls(parsed: ParsedMarkdown): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const block of parsed.blocks) {
+    if (block.kind === "image" && !seen.has(block.url)) {
+      seen.add(block.url);
+      out.push(block.url);
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolves one markdown image url against the dropped asset names by
+ * BASENAME (audit R4-a): strips ?query/#hash, decodes %20-style escapes
+ * (malformed passes through), takes the last path segment and matches
+ * case-insensitively — "images/my photo.png?v=2" hits "My Photo.PNG".
+ * Remote http(s)/data urls and unmatched names return null (the layout
+ * then keeps the honest "[alt]" text — no network, on-device promise).
+ */
+export function matchImageAsset(
+  url: string,
+  assetNames: readonly string[]
+): string | null {
+  if (/^(https?:|data:|blob:)/i.test(url)) return null;
+  let tail = url.split("#")[0] ?? "";
+  const q = tail.indexOf("?");
+  if (q >= 0) tail = tail.slice(0, q);
+  if (tail === "") return null;
+  try {
+    tail = decodeURIComponent(tail);
+  } catch {
+    /* malformed escapes pass through */
+  }
+  const slash = Math.max(tail.lastIndexOf("/"), tail.lastIndexOf("\\"));
+  const base = slash >= 0 ? tail.slice(slash + 1) : tail;
+  if (base === "") return null;
+  const lower = base.toLowerCase();
+  return assetNames.find((name) => name.toLowerCase() === lower) ?? null;
 }

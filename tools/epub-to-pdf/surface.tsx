@@ -564,6 +564,16 @@ export function EpubToPdfSurface({
                     {t("epub.tocEntries", { count: bookStats.tocEntries })}
                   </span>
                 ) : null}
+                {bookStats !== null && bookStats.images > 0 ? (
+                  <span className="rounded-chip bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                    {t("epub.imagesChip", { count: bookStats.images })}
+                  </span>
+                ) : null}
+                {bookStats !== null && bookStats.imagesSkipped > 0 ? (
+                  <span className="rounded-chip bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                    {t("epub.imagesSkippedChip", { count: bookStats.imagesSkipped })}
+                  </span>
+                ) : null}
                 {bookStats !== null && bookStats.skipped > 0 ? (
                   <span className="rounded-chip bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
                     {t("epub.skippedChip", { count: bookStats.skipped })}

@@ -6,9 +6,10 @@
  *  1. parseMarkdown (mdast-util-from-markdown@2.0.2): headings h1-h6,
  *     bold/italic/inline-code, ordered + nested lists, multi-line code with
  *     a blank interior line, blockquote (with a nested list inside),
- *     thematicBreak, links (+ reference links), images as honest [alt]
- *     text, unresolved image references as literals, block html skipped,
- *     hard breaks kept, soft breaks joined with a space.
+ *     thematicBreak, links (+ reference links), block-level images as
+ *     "image" blocks (audit R4-a) with remote URLs degrading to honest
+ *     [alt] text at layout, unresolved image references as literals,
+ *     block html skipped, hard breaks kept, soft breaks joined with a space.
  *  2. layoutMd geometry with REAL pdf-lib fonts (Helvetica family, Courier,
  *     embedded Noto Devanagari — the stamp-common pipeline): every run
  *     re-measured against the content box, markers, code backgrounds, quote
@@ -22,10 +23,15 @@
  *
  * Run: bun scripts/smoke-md2pdf.ts
  */
+import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
 import "regenerator-runtime/runtime";
 import fontkit from "@pdf-lib/fontkit";
+
+import { makeFixturePng } from "./fixture-png";
+import { embedDocumentImage, sniffEmbedKind } from "../src/lib/pdf/embed-image";
+import { config as mdConfig } from "../tools/markdown-to-pdf/config";
 
 import {
   MM_TO_PT,
@@ -36,9 +42,13 @@ import {
   type ScriptFont,
 } from "../tools/txt-to-pdf/text-layout";
 import {
+  collectImageUrls,
   layoutMd,
+  matchImageAsset,
   parseMarkdown,
   resolveMdOptions,
+  type MdBlock,
+  type MdImageDims,
   type MdLayoutResult,
   type MdOptions,
   type ParsedMarkdown,
@@ -291,12 +301,14 @@ check(
 );
 
 const imageParsed = parseMarkdown(F_IMAGE, fromMarkdown);
-const imageRuns = imageParsed.blocks
-  .filter((block) => block.kind === "paragraph")
-  .flatMap((block) => (block.kind === "paragraph" ? block.runs : []));
+const imageBlocks = imageParsed.blocks.filter(
+  (b): b is MdBlock & { kind: "image" } => b.kind === "image"
+);
 check(
-  "image renders its alt text honestly, no URL collected",
-  imageRuns.some((run) => run.text === "[A picture of a cat]" && run.italic) &&
+  "block image parses to an image block (url + alt), no link collected",
+  imageBlocks.length === 1 &&
+    imageBlocks[0]?.url === "https://example.com/cat.png" &&
+    imageBlocks[0]?.alt === "A picture of a cat" &&
     imageParsed.links.length === 0
 );
 
@@ -511,6 +523,237 @@ check(
       (run) => run.script === "noto" && run.x + runWidth(run) <= RIGHT + 0.75
     )
 );
+
+/* ------------------------------------------------------------------ */
+/* 3b. images (audit R4-a) — local drop embeds, remote stays honest    */
+/* ------------------------------------------------------------------ */
+
+console.log("images (audit R4-a)");
+{
+  // parse: an inline image inside a text paragraph NEVER becomes a block
+  const inlineParsed = parseMarkdown(
+    "Inline text with ![tiny dot](dot.png) inside.",
+    fromMarkdown
+  );
+  check(
+    "inline image keeps the honest [alt] paragraph (never a block)",
+    inlineParsed.blocks.length === 1 &&
+      inlineParsed.blocks[0].kind === "paragraph" &&
+      JSON.stringify(inlineParsed.blocks).includes("[tiny dot]"),
+    JSON.stringify(inlineParsed.blocks.map((b) => b.kind))
+  );
+
+  // collectImageUrls: unique, document order, top-level blocks only
+  const twoParsed = parseMarkdown(
+    "![a](one.png)\n\n![b](two.png)\n\n![again](one.png)",
+    fromMarkdown
+  );
+  check(
+    "collectImageUrls: unique + document order",
+    JSON.stringify(collectImageUrls(twoParsed)) ===
+      JSON.stringify(["one.png", "two.png"]),
+    JSON.stringify(collectImageUrls(twoParsed))
+  );
+  const quoteParsed2 = parseMarkdown(
+    "> ![quoted](quoted.png)\n\n![top](top.png)",
+    fromMarkdown
+  );
+  check(
+    "images inside quotes stay honest text (not collected)",
+    JSON.stringify(collectImageUrls(quoteParsed2)) === JSON.stringify(["top.png"]),
+    JSON.stringify(collectImageUrls(quoteParsed2))
+  );
+
+  // matchImageAsset vectors (basename, case-insensitive, no network)
+  check(
+    "basename match is case-insensitive",
+    matchImageAsset("images/My Photo.PNG", ["notes.md", "my photo.png"]) ===
+      "my photo.png",
+    String(matchImageAsset("images/My Photo.PNG", ["my photo.png"]))
+  );
+  check(
+    "%20 + query + hash stripped before matching",
+    matchImageAsset("my%20photo.png?v=2#frag", ["My Photo.png"]) === "My Photo.png"
+  );
+  check(
+    "remote http(s) url → null (no network — on-device promise)",
+    matchImageAsset("https://cdn.example.com/x.png", ["x.png"]) === null
+  );
+  check(
+    "data:/blob: urls → null",
+    matchImageAsset("data:image/png;base64,AAAA", ["AAAA"]) === null &&
+      matchImageAsset("blob:https://x/y", ["y"]) === null
+  );
+  check(
+    "unmatched name → null (honest [alt] fallback)",
+    matchImageAsset("ghost.png", ["real.png"]) === null
+  );
+
+  // layout without dims: honest "[alt]" paragraph + counted skip
+  const localParsed = parseMarkdown(
+    "# Doc\n\n![Plot](plot.png)\n\nAfter.",
+    fromMarkdown
+  );
+  const noDims = layoutMd(localParsed, optsA4, measure);
+  check(
+    "unmatched image degrades to the italic [alt] paragraph + counts the skip",
+    noDims.imageCount === 0 &&
+      noDims.imagesSkipped === 1 &&
+      noDims.pages.some(
+        (p) => p.runs.some((r) => r.text === "[Plot]" && r.spec.italic)
+      ) &&
+      noDims.pages.every((p) => p.images.length === 0),
+    `count=${noDims.imageCount} skipped=${noDims.imagesSkipped}`
+  );
+
+  // layout with dims: atomic block image, capped to the content box
+  const dims: MdImageDims = new Map([["plot.png", { width: 640, height: 320 }]]);
+  const withDims = layoutMd(localParsed, optsA4, measure, dims);
+  const placed = withDims.pages.flatMap((p) => p.images);
+  check(
+    "matched image places exactly one atomic block",
+    withDims.imageCount === 1 && withDims.imagesSkipped === 0 && placed.length === 1,
+    `count=${withDims.imageCount} skipped=${withDims.imagesSkipped}`
+  );
+  const img0 = placed[0];
+  check(
+    "image geometry: content box + 2:1 aspect + inside the page",
+    img0 !== undefined &&
+      img0.w <= A4.width - 2 * MARGIN + 0.01 &&
+      Math.abs(img0.w / img0.h - 2) < 0.001 &&
+      img0.y >= -0.01 &&
+      img0.y + img0.h <= A4.height + 0.01,
+    JSON.stringify(img0)
+  );
+  check(
+    "placed image carries the url the worker keys the embed on",
+    img0?.url === "plot.png"
+  );
+
+  // mixed doc: local embed + remote honest skip in one run
+  const mixed = layoutMd(
+    parseMarkdown(
+      "![local](plot.png)\n\n![remote](https://example.com/far.png)",
+      fromMarkdown
+    ),
+    optsA4,
+    measure,
+    dims
+  );
+  check(
+    "mixed doc: 1 embedded + 1 honest skip ([remote] alt stays)",
+    mixed.imageCount === 1 &&
+      mixed.imagesSkipped === 1 &&
+      mixed.pages.some((p) => p.runs.some((r) => r.text === "[remote]")),
+    `count=${mixed.imageCount} skipped=${mixed.imagesSkipped}`
+  );
+
+  // worker recipe: sniff → embed → draw → save → reload → image XObject
+  const pngBytes = makeFixturePng(64, 40);
+  check(
+    "sniffEmbedKind: PNG magic, GIF rejected (honest skip path)",
+    sniffEmbedKind(pngBytes.subarray(0, 16)) === "png" &&
+      sniffEmbedKind(new Uint8Array([0x47, 0x49, 0x46, 0x38])) === null
+  );
+  const renderDoc = await PDFDocument.create();
+  const embedded = await embedDocumentImage(renderDoc, pngBytes);
+  check(
+    "embedDocumentImage embeds original bytes under bun (no re-encode)",
+    embedded !== null &&
+      embedded.width === 64 &&
+      embedded.height === 40 &&
+      embedded.downscaled === false,
+    embedded === null ? "null" : `${embedded.width}x${embedded.height} downscaled=${embedded.downscaled}`
+  );
+  const renderFonts = await makeFontSet(renderDoc);
+  const renderMeasure: MeasureRun = (text, spec, size, script) =>
+    fontFor(renderFonts, spec, script).widthOfTextAtSize(text, size);
+  const renderLayout = layoutMd(
+    localParsed,
+    optsA4,
+    renderMeasure,
+    new Map([["plot.png", { width: embedded!.width, height: embedded!.height }]])
+  );
+  // section-local colors (the §5 COLORS map lives further down)
+  const inkText = rgb(0.1, 0.1, 0.12);
+  const inkMuted = rgb(0.45, 0.45, 0.5);
+  for (const draw of renderLayout.pages) {
+    const page = renderDoc.addPage([A4.width, A4.height]);
+    for (const run of draw.runs) {
+      if (run.text.length === 0) continue;
+      page.drawText(run.text, {
+        x: run.x,
+        y: run.baseline,
+        size: run.size,
+        font: fontFor(renderFonts, run.spec, run.script),
+        color: run.color === "muted" ? inkMuted : inkText,
+      });
+    }
+    for (const image of draw.images) {
+      const img = image.url === "plot.png" ? embedded!.image : undefined;
+      if (!img) continue;
+      page.drawImage(img, { x: image.x, y: image.y, width: image.w, height: image.h });
+    }
+  }
+  const savedPng = await renderDoc.save({ useObjectStreams: true });
+  const outPath = "/home/z/my-project/download/qa-audit4-md-image.pdf";
+  await writeFile(outPath, savedPng);
+  const reloadedPng = await PDFDocument.load(await readFile(outPath), {
+    updateMetadata: false,
+  });
+  const pngDump = [...reloadedPng.context.enumerateIndirectObjects()]
+    .map(([, o]) => o.toString())
+    .join("\n");
+  check(
+    "saved PDF carries exactly one image XObject (the drawn plot)",
+    pngDump.split("/Subtype /Image").length - 1 === 1,
+    `got ${pngDump.split("/Subtype /Image").length - 1}`
+  );
+  check(
+    "alt text suppressed for the drawn image (no [Plot] glyph)",
+    !renderLayout.pages.some((p) => p.runs.some((r) => r.text === "[Plot]"))
+  );
+
+  // wiring: drop caps + worker constants + i18n keys (EN+HI)
+  check(
+    "config accepts the multi-file image drop (maxFiles 20)",
+    mdConfig.maxFiles === 20,
+    String(mdConfig.maxFiles)
+  );
+  const workerSrc = readFileSync(
+    "/home/z/my-project/tools/markdown-to-pdf/worker.ts",
+    "utf8"
+  );
+  check(
+    "worker caps honest (20 files / 50 MB) + shared embed helper",
+    workerSrc.includes("MAX_MD_FILES = 20") &&
+      workerSrc.includes("MAX_MD_TOTAL_BYTES = 50 * 1024 * 1024") &&
+      workerSrc.includes("sniffEmbedKind"),
+    ""
+  );
+  const en = JSON.parse(
+    readFileSync("/home/z/my-project/src/i18n/en.json", "utf8")
+  ) as Record<string, Record<string, string>>;
+  const hi = JSON.parse(
+    readFileSync("/home/z/my-project/src/i18n/hi.json", "utf8")
+  ) as Record<string, Record<string, string>>;
+  check(
+    "md2pdf drop-cap errors EN+HI (tooMany/tooLarge/noMd)",
+    en.md2pdf?.errorTooMany !== undefined &&
+      en.md2pdf?.errorTooLarge !== undefined &&
+      en.md2pdf?.errorNoMd !== undefined &&
+      hi.md2pdf?.errorTooMany !== undefined &&
+      hi.md2pdf?.errorTooLarge !== undefined &&
+      hi.md2pdf?.errorNoMd !== undefined
+  );
+  check(
+    "result.imagesEmbedded/imagesSkipped EN+HI (shared chips)",
+    en.result?.imagesEmbedded !== undefined &&
+      en.result?.imagesSkipped !== undefined &&
+      hi.result?.imagesEmbedded !== undefined &&
+      hi.result?.imagesSkipped !== undefined
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* 4. Pagination                                                        */

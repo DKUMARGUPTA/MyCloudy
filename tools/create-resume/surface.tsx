@@ -71,11 +71,13 @@ import {
   defaultSection,
   estimatePageBreaks,
   formatDateRange,
+  geometryFor,
   joinMeta,
   newId,
   parseResumeRun,
   resumeStats,
   sampleResume,
+  splitTwoColumns,
 } from "./model";
 import type {
   CertificationItem,
@@ -226,15 +228,18 @@ const PREVIEW_CSS = `
 #rsm-sheet ul{margin:3pt 0 0;padding-left:12pt;list-style:disc outside}
 #rsm-sheet li{margin:1pt 0}
 #rsm-sheet .rsm-skname{font-weight:700}
+#rsm-sheet .rsm-skillcols{display:flex;gap:8pt}
+#rsm-sheet .rsm-skillcols>div{flex:1;min-width:0}
 #rsm-sheet .rsm-modern{display:flex;align-items:stretch}
-#rsm-sheet .rsm-side{width:181.42pt;background:var(--ac,#0b6b4d);color:var(--side-ink,#fff);padding:44pt 24pt}
+#rsm-sheet .rsm-side{width:var(--side-w,202.4pt);background:var(--ac,#0b6b4d);color:var(--side-ink,#fff);padding:44pt 24pt}
 #rsm-sheet .rsm-side .rsm-photo{width:92pt;height:92pt;border-radius:50%;object-fit:cover;display:block;margin:0 auto 14pt}
-#rsm-sheet .rsm-side .rsm-slabel{font-weight:700;font-size:8.5pt;text-transform:uppercase;margin:12pt 0 3pt;letter-spacing:0}
+#rsm-sheet .rsm-side .rsm-name{font-size:20pt}
+#rsm-sheet .rsm-side .rsm-headline{color:var(--side-ink);opacity:.85;font-size:11pt;margin-top:2pt}
+#rsm-sheet .rsm-side .rsm-slabel{font-weight:700;font-size:8.5pt;text-transform:uppercase;margin:12pt 0 3pt;letter-spacing:.7pt}
 #rsm-sheet .rsm-side .rsm-skillname{font-weight:700;font-size:10pt;margin-top:6pt}
 #rsm-sheet .rsm-side .rsm-skillitems{font-size:9pt}
 #rsm-sheet .rsm-main{flex:1;min-width:0;padding:44pt 44pt 44pt 28pt}
-#rsm-sheet .rsm-main .rsm-name{font-size:20pt}
-#rsm-sheet .rsm-main .rsm-hr{border-top:1.25pt solid var(--ac,#0b6b4d)}
+#rsm-sheet.rsm-modern .rsm-title{letter-spacing:.9pt}
 @media print{
   body *{visibility:hidden!important}
   #rsm-sheet,#rsm-sheet *{visibility:visible!important}
@@ -1931,12 +1936,24 @@ export function ResumeSurface(props: ToolSurfaceProps): ReactNode {
             ))
           : null}
         {s.kind === "skills"
-          ? s.groups.map((g) => (
-              <div key={g.id} style={{ marginBottom: "3pt" }}>
-                {g.name ? <span className="rsm-skname">{g.name}: </span> : null}
-                {g.items.filter(Boolean).join(" · ")}
-              </div>
-            ))
+          ? s.groups.map((g) => {
+              const [leftCol, rightCol] = splitTwoColumns(g.items);
+              return doc.template === "compact" ? (
+                // R4-c: compact mirrors the PDF's two-column skills block.
+                <div key={g.id} style={{ marginBottom: "3pt" }}>
+                  {g.name ? <span className="rsm-skname">{g.name}</span> : null}
+                  <div className="rsm-skillcols">
+                    <div>{leftCol.join(" · ")}</div>
+                    <div>{rightCol.join(" · ")}</div>
+                  </div>
+                </div>
+              ) : (
+                <div key={g.id} style={{ marginBottom: "3pt" }}>
+                  {g.name ? <span className="rsm-skname">{g.name}: </span> : null}
+                  {g.items.filter(Boolean).join(" · ")}
+                </div>
+              );
+            })
           : null}
         {s.kind === "projects"
           ? s.items.map((it) => (
@@ -2004,6 +2021,7 @@ export function ResumeSurface(props: ToolSurfaceProps): ReactNode {
           minHeight: `${pagePt.h}pt`,
           "--ac": doc.accentColor,
           "--side-ink": sideInk,
+          "--side-w": `${geometryFor(doc.template, doc.pageSize).sidebarW}pt`,
         } as CSSProperties
       }
     >
@@ -2016,6 +2034,10 @@ export function ResumeSurface(props: ToolSurfaceProps): ReactNode {
                 src={doc.header.photo}
                 alt={t("resume.photoAlt", { name: doc.header.fullName })}
               />
+            ) : null}
+            <div className="rsm-name">{doc.header.fullName}</div>
+            {doc.header.headline ? (
+              <div className="rsm-headline">{doc.header.headline}</div>
             ) : null}
             <div className="rsm-slabel">{t("resume.contactLbl")}</div>
             <div style={{ fontSize: "9pt" }}>
@@ -2052,11 +2074,6 @@ export function ResumeSurface(props: ToolSurfaceProps): ReactNode {
               )}
           </aside>
           <div className="rsm-main">
-            <div className="rsm-name">{doc.header.fullName}</div>
-            {doc.header.headline ? (
-              <div className="rsm-headline">{doc.header.headline}</div>
-            ) : null}
-            <div className="rsm-hr" />
             {doc.sections.map(previewSection)}
           </div>
         </>
@@ -2094,29 +2111,36 @@ export function ResumeSurface(props: ToolSurfaceProps): ReactNode {
         <h2 className="mb-2 text-sm font-semibold">{t("resume.designTitle")}</h2>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <Label
-              htmlFor="rsm-tpl"
-              className="text-xs text-muted-foreground"
-            >
+            <Label className="text-xs text-muted-foreground">
               {t("resume.templateLbl")}
             </Label>
-            <select
+            {/* R4-c: segmented control (3-way), replacing the dropdown. */}
+            <div
               id="rsm-tpl"
-              className={`mt-1.5 ${selCls}`}
-              value={doc.template}
-              onChange={(e) =>
-                update((d) => ({
-                  ...d,
-                  template: e.target.value as ResumeTemplate,
-                }))
-              }
+              role="radiogroup"
+              aria-label={t("resume.templateLbl")}
+              className="mt-1.5 grid grid-cols-3 gap-1 rounded-md border border-input bg-background p-1"
             >
               {TEMPLATES.map((tpl) => (
-                <option key={tpl} value={tpl}>
+                <button
+                  key={tpl}
+                  type="button"
+                  role="radio"
+                  aria-checked={doc.template === tpl}
+                  onClick={() => update((d) => ({ ...d, template: tpl }))}
+                  className={`h-9 min-h-9 rounded-sm px-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 ${
+                    doc.template === tpl
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
                   {t(TEMPLATE_LABEL[tpl])}
-                </option>
+                </button>
               ))}
-            </select>
+            </div>
+            <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+              {t(TEMPLATE_DESC[doc.template])}
+            </p>
           </div>
           <div>
             <Label

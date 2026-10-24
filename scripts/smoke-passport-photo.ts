@@ -42,6 +42,7 @@ import {
 import {
   ADJUST_MAX,
   CELL_GAP_PT,
+  COUNTRY_SPECS,
   CUSTOM_MM_MAX,
   CUSTOM_MM_MIN,
   DEFAULT_STYLE,
@@ -61,9 +62,12 @@ import {
   applyWhiteBackground,
   clampCustomMM,
   clampZoom,
+  complianceReport,
   computeCropRect,
   computeSheetPlan,
+  countryById,
   infoLineText,
+  isCountryId,
   isPhotoSizeId,
   mmToPt,
   mmToPx,
@@ -71,6 +75,7 @@ import {
   photoOutputName,
   photoPixelSize,
   resolveSize,
+  sanitizeCountry,
   serializePassport,
   setJpegDpi,
   sheetById,
@@ -78,7 +83,10 @@ import {
   sheetOutputName,
   sizeAspect,
   sizeById,
+  sizeMatchesCountry,
+  suggestedSizeForCountry,
   toleranceDistanceSq,
+  type CountryId,
   type PassportStyle,
 } from "../tools/passport-photo/model";
 import {
@@ -215,6 +223,63 @@ function part0(): void {
     (key) => key.startsWith("pp.") && !enPp.includes(key)
   );
   assert(missing.length === 0, "tool i18n: surface keys all present", missing);
+
+  /* R4-c: country compliance wiring — surface uses the model + the keys */
+  assert(
+    surfaceSrc.includes("COUNTRY_SPECS") &&
+      surfaceSrc.includes("complianceReport") &&
+      surfaceSrc.includes("useStandard"),
+    "surface: country selector + compliance chip wired"
+  );
+  const countryKeys = [
+    "pp.countryLabel",
+    "pp.complianceSize",
+    "pp.complianceFace",
+    "pp.complianceBgLabel",
+    "pp.sizeMismatch",
+    "pp.useStandard",
+    "pp.countryNote",
+  ];
+  const missingCountry = countryKeys.filter((key) => !enPp.includes(key));
+  assert(
+    missingCountry.length === 0,
+    "tool i18n: country compliance keys present",
+    missingCountry
+  );
+  assert(
+    countryKeys.every((key) => hiKeys.includes(key.slice(3))),
+    "tool i18n: country compliance keys in HI too"
+  );
+  assert(
+    /no face detection/i.test(i18n.en.pp.countryNote),
+    "tool i18n: countryNote is honest about no-verification"
+  );
+  assert(
+    /face|देखें|जाँच/.test(i18n.hi.pp.sizeMismatch) &&
+      i18n.hi.pp.countryNote.length > 40,
+    "tool i18n: HI compliance copy is a real translation"
+  );
+
+  /* R4-c config copy: the guidance feature + honest FAQ (EN + real HI) */
+  const countryFeature = passportConfig.features.find((f) =>
+    /7 countries/i.test(f.en)
+  );
+  assert(
+    countryFeature !== undefined &&
+      /never analyses/i.test(countryFeature.en) &&
+      countryFeature.hi.includes("मार्गदर्शन") &&
+      countryFeature.hi.includes("विश्लेषण"),
+    "config: country-guidance feature EN+HI (honest no-analysis copy)"
+  );
+  const countryFaq = passportConfig.faq.find((f) =>
+    /target-country selector/i.test(f.q.en)
+  );
+  assert(
+    countryFaq !== undefined &&
+      /no face detection/i.test(countryFaq.a.en) &&
+      countryFaq.a.hi.includes("फ़ेस-डिटेक्शन"),
+    "config: target-country FAQ states no face detection (EN+HI)"
+  );
 
   /* shared error codes exist in the central catalog (read-only check) */
   const centralEn = JSON.parse(readFileSync("src/i18n/en.json", "utf8")) as Record<string, unknown>;
@@ -860,6 +925,142 @@ function part1(): void {
     parsePassportOption(JSON.stringify({ locale: "fr" })).locale,
     "en",
     "parsePassportOption: unknown locale → en"
+  );
+
+  /* ---- country compliance (R4-c) ---- */
+  assert(COUNTRY_SPECS.length === 7, "country table: 7 target countries");
+  assert(COUNTRY_SPECS[0]?.id === "india", "country table: India first (default)");
+  const countryIds = COUNTRY_SPECS.map((c) => c.id);
+  assert(
+    new Set(countryIds).size === countryIds.length,
+    "country table: unique ids"
+  );
+  assert(
+    COUNTRY_SPECS.every(
+      (c) =>
+        c.wMM >= CUSTOM_MM_MIN &&
+        c.wMM <= CUSTOM_MM_MAX &&
+        c.hMM >= CUSTOM_MM_MIN &&
+        c.hMM <= CUSTOM_MM_MAX &&
+        c.faceMinPct > 0 &&
+        c.faceMinPct < c.faceMaxPct &&
+        c.faceMaxPct <= 100 &&
+        c.label.en !== "" &&
+        c.label.hi !== "" &&
+        c.bg.en !== "" &&
+        c.bg.hi !== "",
+    ),
+    "country table: sane mm + face band + localized labels/hints"
+  );
+  assert(isCountryId("canada") && !isCountryId("mars"), "isCountryId");
+  assertEqual(sanitizeCountry("uk"), "uk", "sanitizeCountry: valid kept");
+  assertEqual(
+    sanitizeCountry("atlantis"),
+    "india",
+    "sanitizeCountry: garbage → india"
+  );
+  assertEqual(sanitizeCountry(42), "india", "sanitizeCountry: non-string → india");
+  assertEqual(DEFAULT_STYLE.country, "india", "DEFAULT_STYLE.country = india");
+
+  /* size suggestions: preset reuse where the mm match exactly, else custom */
+  assertEqual(
+    suggestedSizeForCountry(countryById("india") as NonNullable<ReturnType<typeof countryById>>),
+    { sizeId: "india-passport", wMM: 35, hMM: 45 },
+    "suggestion: india → india-passport preset"
+  );
+  assertEqual(
+    suggestedSizeForCountry(countryById("us") as NonNullable<ReturnType<typeof countryById>>),
+    { sizeId: "us-visa", wMM: 51, hMM: 51 },
+    "suggestion: us → us-visa preset"
+  );
+  assertEqual(
+    suggestedSizeForCountry(countryById("china") as NonNullable<ReturnType<typeof countryById>>),
+    { sizeId: "china-visa", wMM: 33, hMM: 48 },
+    "suggestion: china → china-visa preset"
+  );
+  assertEqual(
+    suggestedSizeForCountry(countryById("canada") as NonNullable<ReturnType<typeof countryById>>),
+    { sizeId: "custom", wMM: 50, hMM: 70 },
+    "suggestion: canada → custom 50×70 (no preset)"
+  );
+  assertEqual(
+    suggestedSizeForCountry(countryById("uk") as NonNullable<ReturnType<typeof countryById>>),
+    { sizeId: "custom", wMM: 35, hMM: 45 },
+    "suggestion: uk → custom (no India-labelled preset reuse)"
+  );
+
+  /* match / mismatch — honest 0.75 mm tolerance */
+  const canadaSpec = countryById("canada") as NonNullable<ReturnType<typeof countryById>>;
+  assert(
+    sizeMatchesCountry({ sizeId: "custom", wMM: 50, hMM: 70 }, canadaSpec),
+    "match: exact 50×70"
+  );
+  assert(
+    sizeMatchesCountry({ sizeId: "custom", wMM: 50.5, hMM: 69.5 }, canadaSpec),
+    "match: within 0.75 mm tolerance"
+  );
+  assert(
+    !sizeMatchesCountry(india, canadaSpec),
+    "mismatch: 35×45 vs Canada 50×70"
+  );
+
+  /* the report — switching the COUNTRY flips the suggestion + warns */
+  assertEqual(
+    complianceReport(india, "india").matches,
+    true,
+    "report: india default matches the india preset"
+  );
+  const repCanada = complianceReport(india, "canada");
+  assert(
+    repCanada.matches === false &&
+      repCanada.spec.id === "canada" &&
+      repCanada.suggestion.wMM === 50 &&
+      repCanada.suggestion.hMM === 70 &&
+      repCanada.spec.faceMinPct === 44 &&
+      repCanada.spec.faceMaxPct === 51,
+    "report: same photo size + Canada spec → honest mismatch + new suggestion",
+    repCanada
+  );
+  assert(
+    complianceReport({ sizeId: "custom", wMM: 50, hMM: 70 }, "canada").matches,
+    "report: canada 50×70 → match"
+  );
+  const repUS = complianceReport(india, "us");
+  assert(
+    repUS.matches === false && repUS.suggestion.sizeId === "us-visa",
+    "report: 35×45 vs US → mismatch + us-visa suggestion"
+  );
+  assertEqual(
+    complianceReport(india, "atlantis" as unknown as CountryId).country,
+    "india",
+    "report: garbage country id falls back to india"
+  );
+
+  /* sanitizeStyle carries + sanitizes the country field */
+  assertEqual(
+    sanitizeStyleDeep({ country: "canada" }).country,
+    "canada",
+    "sanitizeStyle: country kept"
+  );
+  assertEqual(
+    sanitizeStyleDeep({ country: "nope" }).country,
+    "india",
+    "sanitizeStyle: bad country → india"
+  );
+  assertEqual(
+    sanitizeStyleDeep({}).country,
+    "india",
+    "sanitizeStyle: missing country → india (legacy drafts)"
+  );
+  assertEqual(
+    parsePassportOption(
+      serializePassport({
+        style: { ...DEFAULT_STYLE, country: "schengen" },
+        locale: "en",
+      })
+    ).style.country,
+    "schengen",
+    "option round-trip keeps the country"
   );
 
   /* ---- output names + info line ---- */

@@ -1,14 +1,17 @@
 import { PDFDocument, StandardFonts, type PDFFont, type PDFImage } from "pdf-lib";
+import { unzipSync as fflateUnzipSync, type Unzipped } from "fflate";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
+import { embedDocumentImage } from "@/lib/pdf/embed-image";
 import { loadStampFonts } from "../stamp-common/worker-lib";
 import {
   chapterWordFor,
   EpubParseError,
   inputTooLarge,
+  lookupEntry,
   needsNoto,
   outputBaseName,
   parseEpub,
@@ -37,10 +40,15 @@ import { drawEpubPdf, type EpubFontSet } from "./render";
  *  3. cover embed — the OPF-declared PNG/JPG cover via pdf-lib's
  *     embedPng/embedJpg (a cover that fails to embed is honestly
  *     skipped, never a hard failure);
- *  4. drawEpubPdf — the exact render.ts the smoke script drives:
- *     cover page, chapters on fresh pages, inserted TOC with exact
- *     page numbers, optional folios;
- *  5. save with producer/creator "DocoPDF", PDF title/author from
+ *  4. chapter images (audit R4-a) — the book's resolved image refs
+ *     (ParsedEpub.images) embed through the shared helper (original
+ *     bytes, downscale only for oversized, ≤ 50); remote/missing
+ *     parts were already counted honestly at parse time;
+ *  5. drawEpubPdf — the exact render.ts the smoke script drives:
+ *     cover page, chapters on fresh pages with their images at their
+ *     paragraph anchors, inserted TOC with exact page numbers,
+ *     optional folios;
+ *  6. save with producer/creator "DocoPDF", PDF title/author from
  *     the OPF metadata, and the title-derived download name.
  *
  * Options: pageSize ("a4"|"letter"), margin ("normal"|"narrow"|"wide"),
@@ -175,7 +183,27 @@ async function run(request: WorkerRunRequest): Promise<void> {
       }
     }
 
-    const report = drawEpubPdf(pdfDoc, fonts, book, coverImage, {
+    // chapter images (audit R4-a): the book's resolved refs embed once
+    // per unique zip path; a part that fails here just leaves the
+    // honest alt text (parse-level skips were counted already)
+    const chapterImages = new Map<string, PDFImage>();
+    if (book.images.length > 0) {
+      let files: Unzipped = {};
+      try {
+        files = fflateUnzipSync(bytes);
+      } catch {
+        files = {};
+      }
+      for (const ref of book.images) {
+        const entry = lookupEntry(files, ref.path);
+        if (entry === undefined) continue;
+        const embedded = await embedDocumentImage(pdfDoc, entry);
+        if (embedded === null) continue;
+        chapterImages.set(ref.path, embedded.image);
+      }
+    }
+
+    const report = drawEpubPdf(pdfDoc, fonts, book, coverImage, chapterImages, {
       ...opts,
       tocTitle: tocTitleFor(lang),
       chapterWord: chapterWordFor(lang),
@@ -207,6 +235,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
         pages: report.pages,
         chapters: st.chapters,
         words: st.words,
+        imagesEmbedded: report.imagesDrawn,
+        imagesSkipped: book.imagesSkipped,
       },
     });
   } catch (error) {

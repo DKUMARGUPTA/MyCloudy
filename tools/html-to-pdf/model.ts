@@ -65,6 +65,13 @@ export interface HtmlRun {
   mono: boolean;
   /** href when the run sits inside <a href="…"> (render decides). */
   link?: string;
+  /**
+   * raw src of the <img> this run's [alt] text stands in for (capped).
+   * The html-to-pdf render ignores it (honest alt text stays), but the
+   * epub-to-pdf converter resolves it against the book's zip to embed
+   * block-level chapter images (audit R4-a).
+   */
+  img?: string;
 }
 
 export type HtmlBlock =
@@ -795,6 +802,7 @@ class HtmlAssembler {
           break;
         case "img": {
           const alt = typeof attrs.alt === "string" ? collapseWs(attrs.alt).trim() : "";
+          const src = String(attrs.src ?? "").trim().slice(0, 500);
           if (alt && this.preDepth === 0 && !this.openCell()) {
             const col = this.ensureCollector();
             if (col.runs.length < MAX_RUNS_PER_PARA) {
@@ -804,6 +812,7 @@ class HtmlAssembler {
                 italic: true,
                 underline: false,
                 mono: false,
+                img: src !== "" ? src : undefined,
               });
             }
           }
@@ -1323,6 +1332,8 @@ function coerceRuns(raw: unknown): HtmlRun[] {
     textLen += text.length;
     const link =
       typeof r.link === "string" && r.link !== "" ? r.link.slice(0, 500) : undefined;
+    const img =
+      typeof r.img === "string" && r.img !== "" ? r.img.slice(0, 500) : undefined;
     runs.push({
       text,
       bold: boolOf(r.bold),
@@ -1330,6 +1341,7 @@ function coerceRuns(raw: unknown): HtmlRun[] {
       underline: boolOf(r.underline),
       mono: boolOf(r.mono),
       link,
+      img,
     });
   }
   return runs;

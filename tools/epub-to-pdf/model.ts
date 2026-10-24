@@ -32,9 +32,13 @@
  *
  * Honest limits (mirrored in config.ts): CSS styling is not applied
  * (reflow, not facsimile), fixed-layout EPUBs are rendered as ordinary
- * reflowable text, images beyond the cover are not carried (alt text
- * prints in brackets), and the optional TOC page carries exact page
- * numbers because chapters always start on a fresh page.
+ * reflowable text, and the optional TOC page carries exact page
+ * numbers because chapters always start on a fresh page. CHAPTER
+ * IMAGES (audit R4-a): a paragraph that is only one <img> embeds its
+ * resolved zip part (PNG/JPG, ≤ MAX_EPUB_IMAGES) at that spot —
+ * remote http(s) srcs, missing parts and other formats keep the honest
+ * alt text and are counted in imagesSkipped; inline images stay alt
+ * text exactly as before.
  */
 
 import { unzipSync, zipSync, strToU8, type Unzipped, type Zippable } from "fflate";
@@ -61,6 +65,9 @@ export const MAX_TOTAL_BLOCKS = 60_000;
 export const MAX_TOC_ENTRIES = 2_000;
 export const MAX_TITLE_TEXT = 300;
 export const MAX_AUTHOR_TEXT = 300;
+/** Chapter images carried into the PDF (audit R4-a) — beyond is an
+ * honest skip, never a silent drop. */
+export const MAX_EPUB_IMAGES = 50;
 
 /** Worker/surface input gate: 20 MB of EPUB package. */
 export function inputTooLarge(byteLength: number): boolean {
@@ -93,6 +100,14 @@ export interface EpubCover {
   kind: "png" | "jpg";
 }
 
+/** One resolvable chapter image (audit R4-a): a zip member that a
+ * chapter <img> points at and the renderer can embed. */
+export interface EpubImageRef {
+  /** normalized zip path, e.g. "OEBPS/images/plot.png" */
+  path: string;
+  kind: "png" | "jpg";
+}
+
 export interface ParsedEpub {
   /** dc:title (first non-empty). */
   title: string;
@@ -106,6 +121,12 @@ export interface ParsedEpub {
   toc: EpubTocEntry[];
   /** PNG/JPG cover bytes when detected, else null. */
   cover: EpubCover | null;
+  /** chapter images that resolve to zip parts, in document order (≤
+   * MAX_EPUB_IMAGES — audit R4-a). */
+  images: EpubImageRef[];
+  /** <img> elements found but honestly not carried (remote http(s)
+   * srcs, missing/unsupported parts, over the cap). */
+  imagesSkipped: number;
   /** spine items honestly not followed (images, fonts, CSS, NCX…). */
   skipped: number;
   /** true when a hard cap was hit — the surface shows an honest note. */
@@ -212,7 +233,7 @@ export function resolveZipPath(baseDir: string, href: string): string {
  * Zip member lookup: exact key first, then a case-insensitive unique
  * match (some packaging tools write different case than the OPF).
  */
-function lookupEntry(files: Unzipped, path: string): Uint8Array | undefined {
+export function lookupEntry(files: Unzipped, path: string): Uint8Array | undefined {
   const direct = files[path];
   if (direct !== undefined) return direct;
   const lower = path.toLowerCase();
@@ -578,7 +599,7 @@ function firstHeadingText(doc: ParsedHtml): string {
   return "";
 }
 
-function sniffImageKind(
+export function sniffImageKind(
   mediaType: string,
   bytes: Uint8Array
 ): "png" | "jpg" | null {
@@ -602,6 +623,67 @@ function sniffImageKind(
     return "jpg";
   }
   return null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Chapter images (audit R4-a)                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Resolves every <img> the html parser recorded on its [alt] runs
+ * (HtmlRun.img) against the book's zip parts. A paragraph that is only
+ * one such run embeds its image later (render); remote http(s)/data
+ * srcs, missing parts and non-PNG/JPG bytes keep the honest alt text
+ * and count as skips. Runs carry the RESOLVED zip path (or undefined)
+ * so the worker can key its embed map by path. Pure (no DOM, no embed).
+ */
+function resolveChapterImages(
+  doc: ParsedHtml,
+  files: Unzipped,
+  chapterDir: string,
+  into: Map<string, EpubImageRef>,
+  state: { skipped: number; truncated: boolean }
+): void {
+  for (const block of doc.blocks) {
+    if (
+      block.kind !== "para" &&
+      block.kind !== "heading" &&
+      block.kind !== "quote" &&
+      block.kind !== "list-item"
+    ) {
+      continue;
+    }
+    for (const run of block.runs) {
+      if (run.img === undefined) continue;
+      const src = run.img;
+      if (/^(https?:|data:|blob:)/i.test(src) || src.includes("://")) {
+        // remote — never fetched (on-device promise)
+        run.img = undefined;
+        state.skipped += 1;
+        continue;
+      }
+      const path = resolveZipPath(chapterDir, src);
+      const bytes = path === "" ? undefined : lookupEntry(files, path);
+      const kind = bytes === undefined ? null : sniffImageKind("", bytes);
+      if (bytes === undefined || bytes.length === 0 || kind === null) {
+        run.img = undefined;
+        state.skipped += 1;
+        continue;
+      }
+      if (into.has(path)) {
+        run.img = path; // same part shared across chapters — one embed
+        continue;
+      }
+      if (into.size >= MAX_EPUB_IMAGES) {
+        state.truncated = true;
+        run.img = undefined;
+        state.skipped += 1;
+        continue;
+      }
+      into.set(path, { path, kind });
+      run.img = path;
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -715,6 +797,8 @@ export function parseEpub(bytes: Uint8Array): ParsedEpub {
   const chapters: EpubChapter[] = [];
   let truncated = false;
   let totalBlocks = 0;
+  const imageRefs = new Map<string, EpubImageRef>();
+  const imageState = { skipped: 0, truncated: false };
   const isHtmlItem = (item: OpfItem): boolean => {
     if (
       item.mediaType === "application/xhtml+xml" ||
@@ -745,6 +829,9 @@ export function parseEpub(bytes: Uint8Array): ParsedEpub {
     const doc = parseHtmlRun(
       JSON.stringify(parseHtml(decodeHtmlBytes(docBytes)))
     );
+    // chapter <img> resolution (audit R4-a): runs carry the resolved
+    // zip path or drop it honestly; skips + refs accumulate book-wide
+    resolveChapterImages(doc, files, dirOf(href), imageRefs, imageState);
     if (doc.blocks.length === 0) {
       skipped += 1;
       continue;
@@ -784,8 +871,10 @@ export function parseEpub(bytes: Uint8Array): ParsedEpub {
     chapters,
     toc,
     cover,
+    images: [...imageRefs.values()],
+    imagesSkipped: imageState.skipped,
     skipped,
-    truncated,
+    truncated: truncated || imageState.truncated,
   };
 }
 
@@ -799,6 +888,9 @@ export interface EpubStats {
   blocks: number;
   tocEntries: number;
   hasCover: boolean;
+  /** resolvable chapter images (audit R4-a). */
+  images: number;
+  imagesSkipped: number;
   skipped: number;
   truncated: boolean;
 }
@@ -828,6 +920,8 @@ export function stats(book: ParsedEpub): EpubStats {
     blocks,
     tocEntries: book.toc.length,
     hasCover: book.cover !== null,
+    images: book.images.length,
+    imagesSkipped: book.imagesSkipped,
     skipped: book.skipped,
     truncated: book.truncated,
   };
@@ -939,6 +1033,11 @@ export interface BuildSampleEpubOpts {
   ncx?: boolean;
   /** raw PNG bytes for OEBPS/images/cover.png (cover-image property). */
   cover?: Uint8Array;
+  /** raw PNG bytes for OEBPS/images/plot.png — when set, chapter 1
+   * gains a block-level <p><img src="../images/plot.png"> (the ../ climb
+   * from OEBPS/text/ is exercised) and chapter 3 a remote-src <img> that
+   * must stay honest alt text (audit R4-a image-embedding vectors). */
+  chapterImage?: Uint8Array;
 }
 
 /**
@@ -953,6 +1052,7 @@ export interface BuildSampleEpubOpts {
 export function buildSampleEpub(opts: BuildSampleEpubOpts = {}): Uint8Array {
   const hindi = opts.hindi === true;
   const useNcx = opts.ncx === true;
+  const chapterImage = opts.chapterImage;
   const opfPath = "OEBPS/content.opf";
 
   const ch1Title = hindi ? "यात्रा की शुरुआत" : "The Journey Begins";
@@ -992,12 +1092,24 @@ export function buildSampleEpub(opts: BuildSampleEpubOpts = {}): Uint8Array {
     ? `<h1>${ch3Title}</h1>
 <table><tr><th>क्षेत्र</th><th>मान</th></tr><tr><td>उत्तर</td><td>120</td></tr></table>
 <pre>पंक्ति एक
-पंक्ति दो</pre>`
+पंक्ति दो</pre>${
+        chapterImage
+          ? '\n<p><img src="https://example.com/remote-plot.png" alt="रिमोट तस्वीर"/></p>'
+          : ""
+      }`
     : `<h1>${ch3Title}</h1>
 <table><tr><th>Region</th><th>Value</th></tr><tr><td>North</td><td>120</td></tr><tr><td>South</td><td>80</td></tr></table>
 <pre>ledger line one
 ledger line two   kept</pre>
-<p>After the table.</p>`;
+<p>After the table.</p>${
+        chapterImage
+          ? '\n<p><img src="https://example.com/remote-plot.png" alt="Remote picture"/></p>'
+          : ""
+      }`;
+  const ch1WithImage =
+    chapterImage === undefined
+      ? ch1Body
+      : `${ch1Body}\n<p><img src="../images/plot.png" alt="Plot diagram"/></p>`;
 
   // nav/ncx TOC — both documents sit at the zip ROOT, so their hrefs
   // are relative to the root ("OEBPS/text/…"), exercising the ../
@@ -1087,13 +1199,16 @@ ledger line two   kept</pre>
     ],
     "toc.ncx": [strToU8(ncxXml), { level: 6 }],
     "OEBPS/content.opf": [strToU8(opf), { level: 6 }],
-    "OEBPS/text/ch1.xhtml": [strToU8(xhtml(bookLang, ch1Title, ch1Body)), { level: 6 }],
+    "OEBPS/text/ch1.xhtml": [strToU8(xhtml(bookLang, ch1Title, ch1WithImage)), { level: 6 }],
     "OEBPS/text/chapter two.xhtml": [strToU8(xhtml(bookLang, ch2Title, ch2Body)), { level: 6 }],
     "OEBPS/text/ch3.xhtml": [strToU8(xhtml(bookLang, ch3Title, ch3Body)), { level: 6 }],
     "OEBPS/style.css": [strToU8("body { font-family: serif; }"), { level: 6 }],
   };
   if (opts.cover !== undefined) {
     entries["OEBPS/images/cover.png"] = [opts.cover, { level: 6 }];
+  }
+  if (opts.chapterImage !== undefined) {
+    entries["OEBPS/images/plot.png"] = [opts.chapterImage, { level: 6 }];
   }
   return zipSync(entries);
 }

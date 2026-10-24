@@ -126,6 +126,184 @@ export function resolveSize(
   };
 }
 
+/* ------------------------ country compliance ------------------------- */
+
+/**
+ * Target-country guidance (R4-c) — the commonly PUBLISHED specs, not a
+ * verification: this tool has NO face detection, so the face-height band
+ * and the background hint are framing guidance only. Final acceptance is
+ * always the authority's call (the FAQ already says this).
+ */
+export type CountryId =
+  | "india"
+  | "us"
+  | "uk"
+  | "schengen"
+  | "canada"
+  | "australia"
+  | "china";
+
+export interface CountrySpec {
+  id: CountryId;
+  /** Country name (selector label) — localized like PHOTO_SIZES. */
+  label: L10n;
+  /** Standard print size in millimetres. */
+  wMM: number;
+  hMM: number;
+  /** Published head/face-height band, % of photo height (guidance). */
+  faceMinPct: number;
+  faceMaxPct: number;
+  /** Background plainness hint. */
+  bg: L10n;
+  /**
+   * A PHOTO_SIZES preset with exactly these millimetres (used by the
+   * "set standard size" affordance); null → the custom mm inputs.
+   */
+  preset: PhotoSizeId | null;
+}
+
+/** India first = the honest default (the tool's home audience). */
+export const COUNTRY_SPECS: CountrySpec[] = [
+  {
+    id: "india",
+    label: { en: "India", hi: "भारत" },
+    wMM: 35,
+    hMM: 45,
+    faceMinPct: 70,
+    faceMaxPct: 80,
+    bg: { en: "plain white or light background", hi: "सादा सफ़ेद या हल्का बैकग्राउंड" },
+    preset: "india-passport",
+  },
+  {
+    id: "us",
+    label: { en: "United States", hi: "अमेरिका" },
+    wMM: 51,
+    hMM: 51,
+    faceMinPct: 50,
+    faceMaxPct: 69,
+    bg: { en: "plain white or off-white", hi: "सादा सफ़ेद या ऑफ़-व्हाइट" },
+    preset: "us-visa",
+  },
+  {
+    id: "uk",
+    label: { en: "United Kingdom", hi: "यूनाइटेड किंगडम" },
+    wMM: 35,
+    hMM: 45,
+    faceMinPct: 64,
+    faceMaxPct: 75,
+    bg: { en: "plain light grey or cream", hi: "सादा हल्का स्लेटी या क्रीम" },
+    preset: null,
+  },
+  {
+    id: "schengen",
+    label: { en: "Schengen / EU", hi: "शेंजेन / यूरोपीय संघ" },
+    wMM: 35,
+    hMM: 45,
+    faceMinPct: 70,
+    faceMaxPct: 80,
+    bg: { en: "plain, uniform light background", hi: "सादा, एक-सा हल्का बैकग्राउंड" },
+    preset: null,
+  },
+  {
+    id: "canada",
+    label: { en: "Canada", hi: "कनाडा" },
+    wMM: 50,
+    hMM: 70,
+    faceMinPct: 44,
+    faceMaxPct: 51,
+    bg: { en: "plain white or light neutral", hi: "सादा सफ़ेद या हल्का न्यूट्रल" },
+    preset: null,
+  },
+  {
+    id: "australia",
+    label: { en: "Australia", hi: "ऑस्ट्रेलिया" },
+    wMM: 35,
+    hMM: 45,
+    faceMinPct: 71,
+    faceMaxPct: 80,
+    bg: { en: "plain light background, white preferred", hi: "सादा हल्का बैकग्राउंड, सफ़ेद बेहतर" },
+    preset: null,
+  },
+  {
+    id: "china",
+    label: { en: "China", hi: "चीन" },
+    wMM: 33,
+    hMM: 48,
+    faceMinPct: 58,
+    faceMaxPct: 69,
+    bg: { en: "plain white", hi: "सादा सफ़ेद" },
+    preset: "china-visa",
+  },
+];
+
+const COUNTRY_BY_ID = new Map<string, CountrySpec>(
+  COUNTRY_SPECS.map((c) => [c.id, c])
+);
+
+export function countryById(id: string): CountrySpec | undefined {
+  return COUNTRY_BY_ID.get(id);
+}
+
+export function isCountryId(id: string): boolean {
+  return COUNTRY_BY_ID.has(id);
+}
+
+/** Garbage → the India default (the tool's home spec). */
+export function sanitizeCountry(value: unknown): CountryId {
+  return typeof value === "string" && COUNTRY_BY_ID.has(value)
+    ? (value as CountryId)
+    : "india";
+}
+
+/** The size the country's standard maps to (preset id, or custom mm). */
+export interface SizeSuggestion {
+  sizeId: PhotoSizeId;
+  wMM: number;
+  hMM: number;
+}
+
+export function suggestedSizeForCountry(spec: CountrySpec): SizeSuggestion {
+  return spec.preset
+    ? { sizeId: spec.preset, wMM: spec.wMM, hMM: spec.hMM }
+    : { sizeId: "custom", wMM: spec.wMM, hMM: spec.hMM };
+}
+
+/** mm tolerance — printers round; 0.75 mm is well under a visible step. */
+export const SIZE_MATCH_TOL_MM = 0.75;
+
+export function sizeMatchesCountry(
+  size: ResolvedSize,
+  spec: CountrySpec,
+  tolMM: number = SIZE_MATCH_TOL_MM
+): boolean {
+  return (
+    Math.abs(size.wMM - spec.wMM) <= tolMM &&
+    Math.abs(size.hMM - spec.hMM) <= tolMM
+  );
+}
+
+/** Everything the compliance chip renders, in one pure shape. */
+export interface ComplianceReport {
+  country: CountryId;
+  spec: CountrySpec;
+  /** The resolved photo size is (within tolerance) the country standard. */
+  matches: boolean;
+  suggestion: SizeSuggestion;
+}
+
+export function complianceReport(
+  size: ResolvedSize,
+  countryId: CountryId
+): ComplianceReport {
+  const spec = COUNTRY_BY_ID.get(countryId) ?? (COUNTRY_BY_ID.get("india") as CountrySpec);
+  return {
+    country: spec.id,
+    spec,
+    matches: sizeMatchesCountry(size, spec),
+    suggestion: suggestedSizeForCountry(spec),
+  };
+}
+
 /* ------------------------------- units ------------------------------- */
 
 export const MM_PER_INCH = 25.4;
@@ -511,6 +689,8 @@ export interface PassportStyle {
   sizeId: PhotoSizeId;
   customW: number;
   customH: number;
+  /** R4-c: target-country guidance (India default) — UI hint only. */
+  country: CountryId;
   sheet: SheetId;
   zoom: number;
   panX: number;
@@ -527,6 +707,7 @@ export const DEFAULT_STYLE: PassportStyle = {
   sizeId: "india-passport",
   customW: 35,
   customH: 45,
+  country: "india",
   sheet: "photo4x6",
   zoom: 1,
   panX: 0,
@@ -563,6 +744,7 @@ export function sanitizeStyle(value: unknown): PassportStyle {
     ),
     customW: clampCustomMM(raw.customW, DEFAULT_STYLE.customW),
     customH: clampCustomMM(raw.customH, DEFAULT_STYLE.customH),
+    country: sanitizeCountry(raw.country),
     sheet: pickString(raw.sheet, ["photo4x6", "a4"] as const, DEFAULT_STYLE.sheet),
     zoom: clampZoom(raw.zoom),
     panX: clampPan(raw.panX),

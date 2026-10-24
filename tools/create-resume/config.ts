@@ -35,8 +35,8 @@ export const config: ToolConfig = {
   chainToolIds: ["view-pdf", "compress-pdf"],
   features: [
     {
-      en: "Three ATS-safe templates — Classic (single column, near-black, pure parser-friendly), Modern (accent sidebar with contact and skills), and Compact (dense, 2-page friendly) — on A4 or US Letter.",
-      hi: "तीन ATS-सुरक्षित टेम्पलेट — क्लासिक (एक कॉलम, गह़रा काला, पार्सर-फ्रेंडली), मॉडर्न (संपर्क और कौशल वाली एक्सेंट साइडबार) और कॉम्पैक्ट (सघन, 2-पेज फ़्रेंडली) — A4 या US लेटर पर।",
+      en: "Three ATS-safe templates — Classic (single column, near-black, pure parser-friendly), Modern (accent rail with your name, contact and skills plus letter-spaced section headings), and Compact (dense, two-column skills, 2-page friendly) — on A4 or US Letter.",
+      hi: "तीन ATS-सुरक्षित टेम्पलेट — क्लासिक (एक कॉलम, गह़रा काला, पार्सर-फ्रेंडली), मॉडर्न (आपका नाम, संपर्क और कौशल वाली एक्सेंट रेल + लेटर-स्पेस्ड सेक्शन शीर्षक) और कॉम्पैक्ट (सघन, दो-कॉलम कौशल, 2-पेज फ़्रेंडली) — A4 या US लेटर पर।",
     },
     {
       en: "Every word in the PDF is real selectable text — bullets are \"• \" text lines, never images — so ATS parsers and recruiters can copy and search everything.",

@@ -18,8 +18,9 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  *  - CSS styling is approximated — this reflows text, it does not
  *    reproduce the reader's typography (fixed-layout EPUBs render as
  *    ordinary reflowable text);
- *  - images beyond the cover are not carried (alt text prints in
- *    brackets);
+ *  - chapter images ARE carried: a paragraph that is only one <img>
+ *    embeds its PNG/JPG zip part (≤50 — audit R4-a); remote http(s)
+ *    srcs, unsupported formats and inline images keep honest alt text;
  *  - Hindi bold renders regular (the Noto OFL face ships Regular
  *    only — hierarchy comes from size).
  */
@@ -132,8 +133,8 @@ export const config: ToolConfig = {
       hi: "किताब का मेटाडेटा साथ चलता है: dc:title और dc:creator PDF के शीर्षक और लेखक बनते हैं, और A4 / US लेटर, तीन मार्जिन, तीन फ़ॉन्ट साइज़, विषय-सूची, कवर व पेज नंबर आपके हाथ में — बदलने से पहले शीर्षक/लेखक/अध्याय/≈पेज का लाइव ब्यौरा।",
     },
     {
-      en: "Honest about what it is: a reflower, not a reader engine. DRM-protected books are rejected outright; CSS styling is approximated; fixed-layout EPUBs render as ordinary reflowable text; images beyond the cover print as their alt text.",
-      hi: "अपने बारे में ईमानदार: यह रीफ़्लो करने वाला है, रीडर इंजन नहीं। DRM वाली किताबें सीधे अस्वीकार; CSS स्टाइलिंग सन्निकट; फ़िक्स्ड-लेआउट EPUB सामान्य रीफ़्लो टेक्स्ट जैसी छपती है; कवर के अलावा तस्वीरें अपना alt टेक्स्ट छापती हैं।",
+      en: "Honest about what it is: a reflower, not a reader engine. DRM-protected books are rejected outright; CSS styling is approximated; fixed-layout EPUBs render as ordinary reflowable text; chapter PNG/JPG images are carried into the PDF (≤50) while remote or unsupported ones print as their alt text.",
+      hi: "अपने बारे में ईमानदार: यह रीफ़्लो करने वाला है, रीडर इंजन नहीं। DRM वाली किताबें सीधे अस्वीकार; CSS स्टाइलिंग सन्निकट; फ़िक्स्ड-लेआउट EPUB सामान्य रीफ़्लो टेक्स्ट जैसी छपती है; अध्यायों की PNG/JPG तस्वीरें PDF में आती हैं (≤50) जबकि रिमोट या असमर्थित अपना alt टेक्स्ट छापती हैं।",
     },
   ],
   faq: [
@@ -173,8 +174,8 @@ export const config: ToolConfig = {
         hi: "मेरी किताब कहाँ प्रोसेस होती है, और सीमाएँ क्या हैं?",
       },
       a: {
-        en: "Entirely in this browser — a Web Worker thread unzips the package, follows the OPF spine and paints the PDF; nothing is uploaded, no sign-up, no watermark. One DRM-free .epub at a time, up to 20 MB. Images beyond the cover are not carried (alt text prints in brackets), spine items that are not XHTML (images, CSS, fonts) are skipped with honest accounting, and very large books are capped at 500 chapters / 60,000 blocks — the summary tells you when that happened.",
-        hi: "पूरा काम इसी ब्राउज़र में — एक वर्कर थ्रेड पैकेज खोलती, OPF स्पाइन चलाती और PDF बनाती है; कुछ अपलोड नहीं, न साइन-अप, न वॉटरमार्क। एक बार में एक DRM-मुक्त .epub, 20 MB तक। कवर के अलावा तस्वीरें नहीं आतीं (alt टेक्स्ट कोष्ठक में छपता है), स्पाइन की ग़ैर-XHTML मदें (तस्वीरें, CSS, फ़ॉन्ट) ईमानदारी से छोड़ी जाती हैं, और बहुत बड़ी किताबें 500 अध्याय / 60,000 ब्लॉक पर सीमित होती हैं — सारांश बता देता है कि ऐसा हुआ।",
+        en: "Entirely in this browser — a Web Worker thread unzips the package, follows the OPF spine and paints the PDF; nothing is uploaded, no sign-up, no watermark. One DRM-free .epub at a time, up to 20 MB. Chapter images that are PNG/JPG zip members are embedded at their spot (up to 50); remote http(s) images, other formats and inline images print as alt text, and every skip is counted honestly. Spine items that are not XHTML (covers, CSS, fonts) are skipped with honest accounting, and very large books are capped at 500 chapters / 60,000 blocks — the summary tells you when that happened.",
+        hi: "पूरा काम इसी ब्राउज़र में — एक वर्कर थ्रेड पैकेज खोलती, OPF स्पाइन चलाती और PDF बनाती है; कुछ अपलोड नहीं, न साइन-अप, न वॉटरमार्क। एक बार में एक DRM-मुक्त .epub, 20 MB तक। PNG/JPG ज़िप-मेंबर अध्याय तस्वीरें अपनी जगह पर जुड़ती हैं (50 तक); रिमोट http(s) तस्वीरें, अन्य फ़ॉर्मैट और इनलाइन तस्वीरें alt टेक्स्ट में छपती हैं, और हर छोड़ी तस्वीर ईमानदारी से गिनी जाती है। स्पाइन की ग़ैर-XHTML मदें (कवर, CSS, फ़ॉन्ट) ईमानदारी से छोड़ी जाती हैं, और बहुत बड़ी किताबें 500 अध्याय / 60,000 ब्लॉक पर सीमित होती हैं — सारांश बता देता है कि ऐसा हुआ।",
       },
     },
   ],

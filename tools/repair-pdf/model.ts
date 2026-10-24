@@ -31,6 +31,20 @@ import type { RunDetail } from "@/lib/workers/protocol";
  *   a. Regex-scan the raw bytes for every "N G obj" header (%PDF- is
  *      located anywhere — email wrappers and garbage prefixes included;
  *      a missing %PDF- is reported via headerFixed).
+ *   a2. Xref-STREAM salvage (R4-b): when the scan finds a stream whose
+ *      dict says /Type /XRef, its /Index + /W rows give every object's
+ *      exact offset — each entry is verified against the bytes at that
+ *      offset (object number must match) before it is trusted, and the
+ *      shared extents logic extracts the object. Objects the xref does
+ *      not cover are merged from the object scan; if no xref stream
+ *      parses, the scan alone rebuilds the table (the fallback stays
+ *      honest). Reported via xrefStreamSalvaged/xrefStreamEntries.
+ *      Un-parseable /Type /XRef streams (junk navigation for the OLD
+ *      layout — pdf-lib and other consumers eagerly decode /Type /XRef
+ *      streams and choke on garbage rows) are excluded from the
+ *      rebuild and honestly not counted; the output ships a fresh
+ *      classic table anyway. Stale-but-parseable xref streams are kept
+ *      byte-faithfully — they are part of what survived.
  *   b. Extract each object's bytes up to its endobj / the next header /
  *      EOF — truncated files still yield the objects that survived.
  *   c. Streams: a DIRECT /Length is trusted only when "endstream" really
@@ -111,6 +125,11 @@ export interface RepairReport {
   duplicatesResolved: number;
   /** Stream /Length entries corrected. */
   streamLengthsFixed: number;
+  /** Objects rebuilt via a surviving xref STREAM (/Index + /W) rather
+   *  than the regex object scan (R4-b). */
+  xrefStreamSalvaged: boolean;
+  /** Type-1 entries materialized from that xref stream. */
+  xrefStreamEntries: number;
   /** Page count from the strict verification load. */
   pages: number;
   bytesIn: number;
@@ -134,6 +153,8 @@ export interface RepairDetail extends RunDetail {
   objectsRecovered?: number;
   duplicatesResolved?: number;
   streamLengthsFixed?: number;
+  xrefStreamSalvaged?: boolean;
+  xrefStreamEntries?: number;
   beforeBytes?: number;
   afterBytes?: number;
 }
@@ -382,6 +403,8 @@ interface ScannedObject {
   data: string;
   /** Plain (non-stream) body, trimmed — includes dict bodies. */
   body: string;
+  /** Byte offset of the "N G obj" header (R4-b: xref-stream ordering). */
+  at: number;
 }
 
 interface StructureInfo {
@@ -526,9 +549,16 @@ function collectHeaders(s: string): HeaderMatch[] {
  * endobj / EOF. Stream extents honour a DIRECT /Length only when
  * "endstream" really follows it (and inflates); otherwise the
  * endstream-scan extent is used. An incomplete FINAL object sets the
- * truncation flag (mid-file incomplete objects are just dropped).
+ * truncation flag (mid-file incomplete objects are just dropped) — unless
+ * `forXref` is true (R4-b: the xref-stream path drives the same extractor
+ * with synthesized headers and must not touch the truncation flag, which
+ * belongs to the whole-file scan).
  */
-function extractObjects(s: string, headers: HeaderMatch[]): {
+function extractObjects(
+  s: string,
+  headers: HeaderMatch[],
+  forXref = false
+): {
   objects: ScannedObject[];
   streamLengthsFixed: number;
   truncationDetected: boolean;
@@ -621,6 +651,7 @@ function extractObjects(s: string, headers: HeaderMatch[]): {
             dict: spliced.dict,
             data,
             body: "",
+            at: h.matchStart,
           };
         } else {
           // ---- plain dict object ----
@@ -633,6 +664,7 @@ function extractObjects(s: string, headers: HeaderMatch[]): {
             dict: "",
             data: "",
             body: trimPdfWs(s.slice(h.bodyStart, bodyEnd)),
+            at: h.matchStart,
           };
         }
       }
@@ -650,6 +682,7 @@ function extractObjects(s: string, headers: HeaderMatch[]): {
           dict: "",
           data: "",
           body,
+          at: h.matchStart,
         };
       } else {
         incomplete = true; // never closed — garbage or cut short
@@ -657,7 +690,7 @@ function extractObjects(s: string, headers: HeaderMatch[]): {
     }
 
     if (obj !== null) objects.push(obj);
-    if (isLast && incomplete) truncationDetected = true;
+    if (isLast && incomplete && !forXref) truncationDetected = true;
   }
 
   return { objects, streamLengthsFixed, truncationDetected };
@@ -684,6 +717,193 @@ function scanRaw(s: string): ScanResult {
     truncationDetected: extracted.truncationDetected,
     structure,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Xref-stream salvage (R4-b)                                          */
+/* ------------------------------------------------------------------ */
+
+/** /Type /XRef in a stream dict — the xref-stream marker. */
+const XREF_TYPE_RE = new RegExp(`\\/Type${WS_CLASS_PLUS}\\/XRef(?![a-zA-Z])`);
+/** The classic-trailer shape this tool never trusted; xref streams only. */
+const XREF_HEADER_AT_RE =
+  /^([0-9]{1,9})[ \t\r\n\f\x00]+([0-9]{1,3})[ \t\r\n\f\x00]+obj/;
+
+interface XrefRow {
+  num: number;
+  type: number;
+  f2: number;
+  f3: number;
+}
+
+/** Reads a big-endian field of `width` bytes (width 0 → 0). */
+function readBE(raw: Uint8Array, at: number, width: number): number {
+  let value = 0;
+  for (let i = 0; i < width; i += 1) {
+    value = value * 256 + (raw[at + i] ?? 0);
+  }
+  return value;
+}
+
+/**
+ * Decodes one xref stream object into its rows: /W widths (type, field2,
+ * field3) + /Index sections ([start count …], default [0 /Size]) over the
+ * inflated stream bytes. Returns null for anything that does not fully
+ * parse — the object-scan fallback stays the honest answer then.
+ */
+function parseXrefStream(obj: ScannedObject): XrefRow[] | null {
+  if (!XREF_TYPE_RE.test(obj.dict)) return null;
+
+  const wMatch = /\/W[ \t\r\n\f\x00]*\[((?:[^\]\\]|\\.)*)\]/.exec(obj.dict);
+  if (!wMatch) return null;
+  const widths = wMatch[1]
+    .trim()
+    .split(/[ \t\r\n\f\x00]+/)
+    .filter((t) => t.length > 0)
+    .map((t) => Number.parseInt(t, 10));
+  if (
+    widths.length !== 3 ||
+    widths.some((n) => !Number.isInteger(n) || n < 0 || n > 8)
+  ) {
+    return null;
+  }
+  const [w1, w2, w3] = widths;
+  const rowWidth = w1 + w2 + w3;
+  if (rowWidth <= 0) return null;
+
+  let sections: Array<{ start: number; count: number }> = [];
+  const idxMatch = /\/Index[ \t\r\n\f\x00]*\[((?:[^\]\\]|\\.)*)\]/.exec(obj.dict);
+  if (idxMatch) {
+    const nums = idxMatch[1]
+      .trim()
+      .split(/[ \t\r\n\f\x00]+/)
+      .filter((t) => t.length > 0)
+      .map((t) => Number.parseInt(t, 10));
+    if (nums.length === 0 || nums.length % 2 !== 0) return null;
+    for (let i = 0; i < nums.length; i += 2) {
+      const start = nums[i];
+      const count = nums[i + 1];
+      if (
+        !Number.isInteger(start) ||
+        !Number.isInteger(count) ||
+        start < 0 ||
+        count < 0 ||
+        start > MAX_OBJNUM ||
+        count > MAX_OBJECTS
+      ) {
+        return null;
+      }
+      sections.push({ start, count });
+    }
+  } else {
+    const sizeMatch = /\/Size[ \t\r\n\f\x00]+([0-9]{1,10})/.exec(obj.dict);
+    if (!sizeMatch) return null;
+    const size = Number.parseInt(sizeMatch[1], 10);
+    if (!Number.isInteger(size) || size <= 0 || size > MAX_OBJNUM) return null;
+    sections = [{ start: 0, count: size }];
+  }
+
+  let raw: Uint8Array;
+  try {
+    raw = unzlibSync(latin1Encode(obj.data));
+  } catch {
+    return null; // broken Flate — the fallback owns this file
+  }
+  const maxRows = Math.floor(raw.length / rowWidth);
+  const declared = sections.reduce((sum, sec) => sum + sec.count, 0);
+  if (maxRows <= 0) return null;
+
+  const rows: XrefRow[] = [];
+  let rowIdx = 0;
+  for (const { start, count } of sections) {
+    for (let k = 0; k < count && rowIdx < maxRows && rowIdx < declared; k += 1) {
+      const base = rowIdx * rowWidth;
+      rows.push({
+        num: start + k,
+        type: w1 === 0 ? 1 : readBE(raw, base, w1),
+        f2: w2 === 0 ? 0 : readBE(raw, base + w1, w2),
+        f3: w3 === 0 ? 0 : readBE(raw, base + w1 + w2, w3),
+      });
+      rowIdx += 1;
+    }
+  }
+  return rows;
+}
+
+interface XrefStreamSalvage {
+  /** Objects materialized from type-1 entries. */
+  objects: ScannedObject[];
+  /** The xref stream object the rows came from (newest that parses). */
+  source: ScannedObject;
+  /** Rows that are objects inside /ObjStm containers (kept with their
+   *  container — a classic xref rebuild cannot address them directly). */
+  objstmEntries: number;
+}
+
+/**
+ * R4-b — xref-STREAM salvage. When the raw scan surfaced a stream whose
+ * dict says /Type /XRef (linearized + object-stream files carry one
+ * instead of a classic table), its /Index + /W rows hand us every
+ * object's exact offset — no regex sweep needed, and objects survive even
+ * when their header neighborhood is mangled. Type-1 rows are verified
+ * against the bytes actually at their offset (object number must match —
+ * a stale/overwritten entry is dropped, not trusted), then extracted by
+ * the SAME extents logic the object scan uses. The NEWEST xref stream
+ * (last in byte order) wins; if none parses cleanly, null → the object
+ * scan remains the sole recovery path, exactly as before.
+ */
+function tryXrefStreamSalvage(
+  s: string,
+  objects: ScannedObject[]
+): XrefStreamSalvage | null {
+  const candidates = objects
+    .filter((o) => o.isStream && XREF_TYPE_RE.test(o.dict))
+    .sort((a, b) => b.at - a.at);
+
+  for (const candidate of candidates) {
+    const rows = parseXrefStream(candidate);
+    if (rows === null) continue;
+
+    const headers: HeaderMatch[] = [];
+    let objstmEntries = 0;
+    for (const row of rows) {
+      if (row.type === 2) {
+        objstmEntries += 1;
+        continue;
+      }
+      if (row.type !== 1) continue; // 0 = free
+      if (row.num <= 0 || row.num > MAX_OBJNUM) continue;
+      const off = row.f2;
+      if (off <= 0 || off >= s.length) continue;
+      const m = XREF_HEADER_AT_RE.exec(s.slice(off, off + 40));
+      if (!m) continue;
+      const num = Number.parseInt(m[1], 10);
+      if (num !== row.num) continue; // stale entry — the bytes disagree
+      headers.push({
+        num,
+        gen: Number.parseInt(m[2], 10),
+        matchStart: off,
+        bodyStart: skipWs(s, off + m[0].length, s.length),
+      });
+    }
+    if (headers.length === 0) continue;
+    headers.sort((a, b) => a.matchStart - b.matchStart);
+    const deduped: HeaderMatch[] = [];
+    for (const h of headers) {
+      if (deduped.length > 0 && deduped[deduped.length - 1].matchStart === h.matchStart) {
+        continue;
+      }
+      deduped.push(h);
+    }
+    const extracted = extractObjects(s, deduped, true);
+    if (extracted.objects.length === 0) continue;
+    return {
+      objects: extracted.objects,
+      source: candidate,
+      objstmEntries,
+    };
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -943,6 +1163,8 @@ export async function repairPdf(
           objectsRecovered: objectCount,
           duplicatesResolved: 0,
           streamLengthsFixed: 0,
+          xrefStreamSalvaged: false,
+          xrefStreamEntries: 0,
           pages,
           bytesIn: bytes.length,
           bytesOut: out.length,
@@ -963,6 +1185,8 @@ export async function repairPdf(
         objectsRecovered: objectCount,
         duplicatesResolved: 0,
         streamLengthsFixed: 0,
+        xrefStreamSalvaged: false,
+        xrefStreamEntries: 0,
         pages,
         bytesIn: bytes.length,
         bytesOut: bytes.length,
@@ -976,11 +1200,41 @@ export async function repairPdf(
   }
   const salvage = scan.objects.slice(0, MAX_OBJECTS);
 
-  // Last complete occurrence wins for duplicate object numbers (an
-  // earlier complete copy survives when the later one was cut short).
+  // R4-b — two stages stay honest: the xref-STREAM path is tried first
+  // (its /Index+/W offsets are exact and each one is verified against the
+  // bytes actually at that offset); whatever it does not cover (appended
+  // incremental updates, the xref stream object itself, hybrid
+  // leftovers) is merged from the regex object scan. When no xref stream
+  // parses, the scan alone rebuilds the table — the original behavior,
+  // byte-for-byte.
   const byNum = new Map<number, ScannedObject>();
-  for (const o of salvage) {
-    byNum.set(o.num, o);
+  let xrefStreamSalvaged = false;
+  let xrefStreamEntries = 0;
+  // A /Type /XRef stream whose rows cannot be parsed (un-inflatable
+  // bytes, garbage /W//Index) is pure navigation junk for the OLD
+  // layout: pdf-lib (and some viewers) eagerly decode /Type /XRef
+  // streams and the garbage rows make the whole load fail. The rebuilt
+  // file ships a fresh classic table anyway, so such streams are
+  // excluded from the rebuild — and honestly not counted as recovered.
+  // Stale-but-parseable xref streams stay (byte-faithful recovery).
+  const isJunkXrefStream = (o: ScannedObject): boolean =>
+    o.isStream && XREF_TYPE_RE.test(o.dict) && parseXrefStream(o) === null;
+  const xrefSalvage = tryXrefStreamSalvage(s, scan.objects);
+  if (xrefSalvage !== null) {
+    for (const o of xrefSalvage.objects) {
+      byNum.set(o.num, o);
+    }
+    xrefStreamEntries = xrefSalvage.objects.length;
+    xrefStreamSalvaged = true;
+    for (const o of salvage) {
+      if (!byNum.has(o.num) && !isJunkXrefStream(o)) byNum.set(o.num, o);
+    }
+  } else {
+    // Last complete occurrence wins for duplicate object numbers (an
+    // earlier complete copy survives when the later one was cut short).
+    for (const o of salvage) {
+      if (!isJunkXrefStream(o)) byNum.set(o.num, o);
+    }
   }
 
   const root = pickCatalog(byNum);
@@ -1000,6 +1254,8 @@ export async function repairPdf(
       objectsRecovered: byNum.size,
       duplicatesResolved: scan.dupObjNums,
       streamLengthsFixed: scan.streamLengthsFixed,
+      xrefStreamSalvaged,
+      xrefStreamEntries,
       pages,
       bytesIn: bytes.length,
       bytesOut: out.length,

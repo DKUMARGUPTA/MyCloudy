@@ -697,6 +697,15 @@ export function RepairSurface({
                   label={t("rep.fixXref")}
                 />
                 <FixRow
+                  done={r.xrefStreamSalvaged === true}
+                  label={t("rep.fixXrefStream")}
+                  note={
+                    r.xrefStreamSalvaged === true
+                      ? t("rep.fixCount", { count: r.xrefStreamEntries ?? 0 })
+                      : undefined
+                  }
+                />
+                <FixRow
                   done={r.headerFixed === true}
                   label={t("rep.fixHeader")}
                 />

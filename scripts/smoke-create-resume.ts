@@ -24,6 +24,7 @@ import {
   estimatePageBreaks,
   formatDateRange,
   formatMonth,
+  geometryFor,
   isWinAnsiText,
   joinMeta,
   MAX_BULLETS_PER_ITEM,
@@ -33,6 +34,7 @@ import {
   resumeNeedsNoto,
   resumeStats,
   sampleResume,
+  splitTwoColumns,
 } from "../tools/create-resume/model";
 import { drawResumePdf } from "../tools/create-resume/render";
 import type { ResumeDoc, ResumeRun } from "../tools/create-resume/types";
@@ -483,6 +485,188 @@ console.log("── 7. Round-trip: surface JSON → parser → render ───�
   const out = await render(run.d, true);
   eq(out.pages >= 1, true, `hi round-trip pages (${out.pages})`);
   eq(objDump(out.reloaded).includes("FontFile2"), true, "hi round-trip: noto kept");
+}
+
+console.log("── 8. Template variants (R4-c) ──────────────────────────");
+{
+  /* pure two-column split (compact skills) */
+  eq(splitTwoColumns([]), [[], []], "split: empty → two empties");
+  eq(splitTwoColumns([""]), [[], []], "split: blank only dropped");
+  eq(
+    splitTwoColumns(["a", "", "b"]),
+    [["a"], ["b"]],
+    "split: blanks dropped, order kept"
+  );
+  eq(
+    splitTwoColumns(["a", "b", "c", "d"]),
+    [["a", "b"], ["c", "d"]],
+    "split: even deal"
+  );
+  eq(
+    splitTwoColumns(["a", "b", "c"]),
+    [["a", "b"], ["c"]],
+    "split: odd → left heavier"
+  );
+
+  /* geometry pins — modern rail ~34%, classic/compact untouched */
+  eq(geometryFor("modern", "a4").sidebarW, 202, "modern A4 sidebar = 34% (202pt)");
+  eq(geometryFor("modern", "letter").sidebarW, 208, "modern Letter sidebar = 34% (208pt)");
+  eq(geometryFor("classic", "a4").sidebarW, 0, "classic: no sidebar");
+  eq(geometryFor("compact", "a4").body, 9.5, "compact body stays 9.5pt");
+  eq(geometryFor("classic", "a4").body, 10, "classic body stays 10pt");
+
+  /** (x, y, text) of every drawText-style op in the inflated streams. */
+  const drawnTexts = (bytes: Uint8Array): { x: number; y: number; text: string }[] => {
+    const out: { x: number; y: number; text: string }[] = [];
+    const re = /1 0 0 1 (-?[\d.]+) (-?[\d.]+) Tm\s*<([0-9A-Fa-f]+)> Tj/g;
+    const s = inflatedStreams(bytes);
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s)) !== null) {
+      out.push({
+        x: Number.parseFloat(m[1]),
+        y: Number.parseFloat(m[2]),
+        text: Buffer.from(m[3], "hex").toString("latin1"),
+      });
+    }
+    return out;
+  };
+  const hasTc = (bytes: Uint8Array): boolean => /\bTc\b/.test(inflatedStreams(bytes));
+
+  /* CLASSIC regression — the pre-R4-c key strings, byte-for-byte scope */
+  const en = sampleResume("en");
+  const classic = await render(en, false);
+  const classicTxt = inflatedStreams(classic.bytes);
+  eq(hasText(classicTxt, "Priya"), true, "classic: name (pre-R4-c string)");
+  eq(hasText(classicTxt, "Techseva"), true, "classic: company (pre-R4-c string)");
+  eq(hasText(classicTxt, "EXPERIENCE"), true, "classic: caps section title");
+  eq(hasText(classicTxt, "priya.sharma@example.com"), true, "classic: contact line");
+  eq(hasTc(classic.bytes), false, "classic: NO letter-spacing operator");
+  const classicNodes = drawnTexts(classic.bytes);
+  const classicSkills = classicNodes.find((n) => n.text.includes("TypeScript"));
+  eq(
+    classicSkills?.text ?? "",
+    "TypeScript \u00b7 React \u00b7 Node.js \u00b7 Python",
+    "classic: skills stay ONE joined ATS line"
+  );
+
+  /* MODERN — rail carries name+contact+skills, headings tracked, 34% rect */
+  const modern = await render({ ...en, template: "modern" }, false);
+  const modernTxt = inflatedStreams(modern.bytes);
+  eq(hasText(modernTxt, "Priya"), true, "modern: name in rail");
+  eq(hasText(modernTxt, "Sharma"), true, "modern: surname in rail");
+  eq(hasText(modernTxt, "priya.sharma@example.com"), true, "modern: contact in rail");
+  eq(hasText(modernTxt, "TypeScript"), true, "modern: skills in rail");
+  eq(hasText(modernTxt, "EXPERIENCE"), true, "modern: tracked heading literal contiguous");
+  eq(hasTc(modern.bytes), true, "modern: real Tc letter-spacing present");
+  eq(hasText(modernTxt, "NaN"), false, "modern: no NaN geometry");
+  eq(
+    /0 0 m\s*0 841\.89 l\s*202 841\.89 l\s*202 0 l/.test(modernTxt),
+    true,
+    "modern A4: full-bleed rail path = 34% width"
+  );
+  const modernNodes = drawnTexts(modern.bytes);
+  eq(
+    modernNodes.some((n) => n.text === "Priya Sharma"),
+    true,
+    "modern: full name drawn in the rail column (x < 202)"
+  );
+  eq(
+    modernNodes.every((n) => !(n.text === "Priya Sharma" && n.x > 202)),
+    true,
+    "modern: name x-position inside the rail"
+  );
+  const modernLetter = await render({ ...en, template: "modern", pageSize: "letter" }, false);
+  const ml0 = modernLetter.reloaded.getPage(0).getSize();
+  eq(
+    Math.abs(ml0.width - 612) < 0.5 && Math.abs(ml0.height - 792) < 0.5,
+    true,
+    `modern letter dims (${ml0.width.toFixed(1)}×${ml0.height.toFixed(1)})`
+  );
+  eq(
+    /0 0 m\s*0 792 l\s*208 792 l\s*208 0 l/.test(inflatedStreams(modernLetter.bytes)),
+    true,
+    "modern Letter: full-bleed rail path = 34% width"
+  );
+
+  /* COMPACT — two-column skills, no tracking, tighter body */
+  const compact = await render({ ...en, template: "compact" }, false);
+  const compactTxt = inflatedStreams(compact.bytes);
+  eq(hasText(compactTxt, "EXPERIENCE"), true, "compact: caps section title");
+  eq(hasTc(compact.bytes), false, "compact: NO letter-spacing operator");
+  eq(hasText(compactTxt, "NaN"), false, "compact: no NaN geometry");
+  const compactNodes = drawnTexts(compact.bytes);
+  const left = compactNodes.find((n) => n.text === "TypeScript \u00b7 React");
+  const right = compactNodes.find((n) => n.text === "Node.js \u00b7 Python");
+  eq(left !== undefined, true, "compact: LEFT column literal drawn");
+  eq(right !== undefined, true, "compact: RIGHT column literal drawn");
+  if (left && right) {
+    eq(
+      right.x > left.x + 100,
+      true,
+      `compact: columns separated (${left.x.toFixed(1)} → ${right.x.toFixed(1)})`
+    );
+    eq(
+      Math.abs(left.y - right.y) < 0.5,
+      true,
+      "compact: columns share the same baseline row"
+    );
+  }
+
+  /* Devanagari/Noto pipeline — every template goes through the same pick */
+  const hiModern = await render({ ...sampleResume("hi"), template: "modern" }, true);
+  eq(objDump(hiModern.reloaded).includes("FontFile2"), true, "modern hindi: noto embedded");
+  eq(hiModern.pages >= 1, true, `modern hindi pages (${hiModern.pages})`);
+  const hiCompact = await render({ ...sampleResume("hi"), template: "compact" }, true);
+  eq(objDump(hiCompact.reloaded).includes("FontFile2"), true, "compact hindi: noto embedded");
+  eq(inflatedStreams(hiCompact.bytes).includes("NaN"), false, "compact hindi: no NaN");
+
+  /* wiring: segmented control + template names/hints in BOTH catalogs,
+     tool i18n.json mirror, and the config feature copy (R4-c) */
+  const surfaceSrc = readFileSync("tools/create-resume/surface.tsx", "utf8");
+  eq(
+    /role="radiogroup"/.test(surfaceSrc) &&
+      /TEMPLATE_DESC\[doc\.template\]/.test(surfaceSrc) &&
+      surfaceSrc.includes("splitTwoColumns") &&
+      surfaceSrc.includes("geometryFor"),
+    true,
+    "surface: segmented radiogroup + per-template hint + model wiring"
+  );
+  const rsmI18n = JSON.parse(
+    readFileSync("tools/create-resume/i18n.json", "utf8")
+  ) as {
+    en: Record<string, Record<string, string>>;
+    hi: Record<string, Record<string, string>>;
+  };
+  const rsmEn = rsmI18n.en.resume ?? {};
+  const rsmHi = rsmI18n.hi.resume ?? {};
+  const tplKeys = [
+    "tplClassic",
+    "tplClassicDesc",
+    "tplModern",
+    "tplModernDesc",
+    "tplCompact",
+    "tplCompactDesc",
+  ];
+  eq(
+    tplKeys.every((k) => k in rsmEn && k in rsmHi) &&
+      rsmEn.tplModernDesc !== rsmHi.tplModernDesc &&
+      rsmEn.tplCompactDesc !== rsmHi.tplCompactDesc,
+    true,
+    "tool i18n: template names + hints EN+HI (real translations)"
+  );
+  const central = {
+    en: JSON.parse(readFileSync("src/i18n/en.json", "utf8")) as Record<string, Record<string, string>>,
+    hi: JSON.parse(readFileSync("src/i18n/hi.json", "utf8")) as Record<string, Record<string, string>>,
+  };
+  eq(
+    tplKeys.every(
+      (k) =>
+        central.en.resume?.[k] === rsmEn[k] &&
+        central.hi.resume?.[k] === rsmHi[k]
+    ),
+    true,
+    "central catalogs mirror the tool i18n template strings"
+  );
 }
 
 /* ------------------------------------------------------------------ */

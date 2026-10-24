@@ -15,8 +15,9 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  * Honest limits (mirrored in the FAQ):
  *  - .docx only — the pre-2007 binary .doc format is NOT a ZIP and is
  *    rejected up front;
- *  - images, headers, footers, footnotes, text boxes and multi-column
- *    layouts are not carried over;
+ *  - embedded PNG/JPEG images ARE carried (≤50, anchored to their
+ *    paragraph — audit R4-a); headers, footers, footnotes, text boxes
+ *    and multi-column layouts are still not carried over;
  *  - numbered lists print as bullets; justify renders as left-aligned;
  *  - Hindi bold renders as regular (the Noto OFL face ships Regular
  *    only — hierarchy comes from size).
@@ -88,8 +89,8 @@ export const config: ToolConfig = {
         hi: "रूपांतरण में क्या बचता है — और क्या नहीं?",
       },
       a: {
-        en: "Kept: paragraphs with bold, font sizes, left/center/right alignment, Heading 1–3 and Title hierarchy, bullet lists with nesting, tables with measured columns and hairline borders, and explicit page breaks. Simplified or dropped: images, headers and footers, footnotes, text boxes, multi-column layouts, and numbered lists print as bullets. Everything that IS drawn is real selectable text — we never rasterize your words.",
-        hi: "बचता है: बोल्ड और फ़ॉन्ट आकार वाले पैराग्राफ़, बाएँ/मध्य/दाएँ संरेखण, Heading 1–3 और Title क्रम, नेस्टिंग वाली बुलेट सूचियाँ, मापे हुए कॉलम और पतली किनारों वाली टेबलें, और स्पष्ट पेज-ब्रेक। सरल या छूटा: तस्वीरें, हेडर-फ़ुटर, फ़ुटनोट, टेक्स्ट-बॉक्स, कई कॉलम वाले लेआउट, और नंबर वाली सूचियाँ बुलेट बन जाती हैं। जो कुछ भी छपता है वह असली चुनने योग्य टेक्स्ट है — आपके शब्दों की तस्वीर कभी नहीं बनती।",
+        en: "Kept: paragraphs with bold, font sizes, left/center/right alignment, Heading 1–3 and Title hierarchy, bullet lists with nesting, tables with measured columns and hairline borders, explicit page breaks — and embedded images: PNG/JPEG pictures inside the document are carried into the PDF at their spot (up to 50; other formats and table-cell pictures are counted as skipped). Simplified or dropped: headers and footers, footnotes, text boxes, multi-column layouts, and numbered lists print as bullets. Everything that IS drawn as text is real selectable text — we never rasterize your words.",
+        hi: "बचता है: बोल्ड और फ़ॉन्ट आकार वाले पैराग्राफ़, बाएँ/मध्य/दाएँ संरेखण, Heading 1–3 और Title क्रम, नेस्टिंग वाली बुलेट सूचियाँ, मापे हुए कॉलम और पतली किनारों वाली टेबलें, स्पष्ट पेज-ब्रेक — और एम्बेडेड तस्वीरें: दस्तावेज़ के अंदर की PNG/JPEG तस्वीरें अपनी जगह पर PDF में आती हैं (50 तक; अन्य फ़ॉर्मैट और टेबल-सेल तस्वीरें छोड़ी गिनी जाती हैं)। सरल या छूटा: हेडर-फ़ुटर, फ़ुटनोट, टेक्स्ट-बॉक्स, कई कॉलम वाले लेआउट, और नंबर वाली सूचियाँ बुलेट बन जाती हैं। जो कुछ भी टेक्स्ट के रूप में छपता है वह असली चुनने योग्य टेक्स्ट है — आपके शब्दों की तस्वीर कभी नहीं बनती।",
       },
     },
     {

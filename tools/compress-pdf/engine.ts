@@ -354,3 +354,198 @@ export function indexedPalette(
   }
   return null; // stream-backed palettes are handled by the worker
 }
+
+/* ------------------------------------------------------------------ */
+/* Duplicate image dedupe (R4-b)                                       */
+/* ------------------------------------------------------------------ */
+
+export interface DedupeResult {
+  /** Duplicate image objects that were removed (groups contribute n−1). */
+  mergedCount: number;
+  /** Groups that actually had ≥2 byte-identical members. */
+  mergedGroups: number;
+  /** Sum of the removed duplicates' raw stream bytes (honest lower bound —
+   *  the saved file also drops each duplicate's dict + xref entry). */
+  bytesSaved: number;
+  /** Object number of the shared keeper per removed duplicate (debug/tests). */
+  keeperOf: Map<number, number>;
+}
+
+/** Canonical signature of a value tree, refs rendered as "R:num:gen". */
+function signatureOf(value: unknown): string {
+  if (value instanceof PDFName) return value.asString();
+  if (value instanceof PDFNumber) return `#${value.asNumber()}`;
+  if (value instanceof PDFString || value instanceof PDFHexString) {
+    const bytes = value.asBytes();
+    let hex = "";
+    for (let i = 0; i < bytes.length; i += 1) {
+      hex += bytes[i].toString(16).padStart(2, "0");
+    }
+    return `(${hex})`;
+  }
+  if (value instanceof PDFArray) {
+    const parts: string[] = [];
+    for (let i = 0; i < value.size(); i += 1) {
+      parts.push(signatureOf(value.get(i)));
+    }
+    return `[${parts.join(",")}]`;
+  }
+  if (value instanceof PDFDict) {
+    // NB: PDFName.asString() carries the leading "/" — sort+render the
+    // ENTRIES directly; re-deriving keys via PDFName.of(keyAsString)
+    // would look up the wrong (slash-prefixed) pool entry and render
+    // every value undefined (the smoke's SMask guard caught exactly that).
+    const entries = [...value.entries()].sort((a, b) =>
+      a[0].asString() < b[0].asString() ? -1 : 1
+    );
+    const parts = entries.map(
+      ([key, inner]) => `${key.asString()}=${signatureOf(inner)}`
+    );
+    return `<<${parts.join(",")}>>`;
+  }
+  if (isRef(value)) {
+    return `R:${value.objectNumber}:${value.generationNumber ?? 0}`;
+  }
+  return String(value);
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Deep-walks every indirect object and rewrites PDFRef values that point
+ * at a removed duplicate onto the keeper's ref. PDFDict/PDFArray values
+ * are the only place a PDFRef can legally live; a visited set guards the
+ * cyclic shapes a real page tree can have.
+ */
+function retargetRefs(doc: PDFDocument, keeperOf: Map<PDFRef, PDFRef>): void {
+  const visitedDicts = new Set<PDFDict>();
+  const visitedArrays = new Set<PDFArray>();
+
+  const walk = (value: unknown): void => {
+    if (isRef(value)) return; // leaf — rewriting happens in the parent
+    if (value instanceof PDFDict) {
+      if (visitedDicts.has(value)) return;
+      visitedDicts.add(value);
+      for (const [key, inner] of value.entries()) {
+        if (isRef(inner) && keeperOf.has(inner)) {
+          value.set(key, keeperOf.get(inner)!);
+        } else {
+          walk(inner);
+        }
+      }
+      return;
+    }
+    if (value instanceof PDFArray) {
+      if (visitedArrays.has(value)) return;
+      visitedArrays.add(value);
+      for (let i = 0; i < value.size(); i += 1) {
+        const inner = value.get(i);
+        if (isRef(inner) && keeperOf.has(inner)) {
+          value.set(i, keeperOf.get(inner)!);
+        } else {
+          walk(inner);
+        }
+      }
+    }
+  };
+
+  for (const [, obj] of doc.context.enumerateIndirectObjects()) {
+    if (obj instanceof PDFDict) walk(obj);
+    else if (obj instanceof PDFArray) walk(obj);
+    else if (typeof obj === "object" && obj !== null && "dict" in obj) {
+      // Stream objects (raw streams, content streams, …) — walk the dict.
+      walk((obj as unknown as { dict: unknown }).dict);
+    }
+  }
+}
+
+/**
+ * Merges byte-identical image XObjects onto ONE shared object (R4-b).
+ *
+ * Files that stamp the same logo/photo on every page (letterheads,
+ * watermarks, form scans) embed one copy PER PAGE; the bytes are identical
+ * and all but the first copy are pure waste. Detection: group image
+ * streams by a canonical dict signature (every entry except /Length,
+ * with refs kept distinct so images never share a foreign /SMask) + raw
+ * stream length, then CONFIRM with a full byte compare — a hash alone
+ * never merges. Groups with a single member are untouched; the keeper is
+ * the lowest object number; duplicates are deleted after every reference
+ * in the document was retargeted onto the keeper.
+ *
+ * Runs on ANY image XObject — including ones the JPEG re-encode must skip
+ * (masks, odd colorspaces) — so dedupe is orthogonal to re-encoding, and
+ * running it FIRST means unique images re-encode exactly once.
+ */
+export function dedupeImageXObjects(doc: PDFDocument): DedupeResult {
+  const context = doc.context;
+  const images: { ref: PDFRef; stream: PDFRawStream; signature: string }[] = [];
+  for (const [ref, obj] of context.enumerateIndirectObjects()) {
+    if (!(obj instanceof PDFRawStream)) continue;
+    const dict = obj.dict;
+    const subtype = dict.lookup(PDFName.of("Subtype"));
+    if (!(subtype instanceof PDFName) || subtype !== PDFName.of("Image")) {
+      continue;
+    }
+    // /Length is stream-machinery (it equals contents.length); everything
+    // else in the dict must agree before two images are merge candidates.
+    const shadow = PDFDict.withContext(context);
+    for (const [key, value] of dict.entries()) {
+      if (key === PDFName.of("Length")) continue;
+      shadow.set(key, value);
+    }
+    images.push({ ref, stream: obj, signature: signatureOf(shadow) });
+  }
+
+  const groups = new Map<string, typeof images>();
+  for (const image of images) {
+    const key = `${image.signature}#${image.stream.contents.length}`;
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(image);
+    else groups.set(key, [image]);
+  }
+
+  const keeperOf = new Map<PDFRef, PDFRef>();
+  let bytesSaved = 0;
+  let mergedGroups = 0;
+  for (const bucket of groups.values()) {
+    if (bucket.length < 2) continue; // cap safety: only ≥2 identical copies
+    bucket.sort((a, b) => a.ref.objectNumber - b.ref.objectNumber);
+    const keeper = bucket[0];
+    let mergedAny = false;
+    for (let i = 1; i < bucket.length; i += 1) {
+      const dup = bucket[i];
+      // The signature is necessary but not sufficient — compare the raw
+      // bytes so no hash/length collision can ever corrupt a document.
+      if (!bytesEqual(keeper.stream.contents, dup.stream.contents)) continue;
+      keeperOf.set(dup.ref, keeper.ref);
+      bytesSaved += dup.stream.contents.length;
+      mergedAny = true;
+    }
+    if (mergedAny) mergedGroups += 1;
+  }
+  if (keeperOf.size === 0) {
+    return { mergedCount: 0, mergedGroups: 0, bytesSaved: 0, keeperOf: new Map() };
+  }
+
+  retargetRefs(doc, keeperOf);
+  for (const dup of keeperOf.keys()) {
+    context.delete(dup);
+  }
+
+  const keeperOfNums = new Map<number, number>();
+  for (const [dup, keeper] of keeperOf) {
+    keeperOfNums.set(dup.objectNumber, keeper.objectNumber);
+  }
+  return {
+    mergedCount: keeperOf.size,
+    mergedGroups,
+    bytesSaved,
+    keeperOf: keeperOfNums,
+  };
+}

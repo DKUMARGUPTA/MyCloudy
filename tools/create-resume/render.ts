@@ -10,12 +10,18 @@
  *    embedded) or the self-hosted Noto when any text is Devanagari,
  *    name 22 pt, section titles 11 pt CAPS over a hairline rule, no
  *    colours except near-black.
- *  - modern — accent rail on the left (64 mm ≈ 181 pt, full-bleed)
- *    carrying the photo + contact + skills; main column to the right.
- *  - compact — dense: 9.5 pt body, tighter leading, 2-page friendly.
+ *  - modern — accent rail on the left (~34% of the page width, full-
+ *    bleed) carrying the photo + name + contact + skills; main column
+ *    to the right with uppercase, letter-spaced (real PDF Tc operator)
+ *    section headings.
+ *  - compact — dense: 9.5 pt body, tighter leading, two-column skills
+ *    block, thin accent rules, 2-page friendly.
  *
  * ATS contract: every glyph is REAL selectable text (drawText), bullets
- * are "• " text lines, no icons, no images-as-text, no letter-spacing.
+ * are "• " text lines, no icons, no images-as-text. Letter-spacing is
+ * only used by Modern's headings and only via the PDF text-state Tc
+ * operator — the string stays one contiguous literal, so copy/search
+ * still yields "EXPERIENCE", never "E X P E R I E N C E".
  * Photo is optional and only ever an image XObject.
  *
  * Fonts: pure-WinAnsi content → Helvetica/HelveticaBold (embedStandardFont
@@ -30,14 +36,29 @@
  */
 
 import type { PDFDocument, PDFFont, PDFImage, PDFPage } from "pdf-lib";
-import { rgb, type RGB } from "pdf-lib";
+import {
+  beginText,
+  endText,
+  moveText,
+  PDFName,
+  popGraphicsState,
+  pushGraphicsState,
+  rgb,
+  setCharacterSpacing,
+  setFillingColor,
+  setFontAndSize,
+  showText,
+  type RGB,
+} from "pdf-lib";
 
 import {
   atsBulletLine,
   atsContactLine,
   formatDateRange,
   geometryFor,
+  HEADING_TRACK_RATIO,
   joinMeta,
+  splitTwoColumns,
   wrapText,
   type ResumeGeometry,
 } from "./model";
@@ -112,6 +133,8 @@ class Painter {
   readonly geo: ResumeGeometry;
   readonly run: ResumeRun;
   readonly accent: RGB;
+  /** modern only — section headings draw with real Tc letter-spacing. */
+  readonly tracked: boolean;
   pages: PDFPage[] = [];
   page!: PDFPage;
   y = 0;
@@ -131,6 +154,7 @@ class Painter {
     this.run = run;
     this.geo = geometryFor(run.d.template, run.d.pageSize);
     this.accent = hexColor(accentHex);
+    this.tracked = run.d.template === "modern";
     this.newPage();
   }
 
@@ -196,6 +220,68 @@ class Painter {
       color,
     });
   }
+
+  /**
+   * Letter-spaced text via the PDF text-state Tc operator (modern's
+   * headings): one contiguous Tj literal — extractors read the whole
+   * word, the renderer adds `tracking` pt after every glyph.
+   */
+  trackText(
+    s: string,
+    x: number,
+    yTop: number,
+    size: number,
+    color: RGB,
+    bold = false
+  ): void {
+    this.trackTextOn(this.page, s, x, yTop, size, color, bold);
+  }
+
+  trackTextOn(
+    page: PDFPage,
+    s: string,
+    x: number,
+    yTop: number,
+    size: number,
+    color: RGB,
+    bold = false
+  ): void {
+    if (!s) return;
+    const f = this.fontFor(bold);
+    page.pushOperators(
+      pushGraphicsState(),
+      beginText(),
+      setFillingColor(color),
+      setFontAndSize(this.fontKeyFor(page, f), size),
+      setCharacterSpacing(size * HEADING_TRACK_RATIO),
+      moveText(x, yTop - size),
+      showText(f.encodeText(s)),
+      endText(),
+      popGraphicsState()
+    );
+  }
+
+  /**
+   * Raw Tj text needs the font's RESOURCE key, not the PDFFont — pdf-lib
+   * only wires that up inside drawText, so we register our own "Zt#
+   * dictionary entry once per (page, font) and reuse it.
+   */
+  private fontKeys = new Map<PDFPage, Map<PDFFont, PDFName>>();
+  private fontKeySeq = 0;
+
+  private fontKeyFor(page: PDFPage, font: PDFFont): PDFName {
+    let perPage = this.fontKeys.get(page);
+    if (!perPage) {
+      perPage = new Map();
+      this.fontKeys.set(page, perPage);
+    }
+    const hit = perPage.get(font);
+    if (hit) return hit;
+    const key = PDFName.of(`Zt${this.fontKeySeq++}`);
+    page.node.setFontDictionary(key, font.ref);
+    perPage.set(font, key);
+    return key;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -209,7 +295,12 @@ function drawSectionTitle(
 ): void {
   const g = p.geo;
   p.ensure(g.title * 1.35 + 6 + g.lh); // title + at least one content line
-  p.text(s.title.toUpperCase(), g.x, p.y, g.title, { bold: true });
+  const title = s.title.toUpperCase();
+  if (p.tracked) {
+    p.trackText(title, g.x, p.y, g.title, COL_TEXT, true);
+  } else {
+    p.text(title, g.x, p.y, g.title, { bold: true });
+  }
   p.y -= g.title + 4;
   p.line(g.x, p.y, g.x + g.w, ruleColor, 0.75);
   p.y -= 6 + g.lh * 0.45;
@@ -312,17 +403,34 @@ function drawSkills(
   s: Extract<ResumeSection, { kind: "skills" }>
 ): void {
   const g = p.geo;
+  // R4-c: compact prints each group's items in TWO columns (split by
+  // the pure model helper); classic keeps the single ATS line layout.
+  const twoCol = p.run.d.template === "compact";
   for (const grp of s.groups) {
     if (grp.name) {
       p.ensure(g.lh);
       p.text(grp.name, g.x, p.y, g.body, { bold: true });
       p.y -= g.lh;
     }
-    const items = grp.items.join(" \u00b7 ");
-    for (const ln of p.wrap(items, g.w, g.body)) {
-      p.ensure(g.lh);
-      p.text(ln, g.x, p.y, g.body);
-      p.y -= g.lh;
+    if (twoCol) {
+      const [left, right] = splitTwoColumns(grp.items);
+      const colW = (g.w - 8) / 2;
+      const leftLines = p.wrap(left.join(" \u00b7 "), colW, g.body);
+      const rightLines = p.wrap(right.join(" \u00b7 "), colW, g.body);
+      const rows = Math.max(leftLines.length, rightLines.length);
+      for (let i = 0; i < rows; i++) {
+        p.ensure(g.lh);
+        p.text(leftLines[i] ?? "", g.x, p.y, g.body);
+        p.text(rightLines[i] ?? "", g.x + colW + 8, p.y, g.body);
+        p.y -= g.lh;
+      }
+    } else {
+      const items = grp.items.join(" \u00b7 ");
+      for (const ln of p.wrap(items, g.w, g.body)) {
+        p.ensure(g.lh);
+        p.text(ln, g.x, p.y, g.body);
+        p.y -= g.lh;
+      }
     }
     p.y -= 2;
   }
@@ -566,6 +674,8 @@ interface SideSpec {
   size: number;
   bold: boolean;
   color: RGB;
+  /** modern rail labels — real Tc letter-spacing. */
+  track?: boolean;
 }
 
 interface SideSlices {
@@ -598,14 +708,28 @@ function layoutSidebar(
       y = g.pageH - g.margin;
     }
   };
-  const lineOut = (text: string, size: number, bold = false, color: RGB = ink): void => {
+  const lineOut = (
+    text: string,
+    size: number,
+    bold = false,
+    color: RGB = ink,
+    track = false
+  ): void => {
     for (const ln of p.wrap(text, g.sideW, size, bold)) {
       if (ln === "") {
         y -= g.lh;
         continue;
       }
       fit(g.lh);
-      perPage[pageIdx].push({ x: g.sidePad, yTop: y, text: ln, size, bold, color });
+      perPage[pageIdx].push({
+        x: g.sidePad,
+        yTop: y,
+        text: ln,
+        size,
+        bold,
+        color,
+        track,
+      });
       y -= g.lh;
     }
   };
@@ -624,9 +748,19 @@ function layoutSidebar(
     y -= g.photoSide + 18;
   }
 
+  // R4-c: the identity block (name + headline) lives in the rail.
+  if (d.header.fullName) {
+    lineOut(d.header.fullName, g.name, true);
+    y -= 2;
+  }
+  if (d.header.headline) {
+    lineOut(d.header.headline, g.headline);
+    y -= 6;
+  }
+
   const contactLabel = p.label("contact", "CONTACT").toUpperCase();
   if (contactLabel) {
-    lineOut(contactLabel, g.small, true);
+    lineOut(contactLabel, g.small, true, ink, true);
     y -= 2;
   }
   for (const part of [
@@ -643,7 +777,7 @@ function layoutSidebar(
   for (const s of d.sections) {
     if (s.kind !== "skills") continue;
     fit(g.title * 1.3 + 4 + g.lh);
-    lineOut(s.title.toUpperCase(), g.title - 1, true);
+    lineOut(s.title.toUpperCase(), g.title - 1, true, ink, true);
     y -= 2;
     for (const grp of s.groups) {
       if (grp.name) lineOut(grp.name, g.body, true);
@@ -659,13 +793,17 @@ function paintSidebarSlice(p: Painter, slice: SideSpec[], pageIndex: number): vo
   if (pageIndex >= p.pages.length) return;
   const page = p.pages[pageIndex];
   for (const spec of slice) {
-    page.drawText(spec.text, {
-      x: spec.x,
-      y: spec.yTop - spec.size,
-      size: spec.size,
-      font: p.fontFor(spec.bold),
-      color: spec.color,
-    });
+    if (spec.track) {
+      p.trackTextOn(page, spec.text, spec.x, spec.yTop, spec.size, spec.color, spec.bold);
+    } else {
+      page.drawText(spec.text, {
+        x: spec.x,
+        y: spec.yTop - spec.size,
+        size: spec.size,
+        font: p.fontFor(spec.bold),
+        color: spec.color,
+      });
+    }
   }
 }
 
@@ -727,23 +865,8 @@ async function drawModern(p: Painter): Promise<void> {
     });
   }
 
-  // Phase B: main flow (name + headline + everything except skills).
-  const nameLines = p.wrap(d.header.fullName, g.w, g.name, true);
-  for (const ln of nameLines) {
-    p.text(ln, g.x, p.y, g.name, { bold: true });
-    p.y -= g.name * 1.25;
-  }
-  if (d.header.headline) {
-    for (const ln of p.wrap(d.header.headline, g.w, g.headline)) {
-      p.ensure(g.lh);
-      p.text(ln, g.x, p.y, g.headline, { color: COL_MUTED });
-      p.y -= g.lh;
-    }
-  }
-  p.y -= 6;
-  p.line(g.x, p.y, g.x + g.w, p.accent, 1.25);
-  p.y -= g.gapHeader;
-
+  // Phase B: main flow (R4-c: identity moved into the rail — the main
+  // column starts straight at the first section heading).
   for (const s of d.sections) {
     drawSection(p, s, p.accent, p.accent, true);
   }

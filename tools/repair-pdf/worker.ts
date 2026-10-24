@@ -75,6 +75,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     objectsRecovered: report.objectsRecovered,
     duplicatesResolved: report.duplicatesResolved,
     streamLengthsFixed: report.streamLengthsFixed,
+    xrefStreamSalvaged: report.xrefStreamSalvaged,
+    xrefStreamEntries: report.xrefStreamEntries,
   };
 
   post({

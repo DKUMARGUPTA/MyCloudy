@@ -10,8 +10,11 @@ import {
 } from "../pdfjs-common/worker-lib";
 import {
   countChars,
+  detectSkewAngle,
   joinTextItems,
   joinTxtPages,
+  rgbaToGray,
+  SKEW_MAX_ANGLE,
 } from "./engine";
 
 /**
@@ -25,6 +28,16 @@ import {
  *  2. Scanned pages render at the chosen DPI onto an OffscreenCanvas and
  *     go through self-hosted Tesseract (LSTM, /tesseract — see
  *     public/tesseract/LICENSE*.txt, Apache-2.0; nothing leaves origin).
+ *     With the deskew switch ON (R4-b), the rendered raster is probed
+ *     for a baseline skew (Hough-lite strips, tools/ocr-pdf/engine.ts)
+ *     and counter-rotated BEFORE recognition when the tilt exceeds
+ *     ±0.3°. The deskewed raster is what tesseract sees, and tesseract's
+ *     PDF renderer paints BOTH the visible raster AND the invisible text
+ *     layer from that one image — so the searchable layer always aligns
+ *     with the straightened page by construction. Honest scope: deskew
+ *     applies to pages that get OCR'd (the output page IS the
+ *     straightened scan); pages that already carry selectable text pass
+ *     through byte-identical as always.
  *  3. Searchable output: tesseract's own PDF renderer writes the page
  *     (raster + invisible word layer with the GlyphLessFont — logical
  *     character order, so Hindi ि/ी matras and conjuncts stay searchable;
@@ -209,6 +222,34 @@ function tessPdfBytes(pdf: number[] | Uint8Array | null | undefined): Uint8Array
 }
 
 /**
+ * Deskew step (R4-b): detects the baseline skew of a rendered page and
+ * counter-rotates it on a fresh canvas when the tilt is worth fixing.
+ * Returns null when the page is straight enough (|angle| ≤ 0.3°) — the
+ * caller keeps the original raster, no resampling blur.
+ */
+async function deskewRenderedPage(
+  canvas: OffscreenCanvas
+): Promise<{ canvas: OffscreenCanvas; angle: number } | null> {
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  const { width, height } = canvas;
+  const gray = rgbaToGray(context.getImageData(0, 0, width, height).data);
+  const { angle } = detectSkewAngle(gray, width, height);
+  if (angle === 0 || Math.abs(angle) > SKEW_MAX_ANGLE) return null;
+
+  const out = new OffscreenCanvas(width, height);
+  const outCtx = out.getContext("2d");
+  if (!outCtx) return null;
+  outCtx.fillStyle = "#ffffff";
+  outCtx.fillRect(0, 0, width, height);
+  // Positive angle = clockwise tilt → rotate back counter-clockwise.
+  outCtx.translate(width / 2, height / 2);
+  outCtx.rotate((-angle * Math.PI) / 180);
+  outCtx.drawImage(canvas, -width / 2, -height / 2);
+  return { canvas: out, angle };
+}
+
+/**
  * Materializes a rendered page as committed PNG bytes.
  *
  * Chrome's accelerated OffscreenCanvas can resolve pdf.js's render task
@@ -253,6 +294,9 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const outputMode = options.output === "text" ? "text" : "searchable";
   const skipText = options.skipText !== false;
   const markPages = options.pageMarks === true;
+  // R4-b: optional pre-OCR deskew (default OFF — config switch "deskew").
+  const deskew = options.deskew === true;
+  let deskewedPages = 0;
 
   post({ type: "progress", runId, pct: 2, stage: "reading" });
 
@@ -360,7 +404,14 @@ async function run(request: WorkerRunRequest): Promise<void> {
           pageTexts.push(nativeTexts[i]);
           totalChars += countChars(nativeTexts[i]);
         } else {
-          const rendered = await renderPage(doc, pageNumbers[i] + 1, scale);
+          let rendered = await renderPage(doc, pageNumbers[i] + 1, scale);
+          if (deskew) {
+            const straight = await deskewRenderedPage(rendered.canvas);
+            if (straight !== null) {
+              rendered = { canvas: straight.canvas };
+              deskewedPages += 1;
+            }
+          }
           // Same canvas-commit guard as the searchable path (see below).
           const pngBlob = await committedPngBlob(rendered.canvas);
           const result = await tess!.recognize(pngBlob, {}, {
@@ -406,7 +457,14 @@ async function run(request: WorkerRunRequest): Promise<void> {
           outDoc.addPage(copied);
           totalChars += countChars(nativeTexts[i]);
         } else {
-          const rendered = await renderPage(doc, pageNumbers[i] + 1, scale);
+          let rendered = await renderPage(doc, pageNumbers[i] + 1, scale);
+          if (deskew) {
+            const straight = await deskewRenderedPage(rendered.canvas);
+            if (straight !== null) {
+              rendered = { canvas: straight.canvas };
+              deskewedPages += 1;
+            }
+          }
           // Materialize the raster as committed PNG bytes BEFORE recognition:
           // see committedPngBlob — racing the canvas readback handed tesseract
           // a blank image (confidence 0) on accelerated canvases.
@@ -464,6 +522,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       files: outputs.length,
       pages: totalPages,
       confidence: confCount > 0 ? Math.round(confSum / confCount) : undefined,
+      ...(deskew && deskewedPages > 0 ? { deskewedPages } : {}),
     },
   });
 }

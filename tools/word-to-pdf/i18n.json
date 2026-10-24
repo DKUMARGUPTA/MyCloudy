@@ -21,6 +21,7 @@
       "summaryTitle": "Document summary",
       "statParas": "Paragraphs",
       "statTables": "Tables",
+      "statImages": "Images",
       "statWords": "Words",
       "statChars": "Characters",
       "truncatedNote": "Very large document — only the first 500 paragraphs / 800 blocks / 50 × 30 table cells are converted.",
@@ -36,7 +37,7 @@
       "converting": "Converting…",
       "doneTitle": "PDF ready",
       "doneDesc": "{name} downloaded — {pages, plural, =1 {1 page} other {# pages}} of selectable text.",
-      "honestNote": "Honest limits: images, headers/footers and multi-column layouts are not carried over; text, headings, lists and tables convert faithfully. .docx only."
+      "honestNote": "Honest limits: headers/footers and multi-column layouts are not carried over; embedded PNG/JPEG images are carried (≤50, others counted as skipped); text, headings, lists and tables convert faithfully. .docx only."
     }
   },
   "hi": {
@@ -61,6 +62,7 @@
       "summaryTitle": "दस्तावेज़ सारांश",
       "statParas": "पैराग्राफ़",
       "statTables": "टेबलें",
+      "statImages": "तस्वीरें",
       "statWords": "शब्द",
       "statChars": "अक्षर",
       "truncatedNote": "बहुत बड़ा दस्तावेज़ — केवल पहले 500 पैराग्राफ़ / 800 ब्लॉक / 50 × 30 टेबल कोशिकाँ तक बदलते हैं।",
@@ -76,7 +78,7 @@
       "converting": "बन रही है…",
       "doneTitle": "PDF तैयार",
       "doneDesc": "{name} डाउनलोड हुई — {pages, plural, =1 {1 पेज} other {# पेज}} चुनने योग्य टेक्स्ट की।",
-      "honestNote": "ईमानदार सीमाएँ: तस्वीरें, हेडर-फ़ुटर और कई कॉलम वाले लेआउट नहीं आते; टेक्स्ट, शीर्षक, सूचियाँ और टेबलें विश्वसनीय रूप से बदलती हैं। केवल .docx।"
+      "honestNote": "ईमानदार सीमाएँ: हेडर-फ़ुटर और कई कॉलम वाले लेआउट नहीं आते; एम्बेडेड PNG/JPEG तस्वीरें आती हैं (≤50, बाक़ी छोड़ी गिनी जाती हैं); टेक्स्ट, शीर्षक, सूचियाँ और टेबलें विश्वसनीय रूप से बदलती हैं। केवल .docx।"
     }
   }
 }

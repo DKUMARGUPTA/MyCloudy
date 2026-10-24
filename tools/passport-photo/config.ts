@@ -18,6 +18,11 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  * background is an edge-seeded flood fill — it works on plain
  * backgrounds; busy scenes keep the original. It is NOT an official
  * spec validator: acceptance is always the authority's call.
+ *
+ * R4-c: a target-country selector (7 countries) adds published-spec
+ * GUIDANCE — standard print size, face-height band, background hint —
+ * plus an honest mismatch warning when the chosen size differs. The
+ * tool never analyses the photo (no face detection); see the FAQ.
  */
 export const config: ToolConfig = {
   toolId: "passport-photo",
@@ -40,6 +45,10 @@ export const config: ToolConfig = {
     {
       en: "Drag and zoom to frame the photo with a head-height guide band; smart white washes plain backgrounds with a tolerance slider.",
       hi: "तस्वीर खींचकर और ज़ूम करके फ़्रेम करें, सिर की ऊँचाई की गाइड-बैंड के साथ; स्मार्ट व्हाइट सादे बैकग्राउंड को टॉलरेंस स्लाइडर से सफ़ेद करता है।",
+    },
+    {
+      en: "Target-country guidance for 7 countries (India, US, UK, Schengen/EU, Canada, Australia, China): standard print size, head/face-height band and background hint — with an honest warning when your size differs. Published specs only; the tool never analyses your photo.",
+      hi: "7 देशों के लिए लक्ष्य-देश मार्गदर्शन (भारत, अमेरिका, यूके, शेंजेन/यूरोपीय संघ, कनाडा, ऑस्ट्रेलिया, चीन): स्टैंडर्ड प्रिंट साइज़, सिर/चेहरे की ऊँचाई की सीमा और बैकग्राउंड संकेत — साइज़ अलग होने पर ईमानदार चेतावनी के साथ। केवल प्रकाशित विनिर्देश; टूल आपकी तस्वीर का विश्लेषण कभी नहीं करता।",
     },
     {
       en: "Brightness and contrast touch-ups — plain per-pixel math, applied on your device.",
@@ -73,6 +82,16 @@ export const config: ToolConfig = {
       a: {
         en: "The presets follow the commonly published specs, but rules change — always check your passport office, embassy or form's current requirements before printing. The size, the 300 DPI pixel count and the sheet grid are exact; the head guide band is a rough visual hint, not a spec.",
         hi: "प्रीसेट आम तौर पर प्रकाशित विनिर्देशों पर चलते हैं, लेकिन नियम बदलते हैं — प्रिंट करने से पहले अपने पासपोर्ट दफ़्तर, दूतावास या फ़ॉर्म की मौजूदा शर्तें ज़रूर देखें। साइज़, 300 DPI पिक्सेल गिनती और शीट ग्रिड सटीक हैं; सिर की गाइड-बैंड एक मोटा संकेत है, विनिर्देश नहीं।",
+      },
+    },
+    {
+      q: {
+        en: "What does the target-country selector actually check?",
+        hi: "लक्ष्य-देश चयनकर्ता असल में क्या जाँचता है?",
+      },
+      a: {
+        en: "It shows the published spec for the country you pick — standard print size in mm, the head/face-height band as a % of photo height, and a plain-background hint — and warns honestly when your chosen size differs from that standard. It does NOT analyse your photo: there is no face detection here, so the face band is framing guidance only. The authority reviewing your application always has the final call.",
+        hi: "यह आपके चुने देश का प्रकाशित विनिर्देश दिखाता है — मिमी में स्टैंडर्ड प्रिंट साइज़, फ़ोटो ऊँचाई के % के रूप में सिर/चेहरे की ऊँचाई की सीमा, और सादे बैकग्राउंड का संकेत — और आपका साइज़ उस स्टैंडर्ड से अलग होने पर ईमानदारी से चेतावनी देता है। यह आपकी तस्वीर का विश्लेषण नहीं करता: यहाँ कोई फ़ेस-डिटेक्शन नहीं है, इसलिए फ़ेस-बैंड केवल फ़्रेमिंग मार्गदर्शन है। आख़री फ़ैसला हमेशा आवेदन देखने वाले अधिकारी का है।",
       },
     },
     {

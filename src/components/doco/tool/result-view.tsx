@@ -70,6 +70,7 @@ export function ResultView({
         files?: number;
         pages?: number;
         confidence?: number;
+        deskewedPages?: number;
         targetHit?: boolean;
         compressStage?: "optimize" | "images" | "raster";
         compressQuality?: number;
@@ -83,6 +84,11 @@ export function ResultView({
         strippedPageMetadata?: number;
         strippedAnnotationDates?: number;
         annotations?: number;
+        dedupedImages?: number;
+        /** Bytes of duplicate image streams the merge removed (R4-b). */
+        dedupeBytesSaved?: number;
+        imagesEmbedded?: number;
+        imagesSkipped?: number;
       }
     | null;
   chainFromName?: string;
@@ -270,6 +276,38 @@ export function ResultView({
         {runSummary?.annotations ? (
           <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
             {t("result.annotationCount", { n: runSummary.annotations })}
+          </p>
+        ) : null}
+        {/* markdown/word/epub image embedding (audit R4-a): the honest
+            embed + skip report — a skip is never silent. */}
+        {runSummary?.imagesEmbedded ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.imagesEmbedded", { n: runSummary.imagesEmbedded })}
+          </p>
+        ) : null}
+        {runSummary?.imagesSkipped ? (
+          <p className="rounded-chip bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
+            {t("result.imagesSkipped", { n: runSummary.imagesSkipped })}
+          </p>
+        ) : null}
+        {/* ocr-pdf deskew (R4-b): pages the run straightened before OCR. */}
+        {runSummary?.deskewedPages ? (
+          <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+            {t("result.deskewedPages", { n: runSummary.deskewedPages })}
+          </p>
+        ) : null}
+        {/* compress-pdf image dedupe (R4-b): byte-identical photos now
+            sharing ONE object, plus the raw bytes the merge reclaimed. */}
+        {runSummary?.dedupedImages ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.dedupedImages", { n: runSummary.dedupedImages })}
+          </p>
+        ) : null}
+        {runSummary?.dedupeBytesSaved ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.dedupeBytesSaved", {
+              bytes: formatBytes(runSummary.dedupeBytesSaved),
+            })}
           </p>
         ) : null}
         <p className="text-sm text-muted-foreground">

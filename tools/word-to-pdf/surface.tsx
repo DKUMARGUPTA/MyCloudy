@@ -461,11 +461,12 @@ export function WordToPdfSurface({
             </div>
           ) : (
             <div className="mt-3">
-              <dl className="grid grid-cols-3 gap-3">
+              <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {(
                   [
                     ["w2p.statParas", parsedDoc.paraCount],
                     ["w2p.statTables", parsedDoc.tableCount],
+                    ["w2p.statImages", parsedDoc.imageCount],
                     ["w2p.statWords", parsedDoc.wordCount],
                   ] as const
                 ).map(([key, n]) => (

@@ -8,6 +8,7 @@ import { fileBaseName } from "../stamp-common/layout";
 import { stripAllMetadata } from "../meta-common/worker-lib";
 import {
   collectImageCandidates,
+  dedupeImageXObjects,
   replaceImageStream,
   resolveParams,
 } from "./engine";
@@ -24,6 +25,14 @@ import { recompressCandidate } from "../compress-common/recompress";
  * Every replacement is size-guarded: unless the re-encoded JPEG is clearly
  * smaller, the original stream is kept — output can only shrink per
  * image, never regress.
+ *
+ * BEFORE the re-encode loop, byte-identical duplicate image XObjects are
+ * merged onto one shared object (R4-b) — letterheads and stamped logos
+ * embed one copy per page; all but the first are pure waste. Deduping
+ * first also means each unique photo re-encodes exactly once, and the
+ * merged result is what every reference then sees re-encoded.
+ * The merge is verified byte-for-byte (signature + full compare) and
+ * counted honestly in the result detail (dedupedImages/dedupeBytesSaved).
  *
  * The impure decode/re-encode machinery lives in
  * ../compress-common/recompress.ts (shared with compress-pdf-to-size,
@@ -42,6 +51,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const params = resolveParams(options as Record<string, unknown>);
   const outputs: { name: string; mime: string; blob: Blob }[] = [];
   let totalPages = 0;
+  let dedupedImages = 0;
+  let dedupeBytesSaved = 0;
 
   for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
     const file = files[fileIndex];
@@ -59,6 +70,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
       updateMetadata: false,
     });
     totalPages += doc.getPageCount();
+
+    // R4-b: merge byte-identical image XObjects FIRST — every reference
+    // then shares one object, and unique photos re-encode exactly once.
+    const dedupe = dedupeImageXObjects(doc);
+    dedupedImages += dedupe.mergedCount;
+    dedupeBytesSaved += dedupe.bytesSaved;
 
     const candidates = collectImageCandidates(doc);
 
@@ -111,7 +128,11 @@ async function run(request: WorkerRunRequest): Promise<void> {
     type: "result",
     runId,
     outputs,
-    detail: { files: outputs.length, pages: totalPages },
+    detail: {
+      files: outputs.length,
+      pages: totalPages,
+      ...(dedupedImages > 0 ? { dedupedImages, dedupeBytesSaved } : {}),
+    },
   });
 }
 

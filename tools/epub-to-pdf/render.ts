@@ -10,7 +10,11 @@
  *  - Chapter bodies draw with html-to-pdf's block painter (headings
  *    h1–h6, styled runs, nested lists, quotes, <pre>, tables) — the
  *    html-to-pdf scope, nothing more. Every chapter starts on a
- *    FRESH page (the odt per-chapter pagination pattern).
+ *    FRESH page (the odt per-chapter pagination pattern). Chapter
+ *    images (audit R4-a): a paragraph that is exactly one [alt] run
+ *    carrying a resolved zip path draws its pre-embedded PDFImage
+ *    there — natural size capped to the content box, aspect preserved,
+ *    never upscaled; everything else stays honest alt text.
  *  - Cover page: the EPUB's PNG/JPG cover, contain-fit and centered.
  *  - TOC page ("Contents"): chapter titles with EXACT page numbers —
  *    chapters are painted first and their start pages recorded, then
@@ -558,7 +562,40 @@ function drawHeading(
   p.y -= spec.after;
 }
 
-function drawPara(p: Painter, blk: Extract<HtmlBlock, { kind: "para" }>): void {
+/**
+ * Paragraph painter with the audit R4-a image path: a paragraph that is
+ * EXACTLY one [alt] run whose img resolved to a zip part draws that
+ * pre-embedded image at its spot (max-content-width, aspect preserved,
+ * never upscaled, never split). Returns the number of images drawn;
+ * every other paragraph — and image paragraphs whose map entry is
+ * missing — paints the honest alt text exactly as before.
+ */
+function drawPara(
+  p: Painter,
+  blk: Extract<HtmlBlock, { kind: "para" }>,
+  chapterImages: Map<string, PDFImage>
+): number {
+  if (blk.runs.length === 1 && blk.runs[0].img !== undefined) {
+    const img = chapterImages.get(blk.runs[0].img);
+    if (img && img.width > 0 && img.height > 0) {
+      const scale = Math.min(
+        1,
+        p.contentW / img.width,
+        (p.pageH - p.margin * 2) / img.height
+      );
+      const w = img.width * scale;
+      const h = img.height * scale;
+      p.ensure(h);
+      p.page.drawImage(img, {
+        x: p.margin,
+        y: p.y - h,
+        width: w,
+        height: h,
+      });
+      p.y -= h + PARA_AFTER;
+      return 1;
+    }
+  }
   drawTextLines(
     p,
     blk.runs,
@@ -569,6 +606,7 @@ function drawPara(p: Painter, blk: Extract<HtmlBlock, { kind: "para" }>): void {
     COL_TEXT
   );
   p.y -= PARA_AFTER;
+  return 0;
 }
 
 function drawListItem(
@@ -820,15 +858,21 @@ function drawTable(
   p.y -= TABLE_AFTER;
 }
 
-/** Paint one chapter's blocks into a fresh Painter (new page). */
-function drawChapter(p: Painter, chapter: EpubChapter): void {
+/** Paint one chapter's blocks into a fresh Painter (new page). Returns
+ *  the chapter images drawn (audit R4-a). */
+function drawChapter(
+  p: Painter,
+  chapter: EpubChapter,
+  chapterImages: Map<string, PDFImage>
+): number {
+  let imagesDrawn = 0;
   for (const blk of chapter.doc.blocks) {
     switch (blk.kind) {
       case "heading":
         drawHeading(p, blk);
         break;
       case "para":
-        drawPara(p, blk);
+        imagesDrawn += drawPara(p, blk, chapterImages);
         break;
       case "list-item":
         drawListItem(p, blk);
@@ -849,6 +893,7 @@ function drawChapter(p: Painter, chapter: EpubChapter): void {
         break;
     }
   }
+  return imagesDrawn;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1081,6 +1126,8 @@ export interface EpubRenderReport {
   tocPages: number;
   /** number of cover pages painted (0 or 1). */
   coverPages: number;
+  /** chapter images drawn (audit R4-a). */
+  imagesDrawn: number;
   /**
    * FINAL 0-based page index where each chapter starts (cover + TOC
    * included) — the TOC prints exactly starts[i] + 1.
@@ -1092,14 +1139,18 @@ export interface EpubRenderReport {
  * Paint the whole book into `pdfDoc` (pages added/inserted as needed).
  * `fonts` must already be embedded (the base-14 set OR the Noto
  * subset); `coverImage` must already be embedded by the caller (the
- * worker's embedPng/embedJpg). Chapters always start on a fresh page,
- * so the TOC page numbers are exact without a second render pass.
+ * worker's embedPng/embedJpg); `chapterImages` maps the book's
+ * resolved image paths (ParsedEpub.images) to pre-embedded pdf-lib
+ * images — image paragraphs without an entry keep their honest alt
+ * text (audit R4-a). Chapters always start on a fresh page, so the
+ * TOC page numbers are exact without a second render pass.
  */
 export function drawEpubPdf(
   pdfDoc: PDFDocument,
   fonts: EpubFontSet,
   book: ParsedEpub,
   coverImage: PDFImage | null,
+  chapterImages: Map<string, PDFImage>,
   opts: EpubRenderOpts
 ): EpubRenderReport {
   const pageSize = opts.pageSize === "letter" ? "letter" : "a4";
@@ -1116,10 +1167,11 @@ export function drawEpubPdf(
 
   // 2. chapters — one fresh Painter (fresh page) each, starts recorded
   const starts: number[] = [];
+  let imagesDrawn = 0;
   for (const chapter of book.chapters) {
     starts.push(pdfDoc.getPageCount());
     const p = new Painter(pdfDoc, fonts, pageSize, margin, base);
-    drawChapter(p, chapter);
+    imagesDrawn += drawChapter(p, chapter, chapterImages);
   }
 
   // 3. TOC — inserted between cover and chapters; numbers exact
@@ -1149,6 +1201,7 @@ export function drawEpubPdf(
     pages: pdfDoc.getPageCount(),
     tocPages,
     coverPages,
+    imagesDrawn,
     chapterStarts: starts.map((s) => s + tocPages),
   };
 }

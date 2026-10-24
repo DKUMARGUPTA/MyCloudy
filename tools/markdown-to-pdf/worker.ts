@@ -1,9 +1,10 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage } from "pdf-lib";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
+import { embedDocumentImage, sniffEmbedKind } from "@/lib/pdf/embed-image";
 import { readTextFile } from "../txt-to-pdf/engine";
 import {
   PAGE_SIZES,
@@ -13,7 +14,14 @@ import {
   type MeasureRun,
   type ScriptFont,
 } from "../txt-to-pdf/text-layout";
-import { layoutMd, parseMarkdown, resolveMdOptions } from "./engine";
+import {
+  collectImageUrls,
+  layoutMd,
+  matchImageAsset,
+  parseMarkdown,
+  resolveMdOptions,
+  type MdImageDims,
+} from "./engine";
 import { loadStampFonts } from "../stamp-common/worker-lib";
 
 /**
@@ -26,6 +34,15 @@ import { loadStampFonts } from "../stamp-common/worker-lib";
  * renders through the embedded Noto font — same stamp-common pipeline as
  * every text tool here. Each file becomes its own <base>.pdf. Device-only.
  *
+ * IMAGES (audit R4-a): the drop accepts PNG/JPEG files alongside the
+ * markdown (≤ MAX_MD_FILES files, ≤ MAX_MD_TOTAL_BYTES total — honest
+ * error beyond). Block-level `![alt](photo.png)` references resolve
+ * against the dropped files BY BASENAME (subdirs, %20 and query strings
+ * stripped) and embed at their spot via the shared embed helper —
+ * original bytes, downscale only for oversized images. Inline images,
+ * remote http(s) URLs and unmatched files keep the honest "[alt]"
+ * text (no network — the on-device promise), counted in the result.
+ *
  * PARSER LOADING (P4.1 QA finding): Turbopack's dev worker loader compiles
  * this worker to a CLASSIC blob script that loads chunks via importScripts
  * — ESM-only packages (mdast-util-from-markdown/micromark) die there with a
@@ -36,6 +53,11 @@ import { loadStampFonts } from "../stamp-common/worker-lib";
  * fetch + indirect eval (the CSP ships unsafe-eval). The parser is cached
  * after the first load; zero network beyond the same-origin static asset.
  */
+
+/** Files accepted per drop (markdown + image assets together). */
+const MAX_MD_FILES = 20;
+/** Total drop size cap (markdown + images). */
+const MAX_MD_TOTAL_BYTES = 50 * 1024 * 1024;
 
 type MdParseFn = (source: string) => import("mdast").Root;
 
@@ -161,12 +183,29 @@ async function run(request: WorkerRunRequest): Promise<void> {
     post({ type: "error", runId, code: "tool.errorGeneric" });
     return;
   }
+  if (files.length > MAX_MD_FILES) {
+    post({ type: "error", runId, code: "md2pdf.errorTooMany" });
+    return;
+  }
+  let totalBytes = 0;
+  for (const file of files) totalBytes += file.size;
+  if (totalBytes > MAX_MD_TOTAL_BYTES) {
+    post({ type: "error", runId, code: "md2pdf.errorTooLarge" });
+    return;
+  }
   const opts = resolveMdOptions(options);
 
   post({ type: "progress", runId, pct: 4, stage: "reading" });
   const decoded: { name: string; base: string; text: string }[] = [];
+  const assets: { name: string; bytes: Uint8Array }[] = [];
   for (const file of files) {
     const bytes = new Uint8Array(await file.arrayBuffer());
+    // PNG/JPEG drops become image assets for block-level ![alt](path)
+    // references (audit R4-a); everything else follows the text path.
+    if (sniffEmbedKind(bytes.subarray(0, 16)) !== null) {
+      assets.push({ name: file.name, bytes });
+      continue;
+    }
     const verdict = readTextFile(bytes);
     if (verdict.kind === "binary") {
       post({
@@ -202,9 +241,17 @@ async function run(request: WorkerRunRequest): Promise<void> {
     });
   }
 
+  if (decoded.length === 0) {
+    // Only images were dropped — honest error, nothing to convert.
+    post({ type: "error", runId, code: "md2pdf.errorNoMd" });
+    return;
+  }
+
   const pageSize = PAGE_SIZES[opts.pageSize];
   const outputs: { name: string; mime: string; blob: Blob }[] = [];
   let totalPages = 0;
+  let totalEmbedded = 0;
+  let totalSkipped = 0;
 
   // Parser first (throws typed errors before any per-file work).
   const mdParse = await loadMdParse();
@@ -217,7 +264,29 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const fonts = await loadFonts(doc, needNoto);
 
     post({ type: "progress", runId, pct: 8, stage: "processing" });
-    const result = layoutMd(parsed, opts, fonts.measure);
+
+    // Images (audit R4-a): embed every referenced local file once per
+    // document, original bytes first (downscale only for oversized),
+    // then hand the dims map to the layout. Unmatched/remote/unsupported
+    // references never reach the map — the layout degrades them to the
+    // honest "[alt]" text and counts them for the result card.
+    const dims: MdImageDims = new Map();
+    const embeddedByUrl = new Map<string, PDFImage>();
+    for (const url of collectImageUrls(parsed)) {
+      const assetName = matchImageAsset(
+        url,
+        assets.map((a) => a.name)
+      );
+      if (assetName === null || dims.has(url)) continue;
+      const asset = assets.find((a) => a.name === assetName);
+      if (asset === undefined) continue;
+      const embedded = await embedDocumentImage(doc, asset.bytes);
+      if (embedded === null) continue;
+      dims.set(url, { width: embedded.width, height: embedded.height });
+      embeddedByUrl.set(url, embedded.image);
+    }
+
+    const result = layoutMd(parsed, opts, fonts.measure, dims);
 
     for (let p = 0; p < result.pages.length; p += 1) {
       const page = doc.addPage([pageSize.width, pageSize.height]);
@@ -262,6 +331,16 @@ async function run(request: WorkerRunRequest): Promise<void> {
                 : COLORS.text,
         });
       }
+      for (const image of draw.images) {
+        const embedded = embeddedByUrl.get(image.url);
+        if (!embedded) continue;
+        page.drawImage(embedded, {
+          x: image.x,
+          y: image.y,
+          width: image.w,
+          height: image.h,
+        });
+      }
       totalPages += 1;
       post({
         type: "progress",
@@ -274,6 +353,9 @@ async function run(request: WorkerRunRequest): Promise<void> {
         detail: { page: p + 1, pages: result.pages.length },
       });
     }
+
+    totalEmbedded += result.imageCount;
+    totalSkipped += result.imagesSkipped;
 
     const saved = await doc.save({ useObjectStreams: true });
     outputs.push({
@@ -290,7 +372,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
     type: "result",
     runId,
     outputs,
-    detail: { files: outputs.length, pages: totalPages },
+    detail: {
+      files: outputs.length,
+      pages: totalPages,
+      imagesEmbedded: totalEmbedded,
+      imagesSkipped: totalSkipped,
+    },
   });
 }
 

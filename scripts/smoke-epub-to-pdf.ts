@@ -28,14 +28,17 @@ import {
   type PDFPage,
 } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import { zipSync, strToU8, type Zippable } from "fflate";
+import { unzipSync, zipSync, strToU8, type Unzipped, type Zippable } from "fflate";
 
+import { embedDocumentImage } from "../src/lib/pdf/embed-image";
 import {
   buildSampleEpub,
   chapterWordFor,
   estimatePages,
   EpubParseError,
+  lookupEntry,
   MAX_CHAPTERS,
+  MAX_EPUB_IMAGES,
   needsNoto,
   outputBaseName,
   parseEpub,
@@ -279,8 +282,9 @@ interface RenderOpts {
 
 /**
  * Mirrors the worker step for step: parse → font decision → cover
- * embed → drawEpubPdf → metadata (producer/creator/title/author) →
- * save. The parse itself runs on the fixture bytes like request.files.
+ * embed → chapter-image embed → drawEpubPdf → metadata
+ * (producer/creator/title/author) → save. The parse itself runs on the
+ * fixture bytes like request.files.
  */
 async function renderBook(
   epubBytes: Uint8Array,
@@ -313,7 +317,26 @@ async function renderBook(
       coverImage = null;
     }
   }
-  const report = drawEpubPdf(pdfDoc, fonts, book, coverImage, {
+  // chapter images (audit R4-a) — the worker's exact embed step:
+  // resolved refs → zip part → shared helper (original bytes under bun;
+  // a part that fails here just leaves the honest alt text)
+  const chapterImages = new Map<string, PDFImage>();
+  if (book.images.length > 0) {
+    let files: Unzipped = {};
+    try {
+      files = unzipSync(epubBytes);
+    } catch {
+      files = {};
+    }
+    for (const ref of book.images) {
+      const entry = lookupEntry(files, ref.path);
+      if (entry === undefined) continue;
+      const embedded = await embedDocumentImage(pdfDoc, entry);
+      if (embedded === null) continue;
+      chapterImages.set(ref.path, embedded.image);
+    }
+  }
+  const report = drawEpubPdf(pdfDoc, fonts, book, coverImage, chapterImages, {
     pageSize: opts.letter ? "letter" : "a4",
     margin: opts.margin ?? "normal",
     baseFontSize: 11,
@@ -873,6 +896,239 @@ console.log("── 8. REAL renders (worker's exact render.ts) ─────�
     .map(([, o]) => o.toString())
     .join("\n");
   check("NCX: Helvetica, no embedded font", ncxDump.includes("Helvetica") && !ncxDump.includes("FontFile2"));
+}
+
+console.log("── 9. chapter images (audit R4-a) ────────────────────────");
+{
+  // Same real-PNG recipe as the cover (32×48, node:zlib — the model
+  // stays worker-pure) used both as the chapter image and the cover.
+  const chapterPng = makeCoverPng();
+
+  // ---- parse-level: local part resolves, remote stays honest ----
+  const imgFixture = buildSampleEpub({ cover: coverPng, chapterImage: chapterPng });
+  const imgEntries = readZipWithZlib(imgFixture);
+  check(
+    "fixture carries OEBPS/images/plot.png (real PNG magic)",
+    imgEntries.some(
+      (e) =>
+        e.name === "OEBPS/images/plot.png" &&
+        e.data[0] === 0x89 &&
+        e.data[1] === 0x50
+    )
+  );
+  const imgBook = parseEpub(imgFixture);
+  check(
+    "chapter image ref resolves (path + kind)",
+    imgBook.images.length === 1 &&
+      imgBook.images[0]?.path === "OEBPS/images/plot.png" &&
+      imgBook.images[0]?.kind === "png",
+    imgBook.images
+  );
+  check(
+    "remote http(s) chapter <img> skipped honestly (1 skip)",
+    imgBook.imagesSkipped === 1,
+    imgBook.imagesSkipped
+  );
+  check("chapter image does not trip truncated", imgBook.truncated === false);
+  const imgCh1 = imgBook.chapters[1];
+  const imgPara =
+    imgCh1 !== undefined
+      ? imgCh1.doc.blocks.find(
+          (b) => b.kind === "para" && b.runs.length === 1 && b.runs[0].img !== undefined
+        )
+      : undefined;
+  check(
+    "ch1 block-level <img> para carries the resolved zip path on its [alt] run",
+    imgPara !== undefined &&
+      imgPara.kind === "para" &&
+      imgPara.runs[0].img === "OEBPS/images/plot.png" &&
+      imgPara.runs[0].text === "[Plot diagram]" &&
+      imgPara.runs[0].italic === true,
+    imgPara
+  );
+  const remotePara =
+    imgBook.chapters[3] !== undefined
+      ? imgBook.chapters[3].doc.blocks.find(
+          (b) => b.kind === "para" && b.runs.some((r) => r.text.includes("Remote picture"))
+        )
+      : undefined;
+  check(
+    "remote <img> run keeps honest alt text with img cleared",
+    remotePara !== undefined &&
+      remotePara.kind === "para" &&
+      remotePara.runs.every((r) => r.img === undefined) &&
+      remotePara.runs.some((r) => r.text === "[Remote picture]"),
+    remotePara
+  );
+  const imgStats = stats(imgBook);
+  check(
+    "stats surface the image counts (chip source)",
+    imgStats.images === 1 && imgStats.imagesSkipped === 1 && imgStats.hasCover === true,
+    imgStats
+  );
+
+  // ---- render: image XObject drawn at the paragraph anchor ----
+  const imgOut = await renderBook(imgFixture);
+  check(
+    "render report counts the drawn chapter image",
+    imgOut.report.imagesDrawn === 1,
+    imgOut.report
+  );
+  const imgReloaded = await PDFDocument.load(imgOut.bytes);
+  const imgDump = [...imgReloaded.context.enumerateIndirectObjects()]
+    .map(([, o]) => o.toString())
+    .join("\n");
+  const imageXObjects = imgDump.split("/Subtype /Image").length - 1;
+  check(
+    `PDF carries cover + chapter image XObjects (got ${imageXObjects})`,
+    imageXObjects === 2,
+    imageXObjects
+  );
+  const imgTxt = inflatedText(imgOut.bytes);
+  check(
+    "drawn image suppresses its alt text (no [Plot diagram] glyph)",
+    !hasText(imgTxt, "Plot diagram")
+  );
+  check(
+    "remote image still prints honest alt text",
+    hasText(imgTxt, "Remote picture")
+  );
+  check("no NaN geometry", !imgTxt.includes("NaN"));
+  check(
+    "chapter pages still valid (reload page count matches report)",
+    imgReloaded.getPageCount() === imgOut.report.pages
+  );
+
+  // ---- honest skips: absent part + remote src, no image drawn ----
+  const ghostChapter =
+    XML_DECL +
+    '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>g</title></head><body>' +
+    '<h1>Ghost chapter</h1><p><img src="images/absent.png" alt="Ghost picture"/></p>' +
+    "<p><img src=\"https://cdn.example.com/far.png\" alt=\"Far picture\"/></p>" +
+    "</body></html>";
+  const ghostEpub = makeEpub({
+    "META-INF/container.xml": CONTAINER_OK,
+    "content.opf": opfWith(
+      '<manifest><item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>' +
+        '<spine><itemref idref="c1"/></spine>'
+    ),
+    "ch1.xhtml": ghostChapter,
+  });
+  const ghostBook = parseEpub(ghostEpub);
+  check(
+    "absent part + remote src → zero refs, 2 honest skips",
+    ghostBook.images.length === 0 && ghostBook.imagesSkipped === 2,
+    { images: ghostBook.images, skipped: ghostBook.imagesSkipped }
+  );
+  const ghostOut = await renderBook(ghostEpub, { cover: false });
+  const ghostDoc = await PDFDocument.load(ghostOut.bytes);
+  const ghostDump = [...ghostDoc.context.enumerateIndirectObjects()]
+    .map(([, o]) => o.toString())
+    .join("\n");
+  check(
+    "nothing to embed → no image XObject at all",
+    !ghostDump.includes("/Subtype /Image") && ghostOut.report.imagesDrawn === 0,
+    ghostOut.report
+  );
+  check(
+    "alt text printed for both skipped images",
+    hasText(inflatedText(ghostOut.bytes), "Ghost picture") &&
+      hasText(inflatedText(ghostOut.bytes), "Far picture")
+  );
+
+  // ---- cap: 51 block images → 50 kept + honest skip + truncated ----
+  const capParts: Record<string, string | Uint8Array> = {
+    "META-INF/container.xml": CONTAINER_OK,
+    "content.opf": opfWith(
+      '<manifest><item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>' +
+        '<spine><itemref idref="c1"/></spine>'
+    ),
+  };
+  const capImgs: string[] = [];
+  for (let i = 0; i <= MAX_EPUB_IMAGES; i++) {
+    capParts[`images/p${i}.png`] = chapterPng;
+    capImgs.push(`<p><img src="images/p${i}.png" alt="pic ${i}"/></p>`);
+  }
+  capParts["ch1.xhtml"] =
+    XML_DECL +
+    '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>c</title></head><body>' +
+    "<h1>Cap chapter</h1>" +
+    capImgs.join("") +
+    "</body></html>";
+  const capBook = parseEpub(makeEpub(capParts));
+  check(
+    `image cap honoured (${MAX_EPUB_IMAGES})`,
+    capBook.images.length === MAX_EPUB_IMAGES,
+    capBook.images.length
+  );
+  check(
+    "over-cap images skipped honestly + truncated flagged",
+    capBook.imagesSkipped === 1 && capBook.truncated === true,
+    { skipped: capBook.imagesSkipped, truncated: capBook.truncated }
+  );
+
+  // ---- inline image inside a text paragraph keeps alt text ----
+  const inlineChapter =
+    XML_DECL +
+    '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>i</title></head><body>' +
+    '<h1>Inline chapter</h1><p>Before words <img src="images/inline.png" alt="Inline picture"/> after words.</p>' +
+    "</body></html>";
+  const inlineEpub = makeEpub({
+    "META-INF/container.xml": CONTAINER_OK,
+    "content.opf": opfWith(
+      '<manifest><item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>' +
+        '<spine><itemref idref="c1"/></spine>'
+    ),
+    "ch1.xhtml": inlineChapter,
+    "images/inline.png": chapterPng,
+  });
+  const inlineBook = parseEpub(inlineEpub);
+  const inlinePara =
+    inlineBook.chapters[0] !== undefined
+      ? inlineBook.chapters[0].doc.blocks.find(
+          (b) => b.kind === "para" && b.runs.some((r) => r.img !== undefined)
+        )
+      : undefined;
+  check(
+    "inline <img> resolves but is NOT a sole-image paragraph",
+    inlinePara !== undefined &&
+      inlinePara.kind === "para" &&
+      inlinePara.runs.length > 1 &&
+      inlinePara.runs[0].text === "Before words " &&
+      inlinePara.runs[1]?.img === "images/inline.png",
+    inlinePara
+  );
+  const inlineOut = await renderBook(inlineEpub, { cover: false });
+  check(
+    "inline image never drawn as a block (report stays 0)",
+    inlineOut.report.imagesDrawn === 0,
+    inlineOut.report
+  );
+  check(
+    "inline image prints its alt text in the flow",
+    hasText(inflatedText(inlineOut.bytes), "Inline picture") &&
+      hasText(inflatedText(inlineOut.bytes), "Before words")
+  );
+}
+
+console.log("── 10. image-embedding i18n wiring (EN + HI) ─────────────");
+{
+  const en = JSON.parse(readFileSync("src/i18n/en.json", "utf8")) as Record<string, Record<string, string>>;
+  const hi = JSON.parse(readFileSync("src/i18n/hi.json", "utf8")) as Record<string, Record<string, string>>;
+  const needEnHi = (key: string, label: string): void => {
+    check(`${label} present in EN catalog`, en.result?.[key] !== undefined, en.result?.[key]);
+    check(`${label} present in HI catalog`, hi.result?.[key] !== undefined, hi.result?.[key]);
+  };
+  needEnHi("imagesEmbedded", "result.imagesEmbedded");
+  needEnHi("imagesSkipped", "result.imagesSkipped");
+  check(
+    "epub.imagesChip EN+HI (surface chip source)",
+    en.epub?.imagesChip !== undefined && hi.epub?.imagesChip !== undefined
+  );
+  check(
+    "epub.imagesSkippedChip EN+HI (honest skip chip)",
+    en.epub?.imagesSkippedChip !== undefined && hi.epub?.imagesSkippedChip !== undefined
+  );
 }
 
 console.log(

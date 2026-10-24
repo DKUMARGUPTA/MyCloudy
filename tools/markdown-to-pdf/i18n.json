@@ -7,7 +7,10 @@
       "errorBinary": "This doesn't look like a text file. {detail} contains binary data — Markdown is plain text.",
       "errorEmpty": "Nothing to convert — {detail} has no readable text.",
       "errorUnsupportedScript": "{detail} uses a script we can't embed yet. Latin and Devanagari (Hindi, Marathi…) are supported today.",
-      "errorFont": "Couldn't load the embedded font. Please try again."
+      "errorFont": "Couldn't load the embedded font. Please try again.",
+      "errorTooMany": "That's more than 20 files in one drop. Keep the markdown and its images to 20 files or fewer.",
+      "errorTooLarge": "The drop is over 50 MB. Markdown and images together stay under 50 MB.",
+      "errorNoMd": "Only images were dropped — add at least one Markdown file to convert."
     }
   },
   "hi": {
@@ -18,7 +21,10 @@
       "errorBinary": "यह टेक्स्ट फ़ाइल नहीं लगती। {detail} में बाइनरी डेटा है — मार्कडाउन सादा टेक्स्ट होता है।",
       "errorEmpty": "बदलने को कुछ नहीं — {detail} में पढ़ने लायक़ टेक्स्ट नहीं है।",
       "errorUnsupportedScript": "{detail} की लिपि अभी एम्बेड नहीं होती। अभी लैटिन और देवनागरी (हिंदी, मराठी…) समर्थित हैं।",
-      "errorFont": "एम्बेडेड फ़ॉन्ट लोड नहीं हो सका। कृपया फिर आज़माएँ।"
+      "errorFont": "एम्बेडेड फ़ॉन्ट लोड नहीं हो सका। कृपया फिर आज़माएँ।",
+      "errorTooMany": "एक ड्रॉप में 20 से ज़्यादा फ़ाइलें हैं। मार्कडाउन और तस्वीरें मिलाकर 20 फ़ाइलों तक रखें।",
+      "errorTooLarge": "ड्रॉप 50 MB से बड़ा है। मार्कडाउन और तस्वीरें मिलाकर 50 MB से कम रखें।",
+      "errorNoMd": "केवल तस्वीरें छोड़ी गईं — बदलने के लिए कम से कम एक मार्कडाउन फ़ाइल जोड़ें।"
     }
   }
 }

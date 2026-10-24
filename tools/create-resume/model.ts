@@ -431,12 +431,17 @@ export function geometryFor(
     };
   }
   if (template === "modern") {
-    // Spec's "64pt sidebar" is unusable for contact/skills text —
-    // interpreted as 64 mm (181.42 pt), the standard ~30% resume rail.
-    const sidebarW = (64 * 72) / 25.4;
+    // R4-c: the accent rail is ~34% of the page width — wide enough for
+    // the name, headline, contact and skills blocks it now carries
+    // (A4: 202.4 pt ≈ 71.4 mm, Letter: 208.1 pt). Classic + compact
+    // geometry is untouched (pixel-compat for the existing smokes).
+    // sideW is the rail's inner text width — it MUST be set (the old
+    // 0 silently hard-broke every rail word into one char per line).
+    const sidebarW = Math.round(pt.w * 0.34);
     return {
       ...base,
       sidebarW,
+      sideW: sidebarW - 2 * 24,
       x: sidebarW + 28,
       w: pt.w - sidebarW - 28 - MARGIN,
       name: 20,
@@ -445,6 +450,21 @@ export function geometryFor(
   }
   return base;
 }
+
+/**
+ * Compact's two-column skills split — pure so the smoke can pin it.
+ * Blanks are dropped, items dealt by count (first ceil(n/2) go left),
+ * order preserved top-to-bottom per column; empty input → two empties.
+ */
+export function splitTwoColumns(items: string[]): [string[], string[]] {
+  const clean = items.filter((s) => s.trim() !== "");
+  if (clean.length === 0) return [[], []];
+  const cut = Math.ceil(clean.length / 2);
+  return [clean.slice(0, cut), clean.slice(cut)];
+}
+
+/** Modern's tracked section headings: extra advance per glyph, in pt. */
+export const HEADING_TRACK_RATIO = 0.08;
 
 /* ------------------------------------------------------------------ */
 /* Measuring + wrapping                                                 */
@@ -652,9 +672,8 @@ export function estimatePageBreaks(
     lines(atsContactLine(doc.header), w, geo.contact);
     block(geo.gapHeader);
   } else {
-    block(geo.name * 1.25);
-    if (doc.header.headline) lines(doc.header.headline, geo.w, geo.headline);
-    block(geo.gapHeader);
+    // R4-c: name + headline live in the rail; the main column starts
+    // straight at the first section title.
   }
 
   for (const s of doc.sections) {
@@ -681,7 +700,20 @@ export function estimatePageBreaks(
         break;
       case "skills":
         for (const g of s.groups) {
-          lines(joinMeta([g.name]) + " " + g.items.join(" · "), geo.w, geo.body);
+          if (doc.template !== "compact") {
+            lines(joinMeta([g.name]) + " " + g.items.join(" · "), geo.w, geo.body);
+          } else {
+            // R4-c: compact prints skills in two columns — the row count
+            // is the taller of the two half-width wrapped halves.
+            const [left, right] = splitTwoColumns(g.items);
+            const colW = (geo.w - 8) / 2;
+            const rows = Math.max(
+              wrapText(left.join(" · "), colW, geo.body, measureWrapped).length,
+              wrapText(right.join(" · "), colW, geo.body, measureWrapped).length
+            );
+            if (g.name) block(geo.lh);
+            block(geo.lh * Math.max(1, rows));
+          }
         }
         break;
       case "projects":
@@ -723,7 +755,8 @@ export function estimatePageBreaks(
       }
     };
     if (doc.header.photo) sBlock(geo.photoSide + 14);
-    sLines(doc.header.fullName, 12);
+    sLines(doc.header.fullName, geo.name);
+    if (doc.header.headline) sLines(doc.header.headline, geo.headline);
     sLines(atsContactLine(doc.header), geo.small);
     for (const s of doc.sections) {
       if (s.kind !== "skills") continue;

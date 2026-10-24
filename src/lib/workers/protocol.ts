@@ -33,6 +33,8 @@ export interface RunDetail {
   pages?: number;
   /** Mean OCR confidence (%) across OCRed pages (ocr-pdf). */
   confidence?: number;
+  /** Pages counter-rotated before OCR by the deskew switch (ocr-pdf). */
+  deskewedPages?: number;
   /** Whether the output fit the byte budget (compress-pdf-to-size). */
   targetHit?: boolean;
   /** Winning compress-to-size ladder stage (compress-pdf-to-size). */
@@ -65,6 +67,11 @@ export interface RunDetail {
   images?: number;
   /** Real PDF annotations written (annotate-pdf). */
   annotations?: number;
+  /** Block images embedded into the output (markdown/word/epub R4-a). */
+  imagesEmbedded?: number;
+  /** Images found but honestly not carried — remote/unsupported/
+   *  missing part/over-cap (markdown/word/epub R4-a). */
+  imagesSkipped?: number;
   /** Sticky notes among the annotations (annotate-pdf). */
   notes?: number;
   /** Words of text written into the output (write-pdf). */
@@ -122,8 +129,18 @@ export interface RunDetail {
   duplicatesResolved?: number;
   /** Stream /Length entries corrected (repair-pdf). */
   streamLengthsFixed?: number;
+  /** Objects rebuilt from a surviving xref STREAM (/Index + /W) instead of
+   *  the regex object scan (repair-pdf). */
+  xrefStreamSalvaged?: boolean;
+  /** Type-1 entries successfully materialized from that xref stream. */
+  xrefStreamEntries?: number;
   /** Photo copies packed onto the print sheet (passport-photo). */
   copies?: number;
+  /** Byte-identical duplicate image XObjects merged into one shared object
+   *  (compress-pdf). */
+  dedupedImages?: number;
+  /** Raw stream bytes reclaimed by the image dedupe (compress-pdf). */
+  dedupeBytesSaved?: number;
 }
 
 export interface ToolOutput {

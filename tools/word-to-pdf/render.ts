@@ -16,8 +16,12 @@
  *  - Page breaks: automatic (line/row no longer fits) + explicit
  *    (w:br type="page" blocks). Consecutive breaks at a page top do
  *    not stack blank pages.
- *  - Every glyph is drawText — REAL selectable text. Images from the
- *    source document are NEVER drawn (honest limit, see config.ts).
+ *  - Images (audit R4-a): "image" blocks draw their pre-embedded
+ *    PDFImage at the paragraph anchor — natural px-as-pt size capped to
+ *    the content width and the full content height, aspect preserved,
+ *    never upscaled, never split. Unresolvable relIds are counted
+ *    honestly in the report (imagesSkipped), never silently dropped.
+ *  - Every glyph is drawText — REAL selectable text.
  *
  * Fonts arrive already embedded (worker): `font` is either the
  * non-embedded base-14 Helvetica (pure-WinAnsi docs) or the Noto
@@ -27,10 +31,11 @@
  * embeds Regular + Bold only).
  */
 
-import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
+import type { PDFDocument, PDFFont, PDFImage, PDFPage } from "pdf-lib";
 import { rgb, type RGB } from "pdf-lib";
 
 import type {
+  DocxImageBlock,
   DocxParaBlock,
   DocxRun,
   DocxTableBlock,
@@ -526,6 +531,36 @@ function drawTable(p: Painter, blk: DocxTableBlock): void {
 }
 
 /* ------------------------------------------------------------------ */
+/* Image (audit R4-a)                                                    */
+/* ------------------------------------------------------------------ */
+
+function drawImageBlock(
+  p: Painter,
+  blk: DocxImageBlock,
+  images: Map<string, PDFImage>
+): boolean {
+  const img = images.get(blk.relId);
+  if (!img) return false;
+  const iw = img.width;
+  const ih = img.height;
+  if (iw <= 0 || ih <= 0) return false;
+  // max-content-width, aspect preserved, natural size when it already
+  // fits, never upscaled, never split across pages.
+  const scale = Math.min(1, p.contentW / iw, (p.pageH - p.margin * 2) / ih);
+  const w = iw * scale;
+  const h = ih * scale;
+  p.ensure(h);
+  p.page.drawImage(img, {
+    x: p.margin,
+    y: p.y - h,
+    width: w,
+    height: h,
+  });
+  p.y -= h + PARA_AFTER;
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
 /* Entry point                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -536,20 +571,28 @@ export interface DocxRenderOpts {
 
 export interface DocxRenderReport {
   pages: number;
+  /** image blocks drawn (audit R4-a). */
+  imagesDrawn: number;
+  /** image blocks whose relId had no embedded image — honest skips. */
+  imagesSkipped: number;
 }
 
 /**
  * Paint the whole document into `pdfDoc` (pages added as needed).
  * `font` must already be embedded (Helvetica standard OR the Noto
  * subset); `boldFont` may be null — bold text then falls back to the
- * regular face (Noto ships Regular only).
+ * regular face (Noto ships Regular only). `images` maps the doc's
+ * image-block relIds to pre-embedded pdf-lib images (the worker embeds
+ * the media/* parts; audit R4-a) — image blocks with no entry are
+ * counted as honest skips in the report.
  */
 export function drawDocxPdf(
   pdfDoc: PDFDocument,
   font: PDFFont,
   boldFont: PDFFont | null,
   doc: ParsedDoc,
-  opts: DocxRenderOpts
+  opts: DocxRenderOpts,
+  images: Map<string, PDFImage> = new Map()
 ): DocxRenderReport {
   const p = new Painter(
     pdfDoc,
@@ -558,15 +601,20 @@ export function drawDocxPdf(
     opts.pageSize === "letter" ? "letter" : "a4",
     opts.margin === "narrow" ? "narrow" : "normal"
   );
+  let imagesDrawn = 0;
+  let imagesSkipped = 0;
   for (const blk of doc.blocks) {
     if (blk.kind === "para") {
       drawPara(p, blk);
     } else if (blk.kind === "table") {
       drawTable(p, blk);
+    } else if (blk.kind === "image") {
+      if (drawImageBlock(p, blk, images)) imagesDrawn += 1;
+      else imagesSkipped += 1;
     } else {
       // explicit page break — no stacked blanks when already at a page top
       if (p.y < p.pageH - p.margin - 1) p.newPage();
     }
   }
-  return { pages: p.pages.length };
+  return { pages: p.pages.length, imagesDrawn, imagesSkipped };
 }

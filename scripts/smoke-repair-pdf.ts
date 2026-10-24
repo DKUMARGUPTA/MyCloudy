@@ -12,9 +12,18 @@
  * throwOnInvalidObject for every salvaged output, relative imports
  * without .ts, process.exit at the end.
  *
+ * §12 (R4-b) adds the xref-STREAM salvage: a hand-assembled linearized
+ * file whose ONLY xref is a /Type /XRef stream (/W [1 4 2] + /Index) —
+ * the salvage path must exercise /Index+/W, verify every row against
+ * the bytes at its offset, and equal a REFERENCE RECONSTRUCTION
+ * assembled independently in this file from the known object parts;
+ * stale offsets / un-inflatable rows fall back to the object scan
+ * (byte-identically) and a healthy classic file carrying an xref
+ * stream is never "salvaged".
+ *
  * Run: bun scripts/smoke-repair-pdf.ts
  */
-import { inflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { PDFName, PDFRawStream, PDFDict } from "pdf-lib";
@@ -297,6 +306,12 @@ async function main(): Promise<void> {
     })());
     const again = await repairPdf(stripped, OPTIONS());
     check("deterministic: same input twice -> identical output", Buffer.compare(Buffer.from(out.bytes), Buffer.from(again.bytes)) === 0);
+    // Two-stage honesty: this file has NO xref stream — none claimed.
+    check(
+      "two-stage honest: no xref stream in the input → none claimed",
+      out.report.xrefStreamSalvaged === false && out.report.xrefStreamEntries === 0,
+      { salvaged: out.report.xrefStreamSalvaged, entries: out.report.xrefStreamEntries },
+    );
     // Salvage of the SALVAGED output (now valid) is the unchanged path.
     const round2 = await repairPdf(out.bytes, OPTIONS({ alsoRebuildValid: false }));
     check("salvaged output is now structure-valid (round trip)", round2.report.structureWasValid === true && round2.report.unchanged === true, round2.report);
@@ -440,6 +455,334 @@ async function main(): Promise<void> {
       }
     }
     check("page /Resources /Font chain survives", fontOk);
+  }
+
+  console.log("\n── 12. xref-STREAM salvage (R4-b: /Index + /W rows) ───────");
+  {
+    interface XRefPart {
+      num: number;
+      gen: number;
+      stream: boolean;
+      dict: string;
+      data: string;
+      body: string;
+    }
+
+    /** Mirrors the documented rebuild contract: fresh %PDF- header,
+     *  objects ascending, a correct classic xref table, a minimal
+     *  trailer with the scanned /Root, startxref + %%EOF. The smoke
+     *  knows every object's exact bytes (it built them), so this is
+     *  an INDEPENDENT reference the tool's output must equal. */
+    const referenceRebuild = (
+      parts: Map<number, XRefPart>,
+      root: { num: number; gen: number }
+    ): Uint8Array => {
+      const nums = [...parts.keys()].sort((a, b) => a - b);
+      const maxNum = nums[nums.length - 1];
+      let s = "%PDF-1.7\n";
+      const offsets = new Map<number, number>();
+      for (const n of nums) {
+        const p = parts.get(n)!;
+        offsets.set(n, s.length);
+        s += p.stream
+          ? `${n} ${p.gen} obj\n${p.dict}\nstream\n${p.data}\nendstream\nendobj\n`
+          : `${n} ${p.gen} obj\n${p.body}\nendobj\n`;
+      }
+      const xrefOffset = s.length;
+      const size = maxNum + 1;
+      s += `xref\n0 ${size}\n0000000000 65535 f \n`;
+      for (let n = 1; n <= maxNum; n += 1) {
+        const p = parts.get(n)!;
+        s += `${String(offsets.get(n)).padStart(10, "0")} ${String(p.gen).padStart(5, "0")} n \n`;
+      }
+      s += `trailer\n<< /Size ${size} /Root ${root.num} ${root.gen} R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+      return latin1(s);
+    };
+
+    /** Hand-assembled 3-page PDF (objects 1..10) whose ONLY cross-
+     *  reference is a /Type /XRef stream (object 10: /W [1 4 2],
+     *  /Index [0 10] — the linearized-file shape). No classic xref,
+     *  no startxref, no trailer, no %%EOF, so the structure check
+     *  fails and stage 2 runs. rowDelta shifts every recorded offset
+     *  (a STALE xref stream); corruptXrefData swaps the compressed
+     *  rows for same-length junk (un-inflatable); classicTrailer
+     *  appends a VALID classic xref + trailer instead (a healthy file
+     *  that merely happens to carry an xref stream object). */
+    const buildXrefStreamFixture = (opts: {
+      rowDelta?: number;
+      corruptXrefData?: boolean;
+      classicTrailer?: boolean;
+    }): { bytes: Uint8Array; parts: Map<number, XRefPart> } => {
+      const parts = new Map<number, XRefPart>();
+      const plain = (num: number, body: string): XRefPart => ({
+        num,
+        gen: 0,
+        stream: false,
+        dict: "",
+        data: "",
+        body,
+      });
+      const streamPart = (
+        num: number,
+        dict: string,
+        data: string
+      ): XRefPart => ({
+        num,
+        gen: 0,
+        stream: true,
+        dict,
+        data,
+        body: "",
+      });
+
+      parts.set(1, plain(1, "<< /Type /Catalog /Pages 2 0 R >>"));
+      parts.set(
+        2,
+        plain(2, "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>")
+      );
+      for (let p = 1; p <= 3; p += 1) {
+        parts.set(
+          2 + p,
+          plain(
+            2 + p,
+            `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> >> /Contents ${5 + p} 0 R >>`
+          )
+        );
+      }
+      for (let p = 1; p <= 3; p += 1) {
+        const content = `BT /F1 24 Tf 72 720 Td (XREFSTREAM NEEDLE ${p}) Tj ET`;
+        const z = toLatin(deflateSync(Buffer.from(content, "latin1")));
+        parts.set(
+          5 + p,
+          streamPart(5 + p, `<< /Length ${z.length} /Filter /FlateDecode >>`, z)
+        );
+      }
+      parts.set(
+        9,
+        plain(9, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+      );
+
+      // Lay out objects 1..9 first — their offsets feed the rows.
+      const offsets = new Map<number, number>();
+      let s = "%PDF-1.5\n";
+      for (let n = 1; n <= 9; n += 1) {
+        const p = parts.get(n)!;
+        offsets.set(n, s.length);
+        s += p.stream
+          ? `${n} ${p.gen} obj\n${p.dict}\nstream\n${p.data}\nendstream\nendobj\n`
+          : `${n} ${p.gen} obj\n${p.body}\nendobj\n`;
+      }
+
+      // One 7-byte row per object per /W [1 4 2]: type, 4-byte BE
+      // offset, 2-byte BE gen. Row 0 is the free entry.
+      const row = (type: number, f2: number, f3: number): string =>
+        toLatin(
+          new Uint8Array([
+            type & 0xff,
+            (f2 >>> 24) & 0xff,
+            (f2 >>> 16) & 0xff,
+            (f2 >>> 8) & 0xff,
+            f2 & 0xff,
+            (f3 >>> 8) & 0xff,
+            f3 & 0xff,
+          ])
+        );
+      const delta = opts.rowDelta ?? 0;
+      let rows = row(0, 0, 65535);
+      for (let n = 1; n <= 9; n += 1) {
+        rows += row(1, (offsets.get(n) ?? 0) + delta, 0);
+      }
+      const z = toLatin(deflateSync(Buffer.from(rows, "latin1")));
+      const dict = `<< /Type /XRef /Size 11 /W [1 4 2] /Index [0 10] /Root 1 0 R /Filter /FlateDecode /Length ${z.length} >>`;
+      offsets.set(10, s.length);
+      parts.set(10, streamPart(10, dict, z));
+      s += `10 0 obj\n${dict}\nstream\n${z}\nendstream\nendobj\n`;
+
+      if (opts.corruptXrefData) {
+        // Same-length junk at the exact data extent: extraction is
+        // identical, the stream just no longer inflates — the object
+        // scan must take over.
+        const at =
+          offsets.get(10)! +
+          "10 0 obj\n".length +
+          dict.length +
+          "\nstream\n".length;
+        const junk = "X".repeat(z.length);
+        s = s.slice(0, at) + junk + s.slice(at + junk.length);
+      }
+
+      if (opts.classicTrailer) {
+        const xrefOffset = s.length;
+        let table = "xref\n0 11\n0000000000 65535 f \n";
+        for (let n = 1; n <= 10; n += 1) {
+          table += `${String(offsets.get(n)).padStart(10, "0")} 00000 n \n`;
+        }
+        s += `${table}trailer\n<< /Size 11 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+      }
+      return { bytes: latin1(s), parts };
+    };
+
+    // (i) The salvage path itself.
+    const good = buildXrefStreamFixture({});
+    check(
+      "fixture verified: no classic xref/startxref/trailer/%%EOF, /Type /XRef present",
+      (() => {
+        const s = toLatin(good.bytes);
+        return (
+          !s.includes("startxref") &&
+          !s.includes("trailer") &&
+          !s.includes("%%EOF") &&
+          /\/Type \/XRef /.test(s)
+        );
+      })(),
+    );
+    const salvaged = await repairPdf(good.bytes, OPTIONS());
+    check(
+      "xref stream found → salvage path exercised",
+      salvaged.report.xrefStreamSalvaged === true,
+      salvaged.report,
+    );
+    check(
+      "9 objects materialized from the /Index+/W rows",
+      salvaged.report.xrefStreamEntries === 9,
+      salvaged.report.xrefStreamEntries,
+    );
+    check(
+      "all 10 objects recovered (9 via rows + the xref stream object via the scan merge)",
+      salvaged.report.objectsRecovered === 10,
+      salvaged.report.objectsRecovered,
+    );
+    check(
+      "honest damage flags (xref + eof gone, no length/dup/truncation claims)",
+      salvaged.report.xrefRebuilt === true &&
+        salvaged.report.eofMissing === true &&
+        salvaged.report.streamLengthsFixed === 0 &&
+        salvaged.report.duplicatesResolved === 0 &&
+        salvaged.report.truncationDetected === false &&
+        salvaged.report.headerFixed === false,
+      salvaged.report,
+    );
+    const reGood = await strictLoad(salvaged.bytes);
+    check(
+      "strict reload: 3 pages, report agrees",
+      reGood.getPageCount() === 3 && salvaged.report.pages === 3,
+      { reloaded: reGood.getPageCount(), report: salvaged.report.pages },
+    );
+    const goodText = flateTextOf(reGood);
+    check(
+      "all three page needles survive (inflated, node:zlib)",
+      hasText(goodText, "XREFSTREAM NEEDLE 1") &&
+        hasText(goodText, "XREFSTREAM NEEDLE 2") &&
+        hasText(goodText, "XREFSTREAM NEEDLE 3"),
+    );
+    check(
+      "output carries a fresh classic xref + trailer + startxref + %%EOF",
+      (() => {
+        const o = toLatin(salvaged.bytes);
+        return (
+          o.includes("xref\n0 11\n") &&
+          o.includes("trailer\n<< /Size 11 /Root 1 0 R >>") &&
+          o.includes("startxref") &&
+          o.trimEnd().endsWith("%%EOF")
+        );
+      })(),
+    );
+    check(
+      "OUTPUT EQUALS THE REFERENCE RECONSTRUCTION (byte-for-byte)",
+      Buffer.compare(
+        Buffer.from(salvaged.bytes),
+        Buffer.from(referenceRebuild(good.parts, { num: 1, gen: 0 }))
+      ) === 0,
+    );
+
+    // (ii) A STALE xref stream — every offset shifted by 1 so the
+    // byte-verification drops all rows — must NOT be trusted; the
+    // object-scan fallback reconstructs the SAME document.
+    const stale = buildXrefStreamFixture({ rowDelta: 1 });
+    const viaStale = await repairPdf(stale.bytes, OPTIONS());
+    check(
+      "stale rows (bytes disagree) → xref stream honestly NOT used",
+      viaStale.report.xrefStreamSalvaged === false &&
+        viaStale.report.xrefStreamEntries === 0,
+      {
+        salvaged: viaStale.report.xrefStreamSalvaged,
+        entries: viaStale.report.xrefStreamEntries,
+      },
+    );
+    check(
+      "stale fallback: same 10 objects, 3 pages, needles survive",
+      viaStale.report.objectsRecovered === 10 &&
+        viaStale.report.pages === 3 &&
+        hasText(
+          flateTextOf(await strictLoad(viaStale.bytes)),
+          "XREFSTREAM NEEDLE 2"
+        ),
+    );
+    check(
+      "stale fallback: objects 1..9 byte-identical to the salvage output" +
+        " (the stale stream's own bytes differ only as the file has them)",
+      (() => {
+        const goodS = toLatin(salvaged.bytes);
+        const staleS = toLatin(viaStale.bytes);
+        const p10 = goodS.indexOf("10 0 obj\n");
+        return (
+          p10 > 0 &&
+          staleS.indexOf("10 0 obj\n") === p10 &&
+          goodS.slice(0, p10) === staleS.slice(0, p10)
+        );
+      })(),
+    );
+
+    // (iii) An UN-INFLATABLE xref stream (corrupted rows, same length):
+    // parse fails → fallback, and the junk navigation stream is
+    // EXCLUDED from the rebuild — pdf-lib eagerly decodes /Type /XRef
+    // streams and garbage rows would make the whole output unloadable;
+    // the fresh classic table replaces it. Excluded = honestly not
+    // counted.
+    const corrupt = buildXrefStreamFixture({ corruptXrefData: true });
+    const viaCorrupt = await repairPdf(corrupt.bytes, OPTIONS());
+    check(
+      "un-inflatable rows → xref stream honestly NOT used",
+      viaCorrupt.report.xrefStreamSalvaged === false &&
+        viaCorrupt.report.xrefStreamEntries === 0,
+      viaCorrupt.report,
+    );
+    check(
+      "junk xref stream excluded from the rebuild (9 objects, honestly not counted)",
+      viaCorrupt.report.objectsRecovered === 9,
+      viaCorrupt.report.objectsRecovered,
+    );
+    const reCorrupt = await strictLoad(viaCorrupt.bytes);
+    check(
+      "corrupt-rows fallback: 3 pages + needles survive",
+      reCorrupt.getPageCount() === 3 &&
+        hasText(flateTextOf(reCorrupt), "XREFSTREAM NEEDLE 1") &&
+        hasText(flateTextOf(reCorrupt), "XREFSTREAM NEEDLE 3"),
+    );
+    check(
+      "output carries no /Type /XRef object (fresh classic table only)",
+      !toLatin(viaCorrupt.bytes).includes("/XRef"),
+    );
+
+    // (iv) A HEALTHY file that merely carries an xref stream object:
+    // stage 1 keeps it byte-identical — salvage never hijacks valid
+    // files.
+    const healthy = buildXrefStreamFixture({ classicTrailer: true });
+    const untouched = await repairPdf(
+      healthy.bytes,
+      OPTIONS({ alsoRebuildValid: false })
+    );
+    check(
+      "valid file + xref stream: structure valid, byte-identical, no salvage claim",
+      untouched.report.structureWasValid === true &&
+        untouched.report.unchanged === true &&
+        untouched.report.xrefStreamSalvaged === false &&
+        Buffer.compare(
+          Buffer.from(untouched.bytes),
+          Buffer.from(healthy.bytes)
+        ) === 0,
+      untouched.report,
+    );
   }
 
   console.log(

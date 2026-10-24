@@ -4,9 +4,9 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  * Markdown to PDF (PRD §8.6) — READMEs and notes rendered to a clean PDF:
  * headings h1-h6, bold/italic/inline code, ordered + nested lists, code
  * blocks on gray backgrounds, blockquotes with a bar, rules, and links as
- * blue text with numbered footnotes plus a Links section at the end. The
- * mdast parser runs inside the worker; the layout engine is shared with
- * txt-to-pdf (tools/txt-to-pdf/text-layout.ts). Device-only.
+ * blue text with numbered footnotes plus a Links section at the end. Drop
+ * PNG/JPEG files alongside the .md and block-level images embed at their
+ * spot (audit R4-a); remote URLs keep honest alt text — device-only.
  */
 export const config: ToolConfig = {
   toolId: "markdown-to-pdf",
@@ -16,7 +16,9 @@ export const config: ToolConfig = {
     }),
   outputKind: "pdf",
   minFiles: 1,
-  maxFiles: 5,
+  // Markdown + image assets together (audit R4-a): the extra drops are
+  // the photos/diagrams the markdown references by file name.
+  maxFiles: 20,
   howKeys: ["md2pdf.how1", "md2pdf.how2", "md2pdf.how3"],
   chainToolIds: ["view-pdf", "merge-pdf", "add-page-numbers"],
   options: [
@@ -83,6 +85,10 @@ export const config: ToolConfig = {
       hi: "हेडिंग, लिस्ट और कोड-ब्लॉक असली टाइपोग्राफ़ी में — स्क्रीनशॉट नहीं।",
     },
     {
+      en: "Drop PNG/JPEG images alongside the .md and block-level images embed right where they belong — original quality, no upload.",
+      hi: "PNG/JPEG तस्वीरें .md के साथ छोड़ें — ब्लॉक-लेवल तस्वीरें अपनी जगह पर जुड़ती हैं — असली क्वालिटी में, कोई अपलोड नहीं।",
+    },
+    {
       en: "Bold, italic, inline code, blockquotes and rules, with clean page breaks that never strand a heading.",
       hi: "बोल्ड, इटैलिक, इनलाइन कोड, कोट और रूल — हेडिंग पेज के आख़िर में अटकती नहीं।",
     },
@@ -106,8 +112,8 @@ export const config: ToolConfig = {
         hi: "क्या चलता है — और क्या नहीं?",
       },
       a: {
-        en: "Supported: headings, paragraphs, bold, italic, inline code, links, ordered and nested lists, code blocks, blockquotes and rules. Not yet: images (their alt text shows in brackets), raw HTML blocks and GFM tables (they fall back to plain text) and syntax coloring inside code.",
-        hi: "चलता है: हेडिंग, पैराग्राफ़, बोल्ड, इटैलिक, इनलाइन कोड, लिंक, क्रमांकित और नेस्टेड लिस्ट, कोड-ब्लॉक, कोट और रूल। अभी नहीं: तस्वीरें (उनका alt टेक्स्ट कोष्ठक में दिखता है), रॉ HTML और GFM टेबल (सादा टेक्स्ट में गिरते हैं) और कोड में रंग।",
+        en: "Supported: headings, paragraphs, bold, italic, inline code, links, ordered and nested lists, code blocks, blockquotes and rules — plus images: drop PNG/JPEG files next to the .md and a paragraph that is only an image embeds right there (up to 20 files / 50 MB per drop). Remote http(s) images, inline images in a text paragraph and unmatched file names keep their honest [alt] text — nothing is ever fetched from the network. Not yet: raw HTML blocks and GFM tables (they fall back to plain text) and syntax coloring inside code.",
+        hi: "चलता है: हेडिंग, पैराग्राफ़, बोल्ड, इटैलिक, इनलाइन कोड, लिंक, क्रमांकित और नेस्टेड लिस्ट, कोड-ब्लॉक, कोट और रूल — साथ में तस्वीरें: PNG/JPEG फ़ाइलें .md के साथ छोड़ें और जो पैराग्राफ़ केवल तस्वीर है वह वहीं जुड़ जाता है (प्रति ड्रॉप 20 फ़ाइलें / 50 MB तक)। रिमोट http(s) तस्वीरें, टेक्स्ट पैराग्राफ़ के अंदर इनलाइन तस्वीरें और बिना मैच फ़ाइल-नाम ईमानदार [alt] टेक्स्ट में रहते हैं — नेटवर्क से कभी कुछ नहीं लाया जाता। अभी नहीं: रॉ HTML और GFM टेबल (सादा टेक्स्ट में गिरते हैं) और कोड में रंग।",
       },
     },
     {

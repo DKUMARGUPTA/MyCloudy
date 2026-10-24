@@ -21,10 +21,16 @@
  *    inject stray ASCII quotes (") between Devanagari words; strip " from
  *    strings that contain Devanagari, ONLY those.
  *
- * Honest limits (mirrored in config.ts): images, headers/footers,
- * footnotes, text boxes and multi-column layouts are not carried over;
- * numbered lists print as bullets; the old binary .doc format is not a
- * ZIP and is rejected up front.
+ * Honest limits (mirrored in config.ts): headers/footers, footnotes,
+ * text boxes and multi-column layouts are not carried over; numbered
+ * lists print as bullets; the old binary .doc format is not a ZIP and is
+ * rejected up front. IMAGES (audit R4-a): <a:blip>/<v:imagedata> runs
+ * inside the paragraphs the parser already walks become "image" blocks
+ * anchored to their paragraph — the worker resolves them through
+ * word/_rels/document.xml.rels to the media/* zip parts and embeds
+ * PNG/JPEG via the shared helper (original bytes, downscale only for
+ * oversized). Missing media parts, unsupported formats and images inside
+ * table cells are counted honestly, never silently dropped.
  */
 
 import { unzipSync } from "fflate";
@@ -41,6 +47,11 @@ export const MAX_RUN_TEXT = 2_000;
 export const MAX_PARA_TEXT = 10_000;
 export const MAX_CELL_TEXT = 1_000;
 export const MAX_RUNS_PER_PARA = 200;
+/** Embedded images carried into the PDF (audit R4-a) — beyond is an
+ * honest truncation, never a silent drop. */
+export const MAX_IMAGES = 50;
+/** relationship Id → Target pairs carried through the boundary. */
+export const MAX_RELS = 200;
 
 /* ------------------------------------------------------------------ */
 /* Doc model                                                            */
@@ -77,7 +88,17 @@ export interface DocxPageBreakBlock {
   kind: "pagebreak";
 }
 
-export type DocxBlock = DocxParaBlock | DocxTableBlock | DocxPageBreakBlock;
+/**
+ * One embedded image anchored to the paragraph that carried it (audit
+ * R4-a). `relId` is the <a:blip r:embed>/<v:imagedata r:id> relationship
+ * id — the worker maps it to the media/* zip part via ParsedDoc.media.
+ */
+export interface DocxImageBlock {
+  kind: "image";
+  relId: string;
+}
+
+export type DocxBlock = DocxParaBlock | DocxTableBlock | DocxPageBreakBlock | DocxImageBlock;
 
 export interface ParsedDoc {
   blocks: DocxBlock[];
@@ -85,6 +106,12 @@ export interface ParsedDoc {
   tableCount: number;
   wordCount: number;
   charCount: number;
+  /** document.xml.rels Id → Target pairs (image resolution). */
+  media: Record<string, string>;
+  /** image blocks kept (≤ MAX_IMAGES — the honest parse-level count). */
+  imageCount: number;
+  /** images found but honestly not carried (table cells, over-cap). */
+  imagesDropped: number;
   /** true when any hard cap was hit — the surface shows an honest note. */
   truncated: boolean;
 }
@@ -96,12 +123,22 @@ function emptyDoc(): ParsedDoc {
     tableCount: 0,
     wordCount: 0,
     charCount: 0,
+    media: {},
+    imageCount: 0,
+    imagesDropped: 0,
     truncated: false,
   };
 }
 
 /** Honest stats derived from the blocks alone (parse + coercion agree). */
-function docStats(blocks: DocxBlock[]): Omit<ParsedDoc, "blocks" | "truncated"> {
+interface DocTextStats {
+  paraCount: number;
+  tableCount: number;
+  wordCount: number;
+  charCount: number;
+}
+
+function docStats(blocks: DocxBlock[]): DocTextStats {
   let paraCount = 0;
   let tableCount = 0;
   let words = 0;
@@ -463,6 +500,8 @@ class DocxAssembler {
   private readonly styles: Map<string, number>;
   readonly blocks: DocxBlock[] = [];
   private paraBlocks = 0;
+  private imageBlocks = 0;
+  imagesDropped = 0;
   truncated = false;
 
   /* --- walker state --- */
@@ -470,6 +509,8 @@ class DocxAssembler {
   private inBody = false;
   /** depth of the outermost ignored element (drawing/pict/sectPr), -1 = off. */
   private skipDepth = -1;
+  /** relationship ids of the images inside the paragraph being closed. */
+  private pendingImages: string[] = [];
   private tableStack: TableFrame[] = [];
   private rowStack: string[][] = [];
   private cellStack: CellFrame[] = [];
@@ -499,14 +540,28 @@ class DocxAssembler {
   readonly handlers: SaxHandlers = {
     open: (name, attrs) => {
       this.depth += 1;
-      if (this.skipDepth !== -1) return;
+      if (this.skipDepth !== -1) {
+        // Inside a skipped drawing/pict the image blip is STILL the
+        // honest signal we need (audit R4-a) — capture its relationship
+        // id; everything else inside stays ignored.
+        const skipped = localName(name);
+        if (skipped === "blip") {
+          const rel = attrs["r:embed"] ?? attrs["r:link"] ?? "";
+          if (rel !== "" && this.para !== null) this.pendingImages.push(rel);
+        } else if (skipped === "imagedata") {
+          const rel = attrs["r:id"] ?? "";
+          if (rel !== "" && this.para !== null) this.pendingImages.push(rel);
+        }
+        return;
+      }
       const local = localName(name);
       if (local === "sectPr") {
         this.skipDepth = this.depth;
         return;
       }
-      // drawings / VML pictures: skipped wholesale (images are never
-      // rendered — the honest limit; also drops text-box duplicates).
+      // drawings / VML pictures: their text/layout is still skipped
+      // wholesale (text boxes, shapes), but a:blip / v:imagedata inside
+      // them is captured above as an image anchor (audit R4-a).
       if (local === "drawing" || local === "pict") {
         this.skipDepth = this.depth;
         return;
@@ -536,6 +591,7 @@ class DocxAssembler {
             firstRunDone: false,
             textLen: 0,
           };
+          this.pendingImages = [];
           break;
         case "r": {
           const para = this.para;
@@ -715,31 +771,79 @@ class DocxAssembler {
     para.firstRunDone = true;
   }
 
+  /** Image anchors become blocks right after their paragraph; caps are
+   *  honest (truncated + counted), never silent. */
+  private flushImages(): void {
+    if (this.pendingImages.length === 0) return;
+    const pending = this.pendingImages;
+    this.pendingImages = [];
+    if (!this.inBody) {
+      this.imagesDropped += pending.length;
+      return;
+    }
+    if (this.cellStack.length > 0) {
+      // images inside table cells — honestly not carried (audit R4-a)
+      this.imagesDropped += pending.length;
+      return;
+    }
+    for (const rel of pending) {
+      if (this.imageBlocks >= MAX_IMAGES) {
+        this.truncated = true;
+        this.imagesDropped += 1;
+        continue;
+      }
+      const relId = rel.slice(0, 200);
+      if (relId === "") {
+        this.imagesDropped += 1;
+        continue;
+      }
+      this.imageBlocks += 1;
+      this.pushBlock({ kind: "image", relId });
+    }
+  }
+
   private endPara(): void {
     const para = this.para;
     this.para = null;
     this.inNumPr = false;
-    if (!para) return;
+    if (!para) {
+      this.pendingImages = [];
+      return;
+    }
 
     if (this.cellStack.length > 0) {
-      // paragraph inside a table cell — contributes to the cell text
+      // paragraph inside a table cell — contributes to the cell text;
+      // its images are honestly not carried (audit R4-a)
+      this.imagesDropped += this.pendingImages.length;
+      this.pendingImages = [];
       const cell = this.cellStack[this.cellStack.length - 1];
       cell.texts.push(para.runs.map((r) => r.text).join("").slice(0, MAX_CELL_TEXT));
       return;
     }
-    if (!this.inBody) return;
+    if (!this.inBody) {
+      this.imagesDropped += this.pendingImages.length;
+      this.pendingImages = [];
+      return;
+    }
 
     const text = para.runs.map((r) => r.text).join("");
     const isList = para.listLevel >= 0;
     const hasText = text.trim().length > 0;
+    const hasImages = this.pendingImages.length > 0;
 
     if (!hasText && para.pageBreak) {
       this.pushBlock({ kind: "pagebreak" });
+      this.flushImages();
       return;
     }
     if (!hasText && !isList) {
-      // Word's empty spacing paragraph — keep one honest blank line.
-      this.pushBlock({ kind: "para", runs: [] });
+      if (!hasImages) {
+        // Word's empty spacing paragraph — keep one honest blank line.
+        this.pushBlock({ kind: "para", runs: [] });
+        return;
+      }
+      // an image-only paragraph carries no blank line (audit R4-a)
+      this.flushImages();
       return;
     }
 
@@ -758,15 +862,89 @@ class DocxAssembler {
       listLevel: isList ? para.listLevel : undefined,
     });
     if (para.pageBreak) this.pushBlock({ kind: "pagebreak" });
+    this.flushImages();
   }
 
   finish(): ParsedDoc {
     return {
       blocks: this.blocks,
       ...docStats(this.blocks),
+      media: {},
+      imageCount: this.imageBlocks,
+      imagesDropped: this.imagesDropped,
       truncated: this.truncated,
     };
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* document.xml.rels → media parts (audit R4-a)                          */
+/* ------------------------------------------------------------------ */
+
+/** Parses the document relationships: Id → Target (relative to word/). */
+function parseDocumentRels(xml: string): Record<string, string> {
+  const map: Record<string, string> = {};
+  parseXmlSax(xml, {
+    open(name, attrs) {
+      if (localName(name) !== "Relationship") return;
+      const id = attrs["Id"] ?? "";
+      const target = attrs["Target"] ?? "";
+      if (id !== "" && target !== "") map[id] = target;
+    },
+    text() {},
+    close() {},
+  });
+  return map;
+}
+
+/**
+ * Resolves a relationship Target to a zip path. word/_rels/document.xml.rels
+ * Targets are relative to the word/ PART (OOPC §10.1.2): "media/image1.png"
+ * → "word/media/image1.png", "/word/media/x.png" (package-absolute) →
+ * "word/media/x.png", "../glossary/pic.png" climbs honestly out of word/
+ * ("glossary/pic.png"). External schemes (http:, file:) return "" — never
+ * fetched, on-device promise.
+ */
+export function resolveMediaPath(target: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target)) return "";
+  let t = target.replace(/\\/g, "/");
+  const q = t.indexOf("?");
+  if (q >= 0) t = t.slice(0, q);
+  const h = t.indexOf("#");
+  if (h >= 0) t = t.slice(0, h);
+  // Targets resolve against word/ (the rels' owning part); a leading
+  // slash is package-absolute. ".." pops honestly (word/ → root).
+  const out = t.startsWith("/") ? [] : ["word"];
+  for (const part of t.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      out.pop();
+      continue;
+    }
+    out.push(part);
+  }
+  return out.length === 0 ? "" : out.join("/");
+}
+
+/**
+ * Zip member lookup for media parts: exact key first, then a
+ * case-insensitive unique match (some writers differ in case).
+ */
+export function lookupMediaEntry(
+  entries: Record<string, Uint8Array>,
+  path: string
+): Uint8Array | undefined {
+  const direct = entries[path];
+  if (direct !== undefined) return direct;
+  const lower = path.toLowerCase();
+  let hit: Uint8Array | undefined;
+  for (const key of Object.keys(entries)) {
+    if (key.toLowerCase() === lower) {
+      if (hit !== undefined) return undefined; // ambiguous — treat as miss
+      hit = entries[key];
+    }
+  }
+  return hit;
 }
 
 /* ------------------------------------------------------------------ */
@@ -810,7 +988,18 @@ export function parseDocx(bytes: Uint8Array): ParsedDoc {
   } catch {
     return emptyDoc();
   }
-  return asm.finish();
+  const doc = asm.finish();
+  // the image relationships (audit R4-a) — a missing/broken rels part
+  // degrades to an empty map (the worker then skips images honestly)
+  const relsBytes = entries?.["word/_rels/document.xml.rels"];
+  if (relsBytes && relsBytes.length > 0) {
+    try {
+      doc.media = parseDocumentRels(decode(relsBytes));
+    } catch {
+      doc.media = {};
+    }
+  }
+  return doc;
 }
 
 /* ------------------------------------------------------------------ */
@@ -872,6 +1061,25 @@ export function parseWordRun(raw: string): ParsedDoc {
   let truncated = o.truncated === true;
   const blocks: DocxBlock[] = [];
   let paraBlocks = 0;
+  let imageBlocks = 0;
+  const imagesDroppedRaw = Number(o.imagesDropped);
+  let imagesDropped =
+    Number.isFinite(imagesDroppedRaw) && imagesDroppedRaw > 0
+      ? Math.min(10_000, Math.floor(imagesDroppedRaw))
+      : 0;
+  // relationship Id → Target map (audit R4-a) — sanitized at the boundary
+  const media: Record<string, string> = {};
+  if (typeof o.media === "object" && o.media !== null) {
+    for (const [key, value] of Object.entries(o.media as Record<string, unknown>)) {
+      if (Object.keys(media).length >= MAX_RELS) {
+        truncated = true;
+        break;
+      }
+      const safeKey = cleanText(key, 200);
+      const safeTarget = cleanText(value, 300);
+      if (safeKey !== "" && safeTarget !== "") media[safeKey] = safeTarget;
+    }
+  }
 
   outer: for (const bo of o.blocks) {
     if (blocks.length >= MAX_BLOCKS) {
@@ -884,6 +1092,25 @@ export function parseWordRun(raw: string): ParsedDoc {
 
     if (kind === "pagebreak") {
       blocks.push({ kind: "pagebreak" });
+      continue;
+    }
+
+    if (kind === "image") {
+      // image anchor (audit R4-a): the relId is the ONLY payload; caps
+      // are honest (truncated + counted), garbage relIds are dropped.
+      const rawRel = typeof b.relId === "string" ? b.relId : "";
+      const relId = cleanText(rawRel, 200).replace(/[^A-Za-z0-9_.\-]/g, "");
+      if (relId === "") {
+        imagesDropped += 1;
+        continue;
+      }
+      if (imageBlocks >= MAX_IMAGES) {
+        truncated = true;
+        imagesDropped += 1;
+        continue;
+      }
+      imageBlocks += 1;
+      blocks.push({ kind: "image", relId });
       continue;
     }
 
@@ -962,7 +1189,14 @@ export function parseWordRun(raw: string): ParsedDoc {
     paraBlocks += 1;
   }
 
-  return { blocks, ...docStats(blocks), truncated };
+  return {
+    blocks,
+    ...docStats(blocks),
+    media,
+    imageCount: imageBlocks,
+    imagesDropped,
+    truncated,
+  };
 }
 
 /* ------------------------------------------------------------------ */
