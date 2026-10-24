@@ -4540,3 +4540,19 @@ Stage Summary:
 - i18n leaf parity: en 4359 = hi 4359, identical key sets (prior-run keys verified in both; this session added NO new catalog keys — config features/FAQ are inline EN/HI objects like the rest of the tool). Tool mirrors: create-resume 136/136, passport-photo 51/51.
 - Browser QA (agent-browser, dev server :3000 already running — no restart; DataTransfer/change recipe for the photo; 0 console + 0 page errors throughout): create-resume → landing shows 3 template cards; Modern → Use sample → editor opens with Modern radio checked, preview shows the accent rail (202 pt --side-w) with "Priya Sharma" inside; Download PDF → captured blob %PDF-1.7 3190 bytes → inflated streams contain the Tc operator, hex-drawn "Priya Sharma"/"EXPERIENCE"/contact, and the full-bleed rail path 0 0 m 0 841.89 l 202 841.89 l 202 0 l; segmented control toggles Compact (rsm-compact + "Dense 9.5 pt…two-column skills" hint) and back (aria-checked false,true,false); choice survives a full reload (localStorage draft template:"modern"). Screenshot public/qa/audit4-resume-modern.png (VLM-verified: Modern selected, accent-rail hint, colored sidebar with the name, no errors). passport-photo → portrait.jpg loaded → India default chip (35×45mm · 70–80% · background hint · honest no-face-detection note, no warning) → select Canada → chip flips to 50×70mm · 44–51% + amber "Your 35×45mm size differs from this standard (50×70mm)" + "Set 50×70mm" → clicking it switches to Custom 50×70 and the warning disappears → back to 35×45 the warning returns; HI locale renders लक्ष्य देश / स्टैंडर्ड प्रिंट साइज़ / mismatch / फ़ेस-डिटेक्शन note. Screenshot public/qa/audit4-passport-countries.png (VLM-verified: Canada, 50×70mm + 44–51% band, amber mismatch warning, no broken UI).
 - NOT committed (per instructions); no build; no dev-server restart.
+
+---
+Task ID: R4-FINAL
+Agent: orchestrator (main session)
+Task: Round 4 consolidated verification + commit + push.
+
+Work Log:
+- 3 agents completed sequentially (parallel launches flaked twice on backend deadline — sequential is the reliable pattern now): R4-a image embedding, R4-b engine quality, R4-c creator tools. Each audited a prior dead run's landed code, fixed real gaps (word/ base path, missing i18n key, epub rel path), added missing smoke coverage.
+- Final gates: tsc 0, lint 0, i18n 4359=4359, consolidated 8-smoke battery 872 checks 0 failed.
+- Browser QA: homepage 97 tools ok; agents' per-tool QA (md images E2E w/ XObject capture, compress dedupe 96% size cut, resume Modern template, passport Canada chip) all 0 console errors.
+- Commit + tag audit-4-hardening + push (main + 13 tags on GitHub).
+
+Stage Summary:
+- 4 audit rounds COMPLETE and pushed. Cumulative: 4 BUGs + 21 fixes + 24 enhancements + 3.99MB purge + UBL 2.1 + batch family + FDF + deskew + dedupe + xref salvage + templates + compliance guide.
+- Backlog remaining: ocr→e-invoice chaining, pdf-to-word table reconstruction, html-to-pdf CSS box model (all three are big/risky — candidate for dedicated rounds).
+- REMINDER: user should rotate the chat-exposed GitHub PAT.
