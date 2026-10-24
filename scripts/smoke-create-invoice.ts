@@ -744,6 +744,117 @@ await renderAndCheck(
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* 5. OCR prefill hydration (R5-c): applyOcrDraft + the round-trip      */
+/* ------------------------------------------------------------------ */
+
+console.log("── 5. OCR prefill hydration (applyOcrDraft, R5-c) ──────");
+{
+  const { applyOcrDraft } = await import("../tools/create-invoice/model");
+  const {
+    extractInvoiceDraft,
+    parseOcrPrefill,
+    serializeOcrPrefill,
+  } = await import("../tools/ocr-pdf/invoice-extract");
+
+  // Full E2E chain on the R5-c reference invoice: recognized text →
+  // extract → serialize → parse → apply onto a quotation-state editor.
+  const text = [
+    "TAX INVOICE",
+    "From: Sunrise Traders Pvt Ltd",
+    "Invoice No: INV-2024-001",
+    "Invoice Date: 15/03/2024",
+    "Due Date: 29/03/2024",
+    "Widget Pro 2 × 599.00",
+    "Gadget Lite 1 249.50",
+    "Subtotal: 1,447.50",
+    "CGST: 130.28",
+    "Total: ₹ 1,577.78",
+  ].join("\n");
+  const draft = extractInvoiceDraft([text], "en");
+  eq(draft !== null, true, "E2E: draft extracted");
+  const parsed = parseOcrPrefill(serializeOcrPrefill(draft!, 42));
+  eq(parsed, draft, "E2E: prefill codec round-trip");
+
+  const base = baseState({ ty: "quotation", no: "QT-001" });
+  const hydrated = applyOcrDraft(base, parsed!);
+  eq(hydrated.biz.name, "Sunrise Traders Pvt Ltd", "vendor → business name");
+  eq(hydrated.biz.addr, base.biz.addr, "other business fields survive the merge");
+  eq(hydrated.no, "INV-2024-001", "invoice number set");
+  eq(hydrated.date, "2024-03-15", "invoice date set (ISO)");
+  eq(hydrated.due, "2024-03-29", "due date set (ISO)");
+  eq(hydrated.cur, "INR", "currency set");
+  eq(hydrated.ty, "gst-invoice", "GST/₹ evidence → gst-invoice type");
+  eq(
+    hydrated.items,
+    [
+      { d: "Widget Pro", h: "", q: "2", r: "599.00", g: "", dp: "" },
+      { d: "Gadget Lite", h: "", q: "1", r: "249.50", g: "", dp: "" },
+    ],
+    "items mapped onto editor rows (h/dp empty, gst only when found)"
+  );
+  eq(hydrated.cli, base.cli, "client untouched (OCR never saw it)");
+  // The hydrated state still calculates (integer paise engine intact).
+  const c5 = calc(hydrated);
+  eq(c5.sub, 144750, "hydrated items compute: 2×599 + 1×249.50 = 1447.50");
+
+  // Foreign currency + no GST evidence → standard-family type.
+  const usd = applyOcrDraft(
+    baseState({ ty: "gst-invoice" }),
+    { totals: {}, gstFound: false, items: [], itemsCapped: false, currency: "USD" }
+  );
+  eq(usd.ty, "simple-invoice", "USD totals → simple-invoice (standard family)");
+  eq(usd.cur, "USD", "USD currency applied");
+
+  // NO currency/GST evidence at all → the user's type stays untouched.
+  const keep = applyOcrDraft(
+    baseState({ ty: "quotation" }),
+    { totals: {}, gstFound: false, items: [], itemsCapped: false, invoiceNumber: "X-1" }
+  );
+  eq(keep.ty, "quotation", "no family evidence → type unchanged");
+  eq(keep.no, "X-1", "number still applied");
+
+  // gstFound alone (no currency) also picks the GST invoice.
+  const gstOnly = applyOcrDraft(
+    baseState({ ty: "quotation" }),
+    { totals: { cgst: "10" }, gstFound: true, items: [], itemsCapped: false }
+  );
+  eq(gstOnly.ty, "gst-invoice", "GST-labelled totals → gst-invoice (even without currency)");
+
+  // No items found → rows untouched; per-row gst carried when present.
+  const noItems = applyOcrDraft(
+    baseState({ ty: "gst-invoice", items: [{ d: "kept", h: "", q: "3", r: "7", g: "5", dp: "" }] }),
+    { totals: {}, gstFound: false, items: [], itemsCapped: false, invoiceNumber: "N-1" }
+  );
+  eq(noItems.items, [
+    { d: "kept", h: "", q: "3", r: "7", g: "5", dp: "" },
+  ], "empty draft items → editor rows kept");
+  const withGst = applyOcrDraft(baseState({ ty: "gst-invoice" }), {
+    totals: {},
+    gstFound: true,
+    items: [{ d: "Consulting", q: "10", r: "250.00", g: "18" }],
+    itemsCapped: false,
+  });
+  eq(withGst.items[0].g, "18", "per-row gst carried into the editor");
+
+  // The honest cap survives the whole boundary: 60 found rows → the
+  // codec caps at 50, the mapping keeps the cap.
+  const throughCodec = parseOcrPrefill(
+    serializeOcrPrefill({
+      totals: {},
+      gstFound: false,
+      items: Array.from({ length: 60 }, (_, i) => ({ d: `Row ${i}`, q: "1", r: "2" })),
+      itemsCapped: true,
+    })
+  );
+  eq(throughCodec?.items.length, 50, "parseOcrPrefill caps the list itself");
+  eq(
+    applyOcrDraft(baseState(), throughCodec!).items.length,
+    50,
+    "mapping keeps the codec's 50-row cap"
+  );
+}
+
 console.log("");
 if (failures > 0) {
   console.error(`✗ ${failures} FAILURE(S) — create-invoice smoke`);

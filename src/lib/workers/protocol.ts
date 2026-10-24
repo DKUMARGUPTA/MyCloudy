@@ -86,6 +86,8 @@ export interface RunDetail {
   paragraphs?: number;
   /** Headings detected in the output (pdf-to-word). */
   headings?: number;
+  /** Tables detected into the output (pdf-to-word). */
+  tables?: number;
   /** Slides painted into the output (powerpoint-to-pdf). */
   slides?: number;
   /** Text boxes that overflowed their slide box (powerpoint-to-pdf). */

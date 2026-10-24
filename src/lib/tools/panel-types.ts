@@ -1,4 +1,5 @@
 import type { OptionValues } from "./config-types";
+import type { RunDetail } from "@/lib/workers/protocol";
 
 /**
  * Custom per-tool options panel contract (PRD §2.6: tools/<id>/Panel.tsx).
@@ -47,4 +48,16 @@ export interface ToolSurfaceProps extends ToolPanelProps {
    * existing surfaces can ignore it.
    */
   onChain?: (targetToolId: string) => void;
+}
+
+/**
+ * Per-tool extra rendered INSIDE the result view (R5-c): a named
+ * module-level component looked up in TOOL_RESULT_EXTRAS and mounted
+ * only in the result phase. It receives the worker run summary so
+ * tools whose value lives in the recognized text (ocr-pdf's invoice
+ * hand-off) can offer a follow-up action beside the downloads.
+ */
+export interface ToolResultExtraProps {
+  /** Worker run summary — the ocr hand-off reads pageTexts from it. */
+  runSummary?: RunDetail | null;
 }

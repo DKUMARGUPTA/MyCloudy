@@ -23,6 +23,7 @@ import {
   docxStats,
   extractTextBlocks,
   parseRun,
+  type DocxParaBlock,
   type PdfTextItemInput,
 } from "./model";
 
@@ -45,6 +46,9 @@ import {
  *     bold. Any mismatch (form XObjects, inherited resources, Type3)
  *     skips that page's enrichment — bold degrades honestly to off;
  *  4. extractTextBlocks + buildDocx (fflate OOXML) → Blob download.
+ *     Table detection (default on): consecutive lines with matching
+ *     column clusters become real Word tables; everything else keeps
+ *     the paragraph path. The detail reports the tables count.
  *
  * Scanned PDFs (zero selectable text) fail with tool.errorNoText —
  * honest, same as pdf-to-txt (OCR chain suggested in the FAQ copy).
@@ -281,16 +285,24 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const model = extractTextBlocks(pages, {
     boldMap,
     headings: opts.headings,
+    tables: opts.tables,
   });
 
   post({ type: "progress", runId, pct: 85, stage: "saving" });
 
-  const title =
-    model.blocks.find((block) => block.headingLevel === 1) ??
-    model.blocks[0];
+  // Title = first Heading1 paragraph, else the first paragraph (a table
+  // block carries no runs and is never the title).
+  const titlePara =
+    model.blocks.find(
+      (block): block is DocxParaBlock =>
+        block.kind === "para" && block.headingLevel === 1
+    ) ??
+    model.blocks.find(
+      (block): block is DocxParaBlock => block.kind === "para"
+    );
   const docx = buildDocx(model, {
     pageBreaks: opts.pageBreaks,
-    title: title ? title.runs.map((r) => r.text).join(" ") : "",
+    title: titlePara ? titlePara.runs.map((r) => r.text).join(" ") : "",
   });
 
   const base =
@@ -316,6 +328,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       pages: stats.pages,
       paragraphs: stats.paragraphs,
       headings: stats.headings,
+      tables: stats.tables,
     },
   });
 }

@@ -84,9 +84,14 @@ import {
   upiPayload,
   warnings,
   words,
+  applyOcrDraft,
   type BlockKey,
   type InvoiceState,
 } from "./model";
+import {
+  OCR_PREFILL_KEY,
+  parseOcrPrefill,
+} from "../ocr-pdf/invoice-extract";
 import {
   CURRENCY_SYMBOLS,
   GST_STATES,
@@ -414,6 +419,45 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
       workerRef.current = null;
     };
   }, []);
+
+  /* ---------- one-shot OCR prefill (R5-c) ----------
+   * The ocr tool's "Send to invoice" button stashes the fields it
+   * actually found under "dp_inv_ocr" and navigates here. On mount we
+   * hydrate the editor with exactly those fields (nothing more — the
+   * mapping in model.ts never fabricates), tell the user to review
+   * everything, and REMOVE the key so the hand-off is strictly one-shot
+   * (a later visit or refresh starts from the profile as always). */
+  const ocrPrefillDoneRef = useRef(false);
+  useEffect(() => {
+    if (ocrPrefillDoneRef.current) return;
+    ocrPrefillDoneRef.current = true;
+    let raw: string | null = null;
+    try {
+      raw = localStorage.getItem(OCR_PREFILL_KEY);
+    } catch {
+      raw = null;
+    }
+    if (!raw) return;
+    try {
+      localStorage.removeItem(OCR_PREFILL_KEY);
+    } catch {
+      /* remove is best-effort; the key is ignored when absent */
+    }
+    const draft = parseOcrPrefill(raw);
+    if (!draft) return;
+    // setState-in-effect rides a microtask (house pattern — the effect
+    // body stays render-safe for the React compiler).
+    queueMicrotask(() => {
+      setState((prev) => applyOcrDraft(prev, draft));
+      if (draft.invoiceNumber !== undefined) metaRef.current.tno = true;
+      toast({
+        title: t("invoice.ocrPrefillToastTitle"),
+        description: t("invoice.ocrPrefillToastDesc"),
+      });
+    });
+    // t/toast are stable for a mounted surface; the ref guard makes this
+    // run exactly once per mount even if they ever change identity.
+  }, [t, toast]);
 
   /* ---------- field helpers ---------- */
   const setField = useCallback(

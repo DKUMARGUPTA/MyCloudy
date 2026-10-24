@@ -26,16 +26,19 @@ import type { PdfToWordDetail } from "./model";
  * PDF → Word surface (RB1-b, the 68th tool) — create-pdf pattern: the
  * surface IS the whole product (noFile), rendered on the landing page in
  * place of the shell DropZone. It owns the file intake (shared DropZone,
- * magic-%PDF sniffed), the two conversion switches (heading detection,
- * page breaks), the Convert CTA that spawns the real Web Worker, the
- * progress bar, the on-device download + success toast, and the
- * pages/paragraphs/headings summary card.
+ * magic-%PDF sniffed), the three conversion switches (heading
+ * detection, table detection — default on, with automatic paragraph
+ * fallback for anything it cannot confidently read — and page breaks),
+ * the Convert CTA that spawns the real Web Worker, the progress bar,
+ * the on-device download + success toast, and the
+ * pages/paragraphs/headings/tables summary card.
  *
  * Honest by design: the summary and the standing note say text +
- * structure only (images, columns, tables become a text flow), and a
- * scanned PDF surfaces the worker's tool.errorNoText instead of an
- * empty file. A file chained in from another tool (convert-from-pdf
- * hub) is picked up automatically; picking a new file always wins.
+ * structure only (images and multi-column layouts become a text flow;
+ * tables are only ever DETECTED, never fabricated), and a scanned PDF
+ * surfaces the worker's tool.errorNoText instead of an empty file. A
+ * file chained in from another tool (convert-from-pdf hub) is picked up
+ * automatically; picking a new file always wins.
  */
 
 interface DoneSummary {
@@ -43,6 +46,7 @@ interface DoneSummary {
   pages: number;
   paragraphs: number;
   headings: number;
+  tables: number;
 }
 
 export function PdfToWordSurface({
@@ -54,6 +58,7 @@ export function PdfToWordSurface({
   const [picked, setPicked] = useState<File | null>(null);
   const [headings, setHeadings] = useState(true);
   const [pageBreaks, setPageBreaks] = useState(true);
+  const [tables, setTables] = useState(true);
   const [pct, setPct] = useState<number | null>(null);
   const [stage, setStage] = useState<"reading" | "processing" | "saving">(
     "reading"
@@ -110,6 +115,7 @@ export function PdfToWordSurface({
               pages: detail?.pages ?? 0,
               paragraphs: detail?.paragraphs ?? 0,
               headings: detail?.headings ?? 0,
+              tables: detail?.tables ?? 0,
             });
             toast({
               title: t("p2w.doneTitle"),
@@ -148,13 +154,14 @@ export function PdfToWordSurface({
         run: JSON.stringify({
           headings,
           pageBreaks,
+          tables,
           locale,
           fileWord: t("p2w.fileWord"),
         }),
       },
       files: [active],
     });
-  }, [active, headings, locale, pageBreaks, t, toast]);
+  }, [active, headings, locale, pageBreaks, tables, t, toast]);
 
   const onAccept = useCallback((incoming: File[]): void => {
     const file = incoming[0];
@@ -240,6 +247,23 @@ export function PdfToWordSurface({
 
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="p2w-tables" className="text-sm">
+              {t("p2w.tablesLabel")}
+            </Label>
+            <Switch
+              id="p2w-tables"
+              checked={tables}
+              onCheckedChange={(checked) => setTables(checked)}
+              aria-label={t("p2w.tablesLabel")}
+            />
+          </div>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {t("p2w.tablesHint")}
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-3">
             <Label htmlFor="p2w-breaks" className="text-sm">
               {t("p2w.breaksLabel")}
             </Label>
@@ -320,6 +344,9 @@ export function PdfToWordSurface({
             </li>
             <li className="rounded-chip bg-muted px-2.5 py-1 text-[11px] font-medium text-foreground">
               {t("p2w.summaryHeadings", { count: done.headings })}
+            </li>
+            <li className="rounded-chip bg-muted px-2.5 py-1 text-[11px] font-medium text-foreground">
+              {t("p2w.summaryTables", { count: done.tables })}
             </li>
           </ul>
         </div>

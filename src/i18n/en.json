@@ -421,7 +421,9 @@
     "imagesSkipped": "{n, plural, =1 {1 image skipped} other {# images skipped}} — remote or unsupported",
     "deskewedPages": "{n, plural, =1 {1 tilted page deskewed before OCR} other {# tilted pages deskewed before OCR}}",
     "dedupedImages": "{n, plural, =1 {1 duplicate image merged} other {# duplicate images merged}}",
-    "dedupeBytesSaved": "{bytes} of duplicate image data removed"
+    "dedupeBytesSaved": "{bytes} of duplicate image data removed",
+    "ocrSendInvoice": "Send to invoice",
+    "ocrSendInvoiceHint": "No invoice fields found in this text"
   },
   "feedback": {
     "prompt": "Was this tool useful?",
@@ -2559,7 +2561,9 @@
     "tt-transport-invoice": "Freight Invoice",
     "tt-hotel-invoice": "Hotel Invoice",
     "tt-restaurant-bill": "Restaurant Bill",
-    "tt-medical-bill": "Medical Bill"
+    "tt-medical-bill": "Medical Bill",
+    "ocrPrefillToastTitle": "Filled from OCR",
+    "ocrPrefillToastDesc": "Review every field before downloading"
   },
   "form": {
     "pickTitle": "Start from a template",
@@ -2915,6 +2919,8 @@
     "headingsHint": "The largest font tier becomes Heading 1, the next Heading 2. Switch off to keep everything plain.",
     "breaksLabel": "Keep page breaks",
     "breaksHint": "Each PDF page starts a new Word page. Switch off for one continuous flow.",
+    "tablesLabel": "Detect tables",
+    "tablesHint": "Rows whose column gaps line up become real Word tables — anything unclear stays plain text.",
     "cta": "Convert to Word",
     "working": "Converting…",
     "stageReading": "Reading pages",
@@ -2925,15 +2931,16 @@
     "summaryPages": "{count, plural, =1 {1 page} other {# pages}}",
     "summaryParagraphs": "{count, plural, =1 {1 paragraph} other {# paragraphs}}",
     "summaryHeadings": "{count, plural, =1 {1 heading} other {# headings}}",
-    "qualityNote": "Text and structure only — images, columns and tables are converted into a plain text flow.",
+    "summaryTables": "{count, plural, =1 {1 table} other {# tables}}",
+    "qualityNote": "Text and structure only — detected tables become real Word tables; images and multi-column layouts become a plain text flow.",
     "fileWord": "document",
     "how1": "Drop your PDF — the file is checked by its %PDF signature, never uploaded; everything happens in this browser.",
-    "how2": "Pick your options — heading detection and page breaks — and press Convert; a progress bar follows the real work.",
-    "how3": "The editable .docx downloads straight to your device with a summary of the pages, paragraphs and headings it found.",
+    "how2": "Pick your options — heading detection, tables and page breaks — and press Convert; a progress bar follows the real work.",
+    "how3": "The editable .docx downloads straight to your device with a summary of the pages, paragraphs, tables and headings it found.",
     "feature1": "Real editable .docx — selectable PDF text becomes Word paragraphs, 100% on-device.",
-    "feature2": "Structure survives — paragraphs, Heading 1/2 tiers, bold runs and page breaks are rebuilt.",
+    "feature2": "Structure survives — paragraphs, Heading 1/2 tiers, bold runs, detected tables and page breaks are rebuilt.",
     "feature3": "Hindi comes through clean — Devanagari converts in UTF-8 for Word, Google Docs and LibreOffice.",
-    "feature4": "Honest conversion — pages, paragraphs and headings are counted before the download; images and tables become text."
+    "feature4": "Honest conversion — pages, paragraphs, tables and headings are counted before the download; images and multi-column layouts become text."
   },
   "xls": {
     "how1": "Drop a .xlsx or .xlsm workbook — the real file is sniffed (not just the name), and it never leaves your device.",
@@ -3217,7 +3224,7 @@
     "converting": "Converting…",
     "doneTitle": "PDF ready",
     "doneDesc": "{name} downloaded — {pages, plural, =1 {1 page} other {# pages}} of selectable text.",
-    "honestNote": "Honest limits: this extracts content, not a browser render — CSS layout, scripts, SVG and images are not carried (alt text prints in brackets); nested tables approximate; Hindi bold renders regular."
+    "honestNote": "Honest limits: this extracts content, not a browser render — CSS layout, scripts, SVG and images are not carried (alt text prints in brackets; inline style backgrounds, borders, padding and alignment ARE); nested tables approximate; Hindi bold renders regular."
   },
   "epub": {
     "how1": "Drop a .epub ebook in the box — the ZIP package is checked on your device, no upload ever happens.",

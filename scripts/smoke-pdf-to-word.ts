@@ -21,11 +21,19 @@
  *     XML-escaped, w:b for the bold run, exactly one w:br type="page"
  *     for 2 pages, w:pStyle Heading1/Heading2, Hindi round-trip.
  *  3. parseRun tamper vectors: garbage JSON, wrong types, clamps.
+ *  4. §10 TABLE RECONSTRUCTION: column-cluster unit vectors, 3×4 table
+ *     → exact cells, two tables split by a paragraph, honest fallbacks
+ *     (single columnar line / mismatched counts / paragraph-gap break),
+ *     real OOXML w:tbl + tblGrid + borders + escaping in buildDocx,
+ *     page-break-before-table, ZERO-REGRESSION byte-identity on the
+ *     table-free real fixture, and the EN+HI wiring locks. Also writes
+ *     public/qa/audit5-pdf2word-tables.pdf (real pdf-lib table page) and
+ *     runs the full pdf.js → model → docx path on it.
  *
  * Run: bun scripts/smoke-pdf-to-word.ts   (exit code = failures)
  */
 import "regenerator-runtime/runtime";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { unzipSync } from "fflate";
 import fontkit from "@pdf-lib/fontkit";
 import { PDFDocument, StandardFonts } from "pdf-lib";
@@ -35,12 +43,17 @@ import {
   buildDocx,
   docxStats,
   extractTextBlocks,
+  medianCharWidth,
   parseRun,
   sanitizeRunText,
+  splitIntoColumns,
   xmlEscape,
   DOCX_MIME,
   MAX_PARAGRAPHS,
   MAX_RUN_CHARS,
+  TABLE_GAP_CHAR_WIDTHS,
+  type DocxBlock,
+  type DocxRun,
   type PdfTextItemInput,
   type PdfToWordDetail,
 } from "../tools/pdf-to-word/model";
@@ -92,6 +105,17 @@ function xmlWellFormed(xml: string): boolean {
 
 function countOf(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
+}
+
+/** Paragraph narrowing for the DocxBlock union (table blocks have no runs). */
+function paraRuns(block: DocxBlock | undefined): DocxRun[] {
+  return block !== undefined && block.kind === "para" ? block.runs : [];
+}
+
+function paraHeading(block: DocxBlock | undefined): 1 | 2 | undefined {
+  return block !== undefined && block.kind === "para"
+    ? block.headingLevel
+    : undefined;
 }
 
 /** Synthetic pdf.js item factory for the pure-model section. */
@@ -153,12 +177,12 @@ function part1(): void {
     check("3 pieces → 2 paragraphs (line vs line)", model.blocks.length === 2, model.blocks);
     check(
       "horizontal gap > quarter font becomes a space",
-      model.blocks[0]?.runs[0]?.text === "Hello world",
+      paraRuns(model.blocks[0])[0]?.text === "Hello world",
       model.blocks[0]
     );
     check(
       "tight same-style pieces merge into one run",
-      (model.blocks[0]?.runs.length ?? 0) === 1
+      paraRuns(model.blocks[0]).length === 1
     );
   }
   {
@@ -168,7 +192,7 @@ function part1(): void {
     ]);
     check(
       "zero gap joins with no space",
-      model.blocks[0]?.runs[0]?.text === "Hello",
+      paraRuns(model.blocks[0])[0]?.text === "Hello",
       model.blocks[0]
     );
   }
@@ -184,7 +208,7 @@ function part1(): void {
     ]);
     check(
       "whitespace-only pdf.js item preserves the split space",
-      model.blocks[0]?.runs[0]?.text === "Some parts are for the team.",
+      paraRuns(model.blocks[0])[0]?.text === "Some parts are for the team.",
       model.blocks[0]
     );
   }
@@ -202,7 +226,7 @@ function part1(): void {
     check("gap heuristics: 2 paragraphs", model.blocks.length === 2, model.blocks);
     check(
       "joined lines get exactly one space",
-      (model.blocks[0]?.runs ?? [])
+      paraRuns(model.blocks[0])
         .map((r) => r.text)
         .join("") === "first line of text second line joins",
       model.blocks[0]
@@ -218,7 +242,7 @@ function part1(): void {
     check(
       "dehyphenation merges word-",
       model.blocks.length === 1 &&
-        model.blocks[0]?.runs[0]?.text === "this is a long example of hyphenation.",
+        paraRuns(model.blocks[0])[0]?.text === "this is a long example of hyphenation.",
       model.blocks[0]
     );
   }
@@ -232,7 +256,7 @@ function part1(): void {
     ]);
     check(
       "capital after hyphen is not dehyphenated",
-      (model.blocks[0]?.runs ?? [])
+      paraRuns(model.blocks[0])
         .map((r) => r.text)
         .join("") === "send it to e- Mail support",
       model.blocks[0]
@@ -262,25 +286,31 @@ function part1(): void {
     const model = extractTextBlocks([page]);
     check(
       "largest tier → Heading1",
-      model.blocks[0]?.headingLevel === 1,
+      paraHeading(model.blocks[0]) === 1,
       model.blocks[0]
     );
     check(
       "second tier → Heading2",
-      model.blocks.find((b) => b.runs.some((r) => r.text === "Sub Heading Here"))
-        ?.headingLevel === 2
+      paraHeading(
+        model.blocks.find((b) =>
+          paraRuns(b).some((r) => r.text === "Sub Heading Here")
+        )
+      ) === 2
     );
     check(
       "body size stays body",
-      model.blocks.find((b) => b.runs.some((r) => /body text/.test(r.text)))
-        ?.headingLevel === undefined
+      paraHeading(
+        model.blocks.find((b) =>
+          paraRuns(b).some((r) => /body text/.test(r.text))
+        )
+      ) === undefined
     );
     check("docxStats counts headings", docxStats(model).headings === 2, docxStats(model));
 
     const flat = extractTextBlocks([page], { headings: false });
     check(
       "headings switch off → all plain paragraphs",
-      flat.blocks.every((b) => b.headingLevel === undefined)
+      flat.blocks.every((b) => paraHeading(b) === undefined)
     );
   }
   {
@@ -290,7 +320,7 @@ function part1(): void {
     ]);
     check(
       "tiny heading tier is ignored",
-      model.blocks[0]?.headingLevel === undefined && model.blocks.length === 2,
+      paraHeading(model.blocks[0]) === undefined && model.blocks.length === 2,
       model.blocks
     );
   }
@@ -304,7 +334,7 @@ function part1(): void {
         item("bold words", 130, 100, 10, { fontName: "Helvetica-Bold" }),
       ],
     ]);
-    const runs = model.blocks[0]?.runs ?? [];
+    const runs = paraRuns(model.blocks[0]);
     check(
       "fontName 'Helvetica-Bold' marks the run bold",
       runs.some((r) => r.bold && r.text === "bold words"),
@@ -328,7 +358,7 @@ function part1(): void {
       ],
       { boldMap: new Map([["g_d0_f1", true]]) }
     );
-    const runs = model.blocks[0]?.runs ?? [];
+    const runs = paraRuns(model.blocks[0]);
     check(
       "boldMap enrichment overrides internal ids",
       runs.some((r) => r.text.trim() === "rich" && r.bold) &&
@@ -345,7 +375,7 @@ function part1(): void {
     ]);
     check(
       "runs clamp at 500 chars",
-      (model.blocks[0]?.runs[0]?.text.length ?? 0) === MAX_RUN_CHARS
+      (paraRuns(model.blocks[0])[0]?.text.length ?? 0) === MAX_RUN_CHARS
     );
   }
   {
@@ -373,7 +403,7 @@ function part1(): void {
     check(
       "garbage items skipped, control chars stripped",
       model.blocks.length === 1 &&
-        model.blocks[0]?.runs[0]?.text === "survives",
+        paraRuns(model.blocks[0])[0]?.text === "survives",
       model.blocks
     );
   }
@@ -473,7 +503,10 @@ function part1(): void {
 /* Part 2 — the real fixture through pdf.js + the worker's enrichment   */
 /* ================================================================== */
 
-async function part2(): Promise<void> {
+async function part2(): Promise<{
+  pages: PdfTextItemInput[][];
+  boldMap: Map<string, boolean>;
+}> {
   console.log("8. REAL fixture: pdf-lib build → pdf.js extract → docx");
 
   /* ---- build the 2-page PDF for real ---- */
@@ -600,19 +633,19 @@ async function part2(): Promise<void> {
   check("pageMarks point at the right blocks", model.pageMarks[0] === 0 && model.pageMarks[1] === 6, model.pageMarks);
   check(
     "page-2 blocks start with the H2 heading",
-    model.blocks[6]?.headingLevel === 2 &&
-      model.blocks[6]?.runs[0]?.text === "Second Page Heading",
+    paraHeading(model.blocks[6]) === 2 &&
+      paraRuns(model.blocks[6])[0]?.text === "Second Page Heading",
     model.blocks[6]
   );
   check(
     "two-line body merged into one paragraph",
-    (model.blocks[1]?.runs ?? [])
+    paraRuns(model.blocks[1])
       .map((r) => r.text)
       .join("") ===
       "This report covers the first quarter of the year. Numbers improved across every region listed.",
     model.blocks[1]
   );
-  const mixedRuns = model.blocks[2]?.runs ?? [];
+  const mixedRuns = paraRuns(model.blocks[2]);
   check(
     "mixed line keeps three runs: plain, bold, plain",
     mixedRuns.length === 3 &&
@@ -624,24 +657,25 @@ async function part2(): Promise<void> {
     mixedRuns
   );
   const hindiBlock = model.blocks[5];
+  const hindiRuns = paraRuns(hindiBlock);
   check(
     "Hindi paragraph survives extraction (glyph order accepted)",
     hindiBlock !== undefined &&
-      typeof hindiBlock.runs[0]?.text === "string" &&
-      (hindiBlock.runs[0].text.includes("प्रिया") ||
-        hindiBlock.runs[0].text.includes("िप्रया")) &&
-      hindiBlock.runs[0].text.includes("श"),
+      typeof hindiRuns[0]?.text === "string" &&
+      (hindiRuns[0].text.includes("प्रिया") ||
+        hindiRuns[0].text.includes("िप्रया")) &&
+      hindiRuns[0].text.includes("श"),
     hindiBlock
   );
   check(
     "Hindi 14pt line stays body (below the two heading tiers)",
-    hindiBlock?.headingLevel === undefined
+    paraHeading(hindiBlock) === undefined
   );
 
   /* ---- the docx round-trip ---- */
   const docx = buildDocx(model, {
     pageBreaks: true,
-    title: model.blocks[0]?.runs[0]?.text ?? "",
+    title: paraRuns(model.blocks[0])[0]?.text ?? "",
   });
   check("docx is a zip", docx[0] === 0x50 && docx[1] === 0x4b);
   const parts = unzipSync(docx);
@@ -701,7 +735,7 @@ async function part2(): Promise<void> {
   const noHeadings = extractTextBlocks(pages, { boldMap, headings: false });
   check(
     "headings off → no pStyle in model output",
-    noHeadings.blocks.every((b) => b.headingLevel === undefined)
+    noHeadings.blocks.every((b) => paraHeading(b) === undefined)
   );
   const noBreaks = new TextDecoder().decode(
     unzipSync(buildDocx(model, { pageBreaks: false }))["word/document.xml"]
@@ -710,6 +744,7 @@ async function part2(): Promise<void> {
     "page breaks off → no w:br in the docx",
     !noBreaks.includes('w:type="page"')
   );
+  return { pages, boldMap };
 }
 
 /* ================================================================== */
@@ -774,11 +809,584 @@ function part3(): void {
 }
 
 /* ================================================================== */
+/* Part 4 — §10 table reconstruction                                   */
+/* ================================================================== */
+
+/** One synthetic table row: one pdf.js item per cell at fixed column x. */
+function rowItems(
+  row: readonly string[],
+  xs: readonly number[],
+  y: number,
+  size: number
+): PdfTextItemInput[] {
+  const items: PdfTextItemInput[] = [];
+  for (let i = 0; i < row.length; i += 1) {
+    items.push(item(row[i] ?? "", xs[i] ?? 72, y, size));
+  }
+  return items;
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+async function part4(real: {
+  pages: PdfTextItemInput[][];
+  boldMap: Map<string, boolean>;
+}): Promise<void> {
+  console.log("10. table reconstruction");
+
+  /* ---- unit vectors: the column detector itself ---- */
+  console.log("10a. column clustering units");
+  check(
+    "medianCharWidth = median of width/trimmed-chars",
+    medianCharWidth(
+      [
+        { text: "abcde", x: 0, w: 30 },
+        { text: "abcdefgh", x: 0, w: 40 },
+        { text: "abc", x: 0, w: 21 },
+      ],
+      5
+    ) === 6
+  );
+  check(
+    "medianCharWidth averages the middle pair on even counts",
+    medianCharWidth(
+      [
+        { text: "abcde", x: 0, w: 30 },
+        { text: "abcdefgh", x: 0, w: 40 },
+        { text: "abc", x: 0, w: 21 },
+        { text: "ab", x: 0, w: 16 },
+      ],
+      5
+    ) === 6.5
+  );
+  check("medianCharWidth falls back when no widths", medianCharWidth([], 4.2) === 4.2);
+  {
+    const clusters = splitIntoColumns(
+      [
+        { text: "Region", x: 72, w: 33 },
+        { text: "Q1", x: 200, w: 11 },
+        { text: "Change", x: 440, w: 34 },
+      ],
+      11
+    );
+    check(
+      "clean gaps split 3 columns",
+      clusters !== null && clusters.length === 3
+    );
+  }
+  check(
+    "tight gap (< 1.5 × median char width) stays one line",
+    splitIntoColumns(
+      [
+        { text: "Hello", x: 72, w: 25 },
+        { text: "world", x: 100, w: 25 },
+      ],
+      10
+    ) === null
+  );
+  check(
+    "whitespace-only pieces never count as a column",
+    splitIntoColumns(
+      [
+        { text: "Region", x: 72, w: 33 },
+        { text: " ", x: 200, w: 3 },
+        { text: "95", x: 210, w: 11 },
+      ],
+      11
+    ) !== null &&
+      splitIntoColumns(
+        [
+          { text: "Region", x: 72, w: 33 },
+          { text: " ", x: 200, w: 3 },
+          { text: "95", x: 210, w: 11 },
+        ],
+        11
+      )?.length === 2
+  );
+  check(
+    "a whitespace-only line is not columnar",
+    splitIntoColumns(
+      [
+        { text: " ", x: 72, w: 3 },
+        { text: " ", x: 200, w: 3 },
+      ],
+      11
+    ) === null
+  );
+
+  /* ---- (a) synthetic 3×4 table with clean column gaps ---- */
+  console.log("10b. 3×4 synthetic table");
+  const tableA: string[][] = [
+    ["Region", "Q1", "Q2", "Change"],
+    ["North", "120", "135", "+12.5%"],
+    ["South", "95", "88", "-7.4%"],
+  ];
+  const xsA = [72, 200, 320, 440];
+  const pageA: PdfTextItemInput[] = [
+    ...rowItems(tableA[0] ?? [], xsA, 500, 11),
+    ...rowItems(tableA[1] ?? [], xsA, 484, 11),
+    ...rowItems(tableA[2] ?? [], xsA, 468, 11),
+  ];
+  const modelA = extractTextBlocks([pageA]);
+  check(
+    "(a) 3 matching columnar rows → exactly 1 table block",
+    modelA.blocks.length === 1 && modelA.blocks[0]?.kind === "table",
+    modelA.blocks
+  );
+  check(
+    "(a) exact cell texts in reading order",
+    modelA.blocks[0]?.kind === "table" &&
+      JSON.stringify(modelA.blocks[0].rows) === JSON.stringify(tableA),
+    modelA.blocks[0]
+  );
+  check(
+    "(a) docxStats: 1 table, 0 paragraphs",
+    docxStats(modelA).tables === 1 && docxStats(modelA).paragraphs === 0,
+    docxStats(modelA)
+  );
+  {
+    const off = extractTextBlocks([pageA], { tables: false });
+    check(
+      "(a) tables switch off → honest paragraph fallback, no table",
+      docxStats(off).tables === 0 && off.blocks.every((b) => b.kind === "para"),
+      off.blocks
+    );
+  }
+
+  /* ---- (b) two tables separated by a paragraph line ---- */
+  console.log("10c. two tables split by a paragraph");
+  const tableB: string[][] = [
+    ["Item", "Qty"],
+    ["Pens", "12"],
+  ];
+  const tableC: string[][] = [
+    ["A", "B", "C"],
+    ["1", "2", "3"],
+    ["4", "5", "6"],
+  ];
+  const pageB: PdfTextItemInput[] = [
+    ...rowItems(tableB[0] ?? [], [72, 200], 500, 11),
+    ...rowItems(tableB[1] ?? [], [72, 200], 484, 11),
+    item("a plain sentence sits between the two tables", 72, 468, 11),
+    ...rowItems(tableC[0] ?? [], [72, 200, 320], 452, 11),
+    ...rowItems(tableC[1] ?? [], [72, 200, 320], 436, 11),
+    ...rowItems(tableC[2] ?? [], [72, 200, 320], 420, 11),
+  ];
+  const modelB = extractTextBlocks([pageB]);
+  check(
+    "(b) blocks: table, para, table (order preserved)",
+    modelB.blocks.length === 3 &&
+      modelB.blocks[0]?.kind === "table" &&
+      modelB.blocks[1]?.kind === "para" &&
+      modelB.blocks[2]?.kind === "table",
+    modelB.blocks
+  );
+  check(
+    "(b) table 1 = 2×2, table 2 = 3×3 with exact cells",
+    modelB.blocks[0]?.kind === "table" &&
+      modelB.blocks[2]?.kind === "table" &&
+      JSON.stringify(modelB.blocks[0].rows) === JSON.stringify(tableB) &&
+      JSON.stringify(modelB.blocks[2].rows) === JSON.stringify(tableC),
+    modelB.blocks
+  );
+  check(
+    "(b) separator paragraph text survives between them",
+    modelB.blocks[1]?.kind === "para" &&
+      paraRuns(modelB.blocks[1])
+        .map((r) => r.text)
+        .join("") ===
+        "a plain sentence sits between the two tables",
+    modelB.blocks[1]
+  );
+  check("(b) docxStats tables=2", docxStats(modelB).tables === 2, docxStats(modelB));
+
+  /* ---- honest fallbacks ---- */
+  console.log("10d. honest fallbacks");
+  {
+    // (c) a single columnar line is never a table.
+    const model = extractTextBlocks([
+      [...rowItems(["Name", "Age", "City"], [72, 200, 320], 500, 11)],
+    ]);
+    check(
+      "(c) single columnar line → paragraph fallback (no table)",
+      model.blocks.length === 1 &&
+        model.blocks[0]?.kind === "para" &&
+        docxStats(model).tables === 0,
+      model.blocks
+    );
+    check(
+      "(c) the line keeps its gap-spaces as text",
+      paraRuns(model.blocks[0])
+        .map((r) => r.text)
+        .join("") === "Name Age City",
+      model.blocks[0]
+    );
+  }
+  {
+    // (d) cluster counts 2 then 3 — no fabricated merge, no table.
+    const model = extractTextBlocks([
+      [
+        ...rowItems(["Code", "42"], [72, 200], 500, 11),
+        ...rowItems(["A", "B", "C"], [72, 200, 320], 484, 11),
+      ],
+    ]);
+    check(
+      "(d) mismatched cluster counts → 0 tables",
+      docxStats(model).tables === 0 && model.blocks.every((b) => b.kind === "para"),
+      model.blocks
+    );
+    check(
+      "(d) both lines stay in the paragraph flow",
+      model.blocks.length === 1 &&
+        paraRuns(model.blocks[0])
+          .map((r) => r.text)
+          .join("") === "Code 42 A B C",
+      model.blocks[0]
+    );
+  }
+  {
+    // Extra honesty: a paragraph-sized vertical gap never glues rows.
+    const model = extractTextBlocks([
+      [
+        ...rowItems(["North", "120"], [72, 200], 500, 11),
+        ...rowItems(["South", "95"], [72, 200], 460, 11), // gap 40 > 11*1.7
+      ],
+    ]);
+    check(
+      "paragraph-gap break → no table across a vertical gap",
+      docxStats(model).tables === 0 && model.blocks.every((b) => b.kind === "para"),
+      model.blocks
+    );
+  }
+
+  /* ---- (e) buildDocx emits real OOXML ---- */
+  console.log("10e. OOXML table output");
+  const docx = buildDocx(modelA, { pageBreaks: false, title: "T" });
+  check("(e) output is a zip", docx[0] === 0x50 && docx[1] === 0x4b);
+  const parts = unzipSync(docx);
+  check(
+    "(e) all 7 parts still present",
+    Object.keys(parts).length === 7,
+    Object.keys(parts)
+  );
+  const xml = new TextDecoder().decode(parts["word/document.xml"]);
+  check("(e) document.xml well-formed with a table", xmlWellFormed(xml) && xml.includes("<w:tbl>"));
+  check("(e) tblGrid has exactly one gridCol per column (4)", countOf(xml, "<w:gridCol") === 4);
+  check(
+    "(e) 3 rows / 12 cells",
+    countOf(xml, "<w:tr>") === 3 && countOf(xml, "<w:tc>") === 12
+  );
+  check(
+    "(e) tblW = 5000 pct (100% width)",
+    xml.includes('<w:tblW w:w="5000" w:type="pct"/>')
+  );
+  check("(e) every cell carries tcBorders", countOf(xml, "<w:tcBorders>") === 12);
+  check(
+    "(e) thin single borders on the table frame + every cell edge",
+    countOf(xml, 'w:val="single" w:sz="4"') === 6 + 12 * 4
+  );
+  {
+    const widths = [...xml.matchAll(/<w:gridCol w:w="(\d+)"\/>/g)].map((m) =>
+      Number(m[1])
+    );
+    check(
+      "(e) grid columns split the 9638-twip content width",
+      widths.length === 4 &&
+        widths.reduce((a, b) => a + b, 0) === 9638 &&
+        widths.every((w) => w === 2409 || w === 2410),
+      widths
+    );
+  }
+  check(
+    "(e) all 12 exact cell texts present",
+    tableA.every((row) => row.every((cell) => xml.includes(`>${cell}</w:t>`)))
+  );
+  check(
+    "(e) anchor paragraph after the table (never merges two tables)",
+    countOf(xml, "</w:tbl><w:p/>") === 1
+  );
+  check("(e) 10 pt cell runs", countOf(xml, '<w:sz w:val="20"/>') === 12);
+  {
+    // Cell text goes through xmlEscape like every other run.
+    const escModel = extractTextBlocks([
+      [
+        ...rowItems(["R&D", "A&B"], [72, 200], 500, 11),
+        ...rowItems(["x<y", "ok"], [72, 200], 484, 11),
+      ],
+    ]);
+    const escXml = new TextDecoder().decode(
+      unzipSync(buildDocx(escModel, { pageBreaks: false }))["word/document.xml"]
+    );
+    check(
+      "(e) cell text is XML-escaped",
+      escXml.includes("R&amp;D") &&
+        escXml.includes("A&amp;B") &&
+        escXml.includes("x&lt;y")
+    );
+  }
+  {
+    // A page whose first block is a table still gets its page break.
+    const twoPage = extractTextBlocks([
+      [item("para one", 72, 100, 10)],
+      [
+        ...rowItems(tableB[0] ?? [], [72, 200], 500, 11),
+        ...rowItems(tableB[1] ?? [], [72, 200], 484, 11),
+      ],
+    ]);
+    const twoXml = new TextDecoder().decode(
+      unzipSync(buildDocx(twoPage, { pageBreaks: true }))["word/document.xml"]
+    );
+    check(
+      "(e) page break emitted before a table-first page",
+      twoXml.includes('<w:p><w:r><w:br w:type="page"/></w:r></w:p><w:tbl>')
+    );
+  }
+
+  /* ---- (f) zero-regression on the table-free real fixture ---- */
+  console.log("10f. zero-regression (real fixture, table-free)");
+  {
+    const withTables = extractTextBlocks(real.pages, {
+      boldMap: real.boldMap,
+      tables: true,
+    });
+    const withoutTables = extractTextBlocks(real.pages, {
+      boldMap: real.boldMap,
+      tables: false,
+    });
+    check(
+      "(f) the old fixture detects 0 tables",
+      docxStats(withTables).tables === 0,
+      docxStats(withTables)
+    );
+    check(
+      "(f) detection on vs off → BYTE-IDENTICAL docx",
+      bytesEqual(
+        buildDocx(withTables, { pageBreaks: true, title: "T" }),
+        buildDocx(withoutTables, { pageBreaks: true, title: "T" })
+      )
+    );
+    check(
+      "(f) no w:tbl in the real-fixture docx",
+      !new TextDecoder().decode(
+        unzipSync(buildDocx(withTables, { pageBreaks: true, title: "T" }))[
+          "word/document.xml"
+        ]
+      ).includes("<w:tbl")
+    );
+  }
+
+  /* ---- real QA fixture: pdf-lib table page → pdf.js → docx ---- */
+  console.log("10g. real QA fixture (public/qa/audit5-pdf2word-tables.pdf)");
+  {
+    const doc = await PDFDocument.create();
+    const helv = await doc.embedFont(StandardFonts.Helvetica);
+    const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+    const page = doc.addPage([612, 792]);
+    page.drawText("Regional Sales Report", { x: 72, y: 720, size: 18, font: bold });
+    page.drawText("The table below shows quarterly revenue by region for the year.", {
+      x: 72,
+      y: 690,
+      size: 11,
+      font: helv,
+    });
+    const qaA: string[][] = [
+      ["Region", "Q1", "Q2", "Change"],
+      ["North", "120", "135", "+12.5%"],
+      ["South", "95", "88", "-7.4%"],
+      ["East", "77", "82", "+6.5%"],
+      ["West", "150", "143", "-4.7%"],
+    ];
+    const qaXA = [72, 180, 300, 420];
+    let y = 650;
+    for (let r = 0; r < qaA.length; r += 1) {
+      const row = qaA[r] ?? [];
+      for (let c = 0; c < row.length; c += 1) {
+        page.drawText(row[c] ?? "", {
+          x: qaXA[c] ?? 72,
+          y,
+          size: 11,
+          font: r === 0 ? bold : helv,
+        });
+      }
+      y -= 16;
+    }
+    page.drawText("Notes: figures are in thousands of rupees.", {
+      x: 72,
+      y: 550,
+      size: 11,
+      font: helv,
+    });
+    const qaB: string[][] = [
+      ["Item", "Qty", "Total"],
+      ["Pens", "12", "240"],
+      ["Pads", "5", "375"],
+    ];
+    let y2 = 500;
+    for (const row of qaB) {
+      for (let c = 0; c < row.length; c += 1) {
+        page.drawText(row[c] ?? "", {
+          x: [72, 220, 380][c] ?? 72,
+          y: y2,
+          size: 11,
+          font: helv,
+        });
+      }
+      y2 -= 16;
+    }
+    const bytes = new Uint8Array(await doc.save());
+    writeFileSync(
+      new URL("../public/qa/audit5-pdf2word-tables.pdf", import.meta.url),
+      bytes
+    );
+    check("(g) QA fixture written to public/qa/", bytes.length > 1000, bytes.length);
+
+    const task = getDocument({ data: bytes.slice(), useSystemFonts: true });
+    const pdf = await task.promise;
+    const qaPage = await pdf.getPage(1);
+    const content = await qaPage.getTextContent();
+    qaPage.cleanup();
+    await pdf.cleanup();
+    await task.destroy();
+    const qaModel = extractTextBlocks([content.items as PdfTextItemInput[]]);
+    const qaStats = docxStats(qaModel);
+    check(
+      "(g) real extraction detects 2 tables",
+      qaStats.tables === 2,
+      qaStats
+    );
+    check(
+      "(g) title heading + 3 paragraphs around them",
+      qaStats.headings === 1 && qaStats.paragraphs === 3,
+      qaStats
+    );
+    const qaTables = qaModel.blocks.filter((b) => b.kind === "table");
+    check(
+      "(g) table A cells exact (5×4) through real pdf.js",
+      qaTables[0]?.kind === "table" &&
+        JSON.stringify(qaTables[0].rows) === JSON.stringify(qaA),
+      qaTables[0]
+    );
+    check(
+      "(g) table B cells exact (3×3) through real pdf.js",
+      qaTables[1]?.kind === "table" &&
+        JSON.stringify(qaTables[1].rows) === JSON.stringify(qaB),
+      qaTables[1]
+    );
+    const qaXml = new TextDecoder().decode(
+      unzipSync(buildDocx(qaModel, { pageBreaks: true, title: "Regional Sales Report" }))[
+        "word/document.xml"
+      ]
+    );
+    check("(g) real docx carries 2 w:tbl + 7 gridCol", countOf(qaXml, "<w:tbl>") === 2 && countOf(qaXml, "<w:gridCol") === 7);
+    check("(g) real docx well-formed", xmlWellFormed(qaXml));
+  }
+
+  /* ---- (h) wiring locks: config copy, surface, worker, i18n ---- */
+  console.log("10h. wiring locks");
+  {
+    const configSrc = readFileSync(
+      new URL("../tools/pdf-to-word/config.ts", import.meta.url),
+      "utf8"
+    );
+    check(
+      "(h) config FAQ 'Which PDFs benefit?' (EN) + honesty",
+      /Which PDFs benefit from table detection\?/.test(configSrc) &&
+        /never fabricates/.test(configSrc)
+    );
+    check(
+      "(h) config FAQ Hindi question present",
+      configSrc.includes("टेबल पहचान किन PDF पर काम करती है?")
+    );
+    check(
+      "(h) config features mention bordered Word tables + counts",
+      /real bordered Word tables/.test(configSrc) &&
+        /headings and tables counted/.test(configSrc)
+    );
+    const surfaceSrc = readFileSync(
+      new URL("../tools/pdf-to-word/surface.tsx", import.meta.url),
+      "utf8"
+    );
+    check(
+      "(h) surface: Detect tables switch + hint",
+      /id="p2w-tables"/.test(surfaceSrc) &&
+        surfaceSrc.includes('t("p2w.tablesLabel")') &&
+        surfaceSrc.includes('t("p2w.tablesHint")')
+    );
+    check(
+      "(h) surface: tables option passed to the worker payload",
+      /tables,/.test(surfaceSrc) &&
+        surfaceSrc.includes("tables: detail?.tables ?? 0")
+    );
+    check("(h) surface: tables chip in the summary card", surfaceSrc.includes('t("p2w.summaryTables"'));
+    const workerSrc = readFileSync(
+      new URL("../tools/pdf-to-word/worker.ts", import.meta.url),
+      "utf8"
+    );
+    const modelSrc = readFileSync(
+      new URL("../tools/pdf-to-word/model.ts", import.meta.url),
+      "utf8"
+    );
+    check(
+      "(h) worker: option coerced, passed and reported",
+      /tables: o\.tables !== false/.test(modelSrc) &&
+        /tables: opts\.tables/.test(workerSrc) &&
+        /tables: stats\.tables/.test(workerSrc)
+    );
+    const enCat = JSON.parse(
+      readFileSync(new URL("../src/i18n/en.json", import.meta.url), "utf8")
+    ) as { p2w: Record<string, string> };
+    const hiCat = JSON.parse(
+      readFileSync(new URL("../src/i18n/hi.json", import.meta.url), "utf8")
+    ) as { p2w: Record<string, string> };
+    const mirror = JSON.parse(
+      readFileSync(new URL("../tools/pdf-to-word/i18n.json", import.meta.url), "utf8")
+    ) as { en: { p2w: Record<string, string> }; hi: { p2w: Record<string, string> } };
+    const newKeys = ["tablesLabel", "tablesHint", "summaryTables"];
+    check(
+      "(h) central en+hi carry the new keys",
+      newKeys.every((k) => typeof enCat.p2w[k] === "string" && typeof hiCat.p2w[k] === "string")
+    );
+    check(
+      "(h) chip label is a real plural in both locales",
+      enCat.p2w.summaryTables ===
+        "{count, plural, =1 {1 table} other {# tables}}" &&
+        hiCat.p2w.summaryTables === "{count, plural, =1 {1 टेबल} other {# टेबल}}"
+    );
+    check(
+      "(h) Hindi is a real translation, not a copy",
+      hiCat.p2w.tablesLabel !== enCat.p2w.tablesLabel &&
+        /[\u0900-\u097F]/.test(hiCat.p2w.tablesLabel) &&
+        /[\u0900-\u097F]/.test(hiCat.p2w.tablesHint)
+    );
+    check(
+      "(h) tool i18n mirror matches the central catalog byte-for-byte",
+      newKeys.every(
+        (k) =>
+          mirror.en.p2w[k] === enCat.p2w[k] && mirror.hi.p2w[k] === hiCat.p2w[k]
+      )
+    );
+    check(
+      "(h) parseRun: tables default ON, explicit false honoured",
+      parseRun("{}").tables === true &&
+        parseRun('{"tables":false}').tables === false &&
+        parseRun('{"tables":"no"}').tables === true
+    );
+  }
+}
+
+/* ================================================================== */
 
 async function main(): Promise<void> {
   part1();
-  await part2();
+  const real = await part2();
   part3();
+  await part4(real);
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
 }

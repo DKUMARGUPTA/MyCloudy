@@ -16,11 +16,13 @@
  * the GSTIN checksum (base-36, official algorithm), invoice-number
  * bumping (trailing digit group, width-preserving), the April–March
  * financial-year prefix, GST compliance warnings and the worker-boundary
- * parser/serializer. PURE: no DOM, no storage, no imports beyond types.ts.
+ * parser/serializer, plus the OCR-prefill hydration (R5-c). PURE: no DOM,
+ * no storage — imports only types.ts and the OCR draft contract type.
  */
 
 import type { InvoiceCurrency, InvoiceTypeDef, InvoiceTypeId } from "./types";
 import { INVOICE_TYPES } from "./types";
+import type { OcrInvoiceDraft } from "../ocr-pdf/invoice-extract";
 
 /* ------------------------------------------------------------------ */
 /* Money primitives (exact port)                                        */
@@ -583,6 +585,59 @@ export function parseInvoiceOption(raw: string): InvoiceState {
 export function outputBaseName(s: InvoiceState): string {
   const base = (s.no || "invoice").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "");
   return base || "invoice";
+}
+
+/* ------------------------------------------------------------------ */
+/* OCR prefill hydration (R5-c)                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Hydrate an editor state from an OCR-extracted draft (pure — the
+ * surface calls it with whatever parseOcrPrefill found).
+ *
+ * HONEST MAPPING — only fields the draft actually carries are set:
+ *  - vendor → the business name (the seller on the scan);
+ *  - items → replaces the rows ONLY when at least one was found;
+ *  - number/date/due/currency are taken verbatim when present;
+ *  - the TYPE follows the evidence: a GST-labelled total (CGST/SGST/
+ *    IGST/GST/कर) or ₹/INR totals pick the GST tax invoice, any other
+ *    recognized currency picks the standard-family simple invoice, and
+ *    NO currency/GST evidence at all leaves the user's type untouched;
+ *  - everything else (client, HSN, discounts, notes…) stays as it was —
+ *    the OCR never saw those labels, so it never guesses them.
+ */
+export function applyOcrDraft(
+  s: InvoiceState,
+  draft: OcrInvoiceDraft
+): InvoiceState {
+  const next: InvoiceState = {
+    ...s,
+    ...(draft.vendor !== undefined
+      ? { biz: { ...s.biz, name: draft.vendor } }
+      : {}),
+    ...(draft.currency !== undefined ? { cur: draft.currency } : {}),
+    ...(draft.invoiceNumber !== undefined ? { no: draft.invoiceNumber } : {}),
+    ...(draft.date !== undefined ? { date: draft.date } : {}),
+    ...(draft.dueDate !== undefined ? { due: draft.dueDate } : {}),
+    ...(draft.items.length > 0
+      ? {
+          items: draft.items.map((it) => ({
+            d: it.d,
+            h: "",
+            q: it.q,
+            r: it.r,
+            g: it.g ?? "",
+            dp: "",
+          })),
+        }
+      : {}),
+  };
+  if (draft.gstFound || draft.currency !== undefined) {
+    next.ty = draft.gstFound || draft.currency === "INR"
+      ? "gst-invoice"
+      : "simple-invoice";
+  }
+  return next;
 }
 
 /* ------------------------------------------------------------------ */

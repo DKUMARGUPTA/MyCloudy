@@ -73,7 +73,7 @@ import { OptionsPanel } from "./options-panel";
 import { ProcessingView } from "./processing-view";
 import { ResultView } from "./result-view";
 import { TOOL_PANELS } from "@/lib/tools/panels";
-import { TOOL_SURFACES } from "@/lib/tools/surfaces";
+import { TOOL_SURFACES, TOOL_RESULT_EXTRAS } from "@/lib/tools/surfaces";
 import { cn } from "@/lib/utils";
 
 /**
@@ -189,6 +189,10 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   // Optional workspace surface (PageGrid family): rendered in the main
   // column instead of the FileList; can gate the CTA via runBlocked.
   const WorkspaceSurface = TOOL_SURFACES[tool.id];
+
+  // Optional per-tool result extra (R5-c): the ocr-pdf invoice hand-off
+  // button renders inside the result view, fed by the run summary.
+  const ResultExtra = TOOL_RESULT_EXTRAS[tool.id];
 
   // Surface-driven CTA gating (PRD §8.1 safety: "sab pages delete ho to
   // Apply disabled" / extract needs a selection). Event-context only —
@@ -874,6 +878,9 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           onChain={handleChain}
           onRemoveFromDevice={removeFromDevice}
           onStartOver={startOver}
+          resultExtra={
+            ResultExtra ? <ResultExtra runSummary={runSummary} /> : undefined
+          }
         />
       ) : null}
 

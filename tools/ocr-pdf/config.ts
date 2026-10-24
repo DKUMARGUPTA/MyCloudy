@@ -141,6 +141,10 @@ export const config: ToolConfig = {
       en: "Runs entirely on your device — the scan never leaves your browser.",
       hi: "पूरा काम डिवाइस पर — स्कैन ब्राउज़र से बाहर नहीं जाता।",
     },
+    {
+      en: "Chain into an invoice — after OCR, one click fills a draft invoice (number, dates, items, totals) with the labelled fields it actually found; you review and edit everything in the invoice editor.",
+      hi: "इनवॉइस से जोड़ें — OCR के बाद एक क्लिक पर ड्राफ़्ट इनवॉइस भर जाता है (नंबर, तारीख़ें, आइटम, कुल) उन्हीं फ़ील्डों से जो सच में मिलीं; इनवॉइस एडिटर में आप सब कुछ देखकर बदलते हैं।",
+    },
   ],
   faq: [
     {
@@ -169,6 +173,13 @@ export const config: ToolConfig = {
       a: {
         en: "The OCR engine (~4 MB) and your language model download once from this site — never a third party — and are cached for offline use after that.",
         hi: "OCR इंजन (~4 MB) और भाषा मॉडल एक बार इसी साइट से आते हैं — किसी तीसरी पार्टी से नहीं — और उसके बाद ऑफ़लाइन उपयोग के लिए कैश हो जाते हैं।",
+      },
+    },
+    {
+      q: { en: "How well does the invoice fill work?", hi: "इनवॉइस भरना कितना अच्छा काम करता है?" },
+      a: {
+        en: "It is label-based text heuristics, not magic: fields are read only from lines that clearly label them (\"Invoice No\", \"Due date\", \"Total\", विक्रेता, कुल योग…) and item rows only from clean numeric tails — anything it did not confidently find stays empty, it never guesses or fabricates values. It works best on clear, straight scans of plainly laid-out invoices; on anything else expect partial or no fill. Always review every field in the editor before downloading. The photo or scan never leaves your device, and there is no AI and no cloud — all recognition and extraction run locally in your browser.",
+        hi: "यह लेबल-आधारित टेक्स्ट ह्यूरिस्टिक है, जादू नहीं: फ़ील्ड सिर्फ़ उन्हीं पंक्तियों से पढ़े जाते हैं जो साफ़ लेबल रखती हैं (\"Invoice No\", \"Due date\", \"Total\", विक्रेता, कुल योग…) और आइटम पंक्तियाँ सिर्फ़ साफ़ अंक-पंक्तियों से — जो भरोसे से नहीं मिला वह ख़ाली रहता है, कोई मान कभी अंदाज़ा लगाकर नहीं भरा जाता। साफ़, सीधे स्कैन और सीधे-सादे लेआउट पर सबसे अच्छा चलता है; बाक़ी में आंशिक या कोई भराई न मिलना स्वाभाविक है। डाउनलोड से पहले एडिटर में हर फ़ील्ड ज़रूर जाँचें। तस्वीर या स्कैन कभी डिवाइस से बाहर नहीं जाता — न कोई AI, न क्लाउड; पहचान और निकासी सब आपके ब्राउज़र में ही होती है।",
       },
     },
   ],

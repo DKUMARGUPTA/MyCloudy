@@ -19,17 +19,31 @@
  *  - parseHtmlRun: the worker-boundary coercion (parseWordRun pattern)
  *    — clamp arrays, strip control chars, cap every length. A tampered
  *    payload can never reach the renderer as a wrong type.
+ *  - parseStyle (R5-b): the INLINE STYLE box-model subset for
+ *    style="…" attributes on block elements — background-color, color
+ *    (hex #rgb/#rrggbb/#rgba/#rrggbbaa, rgb()/rgba() with honest alpha
+ *    blending onto the white page, ~24 common named colours), border
+ *    + per-side borders (width/style/colour; dashed/dotted real, the
+ *    fancy 3-D styles honestly fall back to solid), border-radius
+ *    (≤ 50 px), 1–4 value padding, text-align, font-weight/style,
+ *    text-decoration, width (px/%). Never throws: garbage is skipped
+ *    silently, lengths clamp at 400 px, 1000-declaration sanity cap.
+ *    Legacy bgcolor + align (and table width) attributes on
+ *    td/th/table merge into the same record.
  *  - needsNoto / isWinAnsiText: pure-WinAnsi content → non-embedded
  *    base-14 Helvetica; ANY non-WinAnsi char (Devanagari, ₹ …) → the
  *    self-hosted Noto Sans Devanagari subset (fontkit).
  *  - decodeHtmlBytes / detectCharsetLabel: UTF-8 default, BOM + <meta
  *    charset> aware (windows-1252 and friends via TextDecoder labels).
  *
- * Honest limits (mirrored in config.ts): CSS layout/styling is NOT
- * applied — this is content extraction, not a browser engine; scripts,
- * SVG and images are not carried beyond alt text in brackets; complex
- * nested tables approximate (inner tables hoist as their own grid);
- * Hindi bold renders regular (the Noto OFL face ships Regular only).
+ * Honest limits (mirrored in config.ts): only INLINE style attributes
+ * on block elements apply — <style> blocks, class/tag selectors and
+ * external CSS files are dropped wholesale by the tokenizer (this is
+ * content extraction with a box-model subset, not a browser engine);
+ * no floats/flex/grid/positioning; scripts, SVG and images are not
+ * carried beyond alt text in brackets; complex nested tables
+ * approximate (inner tables hoist as their own grid); Hindi bold
+ * renders regular (the Noto OFL face ships Regular only).
  */
 
 /* ------------------------------------------------------------------ */
@@ -46,6 +60,11 @@ export const MAX_CELL_TEXT = 1_000;
 export const MAX_RUNS_PER_PARA = 500;
 export const MAX_PRE_TEXT = 60_000;
 export const MAX_TITLE_TEXT = 300;
+/** R5-b inline-style caps: declarations per attribute, px per value. */
+export const MAX_STYLE_RULES = 1000;
+export const MAX_STYLE_PX = 400;
+/** border-radius clamps at 50 px (37.5 pt) — beyond that is a pill. */
+export const MAX_STYLE_RADIUS_PX = 50;
 
 /** Worker/surface input gate: 20 MB of source HTML. */
 export function inputTooLarge(byteLength: number): boolean {
@@ -75,19 +94,27 @@ export interface HtmlRun {
 }
 
 export type HtmlBlock =
-  | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; runs: HtmlRun[] }
-  | { kind: "para"; runs: HtmlRun[] }
+  | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; runs: HtmlRun[]; style?: StyleProps }
+  | { kind: "para"; runs: HtmlRun[]; style?: StyleProps }
   | {
       kind: "list-item";
       depth: number;
       ordered: boolean;
       number: number;
       runs: HtmlRun[];
+      style?: StyleProps;
     }
-  | { kind: "quote"; runs: HtmlRun[] }
+  | { kind: "quote"; runs: HtmlRun[]; style?: StyleProps }
   | { kind: "rule" }
-  | { kind: "pre"; text: string }
-  | { kind: "table"; grid: string[][]; headerRow?: boolean };
+  | { kind: "pre"; text: string; style?: StyleProps }
+  | {
+      kind: "table";
+      grid: string[][];
+      headerRow?: boolean;
+      style?: StyleProps;
+      /** per-cell styles, parallel to grid (undefined = unstyled cell). */
+      cellStyles?: (StyleProps | undefined)[][];
+    };
 
 export interface HtmlDocStats {
   blockCount: number;
@@ -295,6 +322,439 @@ export function looksLikeHtml(source: string): boolean {
   const head = source.slice(0, 4096);
   if (/<!doctype/i.test(head)) return true;
   return /<\/?[a-zA-Z][a-zA-Z0-9:_-]*(\s|\/?>|>)/.test(head);
+}
+
+/* ------------------------------------------------------------------ */
+/* Inline style parsing — the R5-b CSS box-model subset (pure)         */
+/* ------------------------------------------------------------------ */
+
+/** RGB triple, each component 0-1 rounded to 3 decimals. */
+export type StyleColor = [number, number, number];
+
+export interface BorderSide {
+  /** stroke width in pt (px × 0.75). */
+  width: number;
+  style: "solid" | "dashed" | "dotted";
+  /** omitted → the block's ink (CSS currentColor). */
+  color?: StyleColor;
+}
+
+/**
+ * The honoured subset of an inline style attribute. Everything a real
+ * browser would do with floats/flex/grid/positioning/inheritance is
+ * OUT (config FAQ "Which CSS works?" mirrors this exactly).
+ */
+export interface StyleProps {
+  color?: StyleColor;
+  backgroundColor?: StyleColor;
+  borderTop?: BorderSide;
+  borderRight?: BorderSide;
+  borderBottom?: BorderSide;
+  borderLeft?: BorderSide;
+  /** rounded corners, pt (0 = square). */
+  radius?: number;
+  paddingTop?: number;
+  paddingRight?: number;
+  paddingBottom?: number;
+  paddingLeft?: number;
+  textAlign?: "left" | "center" | "right" | "justify";
+  /** explicit font-weight — false FORCES normal (a normal heading). */
+  bold?: boolean;
+  /** font-style italic/oblique → true, normal → false. */
+  italic?: boolean;
+  /** text-decoration underline. */
+  underline?: boolean;
+  /** text-decoration line-through. */
+  lineThrough?: boolean;
+  /** px width resolved to pt. */
+  widthPt?: number;
+  /** percentage width as a 0-1 fraction of the content box. */
+  widthPct?: number;
+  /** legacy <table align="…"> — positions the table box, not cell text. */
+  tableAlign?: "left" | "center" | "right";
+}
+
+/** Elements whose style attribute styles the block(s) they produce. */
+const STYLE_CARRIERS = new Set([
+  "div", "p", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article",
+  "blockquote", "li", "pre",
+]);
+
+/** ~24 most common named colours (CSS values). */
+const NAMED_COLORS: Record<string, string> = {
+  black: "#000000", white: "#ffffff", red: "#ff0000", green: "#008000",
+  blue: "#0000ff", yellow: "#ffff00", orange: "#ffa500", purple: "#800080",
+  gray: "#808080", grey: "#808080", silver: "#c0c0c0", maroon: "#800000",
+  navy: "#000080", teal: "#008080", olive: "#808000", lime: "#00ff00",
+  aqua: "#00ffff", cyan: "#00ffff", fuchsia: "#ff00ff", magenta: "#ff00ff",
+  pink: "#ffc0cb", brown: "#a52a2a", beige: "#f5f5dc", gold: "#ffd700",
+};
+
+const MAX_COLOR_LEN = 40;
+const MAX_STYLE_LEN = 100_000;
+/** CSS px → PDF pt (96 px/inch vs 72 pt/inch). */
+const PX_TO_PT = 0.75;
+
+function round3(v: number): number {
+  return Math.round(v * 1000) / 1000;
+}
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
+/** rgba() alpha blends onto the WHITE page — honestly, alpha rounded. */
+function blendOnWhite(c: StyleColor, alpha: number): StyleColor {
+  const a = round2(Math.min(1, Math.max(0, alpha)));
+  return [
+    round3(a * c[0] + (1 - a)),
+    round3(a * c[1] + (1 - a)),
+    round3(a * c[2] + (1 - a)),
+  ];
+}
+
+/**
+ * Pure colour parser: #rgb/#rgba/#rrggbb/#rrggbbaa, comma-separated
+ * rgb()/rgba() (percent or 0-255 channels; the close paren is optional
+ * so garbage degrades instead of throwing) and the named table above.
+ * Unknown/NaN/garbage → undefined (skipped, never thrown).
+ */
+export function parseColor(raw: string): StyleColor | undefined {
+  if (typeof raw !== "string") return undefined;
+  const v = raw.trim().toLowerCase();
+  if (v === "" || v.length > MAX_COLOR_LEN) return undefined;
+  if (v.charCodeAt(0) === 35 /* # */) {
+    const hex = v.slice(1);
+    if (!/^[0-9a-f]+$/.test(hex)) return undefined;
+    let r: number, g: number, b: number, a = 1;
+    if (hex.length === 3 || hex.length === 4) {
+      r = parseInt(hex[0] + hex[0], 16);
+      g = parseInt(hex[1] + hex[1], 16);
+      b = parseInt(hex[2] + hex[2], 16);
+      if (hex.length === 4) a = parseInt(hex[3] + hex[3], 16) / 255;
+    } else if (hex.length === 6 || hex.length === 8) {
+      r = parseInt(hex.slice(0, 2), 16);
+      g = parseInt(hex.slice(2, 4), 16);
+      b = parseInt(hex.slice(4, 6), 16);
+      if (hex.length === 8) a = parseInt(hex.slice(6, 8), 16) / 255;
+    } else {
+      return undefined;
+    }
+    if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+      return undefined;
+    }
+    const c: StyleColor = [round3(r / 255), round3(g / 255), round3(b / 255)];
+    return a >= 1 ? c : blendOnWhite(c, a);
+  }
+  const fn = /^rgba?\((.*)$/.exec(v);
+  if (fn) {
+    // single capture group — the channel list (close paren already
+    // stripped below; missing paren degrades instead of throwing)
+    const parts = fn[1].replace(/\)$/, "").split(",");
+    if (parts.length < 3 || parts.length > 4) return undefined;
+    const chan: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const t = parts[i]?.trim() ?? "";
+      const pm = /^(.+)%$/.exec(t);
+      const n = pm ? Number.parseFloat(pm[1]) * 2.55 : Number.parseFloat(t);
+      if (!Number.isFinite(n)) return undefined;
+      chan.push(Math.min(255, Math.max(0, n)));
+    }
+    let alpha = 1;
+    if (parts.length === 4) {
+      const t = parts[3].trim();
+      const pm = /^(.+)%$/.exec(t);
+      const n = pm ? Number.parseFloat(pm[1]) / 100 : Number.parseFloat(t);
+      if (!Number.isFinite(n)) return undefined;
+      alpha = Math.min(1, Math.max(0, n));
+    }
+    const c: StyleColor = [
+      round3(chan[0] / 255),
+      round3(chan[1] / 255),
+      round3(chan[2] / 255),
+    ];
+    return alpha >= 1 ? c : blendOnWhite(c, alpha);
+  }
+  const named = NAMED_COLORS[v];
+  if (named !== undefined) return parseColor(named);
+  return undefined;
+}
+
+/** px length (bare numbers tolerated; %, pt, em… → undefined). Clamped. */
+function parsePx(raw: string): number | undefined {
+  const m = /^(-?[0-9]*\.?[0-9]+)\s*(px)?$/.exec(raw.trim().toLowerCase());
+  if (!m) return undefined;
+  const n = Number.parseFloat(m[1]);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.min(MAX_STYLE_PX, n);
+}
+
+const BORDER_WIDTH_KEYWORDS: Record<string, number> = {
+  thin: 1,
+  medium: 3,
+  thick: 5,
+};
+/** CSS border styles we recognize; the 3-D ones honestly render solid. */
+const BORDER_STYLE_KEYWORDS = new Set([
+  "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset",
+]);
+
+/**
+ * `border[-side]: <width>? <style>? <color>?` in any order. `none` /
+ * `hidden` → undefined (no edge). Width defaults to CSS medium 3 px.
+ */
+function parseBorderEdge(raw: string): BorderSide | undefined {
+  const parts = raw.trim().split(/\s+/).slice(0, 8);
+  let width: number | undefined;
+  let style: BorderSide["style"] | undefined;
+  let color: StyleColor | undefined;
+  let none = false;
+  for (const part of parts) {
+    if (part === "") continue;
+    const t = part.toLowerCase();
+    if (t === "none" || t === "hidden") {
+      none = true;
+      continue;
+    }
+    if (BORDER_STYLE_KEYWORDS.has(t)) {
+      style = t === "dashed" ? "dashed" : t === "dotted" ? "dotted" : "solid";
+      continue;
+    }
+    const kw = BORDER_WIDTH_KEYWORDS[t];
+    if (kw !== undefined) {
+      width = kw;
+      continue;
+    }
+    if (width === undefined) {
+      const px = parsePx(t);
+      if (px !== undefined) {
+        width = px;
+        continue;
+      }
+    }
+    if (color === undefined) {
+      const c = parseColor(t);
+      if (c !== undefined) {
+        color = c;
+        continue;
+      }
+    }
+  }
+  if (none) return undefined;
+  if (width === undefined && style === undefined && color === undefined) {
+    return undefined;
+  }
+  return {
+    width: Math.max(0.25, (width ?? 3) * PX_TO_PT),
+    style: style ?? "solid",
+    color,
+  };
+}
+
+/** 1-4 value CSS padding → [top, right, bottom, left] in pt. */
+function parsePadding(raw: string): [number, number, number, number] | undefined {
+  const parts = raw.trim().split(/\s+/).slice(0, 5);
+  const vals: number[] = [];
+  for (const part of parts) {
+    const px = parsePx(part);
+    if (px === undefined) return undefined; // invalid → whole decl skipped
+    vals.push(px * PX_TO_PT);
+  }
+  if (vals.length === 0 || vals.length > 4) return undefined;
+  const [t, r = t, b = t, l = r] = vals;
+  return [t, r, b, l];
+}
+
+/**
+ * Pure inline-style parser — the R5-b box-model subset. NEVER throws:
+ * unknown properties, garbage values, unclosed parens, NaN and missing
+ * colons are all skipped silently; at most MAX_STYLE_RULES declarations
+ * are honoured. Everything outside the subset is ignored (documented in
+ * the config FAQ, not guessed at).
+ */
+export function parseStyle(css: string): StyleProps {
+  const out: StyleProps = {};
+  if (typeof css !== "string" || css.length === 0 || css.length > MAX_STYLE_LEN) {
+    return out;
+  }
+  const decls = css.split(";");
+  let used = 0;
+  for (const decl of decls) {
+    if (used >= MAX_STYLE_RULES) break;
+    const ci = decl.indexOf(":");
+    if (ci < 0) continue;
+    const name = decl.slice(0, ci).trim().toLowerCase();
+    const value = decl.slice(ci + 1).trim();
+    if (name === "" || value === "") continue;
+    used += 1;
+    switch (name) {
+      case "background-color": {
+        const c = parseColor(value);
+        if (c) out.backgroundColor = c;
+        break;
+      }
+      case "color": {
+        const c = parseColor(value);
+        if (c) out.color = c;
+        break;
+      }
+      case "border":
+      case "border-top":
+      case "border-right":
+      case "border-bottom":
+      case "border-left": {
+        const edge = parseBorderEdge(value);
+        if (name === "border") {
+          if (edge) {
+            out.borderTop = edge;
+            out.borderRight = { ...edge };
+            out.borderBottom = { ...edge };
+            out.borderLeft = { ...edge };
+          } else {
+            // `border: none` resets every side
+            delete out.borderTop;
+            delete out.borderRight;
+            delete out.borderBottom;
+            delete out.borderLeft;
+          }
+        } else if (edge) {
+          if (name === "border-top") out.borderTop = edge;
+          else if (name === "border-right") out.borderRight = edge;
+          else if (name === "border-bottom") out.borderBottom = edge;
+          else out.borderLeft = edge;
+        }
+        break;
+      }
+      case "border-radius": {
+        // single value only; multi-value lists honestly use the first
+        const first = value.split(/\s+/)[0] ?? "";
+        const px = parsePx(first);
+        if (px !== undefined) {
+          out.radius = Math.min(MAX_STYLE_RADIUS_PX, px) * PX_TO_PT;
+        }
+        break;
+      }
+      case "padding": {
+        const p4 = parsePadding(value);
+        if (p4) {
+          out.paddingTop = p4[0];
+          out.paddingRight = p4[1];
+          out.paddingBottom = p4[2];
+          out.paddingLeft = p4[3];
+        }
+        break;
+      }
+      case "padding-top":
+      case "padding-right":
+      case "padding-bottom":
+      case "padding-left": {
+        const px = parsePx(value);
+        if (px !== undefined) {
+          const pt = px * PX_TO_PT;
+          if (name === "padding-top") out.paddingTop = pt;
+          else if (name === "padding-right") out.paddingRight = pt;
+          else if (name === "padding-bottom") out.paddingBottom = pt;
+          else out.paddingLeft = pt;
+        }
+        break;
+      }
+      case "text-align": {
+        const v = value.toLowerCase();
+        if (v === "left" || v === "center" || v === "right" || v === "justify") {
+          out.textAlign = v;
+        }
+        break;
+      }
+      case "font-weight": {
+        const v = value.toLowerCase();
+        if (v === "bold" || v === "bolder") out.bold = true;
+        else if (v === "normal" || v === "lighter") out.bold = false;
+        else {
+          const n = Number.parseFloat(v);
+          if (Number.isFinite(n)) out.bold = n >= 600;
+        }
+        break;
+      }
+      case "font-style": {
+        const v = value.toLowerCase();
+        if (v === "italic" || v === "oblique") out.italic = true;
+        else if (v === "normal") out.italic = false;
+        break;
+      }
+      case "text-decoration": {
+        const toks = value.toLowerCase().split(/\s+/);
+        if (toks.includes("none")) {
+          out.underline = false;
+          out.lineThrough = false;
+        } else {
+          if (toks.includes("underline")) out.underline = true;
+          if (toks.includes("line-through")) out.lineThrough = true;
+        }
+        break;
+      }
+      case "width": {
+        const m = /^([0-9]*\.?[0-9]+)\s*(px|%)?$/.exec(value.trim().toLowerCase());
+        if (m) {
+          const n = Number.parseFloat(m[1]);
+          if (Number.isFinite(n) && n >= 0) {
+            if (m[2] === "%") out.widthPct = Math.min(1, n / 100);
+            else out.widthPt = Math.min(MAX_STYLE_PX, n) * PX_TO_PT;
+          }
+        }
+        break;
+      }
+      default:
+        break; // silently ignored — the documented subset ends here
+    }
+  }
+  return out;
+}
+
+/** true when the record carries at least one honoured property. */
+export function styleHasProps(st: StyleProps | undefined): boolean {
+  return st !== undefined && Object.keys(st).length > 0;
+}
+
+/**
+ * Legacy attribute merge (real-world HTML): bgcolor paints td/th/table,
+ * align positions td/th CELL TEXT and the table BOX, table width takes
+ * px/%. Inline style declarations win per-property.
+ */
+export function mergeLegacyAttrs(
+  st: StyleProps,
+  name: string,
+  attrs: Record<string, string>
+): StyleProps {
+  if (name !== "td" && name !== "th" && name !== "table") return st;
+  const bg = typeof attrs.bgcolor === "string" ? parseColor(attrs.bgcolor) : undefined;
+  if (bg !== undefined && st.backgroundColor === undefined) st.backgroundColor = bg;
+  const al = String(attrs.align ?? "").trim().toLowerCase();
+  if (name === "table") {
+    if (
+      st.tableAlign === undefined &&
+      (al === "left" || al === "center" || al === "right")
+    ) {
+      st.tableAlign = al;
+    }
+    if (st.widthPt === undefined && st.widthPct === undefined) {
+      const m = /^([0-9]*\.?[0-9]+)\s*(px|%)?$/.exec(
+        String(attrs.width ?? "").trim().toLowerCase()
+      );
+      if (m) {
+        const n = Number.parseFloat(m[1]);
+        if (Number.isFinite(n) && n > 0) {
+          if (m[2] === "%") st.widthPct = Math.min(1, n / 100);
+          else st.widthPt = Math.min(MAX_STYLE_PX, n) * PX_TO_PT;
+        }
+      }
+    }
+  } else if (
+    st.textAlign === undefined &&
+    (al === "left" || al === "center" || al === "right")
+  ) {
+    st.textAlign = al;
+  }
+  return st;
 }
 
 /* ------------------------------------------------------------------ */
@@ -550,6 +1010,8 @@ interface Collector {
   ordered: boolean;
   number: number;
   runs: HtmlRun[];
+  /** R5-b: the inline style of the carrier that owns this block. */
+  style?: StyleProps | undefined;
   /** 1-based stack depth of the frame that owns this collector. */
   owner: number;
   textLen: number;
@@ -562,6 +1024,14 @@ interface TableFrame {
   inHeaderCell: boolean;
   headerRow: boolean;
   firstRow: boolean;
+  /** table-level style (inline style + legacy bgcolor/align/width). */
+  style?: StyleProps | undefined;
+  /** style of the currently open td/th. */
+  cellStyle?: StyleProps | undefined;
+  /** per-cell styles of the currently open row (parallel to `row`). */
+  cellRowStyles: (StyleProps | undefined)[];
+  /** per-cell styles of committed rows (parallel to `rows`). */
+  cellStyles: (StyleProps | undefined)[][];
 }
 
 interface ListFrame {
@@ -589,6 +1059,10 @@ class HtmlAssembler {
   /* --- pre blocks --- */
   private preDepth = 0;
   private preText = "";
+  private preStyle: StyleProps | undefined = undefined;
+
+  /* --- R5-b inline style state --- */
+  private styleStack: { depth: number; style: StyleProps }[] = [];
 
   /* --- inline style state --- */
   private boldDepth = 0;
@@ -608,6 +1082,22 @@ class HtmlAssembler {
       return;
     }
     this.blocks.push(b);
+  }
+
+  /** innermost open style carrier (div/p/h1-h6/…/li/pre) for blocks. */
+  private blockStyle(): StyleProps | undefined {
+    const top = this.styleStack[this.styleStack.length - 1];
+    return top !== undefined ? top.style : undefined;
+  }
+
+  /** drop style frames whose element has closed (stack shrank). */
+  private trimStyleStack(): void {
+    while (
+      this.styleStack.length > 0 &&
+      this.styleStack[this.styleStack.length - 1].depth > this.stack.length
+    ) {
+      this.styleStack.pop();
+    }
   }
 
   private style(): RunStyle {
@@ -637,6 +1127,7 @@ class HtmlAssembler {
         ordered: false,
         number: 0,
         runs: [],
+        style: this.blockStyle(),
         owner: this.stack.length,
         textLen: 0,
       };
@@ -717,10 +1208,10 @@ class HtmlAssembler {
     if (runs.length === 0) return;
     switch (col.kind) {
       case "heading":
-        this.pushBlock({ kind: "heading", level: col.level, runs });
+        this.pushBlock({ kind: "heading", level: col.level, runs, style: col.style });
         break;
       case "quote":
-        this.pushBlock({ kind: "quote", runs });
+        this.pushBlock({ kind: "quote", runs, style: col.style });
         break;
       case "list-item":
         this.pushBlock({
@@ -729,10 +1220,11 @@ class HtmlAssembler {
           ordered: col.ordered,
           number: col.number,
           runs,
+          style: col.style,
         });
         break;
       default:
-        this.pushBlock({ kind: "para", runs });
+        this.pushBlock({ kind: "para", runs, style: col.style });
         break;
     }
   }
@@ -769,6 +1261,13 @@ class HtmlAssembler {
       const depth = this.stack.length;
 
       if (this.skipDepth !== -1) return;
+
+      // R5-b: style carriers push their parsed inline style so the
+      // blocks they own pick it up (innermost carrier wins).
+      if (name !== "table" && name !== "td" && name !== "th" && STYLE_CARRIERS.has(name)) {
+        const st = parseStyle(String(attrs.style ?? ""));
+        if (styleHasProps(st)) this.styleStack.push({ depth, style: st });
+      }
 
       if (SKIP_ELEMENTS.has(name) && !isVoid) {
         this.skipDepth = depth;
@@ -863,6 +1362,7 @@ class HtmlAssembler {
             ordered: list ? list.ordered : false,
             number: list ? list.counter : 1,
             runs: [],
+            style: this.blockStyle(),
             owner: depth,
             textLen: 0,
           };
@@ -878,6 +1378,7 @@ class HtmlAssembler {
             ordered: false,
             number: 0,
             runs: [],
+            style: this.blockStyle(),
             owner: depth,
             textLen: 0,
           };
@@ -917,6 +1418,7 @@ class HtmlAssembler {
             ordered: false,
             number: 0,
             runs: [],
+            style: this.blockStyle(),
             owner: depth,
             textLen: 0,
           };
@@ -928,11 +1430,20 @@ class HtmlAssembler {
           break;
         case "pre":
           this.flushCollector();
+          if (this.preDepth === 0) {
+            const st = parseStyle(String(attrs.style ?? ""));
+            this.preStyle = styleHasProps(st) ? st : undefined;
+            this.preText = "";
+          }
           this.preDepth += 1;
-          if (this.preDepth === 1) this.preText = "";
           break;
-        case "table":
+        case "table": {
           this.flushCollector();
+          const st = mergeLegacyAttrs(
+            parseStyle(String(attrs.style ?? "")),
+            "table",
+            attrs
+          );
           this.tableStack.push({
             rows: [],
             row: null,
@@ -940,12 +1451,17 @@ class HtmlAssembler {
             inHeaderCell: false,
             headerRow: false,
             firstRow: true,
+            style: styleHasProps(st) ? st : undefined,
+            cellRowStyles: [],
+            cellStyles: [],
           });
           break;
+        }
         case "tr": {
           const top = this.tableStack[this.tableStack.length - 1];
           if (top) {
             top.row = [];
+            top.cellRowStyles = [];
             top.inHeaderCell = false;
           }
           break;
@@ -957,6 +1473,12 @@ class HtmlAssembler {
             if (top.row === null) top.row = []; // stray cell: implicit row
             top.cell = "";
             top.inHeaderCell = name === "th";
+            const cellStyle = mergeLegacyAttrs(
+              parseStyle(String(attrs.style ?? "")),
+              name,
+              attrs
+            );
+            top.cellStyle = styleHasProps(cellStyle) ? cellStyle : undefined;
           }
           break;
         }
@@ -999,6 +1521,7 @@ class HtmlAssembler {
         if (k === this.skipDepth - 1) {
           // the skip root itself closes
           this.stack.length = k;
+          this.trimStyleStack();
           this.skipDepth = -1;
           this.flushIfOrphaned();
           return;
@@ -1006,10 +1529,12 @@ class HtmlAssembler {
         if (k >= this.skipDepth) {
           // inner close inside the skipped subtree — no side effects
           this.stack.length = k;
+          this.trimStyleStack();
           return;
         }
         // auto-close popped past the skip root (unclosed skip element)
         this.stack.length = k;
+        this.trimStyleStack();
         this.skipDepth = -1;
         this.applyClose(name);
         this.flushIfOrphaned();
@@ -1017,6 +1542,7 @@ class HtmlAssembler {
       }
 
       this.stack.length = k; // pop name + auto-close anything above it
+      this.trimStyleStack();
       this.applyClose(name);
       this.flushIfOrphaned();
     },
@@ -1069,8 +1595,11 @@ class HtmlAssembler {
             text = text.slice(0, MAX_PRE_TEXT);
             this.truncated = true;
           }
-          if (text.trim().length > 0) this.pushBlock({ kind: "pre", text });
+          if (text.trim().length > 0) {
+            this.pushBlock({ kind: "pre", text, style: this.preStyle });
+          }
           this.preText = "";
+          this.preStyle = undefined;
         }
         break;
       case "td":
@@ -1080,11 +1609,13 @@ class HtmlAssembler {
           const cell = hindiNorm(cleanText(top.cell.trim(), MAX_CELL_TEXT));
           if (top.row && top.row.length < MAX_TABLE_COLS) {
             top.row.push(cell);
+            top.cellRowStyles.push(top.cellStyle);
             if (top.inHeaderCell && top.firstRow) top.headerRow = true;
           } else if (top.row) {
             this.truncated = true;
           }
           top.cell = null;
+          top.cellStyle = undefined;
           top.inHeaderCell = false;
         }
         break;
@@ -1093,12 +1624,16 @@ class HtmlAssembler {
         const top = this.tableStack[this.tableStack.length - 1];
         if (top && top.row !== null) {
           if (top.rows.length < MAX_TABLE_ROWS) {
-            if (top.row.length > 0) top.rows.push(top.row);
+            if (top.row.length > 0) {
+              top.rows.push(top.row);
+              top.cellStyles.push(top.cellRowStyles);
+            }
           } else {
             this.truncated = true;
           }
           top.firstRow = false;
           top.row = null;
+          top.cellRowStyles = [];
         }
         break;
       }
@@ -1109,10 +1644,15 @@ class HtmlAssembler {
         // its own grid before the outer table completes — approximate,
         // documented in the FAQ.
         if (top.rows.length > 0) {
+          const anyCellStyle = top.cellStyles.some((row) =>
+            row.some((s) => s !== undefined)
+          );
           this.pushBlock({
             kind: "table",
             grid: top.rows,
             headerRow: top.headerRow || undefined,
+            style: top.style,
+            cellStyles: anyCellStyle ? top.cellStyles : undefined,
           });
         }
         break;
@@ -1248,6 +1788,23 @@ export function estimatePages(doc: ParsedHtml, baseFontSize = 11): number {
   const contentW = 595.28 - 112;
   const usable = 841.89 - 112;
   const cpl = Math.max(20, contentW / (baseFontSize * 0.5));
+  const cplOf = (b: { style?: StyleProps }): number => {
+    // styled boxes can be narrower (width) and padded — honest estimate
+    const st = b.style;
+    if (st === undefined) return cpl;
+    const w =
+      st.widthPt !== undefined
+        ? st.widthPt
+        : st.widthPct !== undefined
+          ? st.widthPct * contentW
+          : contentW;
+    const inner = Math.max(20, w - (st.paddingLeft ?? 0) - (st.paddingRight ?? 0));
+    return Math.max(20, inner / (baseFontSize * 0.5));
+  };
+  const padV = (b: { style?: StyleProps }): number => {
+    const st = b.style;
+    return st === undefined ? 0 : (st.paddingTop ?? 0) + (st.paddingBottom ?? 0);
+  };
   const lh = baseFontSize * 1.36;
   let total = 0;
   for (const b of doc.blocks) {
@@ -1255,7 +1812,10 @@ export function estimatePages(doc: ParsedHtml, baseFontSize = 11): number {
       case "heading": {
         const size = HEADING_SIZES[b.level - 1] * (baseFontSize / 11);
         const len = b.runs.reduce((a, r) => a + r.text.length, 0);
-        total += Math.max(1, Math.ceil(len / cpl)) * size * 1.3 + size * 0.8;
+        total +=
+          Math.max(1, Math.ceil(len / cplOf(b))) * size * 1.3 +
+          size * 0.8 +
+          padV(b);
         break;
       }
       case "para":
@@ -1265,12 +1825,12 @@ export function estimatePages(doc: ParsedHtml, baseFontSize = 11): number {
           0
         );
         const breaks = b.runs.reduce((a, r) => a + (r.text.split("\n").length - 1), 0);
-        total += Math.max(1 + breaks, Math.ceil(len / cpl)) * lh + 4;
+        total += Math.max(1 + breaks, Math.ceil(len / cplOf(b))) * lh + 4 + padV(b);
         break;
       }
       case "list-item": {
         const len = b.runs.reduce((a, r) => a + r.text.length, 0);
-        total += Math.max(1, Math.ceil(len / (cpl - 4))) * lh + 2;
+        total += Math.max(1, Math.ceil(len / (cpl - 4))) * lh + 2 + padV(b);
         break;
       }
       case "rule":
@@ -1278,7 +1838,12 @@ export function estimatePages(doc: ParsedHtml, baseFontSize = 11): number {
         break;
       case "pre": {
         const lines = b.text.split("\n").length;
-        total += lines * (baseFontSize * 0.9 * 1.35) + 12;
+        total +=
+          lines * (baseFontSize * 0.9 * 1.35) +
+          12 +
+          (b.style === undefined
+            ? 0
+            : (b.style.paddingTop ?? 0) + (b.style.paddingBottom ?? 0));
         break;
       }
       case "table": {
@@ -1314,6 +1879,123 @@ function coerceDepth(v: unknown): number {
   const n = typeof v === "number" ? v : Number.parseInt(String(v), 10);
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.min(8, Math.floor(n));
+}
+
+/* --- R5-b style coercion (tampered payloads degrade, never crash) --- */
+
+function coerceColor(v: unknown): StyleColor | undefined {
+  if (!Array.isArray(v) || v.length !== 3) return undefined;
+  const out: StyleColor = [0, 0, 0];
+  for (let i = 0; i < 3; i++) {
+    const n =
+      typeof v[i] === "number" ? v[i] : Number.parseFloat(String(v[i]));
+    if (!Number.isFinite(n)) return undefined;
+    out[i] = Math.round(Math.min(1, Math.max(0, n)) * 1000) / 1000;
+  }
+  return out;
+}
+
+function coerceEdge(v: unknown): BorderSide | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const o = v as Record<string, unknown>;
+  const w = typeof o.width === "number" ? o.width : Number.parseFloat(String(o.width));
+  if (!Number.isFinite(w) || w < 0) return undefined;
+  const s = String(o.style ?? "");
+  const style = s === "dashed" || s === "dotted" ? s : "solid";
+  return { width: Math.min(400, w), style, color: coerceColor(o.color) };
+}
+
+function coerceAlign(v: unknown): "left" | "center" | "right" | "justify" | undefined {
+  const s = String(v ?? "");
+  return s === "left" || s === "center" || s === "right" || s === "justify"
+    ? s
+    : undefined;
+}
+
+function coercePad(v: unknown): number | undefined {
+  const n = typeof v === "number" ? v : Number.parseFloat(String(v));
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.min(400, n);
+}
+
+/** full defensive coercion of a serialized StyleProps (worker boundary). */
+function coerceStyle(v: unknown): StyleProps | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const o = v as Record<string, unknown>;
+  const out: StyleProps = {};
+  const color = coerceColor(o.color);
+  if (color !== undefined) out.color = color;
+  const bg = coerceColor(o.backgroundColor);
+  if (bg !== undefined) out.backgroundColor = bg;
+  const bt = coerceEdge(o.borderTop);
+  if (bt !== undefined) out.borderTop = bt;
+  const br = coerceEdge(o.borderRight);
+  if (br !== undefined) out.borderRight = br;
+  const bb = coerceEdge(o.borderBottom);
+  if (bb !== undefined) out.borderBottom = bb;
+  const bl = coerceEdge(o.borderLeft);
+  if (bl !== undefined) out.borderLeft = bl;
+  const radius = typeof o.radius === "number" ? o.radius : undefined;
+  if (radius !== undefined && Number.isFinite(radius)) {
+    out.radius = Math.min(50, Math.max(0, radius));
+  }
+  const pt = coercePad(o.paddingTop);
+  if (pt !== undefined) out.paddingTop = pt;
+  const pr = coercePad(o.paddingRight);
+  if (pr !== undefined) out.paddingRight = pr;
+  const pb = coercePad(o.paddingBottom);
+  if (pb !== undefined) out.paddingBottom = pb;
+  const pl = coercePad(o.paddingLeft);
+  if (pl !== undefined) out.paddingLeft = pl;
+  const align = coerceAlign(o.textAlign);
+  if (align !== undefined) out.textAlign = align;
+  if (o.bold === true) out.bold = true;
+  else if (o.bold === false) out.bold = false;
+  if (o.italic === true) out.italic = true;
+  else if (o.italic === false) out.italic = false;
+  if (o.underline === true) out.underline = true;
+  else if (o.underline === false) out.underline = false;
+  if (o.lineThrough === true) out.lineThrough = true;
+  else if (o.lineThrough === false) out.lineThrough = false;
+  if (typeof o.widthPt === "number" && Number.isFinite(o.widthPt) && o.widthPt >= 0) {
+    out.widthPt = Math.min(600, o.widthPt);
+  }
+  if (
+    typeof o.widthPct === "number" &&
+    Number.isFinite(o.widthPct) &&
+    o.widthPct >= 0
+  ) {
+    out.widthPct = Math.min(1, o.widthPct);
+  }
+  const ta = String(o.tableAlign ?? "");
+  if (ta === "left" || ta === "center" || ta === "right") out.tableAlign = ta;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** per-cell style grid coercion, parallel to a coerced table grid. */
+function coerceCellStyles(
+  raw: unknown,
+  rows: string[][]
+): (StyleProps | undefined)[][] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  let any = false;
+  const out: (StyleProps | undefined)[][] = [];
+  for (let ri = 0; ri < rows.length; ri++) {
+    const rowRaw = raw[ri];
+    if (!Array.isArray(rowRaw)) {
+      out.push(rows[ri].map(() => undefined));
+      continue;
+    }
+    const cols = rows[ri].map(
+      (cellText, ci) =>
+        cellText === undefined || rowRaw[ci] === undefined
+          ? undefined
+          : coerceStyle(rowRaw[ci])
+    );
+    if (cols.some((s) => s !== undefined)) any = true;
+    out.push(cols);
+  }
+  return any ? out : undefined;
 }
 
 function coerceRuns(raw: unknown): HtmlRun[] {
@@ -1385,7 +2067,11 @@ export function parseHtmlRun(raw: string): ParsedHtml {
     if (kind === "rule") {
       blocks.push({ kind: "rule" });
     } else if (kind === "pre") {
-      blocks.push({ kind: "pre", text: hindiNorm(cleanText(b.text, MAX_PRE_TEXT)) });
+      blocks.push({
+        kind: "pre",
+        text: hindiNorm(cleanText(b.text, MAX_PRE_TEXT)),
+        style: coerceStyle(b.style),
+      });
     } else if (kind === "table") {
       const rawRows = Array.isArray(b.grid) ? b.grid : [];
       const rows: string[][] = [];
@@ -1410,6 +2096,8 @@ export function parseHtmlRun(raw: string): ParsedHtml {
           kind: "table",
           grid: rows,
           headerRow: b.headerRow === true || undefined,
+          style: coerceStyle(b.style),
+          cellStyles: coerceCellStyles(b.cellStyles, rows),
         });
       }
     } else if (
@@ -1419,14 +2107,15 @@ export function parseHtmlRun(raw: string): ParsedHtml {
       kind === "list-item"
     ) {
       const runs = coerceRuns(b.runs);
+      const style = coerceStyle(b.style);
       if (kind === "heading") {
         const level = coerceHeadingLevel(b.level);
-        if (level !== undefined) blocks.push({ kind: "heading", level, runs });
-        else blocks.push({ kind: "para", runs });
+        if (level !== undefined) blocks.push({ kind: "heading", level, runs, style });
+        else blocks.push({ kind: "para", runs, style });
       } else if (kind === "para") {
-        blocks.push({ kind: "para", runs });
+        blocks.push({ kind: "para", runs, style });
       } else if (kind === "quote") {
-        blocks.push({ kind: "quote", runs });
+        blocks.push({ kind: "quote", runs, style });
       } else {
         const numberRaw =
           typeof b.number === "number" ? b.number : Number.parseInt(String(b.number), 10);
@@ -1438,6 +2127,7 @@ export function parseHtmlRun(raw: string): ParsedHtml {
             ? Math.min(999_999, Math.max(0, numberRaw))
             : 1,
           runs,
+          style,
         });
       }
     }

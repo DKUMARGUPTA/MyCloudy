@@ -14,8 +14,11 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  * pipeline.
  *
  * Honest limits (mirrored in the FAQ):
- *  - this is CONTENT extraction, not a browser engine: CSS layout and
- *    styling (columns, floats, colours, fonts) are not applied;
+ *  - this is CONTENT extraction, not a browser engine: CSS layout
+ *    (columns, floats, flex, positioning) is not applied — but the
+ *    inline style="…" box-model subset IS (backgrounds, borders,
+ *    rounded corners, padding, text alignment, colours — see
+ *    model.ts StyleProps);
  *  - scripts, SVG and images are not carried beyond alt text in
  *    brackets; form controls are dropped;
  *  - complex nested tables approximate (inner tables hoist as their
@@ -111,19 +114,33 @@ export const config: ToolConfig = {
       hi: "A4 या US लेटर, सामान्य या सँकरे मार्जिन, तीन फ़ॉन्ट साइज़, वैकल्पिक लिंक पते, और बदलने से पहले शीर्षक/ब्लॉक/शब्द/≈पेज का लाइव ब्यौरा — उसी पार्सर से ईमानदार गिनती जिससे PDF बनता है।",
     },
     {
-      en: "Honest about what it is: a content extractor, not a browser engine. CSS layout, scripts, SVG art and images are not applied — the text, structure and tables you saved are what print.",
-      hi: "अपने बारे में ईमानदार: यह कंटेंट एक्स्ट्रैक्टर है, ब्राउज़र इंजन नहीं। CSS लेआउट, स्क्रिप्ट, SVG कला और तस्वीरें नहीं लगतीं — आपका सेव किया टेक्स्ट, ढाँचा और टेबलें ही छपती हैं।",
+      en: "Inline styles carry over: a style=\"…\" attribute paints real backgrounds, borders (solid, dashed or dotted), rounded corners, padding, text alignment — left, centred, right or true justified — and text colours and decoration onto the blocks, with legacy bgcolor and align attributes honoured on tables too.",
+      hi: "इनलाइन स्टाइल साथ आते हैं: style=\"…\" एट्रिब्यूट ब्लॉकों पर असली पृष्ठभूमि, बॉर्डर (सॉलिड, डैश्ड या डॉटेड), गोल कोने, पैडिंग, टेक्स्ट अलाइनमेंट — बाएँ, बीच, दाएँ या सच्चा जस्टिफ़ाइड — और टेक्स्ट के रंग-सजावट लगाता है; टेबलों पर पुराने bgcolor और align एट्रिब्यूट भी चलते हैं।",
+    },
+    {
+      en: "Honest about what it is: a content extractor, not a browser engine. CSS LAYOUT — columns, floats, flex, grid, positioning, external stylesheets and web fonts — is not applied; the text, structure, inline-styled boxes and tables you saved are what print.",
+      hi: "अपने बारे में ईमानदार: यह कंटेंट एक्स्ट्रैक्टर है, ब्राउज़र इंजन नहीं। CSS लेआउट — कॉलम, फ़्लोट, फ़्लेक्स, ग्रिड, पोज़िशनिंग, बाहरी स्टाइलशीट और वेब फ़ॉन्ट — नहीं लगता; आपका सेव किया टेक्स्ट, ढाँचा, इनलाइन-स्टाइल वाले बॉक्स और टेबलें ही छपती हैं।",
     },
   ],
   faq: [
+    {
+      q: {
+        en: "Which CSS works?",
+        hi: "कौन सा CSS चलता है?",
+      },
+      a: {
+        en: "Inline style=\"…\" attributes on your blocks: background-color, text colour, borders (solid, dashed or dotted, per-side too), border-radius, padding, text-align (including true justified text), font weight/style and text decoration — plus the legacy bgcolor, align and width attributes on tables. Everything parses safely: unknown or malformed values are skipped, never guessed. What does NOT work: floats, flex, grid, positioning, external .css files, <style> blocks, class selectors, web fonts and background images — the page prints as one clean flow with its styled boxes inside it.",
+        hi: "ब्लॉकों के इनलाइन style=\"…\" एट्रिब्यूट: background-color, टेक्स्ट का रंग, बॉर्डर (सॉलिड, डैश्ड या डॉटेड, हर तरफ़ अलग भी), border-radius, पैडिंग, text-align (सच्चा जस्टिफ़ाइड भी), फ़ॉन्ट मोटाई/स्टाइल और टेक्स्ट सजावट — साथ ही टेबलों के पुराने bgcolor, align और width एट्रिब्यूट। पार्सिंग पूरी तरह सुरक्षित है: अनजाने या ग़लत मान छोड़ दिए जाते हैं, अंदाज़ा नहीं लगाया जाता। जो नहीं चलता: फ़्लोट, फ़्लेक्स, ग्रिड, पोज़िशनिंग, बाहरी .css फ़ाइलें, <style> ब्लॉक, क्लास सिलेक्टर, वेब फ़ॉन्ट और बैकग्राउंड तस्वीरें — पेज एक साफ़ फ़्लो में छपता है जिसमें स्टाइल वाले बॉक्स आते हैं।",
+      },
+    },
     {
       q: {
         en: "Will my page look exactly like it does in the browser?",
         hi: "क्या मेरा पेज ब्राउज़र जैसा हूबहू दिखेगा?",
       },
       a: {
-        en: "No — and that is the honest answer. This tool extracts CONTENT, not pixels: headings, paragraphs, bold/italic/underline, lists, quotes, code blocks and tables are re-typeset as clean vector text. CSS layout and styling — columns, floats, colours, web fonts, background images — are not applied, and scripts never run. What you get is a readable, selectable, printable document of everything you saved.",
-        hi: "नहीं — और यही ईमानदार जवाब है। यह टूल कंटेंट निकालता है, पिक्सेल नहीं: शीर्षक, पैराग्राफ़, बोल्ड-इटैलिक-रेखांकन, सूचियाँ, कोट, कोड ब्लॉक और टेबलें साफ़ वेक्टर टेक्स्ट में नए सिरे से छपती हैं। CSS लेआउट और स्टाइलिंग — कॉलम, फ़्लोट, रंग, वेब फ़ॉन्ट, बैकग्राउंड तस्वीरें — नहीं लगते, और स्क्रिप्ट कभी नहीं चलतीं। जो मिलता है वह आपके सेव किए हर शब्द का पढ़ने, चुनने और प्रिंट करने लायक दस्तावेज़ है।",
+        en: "No — and that is the honest answer. This tool extracts CONTENT, not pixels: headings, paragraphs, bold/italic/underline, lists, quotes, code blocks and tables are re-typeset as clean vector text. CSS layout — columns, floats, flex, web fonts, background images — is not applied, and scripts never run. One happy exception: the inline style=\"…\" box-model subset (backgrounds, borders, padding, alignment, colours) does carry onto the blocks. What you get is a readable, selectable, printable document of everything you saved.",
+        hi: "नहीं — और यही ईमानदार जवाब है। यह टूल कंटेंट निकालता है, पिक्सेल नहीं: शीर्षक, पैराग्राफ़, बोल्ड-इटैलिक-रेखांकन, सूचियाँ, कोट, कोड ब्लॉक और टेबलें साफ़ वेक्टर टेक्स्ट में नए सिरे से छपती हैं। CSS लेआउट — कॉलम, फ़्लोट, फ़्लेक्स, वेब फ़ॉन्ट, बैकग्राउंड तस्वीरें — नहीं लगते, और स्क्रिप्ट कभी नहीं चलतीं। एक खुशहाली अपवाद: इनलाइन style=\"…\" बॉक्स-मॉडल सबसेट (पृष्ठभूमि, बॉर्डर, पैडिंग, अलाइनमेंट, रंग) ब्लॉकों पर साथ चलता है। जो मिलता है वह आपके सेव किए हर शब्द का पढ़ने, चुनने और प्रिंट करने लायक दस्तावेज़ है।",
       },
     },
     {

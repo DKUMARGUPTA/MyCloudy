@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   Check,
   CheckCircle2,
@@ -60,6 +60,7 @@ export function ResultView({
   onChain,
   onRemoveFromDevice,
   onStartOver,
+  resultExtra,
 }: {
   tool: ToolDef;
   outputs: ToolOutput[];
@@ -97,6 +98,11 @@ export function ResultView({
   onRemoveFromDevice: () => void;
   /** "Start over with a new file" — clean slate on this tool's page. */
   onStartOver?: () => void;
+  /**
+   * Per-tool follow-up action rendered beside the downloads (R5-c —
+   * ocr-pdf's "Send to invoice" hand-off; see TOOL_RESULT_EXTRAS).
+   */
+  resultExtra?: ReactNode;
 }) {
   const { t, locale } = useI18n();
   const { toast } = useToast();
@@ -475,6 +481,11 @@ export function ResultView({
           {t("result.openPreview")}
         </Button>
       </div>
+
+      {/* Per-tool follow-up (ocr-pdf → create-invoice hand-off, R5-c) */}
+      {resultExtra ? (
+        <div className="mt-5 flex justify-center">{resultExtra}</div>
+      ) : null}
 
       {/* What next? chain (PRD §6.4) */}
       {chainTargets.length > 0 ? (

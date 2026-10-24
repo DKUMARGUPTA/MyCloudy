@@ -277,7 +277,9 @@
       "tt-transport-invoice": "Freight Invoice",
       "tt-hotel-invoice": "Hotel Invoice",
       "tt-restaurant-bill": "Restaurant Bill",
-      "tt-medical-bill": "Medical Bill"
+      "tt-medical-bill": "Medical Bill",
+      "ocrPrefillToastTitle": "Filled from OCR",
+      "ocrPrefillToastDesc": "Review every field before downloading"
     }
   },
   "hi": {
@@ -558,7 +560,9 @@
       "tt-transport-invoice": "फ़्रेट इनवॉइस",
       "tt-hotel-invoice": "होटल इनवॉइस",
       "tt-restaurant-bill": "रेस्टोरेंट बिल",
-      "tt-medical-bill": "मेडिकल बिल"
+      "tt-medical-bill": "मेडिकल बिल",
+      "ocrPrefillToastTitle": "OCR से भरा गया",
+      "ocrPrefillToastDesc": "डाउनलोड करने से पहले हर फ़ील्ड जाँच लें"
     }
   }
 }

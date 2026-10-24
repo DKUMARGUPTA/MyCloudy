@@ -10,6 +10,8 @@
       "headingsHint": "The largest font tier becomes Heading 1, the next Heading 2. Switch off to keep everything plain.",
       "breaksLabel": "Keep page breaks",
       "breaksHint": "Each PDF page starts a new Word page. Switch off for one continuous flow.",
+      "tablesLabel": "Detect tables",
+      "tablesHint": "Rows whose column gaps line up become real Word tables — anything unclear stays plain text.",
       "cta": "Convert to Word",
       "working": "Converting…",
       "stageReading": "Reading pages",
@@ -20,15 +22,16 @@
       "summaryPages": "{count, plural, =1 {1 page} other {# pages}}",
       "summaryParagraphs": "{count, plural, =1 {1 paragraph} other {# paragraphs}}",
       "summaryHeadings": "{count, plural, =1 {1 heading} other {# headings}}",
-      "qualityNote": "Text and structure only — images, columns and tables are converted into a plain text flow.",
+      "summaryTables": "{count, plural, =1 {1 table} other {# tables}}",
+      "qualityNote": "Text and structure only — detected tables become real Word tables; images and multi-column layouts become a plain text flow.",
       "fileWord": "document",
       "how1": "Drop your PDF — the file is checked by its %PDF signature, never uploaded; everything happens in this browser.",
-      "how2": "Pick your options — heading detection and page breaks — and press Convert; a progress bar follows the real work.",
-      "how3": "The editable .docx downloads straight to your device with a summary of the pages, paragraphs and headings it found.",
+      "how2": "Pick your options — heading detection, tables and page breaks — and press Convert; a progress bar follows the real work.",
+      "how3": "The editable .docx downloads straight to your device with a summary of the pages, paragraphs, tables and headings it found.",
       "feature1": "Real editable .docx — selectable PDF text becomes Word paragraphs, 100% on-device.",
-      "feature2": "Structure survives — paragraphs, Heading 1/2 tiers, bold runs and page breaks are rebuilt.",
+      "feature2": "Structure survives — paragraphs, Heading 1/2 tiers, bold runs, detected tables and page breaks are rebuilt.",
       "feature3": "Hindi comes through clean — Devanagari converts in UTF-8 for Word, Google Docs and LibreOffice.",
-      "feature4": "Honest conversion — pages, paragraphs and headings are counted before the download; images and tables become text."
+      "feature4": "Honest conversion — pages, paragraphs, tables and headings are counted before the download; images and multi-column layouts become text."
     }
   },
   "hi": {
@@ -42,6 +45,8 @@
       "headingsHint": "सबसे बड़ा फ़ॉन्ट दरजा हेडिंग 1 बनता है, अगला हेडिंग 2। सब सादा रखने के लिए बंद कर दें।",
       "breaksLabel": "पेज-ब्रेक रखें",
       "breaksHint": "हर PDF पेज Word में नया पेज शुरू करता है। एक लगातार प्रवाह के लिए बंद करें।",
+      "tablesLabel": "टेबल पहचानें",
+      "tablesHint": "जिन पंक्तियों के कॉलम-गैप मिलते हैं वे असली Word टेबल बनती हैं — जो साफ़ न हो, सादा टेक्स्ट रहता है।",
       "cta": "वर्ड में बदलें",
       "working": "बदल रहे हैं…",
       "stageReading": "पेज पढ़े जा रहे हैं",
@@ -52,15 +57,16 @@
       "summaryPages": "{count, plural, =1 {1 पेज} other {# पेज}}",
       "summaryParagraphs": "{count, plural, =1 {1 पैराग्राफ़} other {# पैराग्राफ़}}",
       "summaryHeadings": "{count, plural, =1 {1 हेडिंग} other {# हेडिंग}}",
-      "qualityNote": "सिर्फ़ टेक्स्ट और बनावट — इमेज, कॉलम और टेबल सादी टेक्स्ट-प्रवाह में बदलते हैं।",
+      "summaryTables": "{count, plural, =1 {1 टेबल} other {# टेबल}}",
+      "qualityNote": "सिर्फ़ टेक्स्ट और बनावट — पहचानी गई टेबलें असली Word टेबल बनती हैं; इमेज और मल्टी-कॉलम लेआउट सादी टेक्स्ट-प्रवाह में बदलते हैं।",
       "fileWord": "दस्तावेज़",
       "how1": "अपनी PDF डालें — फ़ाइल %PDF हस्ताक्षर से जाँची जाती है, कहीं अपलोड नहीं होती; सब कुछ इसी ब्राउज़र में होता है।",
-      "how2": "विकल्प चुनें — हेडिंग पहचान और पेज-ब्रेक — और Convert दबाएँ; प्रगति-पट्टी असली काम के साथ चलती है।",
-      "how3": "एडिट करने योग्य .docx सीधे आपके डिवाइस पर डाउनलोड होती है, साथ में पेज, पैराग्राफ़ और हेडिंग की गिनती।",
+      "how2": "विकल्प चुनें — हेडिंग पहचान, टेबल और पेज-ब्रेक — और Convert दबाएँ; प्रगति-पट्टी असली काम के साथ चलती है।",
+      "how3": "एडिट करने योग्य .docx सीधे आपके डिवाइस पर डाउनलोड होती है, साथ में पेज, पैराग्राफ़, टेबल और हेडिंग की गिनती।",
       "feature1": "असली एडिटेबल .docx — PDF का चुनने योग्य टेक्स्ट Word पैराग्राफ़ बनता है, 100% डिवाइस पर।",
-      "feature2": "बनावट बनी रहती है — पैराग्राफ़, हेडिंग 1/2, बोल्ड टेक्स्ट और पेज-ब्रेक दोबारा बनते हैं।",
+      "feature2": "बनावट बनी रहती है — पैराग्राफ़, हेडिंग 1/2 दर्जे, बोल्ड टेक्स्ट, पहचानी गई टेबलें और पेज-ब्रेक दोबारा बनते हैं।",
       "feature3": "हिंदी साफ़ आती है — देवनागरी UTF-8 में बदलती है, Word, Google Docs और LibreOffice के लिए।",
-      "feature4": "ईमानदार रूपांतरण — डाउनलोड से पहले पेज, पैराग्राफ़ और हेडिंग गिने जाते हैं; इमेज और टेबल टेक्स्ट बनते हैं।"
+      "feature4": "ईमानदार रूपांतरण — डाउनलोड से पहले पेज, पैराग्राफ़, टेबल और हेडिंग गिने जाते हैं; इमेज और मल्टी-कॉलम लेआउट टेक्स्ट बनते हैं।"
     }
   }
 }

@@ -2,7 +2,7 @@
 
 import type { ComponentType } from "react";
 
-import type { ToolSurfaceProps } from "./panel-types";
+import type { ToolSurfaceProps, ToolResultExtraProps } from "./panel-types";
 import { GridSurface } from "../../../tools/pagegrid/grid-surface";
 import { AssembleSurface } from "../../../tools/assemble-pdf/surface";
 import { ImageGridSurface } from "../../../tools/imagegrid/image-grid-surface";
@@ -62,6 +62,7 @@ import { PdfToEInvoiceSurface } from "../../../tools/pdf-to-e-invoice/surface";
 import { XmlInvoiceToPdfSurface } from "../../../tools/xml-invoice-to-pdf/surface";
 import { ValidateEInvoiceSurface } from "../../../tools/validate-e-invoice/surface";
 import { PassportPhotoSurface } from "../../../tools/passport-photo/surface";
+import { OcrInvoiceHandoff } from "../../../tools/ocr-pdf/invoice-handoff";
 import { RequestSignatureSurface } from "../../../tools/request-signature/surface";
 import { DigitalSignatureSurface } from "../../../tools/digital-signature/surface";
 import { VerifyPdfSignaturesSurface } from "../../../tools/verify-pdf-signatures/surface";
@@ -188,3 +189,15 @@ export function getToolSurface(
 ): ComponentType<ToolSurfaceProps> | undefined {
   return TOOL_SURFACES[toolId];
 }
+
+/**
+ * Per-tool extras rendered inside the result view (R5-c) — the same
+ * module-level lookup pattern as TOOL_SURFACES/TOOL_PANELS. Currently:
+ * ocr-pdf's "Send to invoice" hand-off button.
+ */
+export const TOOL_RESULT_EXTRAS: Record<
+  string,
+  ComponentType<ToolResultExtraProps>
+> = {
+  "ocr-pdf": OcrInvoiceHandoff,
+};

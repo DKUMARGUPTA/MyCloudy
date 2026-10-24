@@ -4556,3 +4556,68 @@ Stage Summary:
 - 4 audit rounds COMPLETE and pushed. Cumulative: 4 BUGs + 21 fixes + 24 enhancements + 3.99MB purge + UBL 2.1 + batch family + FDF + deskew + dedupe + xref salvage + templates + compliance guide.
 - Backlog remaining: ocr→e-invoice chaining, pdf-to-word table reconstruction, html-to-pdf CSS box model (all three are big/risky — candidate for dedicated rounds).
 - REMINDER: user should rotate the chat-exposed GitHub PAT.
+---
+Task ID: R5-a
+Agent: table-reconstruction enhancer (orchestrator-verified — agent hit context deadline after landing code, before worklog)
+Task: pdf-to-word table reconstruction
+
+Work Log:
+- Landed ~1098 insertions across tools/pdf-to-word/{model,worker,config,surface,i18n.json} + scripts/smoke-pdf-to-word.ts + src/i18n/{en,hi}.json + src/lib/workers/protocol.ts.
+- model.ts: DocxTableBlock {kind:"table", rows} + caps (MAX_TABLES 100, MAX_TABLE_ROWS 500, MAX_TABLE_COLS 30, MAX_TABLE_CELL_CHARS 500); pure helpers medianOf/medianCharWidth/splitIntoColumns (gap > TABLE_GAP_CHAR_WIDTHS 1.5 × median char width)/columnTexts/detectTableRegions (consecutive columnar lines with matching cluster counts, ≥2 rows commit, else honest paragraph fallback); tableXml emits real OOXML §17.2 (tblW pct 5000, tblBorders incl. insideH/insideV, gridCol per column, tcW dxa).
+- Config "Detect tables" switch default ON with honest copy; chip reports detected tables; FAQ "Which PDFs benefit?" EN+HI; protocol detail tables count.
+- Smoke 133 checks: synthetic 3×4 + 5×4 tables, two tables around a paragraph, single-column fallback, mismatched clusters, real pdf.js extraction of the QA fixture (2 tables, 5×4 + 3×3 exact cells), real docx carries 2 w:tbl + 7 gridCol, detection-on vs off byte-identical for table-free docs, wiring locks EN+HI, tool i18n mirror byte-equal.
+
+Stage Summary:
+- Gates (orchestrator-run): tsc 0, lint 0, i18n 4362=4362 (identical key sets), smoke 133/0.
+- Mutation test: TABLE_GAP_CHAR_WIDTHS 1.5→9999 → 25 asserts fail; restored byte-identical → 133/0.
+- Browser QA (agent-browser, dev :3000): uploaded public/qa/audit5-pdf2word-tables.pdf (built by the smoke) → run → "1 page · 3 paragraphs · 1 heading · 2 tables" + Detect tables switch ON by default + honest hint + FAQ; captured DOCX blob 3032 bytes PK magic; 0 console + 0 page errors. Screenshot: public/qa/audit5-pdf2word-tables.png.
+- NOT committed (orchestrator commits at round end).
+---
+Task ID: R5-b
+Agent: css-box-model enhancer (orchestrator-completed — agent landed model+render then hit context deadline; orchestrator fixed a real bug, wrote smokes, copy and QA)
+Task: html-to-pdf CSS box-model fidelity
+
+Work Log:
+- Agent landed ~1526 insertions: tools/html-to-pdf/model.ts (StyleProps, parseStyle, parseColor, parseBorderEdge, parsePx/parsePadding, NAMED_COLORS ×24, caps MAX_STYLE_RULES 1000 / MAX_STYLE_PX 400 / MAX_STYLE_RADIUS_PX 50, STYLE_CARRIERS ×12 elements, legacy bgcolor/align/width merge, styleStack nesting) + render.ts (drawBoxChrome: background rects with real bezier-arc border-radius, borders solid/dashed/dotted via setDash, per-side edges, padding insets, text-align left/center/right/REAL justify last-line-left, per-block ink override, cell→table style cascade, widthPt/widthPct box sizing).
+- BUG FOUND+FIXED (orchestrator): parseColor read exec()[2] on the 1-group /^rgba?\((.*)$/ regex → fn[2] undefined → TypeError on EVERY rgb()/rgba() value (feature dead-on-arrival for functional colours). Fixed to fn[1]; smoke locks it with a never-throws vector.
+- Orchestrator completed: config.ts honest copy refreshed (features entry "Inline styles carry over…" EN+HI, new FAQ "Which CSS works?" EN+HI listing exactly what works + what never does, stale "colours are not applied" copy removed); html.honestNote updated in ALL 4 catalogs (tool mirror en/hi + central en/hi, mirrors byte-equal): CSS layout honestly out, inline styles honestly in.
+- scripts/smoke-html-to-pdf.ts §7 (+44 checks → 150 total): parse vectors (hex 3/4/6/8-digit with alpha-on-white blend, rgb()/rgba() ints+% channels, named colours case-insensitive, border shorthand/per-side/dashed, radius/padding 1-4 values + cap clamps 50px→37.5pt / 400px→300pt, font/decoration/width subset, normal resets, garbage never throws, unknown props skipped); parseHtml wiring (style reaches block, legacy table bgcolor+align+tableAlign, td bgcolor+align → cellStyles); REAL render pins (fill "1 0.953 0.804 rg", stroke "0.941 0.678 0.306 RG", "1.5 w", dashed "[3 2] 0 d", coloured ink "0.78 0.145 0.306 rg", exactly 4 bezier arc segments, padded box width 477.28pt, Tm matrices, justify-changes-geometry vs left, styled text still selectable); zero-regression locks (plain doc has no style ops; §4's pre-existing exact op pins); config/honestNote wiring locks EN+HI.
+- ZERO-REGRESSION BYTE PROOF: HEAD's model+render extracted to /tmp, identical unstyled fixture (headings/lists/quote/pre/table/links) rendered through HEAD vs working tree → 2112 = 2112 bytes BYTE-IDENTICAL.
+- Mutation test: fn[1]→fn[2] reverted → smoke crashes on the rgba vector (TypeError, non-zero exit — lock kills the bug); restored → 150/0.
+
+Stage Summary:
+- Gates: tsc 0, lint 0, i18n 4362=4362 (mirror en/hi byte-equal), smoke-html-to-pdf 150/0.
+- Browser QA (agent-browser, dev :3000 restarted once after a crash): styled-report.html (callout box + justify + dashed divider + bgcolor table) uploaded via DataTransfer → Convert → PDF blob captured (2086 bytes, %PDF magic) via createObjectURL hook; summary 4 blocks/43 words/≈1 page; HI landing shows कौन सा CSS चलता है? FAQ + updated इनलाइन-style honestNote; EN FAQ "Which CSS works?" renders; 0 console + 0 page errors. Screenshots: public/qa/audit5-html-css.png + audit5-html-css-hi.png.
+- NOT committed (orchestrator commits at round end).
+---
+Task ID: R5-c
+Agent: ocr-invoice-chain enhancer (orchestrator-verified — agent hit context deadline after landing code; orchestrator ran gates, mutation test, browser E2E)
+Task: OCR → invoice cross-tool chaining
+
+Work Log:
+- Agent landed: tools/ocr-pdf/invoice-extract.ts (NEW, 810 lines: pure extractInvoiceDraft(pages, locale) with label-required matching for invoice no/date/due/vendor/currency, item rows with qty × rate patterns + honest refuse when numbers do not add, totals Subtotal/CGST/SGST/GST/Total labelled only, MAX_OCR_ITEMS 50 with honest itemsCapped, labelHits===0 → honest null for prose/garbage, vendor heuristic only with other label evidence; prefill codec serializeOcrPrefill/parseOcrPrefill + OCR_PREFILL_KEY "dp_inv_ocr"; readOcrPageTexts for the run detail) + invoice-handoff.tsx (result-view extra: button hidden without text, DISABLED with "No invoice fields found" hint when draft null, storage-failure → error toast never navigates, navigateToHash ROUTES.tool("create-invoice")) + create-invoice surface one-shot hydration effect (ref guard + queueMicrotask house pattern, key REMOVED on read, review toast) + model.ts applyOcrDraft (fields verbatim when present, items replace only when found, GST/₹ evidence → gst-invoice type, no evidence → type untouched, never fabricates client/HSN/discounts/notes) + config feature + FAQ + protocol/panel-types/surfaces/result-view wiring + i18n EN+HI (4 new central keys + mirrors).
+- Smokes: NEW scripts/smoke-ocr-invoice-extract.ts (134 checks: realistic 20-line invoice exact fields, HI विक्रेता/कुल labels, garbage/letter/name-only → null, partial labels → only-found, item edge cases ×/x/thousand-separators/add-up-check, 51-item cap, prefill codec round-trip, worker-detail reader, wiring regexes, i18n parity + mirror equality); smoke-create-invoice extended with applyOcrDraft vectors (all green); smoke-pdf-to-word 133/0 + smoke-html-to-pdf 150/0 re-verified untouched.
+
+Stage Summary:
+- Gates (orchestrator-run): tsc 0, lint 0, i18n parity 4366 = 4366 (4 new keys, mirrors byte-equal), smokes 134/0 + create-invoice all-pass + R5-a/R5-b smokes re-green.
+- Mutation test: labelHits===0 → ===-1 (disable the honesty gate) → exactly 6 honest-null asserts fail (letter prose, random ids, name-only, HI variants); restored byte-identical (cmp) → 134/0. NUM_RE and dead-regex mutations absorbed by design (fallback chains + defense-in-depth) — documented, not gaps.
+- Browser QA (agent-browser, dev :3000 restarted twice after crashes): built scripts/make-ocr-invoice-fixture.py (A4@150dpi PIL invoice: TAX INVOICE / Sharma Electricals / INV-2024-0157 / dates / 4 items qty × rate / CGST+SGST+₹ total) → wrapped image-only PDF → ocr-pdf → run (tesseract, 93% confidence) → "Send to invoice" ENABLED → click → hash #/tool/create-invoice → editor prefilled INV-2024-0157 + 12/08/2024 + due 26/08/2024 + Sharma Electricals + 4 items + computed 6,779 subtotal + GST invoice type + "Filled from OCR — review" toast + dp_inv_ocr key removed (one-shot proven). Honest-null: letter-prose scan → OCR → button DISABLED + "No invoice fields found" hint. 0 console + 0 page errors. Screenshots: public/qa/audit5-ocr-invoice.png + audit5-ocr-invoice-disabled.png. Fixtures: public/qa/audit5-ocr-invoice.{png,pdf} + audit5-ocr-letter.pdf.
+- NOT committed (orchestrator commits at round end).
+---
+Task ID: R5-FINAL
+Agent: orchestrator (main session)
+Task: Round 5 consolidated verification + commit + push.
+
+Work Log:
+- All three agents hit context deadlines mid-round but each landed their code first (the recurring pattern); the orchestrator audited every landed file, found + fixed 1 real shipped bug (parseColor fn[2] on a 1-group regex — every rgb()/rgba() colour threw TypeError), completed missing pieces (config copy, honestNote refresh ×4 catalogs, smoke §7 for html-to-pdf, worklog entries) and ran all gates + browser QA fresh for all three features.
+- Final gates: tsc 0, lint 0, i18n 4366 = 4366 (identical key sets), consolidated battery: smoke-pdf-to-word 133/0, smoke-html-to-pdf 150/0, smoke-ocr-invoice-extract 134/0, smoke-create-invoice all-pass, smoke-ocr-deskew 33/0, smoke-word-to-pdf 67/0, smoke-passport-photo 332/0 — 850+ checks, 0 failed.
+- Mutation tests: TABLE_GAP_CHAR_WIDTHS→9999 (25 fails), rgba fn[1]→fn[2] (crash-lock), labelHits===0→-1 (6 honest-null fails) — all restored byte-identical, re-green.
+- Zero-regression byte proof: html-to-pdf unstyled fixture HEAD vs tree 2112 = 2112 bytes identical.
+- Browser QA: pdf-to-word "2 tables" chip + DOCX blob (PK, w:tbl verified in smoke through real pdf.js); html-to-pdf styled fixture blob + HI/EN FAQ + honestNote; ocr→invoice full chain (93% OCR → prefilled GST invoice with INV-2024-0157 + 4 items + computed totals + one-shot key removal) + honest-null disabled path; homepage 97 tools; 0 console/page errors throughout; screenshots public/qa/audit5-*.png.
+- Dev server: crashed twice during QA (tesseract runs + recompiles) — restarted with setsid, stable at commit time.
+
+Stage Summary:
+- 5 audit rounds COMPLETE. Round 5 delivered the last 3 backlog items: pdf-to-word table reconstruction (column clustering → real w:tbl), html-to-pdf CSS box-model subset (backgrounds/borders/radius/padding/alignment/colours + legacy bgcolor/align), ocr→invoice chaining (label-required extraction + one-shot prefill handoff + honest disabled state).
+- Cumulative across 5 rounds: 5 BUGs found+fixed, 24+ fixes, 30+ enhancements, zero regressions (byte-proofs + mutation tests + 850-check battery).
+- Backlog: EMPTY — all identified items shipped. Next rounds: fresh audit sweep (scripts/audit-sweep.sh) for new findings, or new feature proposals.
+- REMINDER: user should rotate the chat-exposed GitHub PAT (ghp_fxRG… was exposed in chat).

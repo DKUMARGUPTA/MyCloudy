@@ -25,10 +25,18 @@ import type { RunDetail } from "@/lib/workers/protocol";
  *     visible, e.g. "Helvetica-Bold") and from the worker's font-table
  *     enrichment (pdf.js 4.x reports internal ids like "g_d0_f3", so
  *     the worker correlates them with the PDF's own font resources).
+ *  6. Tables — each line's items are clustered into columns by
+ *     horizontal gaps (> TABLE_GAP_CHAR_WIDTHS × the line's median
+ *     char width); ≥2 consecutive columnar lines whose cluster counts
+ *     MATCH commit one table (capped: MAX_TABLES / MAX_TABLE_ROWS /
+ *     MAX_TABLE_COLS / MAX_TABLE_CELL_CHARS). Everything else falls
+ *     back to the EXISTING paragraph path unchanged — detection never
+ *     fabricates.
  *
  * HONEST limits (mirrored in the FAQ copy): text + structure only.
- * Images, columns and tables come out as a plain text flow; scanned
- * pages need OCR first (the worker fails with tool.errorNoText).
+ * Images and multi-column layouts come out as a plain text flow; scanned
+ * pages need OCR first (the worker fails with tool.errorNoText). Tables
+ * are detected, never invented — an ambiguous layout stays text.
  */
 
 /* ------------------------------------------------------------------ */
@@ -56,11 +64,23 @@ export interface DocxRun {
 }
 
 /** One paragraph block. headingLevel is only set when detected + enabled. */
-export interface DocxBlock {
+export interface DocxParaBlock {
   kind: "para";
   runs: DocxRun[];
   headingLevel?: 1 | 2;
 }
+
+/**
+ * One detected table — plain-text cells (honest: the layout evidence is
+ * the column gaps, so no cell styling is fabricated beyond borders).
+ */
+export interface DocxTableBlock {
+  kind: "table";
+  rows: string[][];
+}
+
+/** One output block: a rebuilt paragraph or a detected table. */
+export type DocxBlock = DocxParaBlock | DocxTableBlock;
 
 /** The document model the docx builder consumes. */
 export interface WordDocModel {
@@ -73,6 +93,8 @@ export interface WordDocModel {
 export interface PdfToWordRunOptions {
   headings: boolean;
   pageBreaks: boolean;
+  /** Table detection (surface switch, default on). */
+  tables: boolean;
   locale: "en" | "hi";
   /** Localized fallback word for the output name ("document"/"दस्तावेज़"). */
   fileWord: string;
@@ -82,11 +104,26 @@ export interface PdfToWordRunOptions {
 export interface PdfToWordDetail extends RunDetail {
   paragraphs?: number;
   headings?: number;
+  tables?: number;
 }
 
 /** Clamps — docstring promises, enforced in code. */
 export const MAX_PARAGRAPHS = 2000;
 export const MAX_RUN_CHARS = 500;
+/** Table detection: a gap wider than this many median char widths
+ * splits a column. */
+export const TABLE_GAP_CHAR_WIDTHS = 1.5;
+/** Consecutive matching rows needed before a table is committed. */
+export const TABLE_MIN_ROWS = 2;
+/** Tables per document (regions past the cap degrade to paragraphs). */
+export const MAX_TABLES = 100;
+/** Rows per table (a longer run commits its first rows, the remaining
+ * lines fall back to paragraphs — nothing is dropped silently). */
+export const MAX_TABLE_ROWS = 500;
+/** Columns per table (wider candidates are rejected → paragraphs). */
+export const MAX_TABLE_COLS = 30;
+/** Cell text clamp (same philosophy as MAX_RUN_CHARS). */
+export const MAX_TABLE_CELL_CHARS = 500;
 /** Heading tiers need at least this many chars to count as a real tier. */
 const TIER_MIN_CHARS = 6;
 /** A size must exceed the body size by this ratio AND this many points. */
@@ -172,6 +209,8 @@ interface Line {
   runs: LineRun[];
   y: number;
   size: number;
+  /** x-ordered raw pieces — the column detector's input. */
+  pieces: Piece[];
 }
 
 /** Rounded font size (0.5 pt buckets) for stable run comparisons. */
@@ -291,8 +330,185 @@ function buildLines(pieces: Piece[]): Line[] {
         merged.push(run);
       }
     }
-    return { runs: merged, y: group[0].y, size };
+    return { runs: merged, y: group[0].y, size, pieces: ordered };
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* 3. Tables — column detection (pure, individually testable)          */
+/* ------------------------------------------------------------------ */
+
+/** A piece reduced to what column detection needs. */
+export interface ColumnItem {
+  text: string;
+  x: number;
+  w: number;
+}
+
+/** One line reduced to its column-detection inputs. */
+export interface ColumnLine {
+  y: number;
+  size: number;
+  items: ColumnItem[];
+}
+
+/** A committed table region over a page's y-ordered lines. */
+export interface TableRegion {
+  /** Index of the first line belonging to the table. */
+  start: number;
+  /** Lines the table covers (lines outside fall back to paragraphs). */
+  count: number;
+  rows: string[][];
+}
+
+/** Median of a number list (0 for an empty list). */
+export function medianOf(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 === 1
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Median advance-per-character of a line's items (pdf points). Items
+ * without a usable width fall back to `fallback` (half the font size,
+ * the Latin average) when none computable.
+ */
+export function medianCharWidth(
+  items: readonly ColumnItem[],
+  fallback: number
+): number {
+  const widths: number[] = [];
+  for (const item of items) {
+    const chars = item.text.trim().length;
+    if (item.w > 0 && chars > 0) widths.push(item.w / chars);
+  }
+  return widths.length > 0 ? medianOf(widths) : fallback;
+}
+
+/**
+ * Splits one line's items into column clusters: x-ordered, a horizontal
+ * gap larger than TABLE_GAP_CHAR_WIDTHS × the line's median char width
+ * starts a new cluster. Whitespace-only pieces (pdf.js synthesizes one
+ * per visual gap, its width SPANNING the whole gap) never extend a
+ * cluster or start one — only real ink measures the gap — they just ride
+ * along with the nearest cluster as text. Returns null unless at least
+ * two clusters carry real (non-whitespace) text — i.e. the line is NOT
+ * columnar.
+ */
+export function splitIntoColumns(
+  items: readonly ColumnItem[],
+  size: number
+): ColumnItem[][] | null {
+  if (items.length === 0) return null;
+  const sorted = [...items].sort((a, b) => a.x - b.x);
+  const threshold =
+    TABLE_GAP_CHAR_WIDTHS * medianCharWidth(sorted, size * 0.5);
+  const clusters: ColumnItem[][] = [];
+  let end: number | null = null;
+  for (const item of sorted) {
+    const ink = item.text.trim().length > 0;
+    if (end === null) {
+      if (!ink) continue; // leading whitespace measures nothing
+      clusters.push([item]);
+      end = item.x + item.w;
+      continue;
+    }
+    if (ink && item.x - end > threshold) {
+      clusters.push([item]); // significant gap → new column
+    } else {
+      clusters[clusters.length - 1].push(item);
+    }
+    if (ink) end = Math.max(end, item.x + item.w);
+  }
+  const real = clusters.filter((cluster) =>
+    cluster.some((item) => item.text.trim().length > 0)
+  );
+  return real.length >= 2 ? real : null;
+}
+
+/** Cluster texts → one sanitized, clamped cell string per cluster. */
+export function columnTexts(clusters: readonly ColumnItem[][]): string[] {
+  return clusters.map((cluster) =>
+    sanitizeRunText(cluster.map((item) => item.text).join("")).slice(
+      0,
+      MAX_TABLE_CELL_CHARS
+    )
+  );
+}
+
+/**
+ * Detects table regions in one page's y-ordered lines. A run of
+ * CONSECUTIVE columnar lines whose cluster counts all match is a
+ * candidate; it commits only with ≥ TABLE_MIN_ROWS rows and
+ * ≤ MAX_TABLE_COLS columns, and never across a vertical gap larger
+ * than the paragraph tolerance (a paragraph break never glues rows
+ * into a table). Runs longer than MAX_TABLE_ROWS commit their first
+ * MAX_TABLE_ROWS rows — the remaining lines fall back to paragraphs.
+ */
+export function detectTableRegions(
+  lines: readonly ColumnLine[]
+): TableRegion[] {
+  const regions: TableRegion[] = [];
+  let start = -1;
+  let rows: string[][] = [];
+  let cols = 0;
+  let prevY: number | null = null;
+  let prevSize = 0;
+
+  const commit = (): void => {
+    if (
+      start >= 0 &&
+      rows.length >= TABLE_MIN_ROWS &&
+      cols >= 2 &&
+      cols <= MAX_TABLE_COLS
+    ) {
+      const capped = Math.min(rows.length, MAX_TABLE_ROWS);
+      regions.push({ start, count: capped, rows: rows.slice(0, capped) });
+    }
+    start = -1;
+    rows = [];
+    cols = 0;
+    prevY = null;
+    prevSize = 0;
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const clusters = splitIntoColumns(line.items, line.size);
+    const broken =
+      prevY !== null && prevY - line.y > prevSize * PARAGRAPH_GAP;
+    if (clusters === null || broken) {
+      commit();
+      if (clusters !== null) {
+        // A columnar line after a break starts its own candidate run.
+        start = i;
+        rows = [columnTexts(clusters)];
+        cols = clusters.length;
+        prevY = line.y;
+        prevSize = line.size;
+      }
+      continue;
+    }
+    if (cols === 0) {
+      start = i;
+      rows = [columnTexts(clusters)];
+      cols = clusters.length;
+    } else if (clusters.length !== cols) {
+      commit();
+      start = i;
+      rows = [columnTexts(clusters)];
+      cols = clusters.length;
+    } else {
+      rows.push(columnTexts(clusters));
+    }
+    prevY = line.y;
+    prevSize = line.size;
+  }
+  commit();
+  return regions;
 }
 
 /* ------------------------------------------------------------------ */
@@ -373,6 +589,43 @@ function linesToBlocks(lines: readonly Line[]): DocxBlock[] {
 }
 
 /* ------------------------------------------------------------------ */
+/* 3b. Page assembly — tables + unchanged paragraph fallback          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Turns one page's lines into blocks: committed table regions become
+ * table blocks, every other stretch of lines flows through the EXISTING
+ * paragraph path unchanged. `budget` caps tables per document
+ * (MAX_TABLES) — regions past the cap degrade honestly to paragraphs.
+ */
+function pageToBlocks(
+  lines: readonly Line[],
+  tablesOn: boolean,
+  budget: { left: number }
+): DocxBlock[] {
+  if (!tablesOn || lines.length === 0) return linesToBlocks(lines);
+  const regions = detectTableRegions(
+    lines.map((line) => ({ y: line.y, size: line.size, items: line.pieces }))
+  );
+  if (regions.length === 0) return linesToBlocks(lines);
+  const blocks: DocxBlock[] = [];
+  let cursor = 0;
+  for (const region of regions) {
+    if (budget.left <= 0) break;
+    if (region.start > cursor) {
+      blocks.push(...linesToBlocks(lines.slice(cursor, region.start)));
+    }
+    blocks.push({ kind: "table", rows: region.rows });
+    budget.left -= 1;
+    cursor = region.start + region.count;
+  }
+  if (cursor < lines.length) {
+    blocks.push(...linesToBlocks(lines.slice(cursor)));
+  }
+  return blocks;
+}
+
+/* ------------------------------------------------------------------ */
 /* 4-5. extractTextBlocks                                              */
 /* ------------------------------------------------------------------ */
 
@@ -380,6 +633,8 @@ export interface ExtractOptions {
   boldMap?: ReadonlyMap<string, boolean>;
   /** Heading detection (surface switch). Default: on. */
   headings?: boolean;
+  /** Table detection (surface switch). Default: on. */
+  tables?: boolean;
 }
 
 export function extractTextBlocks(
@@ -387,6 +642,7 @@ export function extractTextBlocks(
   opts: ExtractOptions = {}
 ): WordDocModel {
   const headingsOn = opts.headings !== false;
+  const tablesOn = opts.tables !== false;
 
   // Pass 1 — everything as lines, plus the char-weighted body size.
   const pageLines: Line[][] = [];
@@ -432,13 +688,14 @@ export function extractTextBlocks(
     if (tiers.length > 1) headingSize.set(tiers[1], 2);
   }
 
-  // Pass 2 — paragraphs + page marks.
+  // Pass 2 — paragraphs/tables + page marks.
   const blocks: DocxBlock[] = [];
   const pageMarks: number[] = [];
+  const tableBudget = { left: MAX_TABLES };
   for (const lines of pageLines) {
-    const pageBlocks = linesToBlocks(lines);
+    const pageBlocks = pageToBlocks(lines, tablesOn, tableBudget);
     for (const block of pageBlocks) {
-      if (headingSize && headingsOn) {
+      if (headingSize && headingsOn && block.kind === "para") {
         const level = headingSize.get(dominantSize(block.runs));
         if (level !== undefined) block.headingLevel = level;
       }
@@ -468,6 +725,11 @@ export interface BuildDocxOptions {
 
 const XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 
+/** A4 content width in twips (pgSz 11906 − 2 × 1134 margins). */
+const CONTENT_TWIPS = 9638;
+/** Thin (0.5 pt) single border used on every table + cell edge. */
+const TABLE_BORDER = 'w:val="single" w:sz="4" w:space="0" w:color="auto"';
+
 function runXml(run: DocxRun): string {
   const sz = halfPoints(run.sizePt);
   const rPr =
@@ -476,7 +738,7 @@ function runXml(run: DocxRun): string {
   return `<w:r>${rPr}<w:t xml:space="preserve">${xmlEscape(run.text)}</w:t></w:r>`;
 }
 
-function paragraphXml(block: DocxBlock, pageBreak: boolean): string {
+function paragraphXml(block: DocxParaBlock, pageBreak: boolean): string {
   const pPr =
     block.headingLevel === 1
       ? '<w:pPr><w:pStyle w:val="Heading1"/></w:pPr>'
@@ -488,10 +750,73 @@ function paragraphXml(block: DocxBlock, pageBreak: boolean): string {
   return `<w:p>${pPr}${breakRun}${runs}</w:p>`;
 }
 
+/** One table cell: fixed dxa width, thin borders, one plain-text
+ * paragraph (empty cells still carry the required empty w:p). */
+function cellXml(text: string, width: number): string {
+  const run =
+    text.length > 0
+      ? '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>' +
+        `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r>`
+      : "";
+  return (
+    `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>` +
+    `<w:tcBorders><w:top ${TABLE_BORDER}/><w:left ${TABLE_BORDER}/>` +
+    `<w:bottom ${TABLE_BORDER}/><w:right ${TABLE_BORDER}/></w:tcBorders>` +
+    `</w:tcPr><w:p>${run}</w:p></w:tc>`
+  );
+}
+
+/**
+ * Real OOXML table (§17.2): pct-100% width (tblW 5000), one w:gridCol
+ * per column summing to the content width, thin single borders on the
+ * table AND every cell so Word always draws a visible grid, plain-text
+ * cell paragraphs, and a trailing anchor paragraph — Word requires a
+ * paragraph after a table (and two tables never merge into one).
+ */
+function tableXml(block: DocxTableBlock, pageBreak: boolean): string {
+  let cols = 0;
+  for (const row of block.rows) cols = Math.max(cols, row.length);
+  if (cols === 0) return "";
+  const base = Math.floor(CONTENT_TWIPS / cols);
+  const widths: number[] = [];
+  for (let i = 0; i < cols; i += 1) {
+    widths.push(base + (i < CONTENT_TWIPS - base * cols ? 1 : 0));
+  }
+  const grid = widths.map((w) => `<w:gridCol w:w="${w}"/>`).join("");
+  const rows = block.rows
+    .map(
+      (row) =>
+        `<w:tr>${widths
+          .map((w, i) => cellXml(row[i] ?? "", w))
+          .join("")}</w:tr>`
+    )
+    .join("");
+  const breakPara = pageBreak
+    ? '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+    : "";
+  return (
+    breakPara +
+    "<w:tbl><w:tblPr>" +
+    '<w:tblW w:w="5000" w:type="pct"/>' +
+    `<w:tblBorders><w:top ${TABLE_BORDER}/><w:left ${TABLE_BORDER}/>` +
+    `<w:bottom ${TABLE_BORDER}/><w:right ${TABLE_BORDER}/>` +
+    `<w:insideH ${TABLE_BORDER}/><w:insideV ${TABLE_BORDER}/></w:tblBorders>` +
+    "</w:tblPr>" +
+    `<w:tblGrid>${grid}</w:tblGrid>` +
+    rows +
+    "</w:tbl>" +
+    "<w:p/>"
+  );
+}
+
 function documentXml(doc: WordDocModel, opts: BuildDocxOptions): string {
   const marks = new Set(opts.pageBreaks ? doc.pageMarks.slice(1) : []);
   const body = doc.blocks
-    .map((block, index) => paragraphXml(block, marks.has(index)))
+    .map((block, index) =>
+      block.kind === "table"
+        ? tableXml(block, marks.has(index))
+        : paragraphXml(block, marks.has(index))
+    )
     .join("");
   return (
     `${XML_DECL}` +
@@ -630,8 +955,9 @@ function strBytes(text: string): Uint8Array {
  * parseRun — the options payload the surface sends as options.run.
  * Garbage JSON (or a non-object) degrades to the defaults; only an
  * explicit false disables a switch; the locale must be exactly "hi";
- * the file word is sanitized + clamped. Paragraph/run clamps live in
- * extractTextBlocks (MAX_PARAGRAPHS / MAX_RUN_CHARS).
+ * the file word is sanitized + clamped. Paragraph/run/table clamps
+ * live in extractTextBlocks (MAX_PARAGRAPHS / MAX_RUN_CHARS /
+ * MAX_TABLES…).
  */
 export function parseRun(raw: string): PdfToWordRunOptions {
   let parsed: unknown;
@@ -647,6 +973,7 @@ export function parseRun(raw: string): PdfToWordRunOptions {
   return {
     headings: o.headings !== false,
     pageBreaks: o.pageBreaks !== false,
+    tables: o.tables !== false,
     locale: o.locale === "hi" ? "hi" : "en",
     fileWord: sanitizeRunText(
       typeof o.fileWord === "string" ? o.fileWord.slice(0, 60) : ""
@@ -661,9 +988,14 @@ export function parseRun(raw: string): PdfToWordRunOptions {
 export function docxStats(doc: WordDocModel): PdfToWordDetail {
   let paragraphs = 0;
   let headings = 0;
+  let tables = 0;
   for (const block of doc.blocks) {
+    if (block.kind === "table") {
+      tables += 1;
+      continue;
+    }
     paragraphs += 1;
     if (block.headingLevel !== undefined) headings += 1;
   }
-  return { paragraphs, headings, pages: doc.pageMarks.length };
+  return { paragraphs, headings, tables, pages: doc.pageMarks.length };
 }

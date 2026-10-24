@@ -44,7 +44,7 @@
       "converting": "Converting…",
       "doneTitle": "PDF ready",
       "doneDesc": "{name} downloaded — {pages, plural, =1 {1 page} other {# pages}} of selectable text.",
-      "honestNote": "Honest limits: this extracts content, not a browser render — CSS layout, scripts, SVG and images are not carried (alt text prints in brackets); nested tables approximate; Hindi bold renders regular."
+      "honestNote": "Honest limits: this extracts content, not a browser render — CSS layout, scripts, SVG and images are not carried (alt text prints in brackets; inline style backgrounds, borders, padding and alignment ARE); nested tables approximate; Hindi bold renders regular."
     }
   },
   "hi": {
@@ -92,7 +92,7 @@
       "converting": "बन रही है…",
       "doneTitle": "PDF तैयार",
       "doneDesc": "{name} डाउनलोड हुई — {pages, plural, =1 {1 पेज} other {# पेज}} चुनने योग्य टेक्स्ट की।",
-      "honestNote": "ईमानदार सीमाएँ: यह कंटेंट निकालता है, ब्राउज़र जैसा रेंडर नहीं — CSS लेआउट, स्क्रिप्ट, SVG और तस्वीरें नहीं आतीं (alt टेक्स्ट कोष्ठक में छपता है); नेस्टेड टेबलें सन्निकट होती हैं; हिंदी बोल्ड सामान्य मोटाई में छपता है।"
+      "honestNote": "ईमानदार सीमाएँ: यह कंटेंट निकालता है, ब्राउज़र जैसा रेंडर नहीं — CSS लेआउट, स्क्रिप्ट, SVG और तस्वीरें नहीं आतीं (alt टेक्स्ट कोष्ठक में छपता है; इनलाइन style की पृष्ठभूमि, बॉर्डर, पैडिंग और अलाइनमेंट साथ चलते हैं); नेस्टेड टेबलें सन्निकट होती हैं; हिंदी बोल्ड सामान्य मोटाई में छपता है।"
     }
   }
 }

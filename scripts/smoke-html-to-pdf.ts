@@ -27,8 +27,10 @@ import {
   MAX_TABLE_ROWS,
   needsNoto,
   outputBaseName,
+  parseColor,
   parseHtml,
   parseHtmlRun,
+  parseStyle,
   stats,
   type HtmlRun,
   type ParsedHtml,
@@ -538,6 +540,214 @@ console.log("── 6. rejection vectors ─────────────
     "huge runs capped without throwing",
     junk.blocks.length === 2 && junk.truncated === true,
     { blocks: junk.blocks.length, truncated: junk.truncated }
+  );
+}
+
+console.log("── 7. inline-style box model (R5-b) ────────────────────");
+{
+  // parse vectors — exact values, px→pt ×0.75
+  const s1 = parseStyle(
+    "background-color:#fff3cd;border:2px solid #f0ad4e;border-radius:8px;padding:14px;text-align:center"
+  );
+  check(
+    "parse: #fff3cd background",
+    JSON.stringify(s1.backgroundColor) === JSON.stringify([1, 0.953, 0.804]),
+    s1.backgroundColor
+  );
+  check(
+    "parse: border shorthand 2px solid → 1.5pt + #f0ad4e",
+    s1.borderTop?.width === 1.5 &&
+      s1.borderTop.style === "solid" &&
+      JSON.stringify(s1.borderTop.color) === JSON.stringify([0.941, 0.678, 0.306]) &&
+      s1.borderRight?.width === 1.5 && s1.borderLeft?.width === 1.5 && s1.borderBottom?.width === 1.5,
+    s1.borderTop
+  );
+  check("parse: radius 8px → 6pt", s1.radius === 6, s1.radius);
+  check("parse: padding 14px → 10.5pt all sides", s1.paddingTop === 10.5 && s1.paddingLeft === 10.5, s1.paddingTop);
+  check("parse: text-align center", s1.textAlign === "center", s1.textAlign);
+
+  // THE R5-b regression lock: rgba()/rgb() must parse, never throw
+  // (the landed code read exec()[2] on a 1-group regex → TypeError on
+  // EVERY rgb()/rgba() value until the orchestrator's fix)
+  let threw = false;
+  try {
+    const s2 = parseStyle("color:rgba(240,173,78,0.5);background-color:rgb(100%,50%,0%)");
+    check(
+      "parse: rgba(…,0.5) blends onto white",
+      JSON.stringify(s2.color) === JSON.stringify([0.97, 0.839, 0.653]),
+      s2.color
+    );
+    check(
+      "parse: rgb(%,%,0%) channels",
+      JSON.stringify(s2.backgroundColor) === JSON.stringify([1, 0.5, 0]),
+      s2.backgroundColor
+    );
+  } catch (e) {
+    threw = true;
+    check("parse: rgba()/rgb() never throws", false, String(e));
+  }
+  check("parse: rgba()/rgb() completed without throw", !threw);
+  check(
+    "parse: rgb() integer channels",
+    JSON.stringify(parseColor("rgb(255, 128, 0)")) === JSON.stringify([1, 0.502, 0]),
+    parseColor("rgb(255, 128, 0)")
+  );
+
+  // per-side border + dashed + named colour + 1-4 value padding
+  const s3 = parseStyle("border-left:1px dashed red;padding:10px 20px");
+  check(
+    "parse: per-side dashed border, named red",
+    s3.borderLeft?.width === 0.75 && s3.borderLeft.style === "dashed" && JSON.stringify(s3.borderLeft.color) === JSON.stringify([1, 0, 0]) && s3.borderTop === undefined,
+    s3.borderLeft
+  );
+  check("parse: 2-value padding → t/b 7.5pt, l/r 15pt", s3.paddingTop === 7.5 && s3.paddingLeft === 15, `${s3.paddingTop}/${s3.paddingLeft}`);
+  const s4 = parseStyle("padding:1px 2px 3px 4px");
+  check(
+    "parse: 4-value padding TRBL",
+    s4.paddingTop === 0.75 && s4.paddingRight === 1.5 && s4.paddingBottom === 2.25 && s4.paddingLeft === 3,
+    s4
+  );
+  const s5 = parseStyle("font-weight:700;font-style:italic;text-decoration:underline line-through;text-align:justify;width:50%");
+  check(
+    "parse: font/decoration/align/width subset",
+    s5.bold === true && s5.italic === true && s5.underline === true && s5.lineThrough === true && s5.textAlign === "justify" && s5.widthPct === 0.5,
+    s5
+  );
+  const s6 = parseStyle("font-weight:normal;font-style:normal;text-decoration:none");
+  check(
+    "parse: normal resets",
+    s6.bold === false && s6.italic === false && s6.underline === false && s6.lineThrough === false,
+    s6
+  );
+
+  // garbage never throws, unknown props skipped, caps clamped
+  const junk = parseStyle("garbage: ;:;color:rgb(1,2;border-radius:9999px;padding:500px;float:left;display:flex");
+  check(
+    "parse: garbage degrades silently (no float/flex/colour)",
+    junk.radius === 37.5 && junk.paddingTop === 300 && junk.color === undefined && (junk as { float?: unknown }).float === undefined,
+    junk
+  );
+  check("parse: named colours case-insensitive", JSON.stringify(parseColor("GOLD")) === JSON.stringify([1, 0.843, 0]), parseColor("GOLD"));
+  check("parse: unknown colour → undefined", parseColor("notacolor") === undefined);
+  check("parse: 7-char hex → undefined", parseColor("#1234567") === undefined);
+  check("parse: 4-digit hex alpha blends", JSON.stringify(parseColor("#00000080")) === JSON.stringify([0.5, 0.5, 0.5]), parseColor("#00000080"));
+
+  // blocks carry style; legacy bgcolor/align/width on tables
+  const styled = parseHtml('<div style="background-color:#fff3cd">hi</div>');
+  const styledFirst = styled.blocks[0] as { kind: string; style?: { backgroundColor?: number[] } };
+  check(
+    "parseHtml: style reaches the block",
+    styledFirst?.kind === "para" && JSON.stringify(styledFirst?.style?.backgroundColor) === JSON.stringify([1, 0.953, 0.804]),
+    styledFirst
+  );
+  const tbl = parseHtml('<table bgcolor="#ffeeba" align="center"><tr><td bgcolor="#ff0000" align="right">x</td></tr></table>');
+  const tableBlock = tbl.blocks.find((b) => b.kind === "table") as { style?: { backgroundColor?: number[]; tableAlign?: string } } | undefined;
+  check(
+    "parseHtml: legacy table bgcolor + align",
+    tableBlock?.style?.tableAlign === "center" && JSON.stringify(tableBlock?.style?.backgroundColor) === JSON.stringify([1, 0.933, 0.729]),
+    tableBlock?.style
+  );
+  const cell = (tbl.blocks.find((b) => b.kind === "table") as unknown as { cellStyles: Array<Array<{ backgroundColor?: number[]; textAlign?: string }>> });
+  const cellStyle = cell?.cellStyles?.[0]?.[0];
+  check(
+    "parseHtml: legacy td bgcolor + align reach the cell",
+    JSON.stringify(cellStyle?.backgroundColor) === JSON.stringify([1, 0, 0]) && cellStyle?.textAlign === "right",
+    cellStyle
+  );
+
+  // REAL render: the styled fixture through the worker's exact path
+  const STYLE_FIX = `<html><head><title>Styled</title></head><body>
+<div style="background-color:#fff3cd;border:2px solid #f0ad4e;border-radius:8px;padding:14px;text-align:center">Centered callout box</div>
+<p style="text-align:justify">Justified paragraph of text that should spread across more than one single line of the content box for real justify behaviour testing here.</p>
+<p style="color:#c7254e">Coloured text run</p>
+<div style="border-bottom:3px dashed #337ab7">Dashed underline divider</div>
+</body></html>`;
+  const st = await renderHtml(STYLE_FIX, {});
+  check("render: styled fixture draws 1 page, no NaN", st.pages === 1 && !inflatedText(st.bytes).includes("NaN"), st.pages);
+  const stxt = inflatedText(st.bytes);
+  check("render: background fill op (1 0.953 0.804 rg)", stxt.includes("1 0.953 0.804 rg"));
+  check("render: border stroke op (0.941 0.678 0.306 RG)", stxt.includes("0.941 0.678 0.306 RG"));
+  check("render: line width 1.5 w for the 2px border", /(^|\n)1.5 w(\n|$)/.test(stxt));
+  check("render: dashed edge → [3 2] 0 d dash", stxt.includes("[3 2] 0 d"));
+  check("render: coloured text ink (0.78 0.145 0.306 rg)", stxt.includes("0.78 0.145 0.306 rg"));
+  const arcs = (stxt.match(/ c\n/g) || []).length;
+  check("render: border-radius → 4 bezier arc segments", arcs === 4, arcs);
+  check(
+    "render: padded box is WIDER than the text itself",
+    stxt.includes("477.28 0 l") || stxt.match(/477\.\d+ 0 l/) !== null,
+    stxt.includes("477.28 0 l")
+  );
+  check("render: styled text still selectable", hasText(stxt, "Centered callout box") && hasText(stxt, "Coloured text run"));
+
+  // text placement: pdf-lib emits text matrices (Tm) for every glyph run
+  const tmCount = (stxt.match(/[\d.]+ [\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ Tm/g) || []).length;
+  check(
+    "render: Tm text matrices present",
+    tmCount > 0,
+    tmCount
+  );
+
+  // justify: a long justified paragraph must differ from the same
+  // paragraph left-aligned (word spacing ops or different Td set)
+  const justA = await renderHtml('<p style="text-align:justify">Justified paragraph of text that should spread across more than one single line of the content box for real justify behaviour testing here.</p>', {});
+  const justB = await renderHtml('<p>Justified paragraph of text that should spread across more than one single line of the content box for real justify behaviour testing here.</p>', {});
+  check(
+    "render: justify changes the geometry vs left",
+    inflatedText(justA.bytes) !== inflatedText(justB.bytes),
+    "identical streams"
+  );
+  check(
+    "render: justify still no NaN",
+    !inflatedText(justA.bytes).includes("NaN")
+  );
+
+  // zero-regression: unstyled content path untouched — the exact
+  // pinned §4 op strings (pre bg 0.945…, table 0.62…, quote bar)
+  // already lock that; here we additionally pin that a plain doc
+  // renders NO rgb() fill/stroke ops beyond the built-ins
+  const plain = await renderHtml("<p>plain words only</p>", {});
+  const ptxt = inflatedText(plain.bytes);
+  check(
+    "render: plain doc has no style fill ops",
+    !ptxt.includes("1 0.953 0.804 rg") && !ptxt.includes("0.941 0.678 0.306 RG") && !ptxt.includes("[3 2] 0 d")
+  );
+
+  // wiring: config copy — the honest subset, EN + HI
+  const cfg = readFileSync("tools/html-to-pdf/config.ts", "utf8");
+  check("wiring: config features describe the inline-style subset (EN)", cfg.includes("Inline styles carry over"));
+  check("wiring: config features describe the inline-style subset (HI)", cfg.includes("इनलाइन स्टाइल साथ आते हैं"));
+  check("wiring: 'Which CSS works?' FAQ present (EN)", cfg.includes("Which CSS works?"));
+  check("wiring: 'Which CSS works?' FAQ present (HI)", cfg.includes("कौन सा CSS चलता है?"));
+  check(
+    "wiring: FAQ honestly lists the exclusions",
+    cfg.includes("floats, flex, grid, positioning, external .css files, <style> blocks, class selectors")
+  );
+  check(
+    "wiring: honest content-extractor copy updated (no stale 'colours are not applied')",
+    !cfg.includes("colours, fonts) are not applied")
+  );
+
+  // honestNote (rendered under the options): CSS layout honestly out,
+  // inline styles honestly in — EN + HI, central + mirror byte-equal
+  const i18nTool = JSON.parse(readFileSync("tools/html-to-pdf/i18n.json", "utf8")) as {
+    en: { html: { honestNote: string } };
+    hi: { html: { honestNote: string } };
+  };
+  const enCat = JSON.parse(readFileSync("src/i18n/en.json", "utf8")) as { html: { honestNote: string } };
+  const hiCat = JSON.parse(readFileSync("src/i18n/hi.json", "utf8")) as { html: { honestNote: string } };
+  check(
+    "wiring: honestNote mentions the inline-style subset (EN)",
+    enCat.html.honestNote.includes("inline style backgrounds, borders, padding and alignment ARE"),
+    enCat.html.honestNote.slice(0, 80)
+  );
+  check(
+    "wiring: honestNote mentions the inline-style subset (HI)",
+    hiCat.html.honestNote.includes("इनलाइन style की पृष्ठभूमि, बॉर्डर, पैडिंग और अलाइनमेंट साथ चलते हैं"),
+    hiCat.html.honestNote.slice(0, 80)
+  );
+  check(
+    "wiring: honestNote mirror byte-equal (en + hi)",
+    i18nTool.en.html.honestNote === enCat.html.honestNote && i18nTool.hi.html.honestNote === hiCat.html.honestNote
   );
 }
 

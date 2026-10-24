@@ -16,6 +16,7 @@ import {
   rgbaToGray,
   SKEW_MAX_ANGLE,
 } from "./engine";
+import type { OcrRunDetail } from "./invoice-extract";
 
 /**
  * PDF OCR worker (PRD §8.4) — makes scanned PDFs searchable on-device.
@@ -305,6 +306,11 @@ async function run(request: WorkerRunRequest): Promise<void> {
   let confSum = 0;
   let confCount = 0;
   let totalChars = 0;
+  // R5-c: the recognized text per processed page rides the result detail
+  // so the invoice hand-off can extract labelled fields on the main
+  // thread (in-memory only — same structured-clone channel as the rest
+  // of the detail, nothing is persisted or uploaded).
+  const pageTexts: string[] = [];
 
   for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
     const file = files[fileIndex];
@@ -397,7 +403,6 @@ async function run(request: WorkerRunRequest): Promise<void> {
     };
 
     if (outputMode === "text") {
-      const pageTexts: string[] = [];
       for (let i = 0; i < pageCount; i += 1) {
         let conf: number | undefined;
         if (!needsOcr[i]) {
@@ -455,6 +460,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
         if (!needsOcr[i]) {
           const [copied] = await outDoc.copyPages(srcDoc!, [pageNumbers[i]]);
           outDoc.addPage(copied);
+          pageTexts.push(nativeTexts[i]);
           totalChars += countChars(nativeTexts[i]);
         } else {
           let rendered = await renderPage(doc, pageNumbers[i] + 1, scale);
@@ -482,6 +488,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
           outDoc.addPage(copied);
           const text =
             typeof result.data.text === "string" ? result.data.text : "";
+          pageTexts.push(text.trim());
           totalChars += countChars(text);
           if (typeof result.data.confidence === "number") {
             conf = Math.round(result.data.confidence);
@@ -514,16 +521,20 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   post({ type: "progress", runId, pct: 97, stage: "saving" });
+  // Local extension of RunDetail (see invoice-extract.ts) — the shared
+  // protocol stays untouched; the extra field is additive + optional.
+  const detail: OcrRunDetail = {
+    files: outputs.length,
+    pages: totalPages,
+    confidence: confCount > 0 ? Math.round(confSum / confCount) : undefined,
+    ...(deskew && deskewedPages > 0 ? { deskewedPages } : {}),
+    pageTexts,
+  };
   post({
     type: "result",
     runId,
     outputs,
-    detail: {
-      files: outputs.length,
-      pages: totalPages,
-      confidence: confCount > 0 ? Math.round(confSum / confCount) : undefined,
-      ...(deskew && deskewedPages > 0 ? { deskewedPages } : {}),
-    },
+    detail,
   });
 }
 
