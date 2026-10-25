@@ -1301,7 +1301,11 @@
       "original": "Original",
       "magic": "Magic color",
       "bw": "B&W",
-      "gray": "Grayscale"
+      "gray": "Grayscale",
+      "vivid": "Vivid",
+      "soft": "Soft tone",
+      "sharpbw": "Sharp black",
+      "ocrbw": "OCR black"
     },
     "editTitle": "Edit page {index}",
     "editDesc": "Drag the corner handles onto the document corners — the right side shows the final page live.",
@@ -1338,7 +1342,29 @@
     "searching": "Looking for the page…",
     "how1": "Open the camera (or add photos) and capture each page — a live overlay tracks the document.",
     "how2": "Adjust corners if needed and pick a filter: Original, Magic color, B&W or Grayscale — the preview is the final page.",
-    "how3": "Create the PDF on your device — download it, share it, or continue with Compress, Lock or Sign."
+    "how3": "Create the PDF on your device — download it, share it, or continue with Compress, Lock or Sign.",
+    "adjustTitle": "Adjust",
+    "brightness": "Brightness",
+    "contrast": "Contrast",
+    "adjustReset": "Reset dials",
+    "applyAll": "Apply to all ({count} pages)",
+    "autoEnhance": "Auto enhance",
+    "presetTitle": "Scan preset",
+    "preset": {
+      "document": "Document",
+      "photo": "Photo",
+      "idcard": "ID card",
+      "book": "Book",
+      "signature": "Signature"
+    },
+    "presetApplied": "Preset applied to {count} page(s) — every page stays editable.",
+    "presetOff": "Preset cleared — pages keep their current filters.",
+    "detectText": "Detect text",
+    "detectTextHint": "Send these photos to OCR — text is extracted on-device and the pages stay in the workspace.",
+    "autoCapture": "Auto-capture",
+    "autoCaptureOn": "Auto-capture armed",
+    "autoCaptureIn": "Capturing in {count}…",
+    "gridLines": "Composition grid"
   },
   "imgc": {
     "how1": "Add your images — they stay on your device the whole time.",

@@ -3,26 +3,44 @@
  * Run: bun scripts/smoke-scan.ts
  * Covers: quad detection (bright + dark docs, rotated perspective, honest
  * fallback), homography identity/known-warp, warp bilinear fidelity,
- * filters (magic/gray/bw), quarter rotation, serialization round-trip and
- * the page-list ops.
+ * filters (magic/gray/bw + Round-7 vivid/soft/sharpbw/ocrbw), manual
+ * adjustments, deskew estimate+rotate, corner refinement, low-contrast
+ * detection, quarter rotation, serialization round-trip (incl. legacy
+ * 4-field rows) and the page-list ops + presets.
  */
+import { readFileSync } from "node:fs";
 import {
   applyAdaptiveBW,
+  applyAdjustments,
   applyGrayscale,
   applyMagicColor,
+  applyOCRBW,
+  applySharpBW,
+  applySoftTone,
+  applyVivid,
+  autoDeskew,
+  clampAdjust,
   createInitialScanPages,
   deleteScanPages,
+  deskewBitmap,
   detectDocumentQuad,
   denormalizeQuad,
+  estimateDeskewAngle,
   FULL_FRAME_QUAD,
   moveScanPage,
   normalizeQuad,
+  pageIsEnhanced,
   parseScanPagesOption,
+  PRESET_SPECS,
   quadOutputSize,
   reconcileScanPages,
+  refineQuadCorners,
   rotateQuarter,
   rotateScanPages,
+  SCAN_FILTERS,
+  SCAN_PRESETS,
   serializeScanPages,
+  setScanAdjust,
   setScanFilter,
   solveHomography,
   warpPerspective,
@@ -356,6 +374,449 @@ console.log("scan-pdf engine — normalize helpers");
   ok(q[2] === 800 && q[5] === 600, "denormalize");
   const back = normalizeQuad(q, 800, 600);
   ok(back.every((v, i) => Math.abs(v - FULL_FRAME_QUAD[i]) < 1e-12), "normalize round-trip");
+}
+
+console.log("scan-pdf engine — Round-7 filters (Doc Scanner parity)");
+{
+  // Colourful scene: red-ish page on cyan-ish desk (both mid-tone so the
+  // colour-aware filters have something to bite on).
+  const W = 80;
+  const H = 60;
+  const mk = (r: number, g: number, b: number): ScanBitmap => {
+    const bmp: ScanBitmap = { data: new Uint8ClampedArray(W * H * 4), width: W, height: H };
+    for (let i = 0; i < W * H; i += 1) {
+      bmp.data[i * 4] = r;
+      bmp.data[i * 4 + 1] = g;
+      bmp.data[i * 4 + 2] = b;
+      bmp.data[i * 4 + 3] = 255;
+    }
+    return bmp;
+  };
+  const satAt = (bmp: ScanBitmap, i: number) => {
+    const r = bmp.data[i * 4];
+    const g = bmp.data[i * 4 + 1];
+    const b = bmp.data[i * 4 + 2];
+    const mx = Math.max(r, g, b);
+    const mn = Math.min(r, g, b);
+    return mx - mn;
+  };
+
+  // vivid: saturation strongly lifted (1.45×) on a coloured scene.
+  const before = mk(200, 120, 80);
+  const beforeSat = satAt(before, 0);
+  const vivid = mk(200, 120, 80);
+  applyVivid(vivid);
+  ok(satAt(vivid, 0) > beforeSat * 1.2, "vivid: saturation lifted", `${beforeSat}→${satAt(vivid, 0)}`);
+
+  // soft: saturation reduced (0.88×) and warmed (red ↑, blue ↓).
+  const soft = mk(200, 120, 80);
+  applySoftTone(soft);
+  ok(satAt(soft, 0) < beforeSat * 1.02, "soft: saturation softened", `${beforeSat}→${satAt(soft, 0)}`);
+  const warmR = soft.data[0];
+  const warmB = soft.data[2];
+  ok(
+    warmR > 0 && warmB < 255 && warmR - warmB >= 90,
+    "soft: colour separation preserved (not nuked)",
+    `r=${warmR} b=${warmB}`
+  );
+  // Uniform colour is NOT nuked to black by the percentile stretch.
+  const uni = mk(200, 120, 80);
+  applyVivid(uni);
+  ok(
+    satAt(uni, 0) > 60,
+    "vivid: uniform colour survives (no nuke-to-black)",
+    String(satAt(uni, 0))
+  );
+
+  // Text-page pattern for the two binarizing filters.
+  const page = (): ScanBitmap => {
+    const bmp = mk(232, 230, 224);
+    for (let y = 0; y < H; y += 1) {
+      for (let x = 0; x < W; x += 1) {
+        const isText = x >= 10 && x <= 70 && y % 10 >= 3 && y % 10 <= 5;
+        if (isText) {
+          const o = (y * W + x) * 4;
+          bmp.data[o] = 40;
+          bmp.data[o + 1] = 40;
+          bmp.data[o + 2] = 42;
+        }
+      }
+    }
+    return bmp;
+  };
+  const binarized = (bmp: ScanBitmap) => {
+    let zero = 0;
+    let twoFiveFive = 0;
+    for (let i = 0; i < bmp.data.length; i += 4) {
+      if (bmp.data[i] === 0 && bmp.data[i + 1] === 0) zero += 1;
+      else if (bmp.data[i] === 255 && bmp.data[i + 1] === 255) twoFiveFive += 1;
+    }
+    return { zero, twoFiveFive };
+  };
+
+  const sharp = page();
+  applySharpBW(sharp);
+  const sharpStats = binarized(sharp);
+  ok(
+    sharpStats.zero > 150 && sharpStats.twoFiveFive > 2000,
+    "sharpbw: binarized with text black + paper white",
+    JSON.stringify(sharpStats)
+  );
+  ok(sharp.data[(4 * W + 40) * 4] === 0, "sharpbw: text row inside a bar is black");
+
+  const ocr = page();
+  applyOCRBW(ocr);
+  const ocrStats = binarized(ocr);
+  ok(
+    ocrStats.zero > 150 && ocrStats.twoFiveFive > 2000,
+    "ocrbw: binarized with text black + paper white",
+    JSON.stringify(ocrStats)
+  );
+
+  ok(SCAN_FILTERS.length === 8, "filters: registry has 8 entries", String(SCAN_FILTERS.length));
+  ok(
+    ["vivid", "soft", "sharpbw", "ocrbw"].every((f) => SCAN_FILTERS.includes(f as never)),
+    "filters: all Round-7 ids registered"
+  );
+}
+
+console.log("scan-pdf engine — Round-7 adjustments");
+{
+  const mk = (v: number): ScanBitmap => {
+    const bmp: ScanBitmap = {
+      data: new Uint8ClampedArray(4 * 4 * 4),
+      width: 4,
+      height: 4,
+    };
+    for (let i = 0; i < 16; i += 1) {
+      bmp.data[i * 4] = v;
+      bmp.data[i * 4 + 1] = v;
+      bmp.data[i * 4 + 2] = v;
+      bmp.data[i * 4 + 3] = 255;
+    }
+    return bmp;
+  };
+  // Brightness +40 → +48 levels on 100 → 148.
+  const bright = mk(100);
+  applyAdjustments(bright, { brightness: 40, contrast: 0 });
+  ok(bright.data[0] === 148, "adjust: brightness +40 lifts 100→148", String(bright.data[0]));
+  // Contrast +40 → ×1.6 around 128: 100 → 128−28×1.6=83.2 → 83.
+  const contrast = mk(100);
+  applyAdjustments(contrast, { brightness: 0, contrast: 40 });
+  ok(contrast.data[0] === 83, "adjust: contrast +40 maps 100→83", String(contrast.data[0]));
+  // Negative contrast flattens toward 128: ×0.4 → 128−28×0.4=116.8 → 117.
+  const flat = mk(100);
+  applyAdjustments(flat, { brightness: 0, contrast: -40 });
+  ok(flat.data[0] === 117, "adjust: contrast −40 flattens 100→117", String(flat.data[0]));
+  // 0/0 is a strict no-op (same reference mutated nothing — value equal).
+  const noop = mk(100);
+  applyAdjustments(noop, { brightness: 0, contrast: 0 });
+  ok(noop.data[0] === 100, "adjust: 0/0 no-op");
+  // Out-of-range input clamps to ±40 before applying (both dials combine
+  // in one LUT: (100−128)×0.4 + 128 + 48 = 164.8 → 165).
+  const clamped = mk(100);
+  applyAdjustments(clamped, { brightness: 999, contrast: -999 });
+  ok(clamped.data[0] === 165, "adjust: clamps to ±40 (combined LUT)", String(clamped.data[0]));
+  ok(clampAdjust(999) === 40 && clampAdjust(-999) === -40 && clampAdjust(7.6) === 8, "adjust: clampAdjust vectors");
+}
+
+console.log("scan-pdf engine — Round-7 deskew");
+{
+  // Text page: 7 horizontal bars on white.
+  const W = 220;
+  const H = 150;
+  const page: ScanBitmap = { data: new Uint8ClampedArray(W * H * 4), width: W, height: H };
+  for (let y = 0; y < H; y += 1) {
+    for (let x = 0; x < W; x += 1) {
+      const o = (y * W + x) * 4;
+      const isText = x >= 20 && x <= 200 && y % 18 >= 5 && y % 18 <= 9;
+      const v = isText ? 30 : 240;
+      page.data[o] = v;
+      page.data[o + 1] = v;
+      page.data[o + 2] = v;
+      page.data[o + 3] = 255;
+    }
+  }
+  const flat = estimateDeskewAngle(page);
+  ok(Math.abs(flat.angle) < 0.3, "deskew: flat page ≈ 0°", JSON.stringify(flat));
+  ok(flat.strength > 1.8, "deskew: text page has structure strength", String(flat.strength));
+
+  // Tilt the page by +3° using the engine's own rotator → estimate recovers it.
+  const tilted = deskewBitmap(page, 3);
+  const est = estimateDeskewAngle(tilted);
+  ok(Math.abs(est.angle - 3) <= 0.5, "deskew: +3° tilt detected", JSON.stringify(est));
+  ok(est.strength > 1.8, "deskew: tilted page still structured", String(est.strength));
+
+  // Straighten back via the two-pass helper (what the worker actually
+  // runs): residual after double bilinear rotation stays well under 0.5°.
+  const straight = autoDeskew(tilted);
+  const re = estimateDeskewAngle(straight);
+  ok(Math.abs(re.angle) < 0.5, "deskew: autoDeskew restores ≈ 0° (two-pass)", JSON.stringify(re));
+  // Exact −angle also restores ≈ 0.
+  const exact = estimateDeskewAngle(deskewBitmap(tilted, -3));
+  ok(Math.abs(exact.angle) < 0.4, "deskew: exact −3 restores ≈ 0°", JSON.stringify(exact));
+
+  // Blank page: no ink → honest {0, strength 0}.
+  const blank: ScanBitmap = { data: new Uint8ClampedArray(60 * 40 * 4).fill(240), width: 60, height: 40 };
+  for (let i = 3; i < blank.data.length; i += 4) blank.data[i] = 255;
+  const blankEst = estimateDeskewAngle(blank);
+  ok(blankEst.angle === 0 && blankEst.strength === 0, "deskew: blank page honest zero", JSON.stringify(blankEst));
+
+  // deskewBitmap no-op under the 0.05° threshold (same object back).
+  const same = deskewBitmap(page, 0.01);
+  ok(same === page, "deskew: <0.05° returns the same bitmap");
+}
+
+console.log("scan-pdf engine — Round-7 corner refinement + low contrast");
+{
+  // True page edges at 50/190 × 40/140 on a darker desk; pass a quad that is
+  // 6 px INSIDE the true page — refinement must snap back out to the edges.
+  const W = 240;
+  const H = 180;
+  const doc: [number, number][] = [
+    [50, 40],
+    [190, 40],
+    [190, 140],
+    [50, 140],
+  ];
+  const scene = makeScene(W, H, doc, [70, 70, 70], [235, 235, 235]);
+  const gray = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i += 1) {
+    gray[i] = (scene.data[i * 4] * 77 + scene.data[i * 4 + 1] * 150 + scene.data[i * 4 + 2] * 29) >> 7;
+  }
+  const off: Quad = [56, 46, 184, 46, 184, 134, 56, 134];
+  const refined = refineQuadCorners(gray, W, H, off);
+  const dist = (q: Quad, cx: number, cy: number) =>
+    Math.hypot(q[cx], q[cy]);
+  void dist;
+  const cornerErr = (q: Quad) =>
+    Math.hypot(q[0] - 50, q[1] - 40) +
+    Math.hypot(q[2] - 190, q[3] - 40) +
+    Math.hypot(q[4] - 190, q[5] - 140) +
+    Math.hypot(q[6] - 50, q[7] - 140);
+  const before = cornerErr(off);
+  const after = cornerErr(refined);
+  ok(after < before * 0.5, "refine: snapped toward true edges", `err ${before}→${after}`);
+  ok(after <= 8, "refine: final error ≤ 8px total", String(after));
+
+  // Uniform gray + wrong quad → honest no-op (no gradients to chase).
+  const uniformGray = new Uint8Array(W * H).fill(128);
+  const noOp = refineQuadCorners(uniformGray, W, H, off);
+  ok(noOp.every((v, i) => v === off[i]), "refine: uniform frame is a no-op");
+
+  // Low-contrast 3-tone scene: bright-ish desk (225) + page (235) + a dark
+  // object (20) that drags the raw Otsu cut down so page+desk merge. The
+  // equalized candidate set + border-bleed penalty must still find the PAGE
+  // (not the merged full-frame blob).
+  const W3 = 240;
+  const H3 = 180;
+  const scene3 = makeScene(
+    W3,
+    H3,
+    [
+      [40, 30],
+      [200, 30],
+      [200, 150],
+      [40, 150],
+    ],
+    [225, 225, 225],
+    [235, 235, 235]
+  );
+  // Dark object: top-left corner block, 30×26.
+  for (let y = 0; y < 26; y += 1) {
+    for (let x = 0; x < 30; x += 1) {
+      const o = (y * W3 + x) * 4;
+      scene3.data[o] = 20;
+      scene3.data[o + 1] = 20;
+      scene3.data[o + 2] = 20;
+    }
+  }
+  const det3 = detectDocumentQuad(scene3.data, W3, H3);
+  ok(det3.confidence > 0.35, "low-contrast: page found", `conf=${det3.confidence}`);
+  ok(
+    Math.abs(det3.quad[0] - 41) <= 5 &&
+      Math.abs(det3.quad[1] - 31) <= 5 &&
+      Math.abs(det3.quad[4] - 199) <= 5 &&
+      Math.abs(det3.quad[5] - 149) <= 5,
+    "low-contrast: quad is the PAGE, not the merged frame",
+    JSON.stringify(det3.quad)
+  );
+
+  // Luma-cliff scene (regression lock for the >>8 fix): a page whose
+  // brightness GRADIENT crosses 128 on a dark desk. With the old >>7 luma
+  // (2v mod 256), the page's top half wrapped bright and its bottom half
+  // wrapped dark — the page split and detection fell apart. The fixed
+  // luma keeps the page one bright region against the desk.
+  const W4 = 240;
+  const H4 = 180;
+  const cliff = makeScene(
+    W4,
+    H4,
+    [
+      [40, 30],
+      [200, 30],
+      [200, 150],
+      [40, 150],
+    ],
+    [30, 30, 30],
+    [128, 128, 128] // placeholder — overwritten below
+  );
+  for (let y = 30; y <= 150; y += 1) {
+    for (let x = 40; x <= 200; x += 1) {
+      const v = Math.round(120 + ((y - 30) / 120) * 16); // 120..136, crosses 128
+      const o = (y * W4 + x) * 4;
+      cliff.data[o] = v;
+      cliff.data[o + 1] = v;
+      cliff.data[o + 2] = v;
+    }
+  }
+  const det4 = detectDocumentQuad(cliff.data, W4, H4);
+  ok(det4.confidence > 0.35, "luma-cliff: page found", `conf=${det4.confidence}`);
+  ok(
+    Math.abs(det4.quad[0] - 41) <= 5 &&
+      Math.abs(det4.quad[1] - 31) <= 5 &&
+      Math.abs(det4.quad[4] - 199) <= 5 &&
+      Math.abs(det4.quad[5] - 149) <= 5,
+    "luma-cliff: gradient page stays whole (luma monotonicity)",
+    JSON.stringify(det4.quad)
+  );
+}
+
+console.log("scan-pdf engine — Round-7 model (adjust + presets)");
+{
+  const pages = createInitialScanPages(2);
+  ok(pages.every((p) => p.adjust.brightness === 0 && p.adjust.contrast === 0), "model: initial adjust zero");
+  ok(!pageIsEnhanced(pages[0]), "model: initial page not enhanced");
+
+  const adjusted = setScanAdjust(pages, [0], { brightness: 12, contrast: -8 });
+  ok(
+    adjusted[0].adjust.brightness === 12 && adjusted[0].adjust.contrast === -8,
+    "model: setScanAdjust sets values"
+  );
+  ok(adjusted[1].adjust.brightness === 0, "model: setScanAdjust leaves others");
+  ok(pageIsEnhanced(adjusted[0]), "model: adjusted page is enhanced");
+  const filteredOnly = setScanFilter(pages, [1], "vivid");
+  ok(pageIsEnhanced(filteredOnly[1]), "model: filter counts as enhanced");
+
+  // Serialize round-trip now carries adjust (6-field rows).
+  const serialized = serializeScanPages(adjusted);
+  const parsed = parseScanPagesOption(serialized, 2);
+  ok(parsed !== null && parsed[0].adjust.brightness === 12 && parsed[0].adjust.contrast === -8, "model: adjust round-trip");
+  // Adjust values clamp on parse.
+  const clampedParse = parseScanPagesOption(
+    '[[0,0,"original",[0,0,1,0,1,1,0,1],999,-999]]',
+    1
+  );
+  ok(
+    clampedParse !== null && clampedParse[0].adjust.brightness === 40 && clampedParse[0].adjust.contrast === -40,
+    "model: parse clamps adjust"
+  );
+  // Legacy 4-field rows (Round ≤6 shape) still parse with zero adjust.
+  const legacy = parseScanPagesOption(
+    '[[0,90,"bw",[0,0,1,0,1,1,0,1]]]',
+    1
+  );
+  ok(
+    legacy !== null && legacy[0].rotation === 90 && legacy[0].filter === "bw" &&
+      legacy[0].adjust.brightness === 0 && legacy[0].adjust.contrast === 0,
+    "model: legacy 4-field rows parse"
+  );
+  // 5-field rows are rejected (no half shapes).
+  ok(parseScanPagesOption('[[0,0,"bw",[0,0,1,0,1,1,0,1],5]]', 1) === null, "model: 5-field rows rejected");
+  // New filter ids parse.
+  ok(
+    parseScanPagesOption('[[0,0,"ocrbw",[0,0,1,0,1,1,0,1],0,0]]', 1) !== null,
+    "model: ocrbw parses"
+  );
+
+  // Presets.
+  ok(SCAN_PRESETS.length === 5, "presets: five presets", String(SCAN_PRESETS.length));
+  ok(PRESET_SPECS.document.filter === "magic" && PRESET_SPECS.document.autoStraighten === true && PRESET_SPECS.document.pageSize === "a4", "presets: document spec");
+  ok(PRESET_SPECS.photo.filter === "original" && PRESET_SPECS.photo.autoStraighten === false, "presets: photo spec");
+  ok(PRESET_SPECS.signature.filter === "ocrbw", "presets: signature uses OCR black");
+  ok(PRESET_SPECS.book.pageSize === "fit", "presets: book fits page");
+}
+
+console.log("scan-pdf engine — Round-7 worker + surface wiring locks");
+{
+  const read = (p: string) => readFileSync(p, "utf8");
+  const worker = read("tools/scan-pdf/worker.ts");
+  const surface = read("tools/scan-pdf/surface.tsx");
+  const config = read("tools/scan-pdf/config.ts");
+
+  ok(worker.includes("applyAdjustments(warped, page.adjust)"), "worker: adjustments applied after filter");
+  ok(worker.includes("autoDeskew(warped)"), "worker: two-pass deskew applied");
+  ok(worker.includes("autoStraighten !== false"), "worker: autoStraighten option honoured");
+  ok(worker.includes("options.docName"), "worker: docName option read");
+
+  ok(surface.includes("FilterThumb"), "surface: filter thumbnails rendered");
+  ok(surface.includes('id="scan-brightness"') && surface.includes('id="scan-contrast"'), "surface: brightness + contrast sliders");
+  ok(surface.includes('role="switch"'), "surface: apply-to-all switch");
+  ok(surface.includes("onChangeFilter(entry.id, applyAll)"), "surface: filter honours apply-all scope");
+  ok(surface.includes("runAutoEnhance"), "surface: AUTO enhance button");
+  ok(surface.includes('onChain("ocr-pdf")'), "surface: OCR chain button");
+  ok(surface.includes("SCAN_PRESETS.map"), "surface: preset chips rendered");
+  ok(surface.includes("PRESET_SPECS[preset].filter"), "surface: new pages adopt preset filter");
+  ok(
+    surface.includes('viewBox="0 0 100 100"') && surface.includes("normalizeQuad(det.quad, width, height)"),
+    "surface: camera overlay coordinate fix (normalized quad + 0..100 viewBox)"
+  );
+  ok(surface.includes("stableTickRef.current + 1"), "surface: auto-capture stability counter");
+  ok(surface.includes("count >= 4"), "surface: auto-capture fires at 4 stable ticks");
+  ok(surface.includes("autoCooldownRef.current = Date.now() + 2500"), "surface: auto-capture cooldown");
+  ok(surface.includes("Grid3x3"), "surface: composition grid toggle");
+  ok(surface.includes("autoStraighten={values.autoStraighten !== false}"), "surface: editor gets autoStraighten option");
+
+  ok(config.includes('"ocr-pdf"'), "config: OCR first in chain targets");
+  ok(config.includes('id: "autoStraighten"') && config.includes('default: true'), "config: autoStraighten switch");
+  ok(config.includes('id: "docName"'), "config: docName text option");
+
+  // i18n: every new key exists in BOTH locales with real HI.
+  const en = JSON.parse(read("src/i18n/en.json")) as { scan: Record<string, unknown> };
+  const hi = JSON.parse(read("src/i18n/hi.json")) as { scan: Record<string, unknown> };
+  const filterEn = en.scan.filter as Record<string, string>;
+  const filterHi = hi.scan.filter as Record<string, string>;
+  for (const id of ["vivid", "soft", "sharpbw", "ocrbw"]) {
+    ok(typeof filterEn[id] === "string" && filterEn[id].length > 0, `i18n: filter.${id} EN`);
+    ok(/[\u0900-\u097F]/.test(filterHi[id] ?? ""), `i18n: filter.${id} HI is Devanagari`);
+  }
+  const presetEn = en.scan.preset as Record<string, string>;
+  const presetHi = hi.scan.preset as Record<string, string>;
+  for (const id of ["document", "photo", "idcard", "book", "signature"]) {
+    ok(typeof presetEn[id] === "string" && presetEn[id].length > 0, `i18n: preset.${id} EN`);
+    ok(/[\u0900-\u097F]/.test(presetHi[id] ?? ""), `i18n: preset.${id} HI is Devanagari`);
+  }
+  for (const key of [
+    "adjustTitle",
+    "brightness",
+    "contrast",
+    "adjustReset",
+    "applyAll",
+    "autoEnhance",
+    "presetTitle",
+    "presetApplied",
+    "presetOff",
+    "detectText",
+    "detectTextHint",
+    "autoCapture",
+    "autoCaptureOn",
+    "autoCaptureIn",
+    "gridLines",
+  ]) {
+    ok(
+      typeof en.scan[key] === "string" && (en.scan[key] as string).length > 0,
+      `i18n: scan.${key} EN`
+    );
+    ok(
+      typeof hi.scan[key] === "string" && /[\u0900-\u097F]/.test(hi.scan[key] as string),
+      `i18n: scan.${key} HI is Devanagari`
+    );
+  }
+  // Param coverage: keys with {count} must keep it in both locales.
+  for (const key of ["applyAll", "presetApplied", "autoCaptureIn"]) {
+    ok((en.scan[key] as string).includes("{count}"), `i18n: ${key} EN keeps {{count}}`);
+    ok((hi.scan[key] as string).includes("{count}"), `i18n: ${key} HI keeps {{count}}`);
+  }
 }
 
 console.log("");

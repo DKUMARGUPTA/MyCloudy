@@ -19,7 +19,7 @@ export const config: ToolConfig = {
   minFiles: 0,
   maxFiles: 30,
   howKeys: ["scan.how1", "scan.how2", "scan.how3"],
-  chainToolIds: ["compress-pdf", "lock-pdf", "sign-pdf", "merge-pdf", "split-pdf"],
+  chainToolIds: ["ocr-pdf", "edit-pdf", "compress-pdf", "sign-pdf", "merge-pdf"],
   options: [
     {
       kind: "select",
@@ -34,6 +34,33 @@ export const config: ToolConfig = {
         },
       ],
       default: "a4",
+    },
+    {
+      kind: "switch",
+      id: "autoStraighten",
+      label: {
+        en: "Auto-straighten text",
+        hi: "टेक्स्ट अपने आप सीधा करें",
+      },
+      hint: {
+        en: "Detects tilted text lines (0.3°–5°) and straightens them. Photos and blank pages are left untouched.",
+        hi: "तिरछी टेक्स्ट लाइनें (0.3°–5°) पहचानकर सीधी करता है। तस्वीरें और खाली पेज वैसे ही रहते हैं।",
+      },
+      default: true,
+    },
+    {
+      kind: "text",
+      id: "docName",
+      label: { en: "Document name", hi: "दस्तावेज़ का नाम" },
+      placeholder: {
+        en: "scan (automatic)",
+        hi: "scan (अपने आप)",
+      },
+      hint: {
+        en: "Name for the downloaded PDF. Leave empty to name it automatically.",
+        hi: "डाउनलोड होने वाली PDF का नाम। खाली छोड़ें तो नाम अपने आप रखा जाता है।",
+      },
+      default: "",
     },
     {
       kind: "select",
@@ -66,16 +93,20 @@ export const config: ToolConfig = {
   ],
   features: [
     {
-      en: "Point the camera and the page is detected automatically — corners, edges and perspective are straightened into a flat scan.",
-      hi: "कैमरा घुमाइए, पेज अपने आप पहचाना जाता है — कोने, किनारे और पर्स्पेक्टिव सीधा करके सपाट स्कैन बनता है।",
+      en: "Point the camera and the page is detected automatically — corners, edges and perspective are straightened into a flat scan, with a live outline that tracks the page.",
+      hi: "कैमरा घुमाइए, पेज अपने आप पहचाना जाता है — कोने, किनारे और पर्स्पेक्टिव सीधा करके सपाट स्कैन बनता है, और लाइव आउटलाइन पेज को फ़ॉलो करती है।",
     },
     {
-      en: "Scanner filters on every page: Original, Magic color, B&W (crisp text) and Grayscale — try them live before saving.",
-      hi: "हर पेज पर स्कैनर फ़िल्टर: Original, Magic color, B&W (साफ़ टेक्स्ट) और Grayscale — सेव करने से पहले लाइव आज़माइए।",
+      en: "Eight scanner filters with live thumbnails — Original, Magic color, Vivid, Soft tone, B&W, Grayscale, Sharp black and OCR black — plus brightness/contrast dials on every page.",
+      hi: "आठ स्कैनर फ़िल्टर लाइव थंबनेल के साथ — Original, Magic color, Vivid, Soft tone, B&W, Grayscale, Sharp black और OCR black — साथ हर पेज पर ब्राइटनेस/कॉन्ट्रास्ट डायल।",
     },
     {
-      en: "Multi-page sessions: keep capturing and the pages stack up; drag to reorder, tap to fix corners or re-filter later.",
-      hi: "मल्टी-पेज सेशन: लगातार कैप्चर करते रहिए, पेज जुड़ते जाते हैं; खींचकर क्रम बदलें, कोने ठीक करें या फ़िल्टर बदलें।",
+      en: "Auto-capture mode holds the shutter until the page locks still, the composition grid frames your shot, and presets (Document, Photo, ID card, Book, Signature) set the whole look in one tap.",
+      hi: "ऑटो-कैप्चर मोड पेज स्थिर होने तक शटर रोकता है, कंपोज़िशन ग्रिड शॉट संवारता है, और प्रीसेट (Document, Photo, ID card, Book, Signature) एक टैप में पूरी लुक सेट करते हैं।",
+    },
+    {
+      en: "Text pages straighten themselves (tilt up to 5° is corrected), and finished scans chain straight to OCR, editing, signing or compressing — every next step keeps your pages.",
+      hi: "टेक्स्ट पेज अपने आप सीधे हो जाते हैं (5° तक का झुकाव ठीक होता है), और तैयार स्कैन सीधे OCR, एडिटिंग, साइनिंग या कंप्रेशन से जुड़ते हैं — अगला कदम आपके पेज बनाए रखता है।",
     },
     {
       en: "No camera? Add photos from the gallery — they get the same edge detection, filters and perspective fix.",
@@ -97,8 +128,18 @@ export const config: ToolConfig = {
     {
       q: { en: "Which filter should I pick?", hi: "कौन सा फ़िल्टर चुनें?" },
       a: {
-        en: "Magic color is the safe default for documents — it whitens the paper and boosts contrast. B&W gives the smallest files and the crispest text for printed pages. Grayscale softens photos and colored stamps. Original keeps the photo exactly as captured.",
-        hi: "दस्तावेज़ों के लिए Magic color सबसे सुरक्षित है — काग़ज़ सफ़ेद और कंट्रास्ट बेहतर करता है। B&W सबसे छोटी फ़ाइल और छपे पेजों के लिए सबसे साफ़ टेक्स्ट देता है। Grayscale तस्वीरों और रंगीन मुहरों को नरम करता है। Original तस्वीर जैसी है वैसी ही रखता है।",
+        en: "Magic color is the safe default for documents — it whitens the paper and boosts contrast. Vivid makes product boxes and colour pages pop. Soft tone is gentle for long reading. B&W and Sharp black give the smallest files and the crispest text (Sharp black adds edge sharpening before the cut). OCR black cleans the background for text extraction. Grayscale softens photos and coloured stamps. Original keeps the photo exactly as captured.",
+        hi: "दस्तावेज़ों के लिए Magic color सबसे सुरक्षित है — काग़ज़ सफ़ेद और कॉन्ट्रास्ट बेहतर करता है। Vivid प्रोडक्ट बॉक्स और रंगीन पेज चमकाता है। Soft tone लंबे पढ़ने के लिए हल्का है। B&W और Sharp black सबसे छोटी फ़ाइल और सबसे साफ़ टेक्स्ट देते हैं (Sharp black काट से पहले एज़ शार्प करता है)। OCR black टेक्स्ट निकालने के लिए बैकग्राउंड साफ़ करता है। Grayscale तस्वीरों और रंगीन मुहरों को नरम करता है। Original तस्वीर जैसी है वैसी रखता है।",
+      },
+    },
+    {
+      q: {
+        en: "What do the presets do?",
+        hi: "प्रीसेट क्या करते हैं?",
+      },
+      a: {
+        en: "A preset is a starting point, not a promise: Document applies Magic color, A4 pages and auto-straighten; Photo and ID card keep colours untouched with page size fitted to the scan; Book applies Magic color with fitted pages; Signature switches to OCR black for a high-contrast copy. Every page stays fully editable afterwards.",
+        hi: "प्रीसेट शुरुआती पॉइंट है, जादू नहीं: Document मैजिक कलर, A4 पेज और ऑटो-स्ट्रेटन लगाता है; Photo और ID card रंग वैसे रखते हैं और पेज साइज़ स्कैन के अनुसार; Book मैजिक कलर और फ़िटेड पेज; Signature ऑटो-स्ट्रेटन के साथ हाई-कॉन्ट्रास्ट कॉपी के लिए OCR black लगाता है। बाद में हर पेज पूरी तरह एडिट योग्य रहता है।",
       },
     },
     {

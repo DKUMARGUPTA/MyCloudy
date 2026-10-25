@@ -35,16 +35,26 @@ import {
   ChevronDown,
   ChevronUp,
   CircleAlert,
+  Contrast,
+  Feather,
+  FileText,
+  Grid3x3,
   GripVertical,
   Images,
+  Layers,
   Loader2,
+  Palette,
   Pencil,
   RotateCcw,
   RotateCw,
   ScanLine,
+  ScanText,
   Sparkles,
+  Sun,
+  Timer,
   Trash2,
   TriangleAlert,
+  Type,
   Wand2,
   X,
   Zap,
@@ -67,7 +77,9 @@ import { DropZone } from "@/components/doco/tool/drop-zone";
 import { formatBytes } from "@/lib/storage/recent-files";
 import { cn } from "@/lib/utils";
 import {
+  applyAdjustments,
   applyScanFilter,
+  autoDeskew,
   createInitialScanPages,
   deleteScanPages,
   denormalizeQuad,
@@ -75,16 +87,23 @@ import {
   FULL_FRAME_QUAD,
   moveScanPage,
   normalizeQuad,
+  pageIsEnhanced,
+  PRESET_SPECS,
   quadOutputSize,
   reconcileScanPages,
   rotateQuarter,
   rotateScanPages,
   serializeScanPages,
+  setScanAdjust,
   setScanFilter,
   warpPerspective,
+  SCAN_PRESETS,
   type Quad,
+  type ScanAdjust,
+  type ScanBitmap,
   type ScanFilter,
   type ScanPage,
+  type ScanPreset,
 } from "./engine";
 
 /**
@@ -109,8 +128,12 @@ const TOOL_BTN =
 const FILTERS: { id: ScanFilter; icon: typeof Sparkles }[] = [
   { id: "original", icon: Camera },
   { id: "magic", icon: Wand2 },
+  { id: "vivid", icon: Palette },
+  { id: "soft", icon: Feather },
   { id: "bw", icon: ScanLine },
   { id: "gray", icon: Images },
+  { id: "sharpbw", icon: Type },
+  { id: "ocrbw", icon: FileText },
 ];
 
 const CORNER_KEYS = ["tl", "tr", "br", "bl"] as const;
@@ -234,14 +257,20 @@ async function loadPreviewBitmap(file: File, key: string): Promise<PreviewBitmap
 function drawScanPreview(
   canvas: HTMLCanvasElement,
   bmp: PreviewBitmap,
-  page: Pick<ScanPage, "quad" | "filter" | "rotation">,
-  maxEdge: number
+  page: Pick<ScanPage, "quad" | "filter" | "rotation" | "adjust">,
+  maxEdge: number,
+  autoStraighten = false
 ): void {
   const quadAbs = denormalizeQuad(page.quad, bmp.width, bmp.height);
   const { width, height } = quadOutputSize(quadAbs, maxEdge);
   let warped = warpPerspective(bmp, quadAbs, width, height);
   applyScanFilter(warped, page.filter);
+  applyAdjustments(warped, page.adjust);
   warped = rotateQuarter(warped, page.rotation);
+  if (autoStraighten && page.rotation % 180 === 0) {
+    // Same two-pass helper the export worker runs — WYSIWYG straightening.
+    warped = autoDeskew(warped);
+  }
   canvas.width = warped.width;
   canvas.height = warped.height;
   const context = canvas.getContext("2d");
@@ -257,9 +286,11 @@ function drawScanPreview(
 
 export function ScanSurface({
   files,
+  values,
   onChange,
   addFiles,
   setRunBlocked,
+  onChain,
 }: ToolSurfaceProps) {
   const { t } = useI18n();
   const toast = useToast().toast;
@@ -270,6 +301,9 @@ export function ScanSurface({
   const [prevFileCount, setPrevFileCount] = useState(files.length);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [editingUid, setEditingUid] = useState<string | null>(null);
+  // Round-7 scan preset (Doc Scanner's Photo/ID/Document/Book/Signature).
+  // null = untouched (pages keep whatever filter the user picked).
+  const [preset, setPreset] = useState<ScanPreset | null>(null);
   // Mirror of the latest page list for async continuations (auto-detect
   // must read the state that exists AFTER its awaits). apply() keeps it
   // current — never assigned during render.
@@ -337,20 +371,31 @@ export function ScanSurface({
   );
 
   // Reconcile when the shell file list changes (camera batches, gallery
-  // add-more, chain handoff) — microtask, never in the effect body.
+  // add-more, chain handoff) — microtask, never in the effect body. Newly
+  // appended sources adopt the active preset's filter (Doc Scanner applies
+  // the chosen look to every new capture).
   useEffect(() => {
     if (files.length === prevFileCount) return;
     let cancelled = false;
     void Promise.resolve().then(() => {
       if (cancelled) return;
-      const next = reconcileScanPages(pages, files.length, prevFileCount);
+      const grew = files.length > prevFileCount;
+      const fromSource = grew ? prevFileCount : -1;
+      let next = reconcileScanPages(pages, files.length, prevFileCount);
+      if (grew && preset !== null && fromSource >= 0) {
+        next = next.map((page) =>
+          page.source >= fromSource
+            ? { ...page, filter: PRESET_SPECS[preset].filter, adjust: { brightness: 0, contrast: 0 } }
+            : page
+        );
+      }
       setPrevFileCount(files.length);
       apply(next);
     });
     return () => {
       cancelled = true;
     };
-  }, [files.length, pages, prevFileCount, apply]);
+  }, [files.length, pages, prevFileCount, apply, preset]);
 
   // Auto-detection kicker — the SINGLE entry point for edge detection on
   // newly arrived photos. Fires on mount (the landing→workspace remount
@@ -398,6 +443,26 @@ export function ScanSurface({
     [addFiles, t, toast]
   );
 
+  /** Applies a preset to every page + the matching run options. */
+  const applyPreset = (next: ScanPreset | null) => {
+    setPreset(next);
+    if (next === null) {
+      toast({ description: t("scan.presetOff") });
+      return;
+    }
+    const spec = PRESET_SPECS[next];
+    const indices = pages.map((_, index) => index);
+    let nextPages = setScanFilter(pages, indices, spec.filter);
+    nextPages = nextPages.map((page) => ({
+      ...page,
+      adjust: { brightness: 0, contrast: 0 },
+    }));
+    apply(nextPages);
+    onChange("pageSize", spec.pageSize);
+    onChange("autoStraighten", spec.autoStraighten);
+    toast({ description: t("scan.presetApplied", { count: pages.length }) });
+  };
+
   /* ------------------------------ drag reorder ------------------------------ */
 
   const sensors = useSensors(
@@ -419,7 +484,7 @@ export function ScanSurface({
     () => ({
       pages: pages.length,
       auto: pages.filter((page) => page.autoDetected).length,
-      filtered: pages.filter((page) => page.filter !== "original").length,
+      filtered: pages.filter((page) => pageIsEnhanced(page)).length,
     }),
     [pages]
   );
@@ -494,6 +559,8 @@ export function ScanSurface({
         {cameraOpen && cameraSupported ? (
           <CameraSheet
             existingCount={0}
+            preset={preset}
+            onPresetChange={applyPreset}
             onDone={onCameraDone}
             onClose={() => setCameraOpen(false)}
           />
@@ -534,6 +601,21 @@ export function ScanSurface({
             </span>
           ) : null}
           <span className="ml-auto flex items-center gap-1.5">
+            {onChain ? (
+              <Button
+                type="button"
+                className={cn(
+                  TOOL_BTN,
+                  "border-cat-create/30 bg-cat-create/5 text-cat-create hover:bg-cat-create/10 hover:text-cat-create"
+                )}
+                onClick={() => onChain("ocr-pdf")}
+                aria-label={t("scan.detectText")}
+                title={t("scan.detectTextHint")}
+              >
+                <ScanText className="size-4" aria-hidden="true" />
+                <span className="hidden sm:inline">{t("scan.detectText")}</span>
+              </Button>
+            ) : null}
             <Button
               type="button"
               className={cn(
@@ -568,6 +650,36 @@ export function ScanSurface({
               <RotateCw className="size-4" aria-hidden="true" />
             </Button>
           </span>
+        </div>
+        {/* Preset chips (Doc Scanner's Photo / ID Card / Document / Book /
+            Signature) — one tap applies the look + page settings to all. */}
+        <div
+          className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          role="group"
+          aria-label={t("scan.presetTitle")}
+        >
+          {SCAN_PRESETS.map((id) => {
+            const active = preset === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => applyPreset(active ? null : id)}
+                className={cn(
+                  "flex h-9 min-h-9 shrink-0 items-center gap-1.5 rounded-btn border px-3 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                  active
+                    ? "border-primary/60 bg-primary/10 text-foreground"
+                    : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground"
+                )}
+              >
+                {active ? (
+                  <Check className="size-3.5 text-primary" aria-hidden="true" />
+                ) : null}
+                {t(`scan.preset.${id}`)}
+              </button>
+            );
+          })}
         </div>
         <p className="text-[11px] text-muted-foreground">{t("scan.hint")}</p>
       </div>
@@ -622,6 +734,8 @@ export function ScanSurface({
       {cameraOpen ? (
         <CameraSheet
           existingCount={files.length}
+          preset={preset}
+          onPresetChange={applyPreset}
           onDone={onCameraDone}
           onClose={() => setCameraOpen(false)}
         />
@@ -633,6 +747,8 @@ export function ScanSurface({
           file={editingFileRef?.file ?? null}
           fileKey={editingFileRef?.id ?? editingPage.uid}
           pageIndex={editingIndex + 1}
+          total={pages.length}
+          autoStraighten={values.autoStraighten !== false}
           onClose={() => setEditingUid(null)}
           onChangeQuad={(quad, autoDetected) => {
             apply(
@@ -641,8 +757,23 @@ export function ScanSurface({
               )
             );
           }}
-          onChangeFilter={(filter) => {
-            apply(setScanFilter(pages, [editingIndex], filter));
+          onChangeFilter={(filter, allPages) => {
+            apply(
+              setScanFilter(
+                pages,
+                allPages ? pages.map((_, index) => index) : [editingIndex],
+                filter
+              )
+            );
+          }}
+          onChangeAdjust={(adjust, allPages) => {
+            apply(
+              setScanAdjust(
+                pages,
+                allPages ? pages.map((_, index) => index) : [editingIndex],
+                adjust
+              )
+            );
           }}
           onRotate={(delta) => {
             apply(rotateScanPages(pages, [editingIndex], delta));
@@ -875,18 +1006,24 @@ function PageEditorDialog({
   file,
   fileKey,
   pageIndex,
+  total,
+  autoStraighten,
   onClose,
   onChangeQuad,
   onChangeFilter,
+  onChangeAdjust,
   onRotate,
 }: {
   page: ScanPage;
   file: File | null;
   fileKey: string;
   pageIndex: number;
+  total: number;
+  autoStraighten: boolean;
   onClose: () => void;
   onChangeQuad: (quad: Quad, autoDetected: boolean) => void;
-  onChangeFilter: (filter: ScanFilter) => void;
+  onChangeFilter: (filter: ScanFilter, allPages: boolean) => void;
+  onChangeAdjust: (adjust: ScanAdjust, allPages: boolean) => void;
   onRotate: (delta: number) => void;
 }) {
   const { t } = useI18n();
@@ -898,6 +1035,8 @@ function PageEditorDialog({
   const [sourceDims, setSourceDims] = useState<{ w: number; h: number } | null>(null);
   const [bitmap, setBitmap] = useState<PreviewBitmap | null>(null);
   const [bitmapError, setBitmapError] = useState(false);
+  // Round-7: "Apply to all pages" scope for filter + adjust changes.
+  const [applyAll, setApplyAll] = useState(false);
 
   // Object URL for the untouched source photo + the shared preview bitmap.
   useEffect(() => {
@@ -929,15 +1068,25 @@ function PageEditorDialog({
 
   // Live warped preview — imperative canvas redraw, one rAF per change
   // (rapid corner drags coalesce into the next frame; no React state).
+  // Round-7: adjustments + optional deskew are part of the WYSIWYG pipeline.
   useEffect(() => {
     if (!bitmap) return;
     const frame = requestAnimationFrame(() => {
       const canvas = previewCanvasRef.current;
       if (!canvas) return;
-      drawScanPreview(canvas, bitmap, page, 620);
+      drawScanPreview(canvas, bitmap, page, 620, autoStraighten);
     });
     return () => cancelAnimationFrame(frame);
-  }, [bitmap, page]);
+  }, [bitmap, page, autoStraighten]);
+
+  // Shared thumbnail base — one warp at thumb resolution; each FilterThumb
+  // copies it and applies its own filter (fast: 8 × ~180 px passes).
+  const thumbBase = useMemo(() => {
+    if (!bitmap) return null;
+    const quadAbs = denormalizeQuad(page.quad, bitmap.width, bitmap.height);
+    const { width, height } = quadOutputSize(quadAbs, 180);
+    return rotateQuarter(warpPerspective(bitmap, quadAbs, width, height), page.rotation);
+  }, [bitmap, page.quad, page.rotation]);
 
   /* --------------------------- corner dragging --------------------------- */
 
@@ -994,6 +1143,13 @@ function PageEditorDialog({
     if (det.confidence > 0.2) {
       onChangeQuad(normalizeQuad(det.quad, bitmap.width, bitmap.height), true);
     }
+  };
+
+  /** Doc Scanner's AUTO — find the page, apply the enhancer, reset dials. */
+  const runAutoEnhance = () => {
+    runAutoDetect();
+    onChangeFilter("magic", false);
+    onChangeAdjust({ brightness: 0, contrast: 0 }, false);
   };
 
   const resetCorners = () => {
@@ -1082,6 +1238,18 @@ function PageEditorDialog({
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
+                className={cn(
+                  TOOL_BTN,
+                  "border-cat-create/30 bg-cat-create/10 text-cat-create hover:bg-cat-create/20 hover:text-cat-create"
+                )}
+                onClick={runAutoEnhance}
+                disabled={!bitmap}
+              >
+                <Wand2 className="size-4" aria-hidden="true" />
+                {t("scan.autoEnhance")}
+              </Button>
+              <Button
+                type="button"
                 variant="outline"
                 className={TOOL_BTN}
                 onClick={runAutoDetect}
@@ -1156,39 +1324,126 @@ function PageEditorDialog({
             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               {t("scan.filterTitle")}
             </p>
+            {/* Live thumbnail rail (Doc Scanner's filter carousel) */}
             <div
-              className="grid grid-cols-2 gap-2"
+              className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:thin]"
               role="radiogroup"
               aria-label={t("scan.filterTitle")}
             >
               {FILTERS.map((entry) => {
                 const active = page.filter === entry.id;
-                const Icon = entry.icon;
                 return (
-                  <button
+                  <FilterThumb
                     key={entry.id}
+                    base={thumbBase}
+                    filter={entry.id}
+                    adjust={page.adjust}
+                    icon={entry.icon}
+                    label={t(`scan.filter.${entry.id}`)}
+                    active={active}
+                    onSelect={() => onChangeFilter(entry.id, applyAll)}
+                  />
+                );
+              })}
+            </div>
+
+            {/* Manual adjustments (brightness / contrast) */}
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {t("scan.adjustTitle")}
+            </p>
+            <div className="flex flex-col gap-3 rounded-card border border-border bg-card p-3">
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="scan-brightness"
+                    className="flex items-center gap-1.5 text-xs font-medium text-foreground"
+                  >
+                    <Sun className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    {t("scan.brightness")}
+                  </label>
+                  <span className="rounded-chip bg-muted px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-muted-foreground">
+                    {page.adjust.brightness > 0 ? "+" : ""}
+                    {page.adjust.brightness}
+                  </span>
+                </div>
+                <input
+                  id="scan-brightness"
+                  type="range"
+                  min={-40}
+                  max={40}
+                  step={1}
+                  value={page.adjust.brightness}
+                  onChange={(event) =>
+                    onChangeAdjust(
+                      { ...page.adjust, brightness: Number(event.target.value) },
+                      applyAll
+                    )
+                  }
+                  className="h-6 w-full cursor-pointer accent-primary"
+                  aria-label={t("scan.brightness")}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="scan-contrast"
+                    className="flex items-center gap-1.5 text-xs font-medium text-foreground"
+                  >
+                    <Contrast className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    {t("scan.contrast")}
+                  </label>
+                  <span className="rounded-chip bg-muted px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-muted-foreground">
+                    {page.adjust.contrast > 0 ? "+" : ""}
+                    {page.adjust.contrast}
+                  </span>
+                </div>
+                <input
+                  id="scan-contrast"
+                  type="range"
+                  min={-40}
+                  max={40}
+                  step={1}
+                  value={page.adjust.contrast}
+                  onChange={(event) =>
+                    onChangeAdjust(
+                      { ...page.adjust, contrast: Number(event.target.value) },
+                      applyAll
+                    )
+                  }
+                  className="h-6 w-full cursor-pointer accent-primary"
+                  aria-label={t("scan.contrast")}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChangeAdjust({ brightness: 0, contrast: 0 }, applyAll)
+                  }
+                  disabled={page.adjust.brightness === 0 && page.adjust.contrast === 0}
+                  className="flex h-9 min-h-9 items-center gap-1.5 rounded-btn border border-border bg-card px-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
+                >
+                  <RotateCcw className="size-3.5" aria-hidden="true" />
+                  {t("scan.adjustReset")}
+                </button>
+                {total > 1 ? (
+                  <button
                     type="button"
-                    role="radio"
-                    aria-checked={active}
-                    onClick={() => onChangeFilter(entry.id)}
+                    role="switch"
+                    aria-checked={applyAll}
+                    onClick={() => setApplyAll((prev) => !prev)}
                     className={cn(
-                      "flex min-h-11 items-center gap-2 rounded-btn border px-3 py-2 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
-                      active
+                      "ml-auto flex h-9 min-h-9 items-center gap-1.5 rounded-btn border px-3 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                      applyAll
                         ? "border-primary/60 bg-primary/10 text-foreground"
                         : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground"
                     )}
                   >
-                    <Icon className="size-4 shrink-0" aria-hidden="true" />
-                    {t(`scan.filter.${entry.id}`)}
-                    {active ? (
-                      <Check
-                        className="ml-auto size-3.5 text-primary"
-                        aria-hidden="true"
-                      />
-                    ) : null}
+                    <Layers className="size-3.5" aria-hidden="true" />
+                    {t("scan.applyAll", { count: total })}
                   </button>
-                );
-              })}
+                ) : null}
+              </div>
             </div>
           </div>
         </div>
@@ -1203,16 +1458,107 @@ function PageEditorDialog({
   );
 }
 
+/* ------------------------------ filter thumb ------------------------------ */
+
+/**
+ * One filter option in the editor's live carousel (Doc Scanner parity):
+ * a small canvas rendered through the REAL pipeline (warp → filter →
+ * adjust) so what you see is what the exported page will be.
+ */
+function FilterThumb({
+  base,
+  filter,
+  adjust,
+  icon: Icon,
+  label,
+  active,
+  onSelect,
+}: {
+  base: ScanBitmap | null;
+  filter: ScanFilter;
+  adjust: ScanAdjust;
+  icon: typeof Sparkles;
+  label: string;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !base) return;
+    const copy: ScanBitmap = {
+      data: new Uint8ClampedArray(base.data),
+      width: base.width,
+      height: base.height,
+    };
+    applyScanFilter(copy, filter);
+    applyAdjustments(copy, adjust);
+    canvas.width = copy.width;
+    canvas.height = copy.height;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.putImageData(
+      new ImageData(new Uint8ClampedArray(copy.data), copy.width, copy.height),
+      0,
+      0
+    );
+  }, [base, filter, adjust]);
+
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={onSelect}
+      className={cn(
+        "flex w-24 shrink-0 flex-col gap-1 rounded-btn border p-1.5 text-center outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        active
+          ? "border-primary/60 bg-primary/10"
+          : "border-border bg-card hover:bg-accent"
+      )}
+    >
+      <span className="flex h-14 items-center justify-center overflow-hidden rounded-chip bg-muted/50">
+        {base ? (
+          <canvas
+            ref={canvasRef}
+            role="img"
+            aria-label={label}
+            className="max-h-full max-w-full object-contain"
+          />
+        ) : (
+          <Loader2
+            className="size-4 animate-spin text-muted-foreground/60"
+            aria-hidden="true"
+          />
+        )}
+      </span>
+      <span className="flex items-center justify-center gap-1 text-[10px] font-medium leading-tight text-foreground">
+        {active ? (
+          <Check className="size-3 shrink-0 text-primary" aria-hidden="true" />
+        ) : (
+          <Icon className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+        )}
+        {label}
+      </span>
+    </button>
+  );
+}
+
 /* ------------------------------ camera sheet ------------------------------ */
 
 type CameraError = "denied" | "notfound" | "unsupported" | null;
 
 function CameraSheet({
   existingCount,
+  preset,
+  onPresetChange,
   onDone,
   onClose,
 }: {
   existingCount: number;
+  preset: ScanPreset | null;
+  onPresetChange: (next: ScanPreset | null) => void;
   onDone: (captured: File[]) => void;
   onClose: () => void;
 }) {
@@ -1230,6 +1576,31 @@ function CameraSheet({
   const [torchSupported, setTorchSupported] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [videoDims, setVideoDims] = useState<{ w: number; h: number } | null>(null);
+  // Round-7: auto-capture (AI shutter), composition grid, stability chip.
+  const [autoCapture, setAutoCapture] = useState(false);
+  const [gridOn, setGridOn] = useState(false);
+  const [stableCount, setStableCount] = useState(0);
+
+  // Mirrors for the interval closure (house pattern — refs only in effects).
+  const capturingRef = useRef(false);
+  const autoCaptureRef = useRef(false);
+  const shotsRef = useRef(0);
+  const stableGeomRef = useRef<{ cx: number; cy: number; area: number } | null>(null);
+  const stableTickRef = useRef(0);
+  const autoCooldownRef = useRef(0);
+  // Stable handle to `capture` for the interval (declared below).
+  const captureRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    capturingRef.current = capturing;
+  }, [capturing]);
+  useEffect(() => {
+    shotsRef.current = shots.length;
+  }, [shots.length]);
+  useEffect(() => {
+    autoCaptureRef.current = autoCapture;
+    stableGeomRef.current = null;
+  }, [autoCapture]);
 
   const maxShots = 30 - existingCount;
 
@@ -1289,7 +1660,11 @@ function CameraSheet({
     };
   }, [startStream]);
 
-  // Live edge detection — throttled overlay on the video feed.
+  // Live edge detection — throttled overlay on the video feed. Round-7:
+  // the quad is stored NORMALIZED (0..1 of the sniff buffer) and rendered
+  // on a 0..100 viewBox — fixing the old mismatch where absolute sniff
+  // pixels were plotted on a full-resolution viewBox (overlay sat tiny in
+  // the top-left corner instead of tracking the page).
   useEffect(() => {
     if (!ready) return;
     const small = document.createElement("canvas");
@@ -1308,7 +1683,50 @@ function CameraSheet({
         context.drawImage(video, 0, 0, width, height);
         const data = context.getImageData(0, 0, width, height).data;
         const det = detectDocumentQuad(data, width, height);
-        setOverlay({ quad: det.quad, confident: det.confidence > 0.45 });
+        const confident = det.confidence > 0.45;
+        setOverlay({ quad: normalizeQuad(det.quad, width, height), confident });
+
+        // Auto-capture stability — fire when the confident quad holds
+        // still for 4 consecutive ticks (~1.8 s), then cool down 2.5 s.
+        const q = det.quad;
+        const cx = (q[0] + q[2] + q[4] + q[6]) / 4;
+        const cy = (q[1] + q[3] + q[5] + q[7]) / 4;
+        let area = 0;
+        for (let i = 0; i < 4; i += 1) {
+          const j = (i + 1) % 4;
+          area += q[i * 2] * q[j * 2 + 1] - q[j * 2] * q[i * 2 + 1];
+        }
+        area = Math.abs(area) / 2;
+        const geom = { cx, cy, area };
+        const last = stableGeomRef.current;
+        const cooledDown = Date.now() >= autoCooldownRef.current;
+        const canAuto =
+          autoCaptureRef.current &&
+          confident &&
+          cooledDown &&
+          !capturingRef.current &&
+          shotsRef.current < 30 - existingCount;
+        if (canAuto && last) {
+          const stable =
+            Math.abs(cx - last.cx) <= width * 0.02 &&
+            Math.abs(cy - last.cy) <= height * 0.02 &&
+            Math.abs(area - last.area) <= last.area * 0.08;
+          const count = stable ? stableTickRef.current + 1 : 0;
+          stableTickRef.current = count;
+          setStableCount(count);
+          if (count >= 4) {
+            stableTickRef.current = 0;
+            setStableCount(0);
+            autoCooldownRef.current = Date.now() + 2500;
+            stableGeomRef.current = null;
+            void captureRef.current?.();
+          }
+        } else {
+          stableTickRef.current = 0;
+          setStableCount(0);
+        }
+        if (confident) stableGeomRef.current = geom;
+        else stableGeomRef.current = null;
       } catch {
         // Frame read hiccup — keep the last overlay, try next tick.
       } finally {
@@ -1318,11 +1736,12 @@ function CameraSheet({
     return () => {
       window.clearInterval(timer);
     };
-  }, [ready]);
+  }, [ready, existingCount]);
 
   const capture = async () => {
     const video = videoRef.current;
-    if (!video || video.videoWidth === 0 || capturing) return;
+    if (!video || video.videoWidth === 0 || capturingRef.current) return;
+    capturingRef.current = true;
     setCapturing(true);
     try {
       const maxEdge = 2560;
@@ -1348,9 +1767,15 @@ function CameraSheet({
       shotUrlsRef.current.add(url);
       setShots((prev) => [...prev, { url, file }]);
     } finally {
+      capturingRef.current = false;
       setCapturing(false);
     }
   };
+
+  // Publish the capture handle for the auto-capture interval.
+  useEffect(() => {
+    captureRef.current = () => void capture();
+  });
 
   const removeShot = (url: string) => {
     URL.revokeObjectURL(url);
@@ -1387,12 +1812,12 @@ function CameraSheet({
       className="fixed inset-0 z-[70] flex flex-col bg-black text-white"
     >
       {/* Header */}
-      <div className="flex items-center gap-3 p-4 pb-2">
+      <div className="flex items-center gap-2 p-4 pb-2">
         <button
           type="button"
           onClick={onClose}
           aria-label={t("scan.closeCamera")}
-          className="flex size-11 items-center justify-center rounded-full bg-white/10 outline-none transition-colors hover:bg-white/20 focus-visible:ring-[3px] focus-visible:ring-white/60"
+          className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white/10 outline-none transition-colors hover:bg-white/20 focus-visible:ring-[3px] focus-visible:ring-white/60"
         >
           <X className="size-5" aria-hidden="true" />
         </button>
@@ -1402,6 +1827,67 @@ function CameraSheet({
             {t("scan.shotsCount", { count: shots.length })}
           </span>
         ) : null}
+        <span className={cn("flex gap-1.5", shots.length > 0 ? "" : "ml-auto")}>
+          {/* Round-7: auto-capture (AI shutter) + composition grid */}
+          <button
+            type="button"
+            aria-pressed={autoCapture}
+            aria-label={t("scan.autoCapture")}
+            title={t("scan.autoCapture")}
+            onClick={() => setAutoCapture((prev) => !prev)}
+            className={cn(
+              "flex size-11 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-white/60",
+              autoCapture
+                ? "bg-emerald-400 text-black"
+                : "bg-white/10 hover:bg-white/20"
+            )}
+          >
+            <Timer className="size-5" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            aria-pressed={gridOn}
+            aria-label={t("scan.gridLines")}
+            title={t("scan.gridLines")}
+            onClick={() => setGridOn((prev) => !prev)}
+            className={cn(
+              "flex size-11 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-white/60",
+              gridOn ? "bg-white/80 text-black" : "bg-white/10 hover:bg-white/20"
+            )}
+          >
+            <Grid3x3 className="size-5" aria-hidden="true" />
+          </button>
+        </span>
+      </div>
+
+      {/* Preset row (Photo / ID Card / Document / Book / Signature) */}
+      <div
+        className="flex items-center gap-1.5 overflow-x-auto px-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        role="group"
+        aria-label={t("scan.presetTitle")}
+      >
+        {SCAN_PRESETS.map((id) => {
+          const active = preset === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onPresetChange(active ? null : id)}
+              className={cn(
+                "flex h-8 min-h-8 shrink-0 items-center gap-1 rounded-btn border px-2.5 text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-white/60",
+                active
+                  ? "border-emerald-300/70 bg-emerald-400/20 text-emerald-100"
+                  : "border-white/20 bg-white/5 text-white/80 hover:bg-white/15"
+              )}
+            >
+              {active ? (
+                <Check className="size-3" aria-hidden="true" />
+              ) : null}
+              {t(`scan.preset.${id}`)}
+            </button>
+          );
+        })}
       </div>
 
       {/* Video stage */}
@@ -1424,11 +1910,61 @@ function CameraSheet({
             className="size-full rounded-card bg-black object-contain"
             aria-label={t("scan.cameraFeed")}
           />
-          {/* Live detection overlay */}
-          {overlay && videoDims ? (
+          {/* Composition grid (rule of thirds, Round-7) */}
+          {gridOn && videoDims ? (
             <svg
               aria-hidden="true"
               viewBox={`0 0 ${videoDims.w} ${videoDims.h}`}
+              preserveAspectRatio="none"
+              className="pointer-events-none absolute inset-0 size-full"
+            >
+              <line
+                x1={videoDims.w / 3}
+                y1={0}
+                x2={videoDims.w / 3}
+                y2={videoDims.h}
+                stroke="rgba(255,255,255,0.35)"
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+              <line
+                x1={(videoDims.w * 2) / 3}
+                y1={0}
+                x2={(videoDims.w * 2) / 3}
+                y2={videoDims.h}
+                stroke="rgba(255,255,255,0.35)"
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+              <line
+                x1={0}
+                y1={videoDims.h / 3}
+                x2={videoDims.w}
+                y2={videoDims.h / 3}
+                stroke="rgba(255,255,255,0.35)"
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+              <line
+                x1={0}
+                y1={(videoDims.h * 2) / 3}
+                x2={videoDims.w}
+                y2={(videoDims.h * 2) / 3}
+                stroke="rgba(255,255,255,0.35)"
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+            </svg>
+          ) : null}
+
+          {/* Live detection overlay — normalized quad on a 0..100 viewBox
+              (Round-7 coordinate fix: previously absolute sniff-buffer
+              pixels were plotted on the full-resolution viewBox, so the
+              polygon never tracked the page). */}
+          {overlay && videoDims ? (
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 100 100"
               preserveAspectRatio="none"
               className={cn(
                 "pointer-events-none absolute inset-0 size-full transition-opacity duration-300",
@@ -1436,7 +1972,7 @@ function CameraSheet({
               )}
             >
               <polygon
-                points={quadPoints(overlay.quad)}
+                points={quadPoints(overlay.quad, 100)}
                 fill={
                   overlay.confident
                     ? "rgba(16, 185, 129, 0.12)"
@@ -1506,6 +2042,19 @@ function CameraSheet({
               ) : (
                 t("scan.searching")
               )}
+            </span>
+          ) : null}
+
+          {/* Auto-capture progress ring (Round-7) — shows the coming shot */}
+          {ready && !error && autoCapture && overlay?.confident && stableCount > 0 ? (
+            <span className="pointer-events-none absolute right-3 top-3 flex items-center gap-1.5 rounded-chip bg-emerald-500/90 px-2.5 py-1 text-[11px] font-bold text-white shadow-lg">
+              <Timer className="size-3 animate-pulse" aria-hidden="true" />
+              {t("scan.autoCaptureIn", { count: Math.max(1, 4 - stableCount) })}
+            </span>
+          ) : null}
+          {ready && !error && autoCapture && !overlay?.confident ? (
+            <span className="pointer-events-none absolute right-3 top-3 rounded-chip bg-black/60 px-2.5 py-1 text-[11px] font-semibold text-white/85 shadow-lg">
+              {t("scan.autoCaptureOn")}
             </span>
           ) : null}
         </div>

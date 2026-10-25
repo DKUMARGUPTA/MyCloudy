@@ -2,7 +2,9 @@ import { PDFDocument } from "pdf-lib";
 
 import type { OptionValues } from "@/lib/tools/config-types";
 import {
+  applyAdjustments,
   applyScanFilter,
+  autoDeskew,
   denormalizeQuad,
   parseScanPagesOption,
   quadOutputSize,
@@ -123,6 +125,11 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const pageSize = String(options.pageSize ?? "a4");
   const margin = MARGIN_PT[String(options.margin ?? "none")] ?? 0;
   const maxEdge = MAX_EDGE[String(options.quality ?? "standard")] ?? 1600;
+  // Round-7: "Auto-straighten text" — deskew each page when the projection
+  // profile shows clear text-line structure (strength gate keeps photos
+  // and blank pages untouched; angle window 0.3°…5° avoids noise spins).
+  const autoStraighten = options.autoStraighten !== false;
+  const docName = String(options.docName ?? "").trim();
 
   const pdf = await PDFDocument.create();
 
@@ -135,7 +142,14 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const { width, height } = quadOutputSize(quad, maxEdge);
     let warped = warpPerspective(source, quad, width, height);
     applyScanFilter(warped, page.filter);
+    applyAdjustments(warped, page.adjust);
     warped = rotateQuarter(warped, page.rotation);
+    if (autoStraighten && page.rotation % 180 === 0) {
+      // Two-pass estimate+rotate (strength-gated: photos and blank pages
+      // pass through untouched; 90°-turned pages skip — their tilt axis is
+      // outside the sweep and the corner quad already covers the fix).
+      warped = autoDeskew(warped);
+    }
 
     const jpeg = await encodeJpeg(warped, 0.9);
     const image = await pdf.embedJpg(jpeg);
@@ -179,11 +193,17 @@ async function run(request: WorkerRunRequest): Promise<void> {
   post({ type: "progress", runId, pct: 95, stage: "saving" });
   const saved = await pdf.save({ useObjectStreams: true });
 
-  // Name: the first source's base name, unless it is one of our own
-  // camera captures (scan-…) — then a plain, friendly "scan".
-  const firstName = files[pages[0].source].name;
-  let base = firstName.replace(/\.[^.]+$/, "") || "scan";
-  if (/^scan(-|_)|^page(-|_)/i.test(base)) base = "scan";
+  // Name: the user's document name (Round-7 "Doc name"), else the first
+  // source's base name, unless it is one of our own camera captures
+  // (scan-…) — then a plain, friendly "scan".
+  let base: string;
+  if (docName) {
+    base = docName.replace(/\.pdf$/i, "");
+  } else {
+    const firstName = files[pages[0].source].name;
+    base = firstName.replace(/\.[^.]+$/, "") || "scan";
+    if (/^scan(-|_)|^page(-|_)/i.test(base)) base = "scan";
+  }
   const safeBase = base.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 120) || "scan";
 
   post({
