@@ -90,6 +90,10 @@ export function ResultView({
         dedupeBytesSaved?: number;
         imagesEmbedded?: number;
         imagesSkipped?: number;
+        /** Source characters translated (translate-pdf R9-c). */
+        translatedChars?: number;
+        /** API batches the translation needed (translate-pdf R9-c). */
+        translatedBatches?: number;
       }
     | null;
   chainFromName?: string;
@@ -208,6 +212,20 @@ export function ResultView({
         {runSummary?.confidence !== undefined ? (
           <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
             {t("result.ocrConfidence", { n: runSummary.confidence })}
+          </p>
+        ) : null}
+        {/* translate-pdf: how much text was translated and in how many
+            bounded batches (R9-c — the honest effort report). */}
+        {runSummary?.translatedChars ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.translatedChars", { n: runSummary.translatedChars })}
+          </p>
+        ) : null}
+        {runSummary?.translatedBatches ? (
+          <p className="rounded-chip bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
+            {t("result.translatedBatches", {
+              n: runSummary.translatedBatches,
+            })}
           </p>
         ) : null}
         {runSummary?.targetHit === true ? (

@@ -383,7 +383,11 @@
     "confidence": "OCR confidence {n}%",
     "errorOcrModel": "The OCR engine could not load — check your connection and try again.",
     "errorOcrEmpty": "No text was recognized — try 300 DPI or a clearer scan.",
-    "errorAlreadySigned": "This PDF already carries a digital signature — saving changes here would break it. Use Digital signature to add another one."
+    "errorAlreadySigned": "This PDF already carries a digital signature — saving changes here would break it. Use Digital signature to add another one.",
+    "errorTranslateTooLong": "That document is too long to translate in one go (200 pages / ~100,000 characters). Use the Pages option to translate a smaller range, then the next.",
+    "errorTranslateTimeout": "A translation batch took too long and the run was stopped. Check your connection and retry — or translate fewer pages.",
+    "errorTranslateAi": "The translation service is not answering right now. Check your connection and try again.",
+    "errorNoFile": "No file was received — add one and try again."
   },
   "result": {
     "title": "Your file is ready!",
@@ -425,7 +429,9 @@
     "dedupedImages": "{n, plural, =1 {1 duplicate image merged} other {# duplicate images merged}}",
     "dedupeBytesSaved": "{bytes} of duplicate image data removed",
     "ocrSendInvoice": "Send to invoice",
-    "ocrSendInvoiceHint": "No invoice fields found in this text"
+    "ocrSendInvoiceHint": "No invoice fields found in this text",
+    "translatedChars": "{n, plural, =1 {1 character translated} other {# characters translated}}",
+    "translatedBatches": "{n, plural, =1 {1 AI batch} other {# AI batches}}"
   },
   "feedback": {
     "prompt": "Was this tool useful?",
@@ -2164,7 +2170,7 @@
     "how1": "Open a PDF — the text is extracted right on your device; the file itself is never uploaded.",
     "how2": "Ask anything in English or Hindi — quick prompts or your own questions.",
     "how3": "The AI answers only from your document and cites the page — verify anything on the spot.",
-    "dropHere": "Drop your PDF here to start chatting",
+    "dropHere": "Drop up to 5 PDFs here to start chatting",
     "docPages": "{count, plural, =1 {1 page} other {# pages}}",
     "docChars": "{count, plural, =1 {1 character} other {# characters}} extracted",
     "pagesOmitted": "{count, plural, =1 {middle page omitted} other {# middle pages omitted}}",
@@ -2197,29 +2203,46 @@
     "errTimeout": "The answer took too long. Try a shorter question, or try again.",
     "errBadRequest": "That message could not be sent. Shorten it and try again.",
     "qp": {
-    "summarize": {
-    "label": "Summarize",
-    "prompt": "Summarize this document in a few short sections: what it is about, the key points, and the main conclusion."
+      "summarize": {
+        "label": "Summarize",
+        "prompt": "Summarize this document in a few short sections: what it is about, the key points, and the main conclusion."
+      },
+      "keyPoints": {
+        "label": "Key points",
+        "prompt": "List the key points of this document as short bullets, each with a page citation."
+      },
+      "actionItems": {
+        "label": "Action items",
+        "prompt": "List every action item, task, deadline or follow-up this document asks for, with page citations."
+      },
+      "explainSimple": {
+        "label": "Explain simply",
+        "prompt": "Explain this document in simple words, as if to someone new to the topic, with page citations for the main ideas."
+      },
+      "extractDates": {
+        "label": "Dates & numbers",
+        "prompt": "Extract every date, deadline, amount and important number in this document, each with a page citation."
+      }
+    },
+    "exportLabel": "Export",
+    "exportMd": "Markdown (.md)",
+    "exportTxt": "Plain text (.txt)",
+    "exportFileTitle": "Chat with PDF",
+    "exportDocumentLabel": "Document",
+    "exportGenerated": "Exported",
+    "youLabel": "You",
+    "exportDone": "Conversation downloaded",
+    "docsLabel": "{count, plural, =1 {Document} other {Documents}}",
+    "addMore": "Add more PDFs (up to 5)",
+    "multiHint": "Open one PDF — or up to 5 together — and ask anything.",
+    "fileNoText": "No text",
+    "fileEncrypted": "Password-protected",
+    "fileUnreadable": "Unreadable",
+    "filePending": "Waiting…",
+    "fileReady": "Ready",
+    "extractionFile": "Reading file {index} of {count}…",
+    "someNoText": "{count, plural, =1 {1 file has no text} other {# files have no text}}"
   },
-    "keyPoints": {
-    "label": "Key points",
-    "prompt": "List the key points of this document as short bullets, each with a page citation."
-  },
-    "actionItems": {
-    "label": "Action items",
-    "prompt": "List every action item, task, deadline or follow-up this document asks for, with page citations."
-  },
-    "explainSimple": {
-    "label": "Explain simply",
-    "prompt": "Explain this document in simple words, as if to someone new to the topic, with page citations for the main ideas."
-  },
-    "extractDates": {
-    "label": "Dates & numbers",
-    "prompt": "Extract every date, deadline, amount and important number in this document, each with a page citation."
-    }
-    }
-  },
-
   "collage": {
     "how1": "Drop 1 to 50 photos — JPG, PNG, WEBP, GIF, HEIC and TIFF all work on-device.",
     "how2": "Pick a layout and tune the page, captions and style — the live preview is exactly what exports.",

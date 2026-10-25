@@ -4,16 +4,21 @@ import {
 } from "../pdfjs-common/worker-lib";
 
 /**
- * Chat with PDF (R8) — extraction worker: pulls every page's selectable
- * text with pdf.js running INSIDE this worker (fake-worker mode, the
- * pdf-to-txt recipe). This is the ONLY thing that touches the file: the
- * PDF bytes stay on the device; just per-page text strings come out.
+ * Chat with PDF (R8, R9-b) — extraction worker: pulls every page's
+ * selectable text with pdf.js running INSIDE this worker (fake-worker
+ * mode, the pdf-to-txt recipe). This is the ONLY thing that touches the
+ * file: the PDF bytes stay on the device; just per-page text strings come
+ * out.
  *
  * Private protocol (no run-step, so not the shared WorkerRunRequest):
- *   → { type: "extract", file: ArrayBuffer }
- *   ← { type: "progress", page, total }
- *   ← { type: "pages", pages: { page, text }[] }
- *   ← { type: "error", code }   // "encrypted" | "corrupt"
+ *   → { type: "extract", file: ArrayBuffer, index?: number }
+ *   ← { type: "progress", page, total, index? }
+ *   ← { type: "pages", pages: { page, text }[], index? }
+ *   ← { type: "error", code, index? }   // "encrypted" | "corrupt"
+ *
+ * index (0-based) tags which workspace file the events belong to — the
+ * surface extracts files ONE AT A TIME (it posts the next extract only
+ * after the previous settles), so a single worker serializes cleanly.
  */
 
 type PdfjsModule = typeof import("pdfjs-dist");
@@ -106,7 +111,7 @@ function pageText(items: RawTextItem[]): string {
   return lines.join("\n");
 }
 
-async function extract(file: ArrayBuffer): Promise<void> {
+async function extract(file: ArrayBuffer, index: number): Promise<void> {
   const pdfjs: PdfjsModule = await loadPdfjsInWorker();
   const doc = await pdfjs.getDocument({
     data: new Uint8Array(file),
@@ -126,9 +131,9 @@ async function extract(file: ArrayBuffer): Promise<void> {
       const content = await page.getTextContent();
       pages.push({ page: n, text: pageText(content.items as RawTextItem[]) });
       page.cleanup();
-      post({ type: "progress", page: n, total });
+      post({ type: "progress", page: n, total, index });
     }
-    post({ type: "pages", pages });
+    post({ type: "pages", pages, index });
   } finally {
     doc.cleanup();
     await doc.destroy();
@@ -136,12 +141,18 @@ async function extract(file: ArrayBuffer): Promise<void> {
 }
 
 self.onmessage = (event: MessageEvent) => {
-  const data = event.data as { type?: string; file?: ArrayBuffer } | null;
+  const data = event.data as
+    | { type?: string; file?: ArrayBuffer; index?: number }
+    | null;
   if (data?.type !== "extract" || !(data.file instanceof ArrayBuffer)) return;
-  extract(data.file).catch((error: unknown) => {
+  const index =
+    typeof data.index === "number" && Number.isFinite(data.index) && data.index >= 0
+      ? Math.floor(data.index)
+      : 0;
+  extract(data.file, index).catch((error: unknown) => {
     const message =
       error instanceof Error ? error.message : String(error ?? "");
     const code = /password/i.test(message) ? "encrypted" : "corrupt";
-    post({ type: "error", code });
+    post({ type: "error", code, index });
   });
 };

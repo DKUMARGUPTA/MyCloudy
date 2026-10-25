@@ -43,6 +43,7 @@ import {
   Images,
   Info,
   KeyRound,
+  Languages,
   LayoutGrid,
   LayoutTemplate,
   ListChecks,
@@ -75,7 +76,6 @@ import {
   Wrench,
   Zap,
 } from "lucide-react";
-
 /**
  * DocoPDF tool registry — THE source of truth for every tool (PRD §7).
  *
@@ -1834,6 +1834,25 @@ export const ALL_TOOLS: ToolDef[] = [
     tags: {
       en: ["extract text", "plain text", "copy all"],
       hi: ["टेक्स्ट", "text", "nikalein"],
+    },
+  }),
+  def({
+    id: "translate-pdf",
+    category: "convert-from",
+    mode: "D",
+    enabled: true,
+    phase: "P1",
+    icon: Languages,
+    popularity: 72,
+    accepts: "pdf",
+    name: { en: "Translate PDF", hi: "PDF अनुवाद" },
+    description: {
+      en: "Whole-document translation into 9 languages — Hindi with real Devanagari — free.",
+      hi: "पूरे दस्तावेज़ का अनुवाद 9 भाषाओं में — हिन्दी असली देवनागरी में — मुफ़्त।",
+    },
+    tags: {
+      en: ["translate", "hindi", "language"],
+      hi: ["अनुवाद", "translate", "भाषा"],
     },
   }),
   def({

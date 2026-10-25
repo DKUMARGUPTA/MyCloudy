@@ -226,3 +226,203 @@ export function isLikelyScanned(pages: ExtractedPage[]): boolean {
   );
   return total < CHAT_LIMITS.scannedThresholdChars;
 }
+
+/* --------------------- R9-a: conversation export --------------------- */
+
+export type ChatExportFormat = "markdown" | "txt";
+
+/**
+ * Localized labels the surface passes in — the model stays i18n-free so the
+ * smoke can pin the structure without touching the catalog.
+ */
+export interface ChatExportLabels {
+  title: string;
+  document: string;
+  generated: string;
+  you: string;
+  ai: string;
+}
+
+/** Display-safe header name for one document in an export / prompt section. */
+export function cleanDocName(raw: string | undefined, cap = 80): string {
+  const cleaned = String(raw ?? "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.length > 0 ? cleaned.slice(0, cap) : "document";
+}
+
+/** Download-safe base name for the exported conversation file. */
+export function chatExportBaseName(docNames: string[]): string {
+  const base = docNames
+    .map((n) => String(n ?? "").replace(/\.(pdf)$/i, ""))
+    .join(" + ")
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+  return base.length > 0 ? base.slice(0, 100) : "document";
+}
+
+/** ISO-like local timestamp — deterministic, no locale drift in tests. */
+export function exportStamp(date: Date = new Date()): string {
+  const pad = (n: number, w = 2): string => String(n).padStart(w, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
+}
+
+/**
+ * Formats the visible conversation for download. Markdown keeps **bold** and
+ * (p. N) citations verbatim (they ARE markdown-ish); txt is plain and
+ * readable anywhere. Returns "" when there is nothing worth exporting.
+ */
+export function buildChatExport(
+  messages: ChatMessage[],
+  docNames: string[],
+  labels: ChatExportLabels,
+  format: ChatExportFormat,
+  date: Date = new Date(),
+): string {
+  const clean = sanitizeChatMessages(messages);
+  if (clean.length === 0) return "";
+  const names = (Array.isArray(docNames) ? docNames : [])
+    .map((n) => cleanDocName(n))
+    .filter((n) => n.length > 0);
+  const docLine =
+    names.length > 0 ? names.join(" + ") : "document";
+  const stamp = exportStamp(date);
+
+  if (format === "markdown") {
+    const parts: string[] = [
+      `# ${labels.title}`,
+      "",
+      `- **${labels.document}:** ${docLine}`,
+      `- **${labels.generated}:** ${stamp}`,
+      "",
+      "---",
+      "",
+    ];
+    for (const m of clean) {
+      parts.push(`**${m.role === "user" ? labels.you : labels.ai}:**`);
+      parts.push("");
+      parts.push(m.content);
+      parts.push("");
+      parts.push("---");
+      parts.push("");
+    }
+    parts.pop(); // trailing "---"
+    parts.pop(); // trailing blank
+    return parts.join("\n").replace(/\n+$/, "\n");
+  }
+
+  const parts: string[] = [
+    labels.title,
+    `${labels.document}: ${docLine}`,
+    `${labels.generated}: ${stamp}`,
+    "",
+    "========================================",
+    "",
+  ];
+  for (const m of clean) {
+    parts.push(`[${m.role === "user" ? labels.you : labels.ai}]`);
+    parts.push(m.content);
+    parts.push("");
+  }
+  return parts.join("\n").replace(/\n+$/, "\n");
+}
+
+/* ------------------- R9-b: multi-file excerpts ----------------------- */
+
+export interface ChatDoc {
+  name: string;
+  pages: ExtractedPage[];
+}
+
+export interface MultiDocEntry extends DocExcerpt {
+  name: string;
+}
+
+export interface MultiDocExcerpt {
+  excerpt: string;
+  docs: MultiDocEntry[];
+  totalChars: number;
+  sentChars: number;
+  pagesIncluded: number;
+  pagesOmitted: number;
+}
+
+/** Section header wrapping one document inside a multi-file excerpt. */
+export function fileSectionHeader(name: string): string {
+  return `=== FILE "${cleanDocName(name)}" ===`;
+}
+
+const FILE_SECTION_END = "=== END FILE ===";
+
+/**
+ * Multi-document excerpt with an even budget split and one honest
+ * redistribution pass: every document gets an equal share of the context
+ * window first; whatever the small documents leave unused is offered to the
+ * trimmed documents in file order (each absorbs what it can).
+ *
+ * One document → EXACTLY buildDocExcerpt's output (no section headers), so
+ * the single-file prompt path stays byte-identical. Returns null for an empty
+ * or wholly invalid input.
+ */
+export function buildMultiDocExcerpt(
+  docs: ChatDoc[],
+  budget: number = CHAT_LIMITS.excerptBudget,
+): MultiDocExcerpt | null {
+  const valid = (Array.isArray(docs) ? docs : []).filter(
+    (d): d is ChatDoc =>
+      !!d && typeof d.name === "string" && Array.isArray(d.pages),
+  );
+  if (valid.length === 0) return null;
+
+  const share = Math.max(
+    pageMarker(1).length + 8,
+    Math.floor(budget / valid.length),
+  );
+
+  const entries: MultiDocEntry[] = valid.map((d) => ({
+    name: cleanDocName(d.name),
+    ...buildDocExcerpt(d.pages, share),
+  }));
+
+  // Redistribution: leftover budget flows to trimmed docs in file order.
+  const used = (): number =>
+    entries.reduce((n, e) => n + e.sentChars, 0);
+  for (let i = 0; i < entries.length; i += 1) {
+    const extra = budget - used();
+    if (extra <= 0) break;
+    const e = entries[i];
+    if (e.omittedPages === 0) continue;
+    const retry = buildDocExcerpt(valid[i].pages, share + extra);
+    entries[i] = { name: e.name, ...retry };
+  }
+
+  if (entries.length === 1) {
+    const only = entries[0];
+    return {
+      excerpt: only.excerpt,
+      docs: entries,
+      totalChars: only.totalChars,
+      sentChars: only.sentChars,
+      pagesIncluded: only.pagesIncluded,
+      pagesOmitted: only.omittedPages,
+    };
+  }
+
+  const sections = entries.map(
+    (e) => `${fileSectionHeader(e.name)}\n${e.excerpt}\n${FILE_SECTION_END}`,
+  );
+  const excerpt = sections.join("\n");
+  return {
+    excerpt,
+    docs: entries,
+    totalChars: entries.reduce((n, e) => n + e.totalChars, 0),
+    sentChars: excerpt.length,
+    pagesIncluded: entries.reduce((n, e) => n + e.pagesIncluded, 0),
+    pagesOmitted: entries.reduce((n, e) => n + e.omittedPages, 0),
+  };
+}

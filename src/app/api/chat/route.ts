@@ -43,6 +43,7 @@ type ValidBody = {
   messages: { role: "user" | "assistant"; content: string }[];
   docExcerpt: string;
   docName?: string;
+  docCount: number;
   locale: "en" | "hi";
 };
 
@@ -69,7 +70,7 @@ async function callModel(body: ValidBody): Promise<string> {
   const zai = await ZAI.create();
   const completion = await zai.chat.completions.create({
     messages: [
-      { role: "assistant", content: buildSystemPrompt() },
+      { role: "assistant", content: buildSystemPrompt(body.docCount) },
       { role: "user", content: buildDocMessage(body.docExcerpt, body.docName) },
       { role: "assistant", content: DOC_ACK_MESSAGE },
       ...body.messages,

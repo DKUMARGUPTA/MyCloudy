@@ -27,10 +27,17 @@ import { join } from "node:path";
 import {
   CHAT_LIMITS,
   buildDocExcerpt,
+  buildChatExport,
+  buildMultiDocExcerpt,
+  chatExportBaseName,
+  cleanDocName,
   cleanUserText,
+  exportStamp,
+  fileSectionHeader,
   isLikelyScanned,
   pageMarker,
   sanitizeChatMessages,
+  type ChatExportLabels,
 } from "../tools/chat-with-pdf/model";
 import {
   CHAT_API,
@@ -351,7 +358,8 @@ check(
   "config is viewerOnly + landingSurface (hero on landing, no run step)",
   /viewerOnly: true/.test(config) &&
     /landingSurface: true/.test(config) &&
-    /maxFiles: 1/.test(config) &&
+    /maxFiles: 5/.test(config) &&
+    /minFiles: 1/.test(config) &&
     /options: \[\]/.test(config),
 );
 check(
@@ -393,9 +401,10 @@ check(
   /encrypted/.test(worker) && /corrupt/.test(worker),
 );
 check(
-  "surface: posts ONLY excerpt+history to /api/chat",
+  "surface: posts ONLY excerpt+history to /api/chat (R9: + docCount)",
   surface.includes('"/api/chat"') &&
-    /docExcerpt: current\.doc\.excerpt/.test(surface) &&
+    /docExcerpt: current\.excerpt/.test(surface) &&
+    /docCount: Math\.max\(1, readyCount\)/.test(surface) &&
     !/arrayBuffer\(\)[\s\S]{0,200}fetch/.test(surface),
 );
 check(
@@ -551,6 +560,271 @@ check(
       ),
     ),
 );
+
+/* ---------------- 5. R9-a: export vectors ---------------- */
+
+console.log("\n§5 R9-a — conversation export builders");
+
+const LABELS: ChatExportLabels = {
+  title: "Chat with PDF",
+  document: "Document",
+  generated: "Exported",
+  you: "You",
+  ai: "DocoPDF AI",
+};
+
+{
+  const msgHistory = [
+    {
+      role: "user" as const,
+      content: "What is the revenue? (p. 2)",
+    },
+    {
+      role: "assistant" as const,
+      content: "Revenue is **12.5 crore** (p. 2).",
+    },
+  ];
+
+  const md = buildChatExport(msgHistory, ["report.pdf"], LABELS, "markdown", new Date(2026, 9, 25, 14, 5));
+  check(
+    "export md: header + labels + content + stamp",
+    md.startsWith("# Chat with PDF\n") &&
+      md.includes("- **Document:** report.pdf") &&
+      md.includes("- **Exported:** 2026-10-25 14:05") &&
+      md.includes("**You:**") &&
+      md.includes("**DocoPDF AI:**") &&
+      md.includes("What is the revenue? (p. 2)") &&
+      md.includes("Revenue is **12.5 crore** (p. 2)."),
+    `${md.length} chars`,
+  );
+  check(
+    "export md: no trailing separator junk",
+    !md.endsWith("\n---\n") && !/\n{3,}$/.test(md),
+  );
+
+  const txt = buildChatExport(msgHistory, ["a.pdf", "b.pdf"], LABELS, "txt", new Date(2026, 0, 2, 3, 4));
+  check(
+    "export txt: plain format, joined doc names, bracket roles",
+    txt.startsWith("Chat with PDF\nDocument: a.pdf + b.pdf\nExported: 2026-01-02 03:04\n") &&
+      txt.includes("========================================") &&
+      txt.includes("[You]") &&
+      txt.includes("[DocoPDF AI]") &&
+      !txt.startsWith("#") &&
+      !/-\s*\*\*Document/.test(txt),
+  );
+
+  check(
+    "export: empty conversation → empty string",
+    buildChatExport([], ["x.pdf"], LABELS, "markdown") === "",
+  );
+  check(
+    "export: no doc names → 'document' placeholder",
+    buildChatExport(msgHistory, [], LABELS, "txt").includes("Document: document"),
+  );
+  check(
+    "export: sanitizes roles (bad input never crashes)",
+    buildChatExport(
+      [{ role: "evil" as "user", content: "x" }],
+      ["x.pdf"],
+      LABELS,
+      "txt",
+    ) === "",
+  );
+  check(
+    "exportStamp: zero-padded deterministic stamp",
+    exportStamp(new Date(2026, 9, 25, 14, 5)) === "2026-10-25 14:05",
+  );
+  check(
+    "chatExportBaseName: joins + strips .pdf + unsafe chars",
+    chatExportBaseName(["My Report.pdf", "q3/v2.pdf"]) ===
+      "My Report + q3_v2",
+  );
+  check(
+    "chatExportBaseName: empty input falls back",
+    chatExportBaseName([]) === "document" && chatExportBaseName([".pdf"]) === "document",
+  );
+  check(
+    "cleanDocName: control chars → space, collapsed, capped, defaults",
+    cleanDocName("a\u0000b   c.pdf") === "a b c.pdf" &&
+      cleanDocName("") === "document" &&
+      cleanDocName(undefined) === "document" &&
+      cleanDocName("x".repeat(100)).length === 80,
+  );
+}
+
+/* ---------------- 6. R9-b: multi-file excerpt + prompt ---------------- */
+
+console.log("\n§6 R9-b — multi-file excerpts, budget split, prompt rule");
+
+{
+  const mk = (n: number, chars: number): { page: number; text: string }[] =>
+    Array.from({ length: n }, (_, i) => ({
+      page: i + 1,
+      text: `p${i + 1}-`.padEnd(chars, "x"),
+    }));
+
+  // Single doc → byte-identical to buildDocExcerpt (zero regression pin).
+  const one = buildMultiDocExcerpt([{ name: "solo.pdf", pages: mk(3, 40) }]);
+  const oneRef = buildDocExcerpt(mk(3, 40));
+  check(
+    "multi: single doc excerpt === buildDocExcerpt (no section headers)",
+    one !== null && one.excerpt === oneRef.excerpt && one.docs.length === 1,
+  );
+  check(
+    "multi: single doc keeps plain [[p N]] markers",
+    one !== null && one.excerpt.includes("[[p 2]]") && !one.excerpt.includes("=== FILE"),
+  );
+
+  check(
+    "multi: null for empty / invalid input",
+    buildMultiDocExcerpt([]) === null &&
+      buildMultiDocExcerpt(null as unknown as []) === null &&
+      buildMultiDocExcerpt([{ name: 5, pages: [] } as unknown as { name: string; pages: [] }]) === null,
+  );
+
+  // Even split: two small docs both fit fully inside their shares.
+  const twoSmall = buildMultiDocExcerpt([
+    { name: "a.pdf", pages: mk(2, 30) },
+    { name: "b.pdf", pages: mk(2, 30) },
+  ]);
+  check(
+    "multi: both docs present with === FILE headers + END markers",
+    twoSmall !== null &&
+      twoSmall.excerpt.includes(fileSectionHeader("a.pdf")) &&
+      twoSmall.excerpt.includes(fileSectionHeader("b.pdf")) &&
+      twoSmall.excerpt.includes("=== END FILE ===") &&
+      twoSmall.excerpt.indexOf("a.pdf") < twoSmall.excerpt.indexOf("b.pdf") &&
+      twoSmall.pagesIncluded === 4 &&
+      twoSmall.pagesOmitted === 0,
+  );
+
+  // Budget split: two BIG docs under a tiny budget → each trimmed to its
+  // share, honest omitted markers per doc, page CONTENT within budget (the
+  // [[omitted]] markers and === FILE headers are overhead, never content).
+  const tiny = 600;
+  const contentOnly = (s: string): string =>
+    s
+      .split("\n")
+      .filter(
+        (l) =>
+          !l.startsWith("[[omitted]]") && !l.startsWith("=== "),
+      )
+      .join("\n");
+  const twoBig = buildMultiDocExcerpt(
+    [
+      { name: "big-a.pdf", pages: mk(20, 60) },
+      { name: "big-b.pdf", pages: mk(20, 60) },
+    ],
+    tiny,
+  );
+  check(
+    "multi: over-budget docs split evenly (each trimmed, no free ride)",
+    twoBig !== null &&
+      contentOnly(twoBig.excerpt).length <= tiny &&
+      twoBig.docs[0].omittedPages > 0 &&
+      twoBig.docs[1].omittedPages > 0 &&
+      Math.abs(twoBig.docs[0].sentChars - twoBig.docs[1].sentChars) <= 200,
+    `content=${contentOnly(twoBig?.excerpt ?? "").length} of ${tiny} (a=${twoBig?.docs[0].sentChars}, b=${twoBig?.docs[1].sentChars})`,
+  );
+
+  // Redistribution: one tiny doc + one big doc under a small budget → the
+  // big doc absorbs the tiny doc's unused share (CONTENT within budget).
+  const mixed = buildMultiDocExcerpt(
+    [
+      { name: "tiny.pdf", pages: mk(1, 20) },
+      { name: "huge.pdf", pages: mk(30, 60) },
+    ],
+    1200,
+  );
+  check(
+    "multi: leftover budget redistributed to the trimmed doc",
+    mixed !== null &&
+      mixed.docs[0].omittedPages === 0 &&
+      contentOnly(mixed.excerpt).length > 950 &&
+      contentOnly(mixed.excerpt).length <= 1200,
+    `content=${contentOnly(mixed?.excerpt ?? "").length} of 1200`,
+  );
+
+  check(
+    "fileSectionHeader: name cleaned + quoted",
+    fileSectionHeader("plain.pdf") === '=== FILE "plain.pdf" ===' &&
+      fileSectionHeader("multi  space.pdf") === '=== FILE "multi space.pdf" ===' &&
+      fileSectionHeader("") === '=== FILE "document" ===',
+  );
+
+  // api-model: docCount drives the multi citation rule.
+  const single = buildSystemPrompt(1);
+  const multiPrompt = buildSystemPrompt(3);
+  check(
+    "prompt: docCount 1 is byte-identical to the R8 single-file prompt",
+    single === buildSystemPrompt() &&
+      !single.includes("=== FILE") &&
+      !single.includes("2a."),
+  );
+  check(
+    "prompt: docCount > 1 adds the file-citation rule 2a",
+    multiPrompt.includes("2a. Several documents are open (3).") &&
+      multiPrompt.includes('cite the document too, like ("name" p. 3)'),
+  );
+  check(
+    "schema: docCount validated (1..5, default 1)",
+    chatBodySchema.safeParse({
+      messages: [{ role: "user", content: "hi" }],
+      docExcerpt: "x",
+      docCount: 5,
+    }).success &&
+      chatBodySchema.safeParse({
+        messages: [{ role: "user", content: "hi" }],
+        docExcerpt: "x",
+      }).data?.docCount === 1 &&
+      !chatBodySchema.safeParse({
+        messages: [{ role: "user", content: "hi" }],
+        docExcerpt: "x",
+        docCount: 6,
+      }).success &&
+      !chatBodySchema.safeParse({
+        messages: [{ role: "user", content: "hi" }],
+        docExcerpt: "x",
+        docCount: 0,
+      }).success,
+  );
+
+  // Surface wiring: multi-file + export locks.
+  const surfaceR9 = read("tools/chat-with-pdf/surface.tsx");
+  check(
+    "surface: sequential per-file extraction with index-tagged events",
+    surfaceR9.includes("extractOne(") &&
+      /postMessage\(\s*\{ type: "extract", file: buf, index \}/.test(surfaceR9),
+  );
+  check(
+    "surface: signature-keyed effect (ids joined) + retry tick",
+    /filesSig = files\.map\(\(f\) => f\.id\)\.join\("\|"\)/.test(surfaceR9) &&
+      /\[filesSig, retryTick\]/.test(surfaceR9),
+  );
+  check(
+    "surface: export dropdown with md + txt handlers",
+    surfaceR9.includes('exportChat("markdown")') &&
+      surfaceR9.includes('exportChat("txt")') &&
+      /chatExportBaseName\(/.test(surfaceR9) &&
+      /new Blob\(\[text\]/.test(surfaceR9),
+  );
+  check(
+    "surface: file citation chips render (name · p. N pattern)",
+    surfaceR9.includes("p.&nbsp;{m[3]}") &&
+      surfaceR9.includes("{m[2]}") &&
+      surfaceR9.includes("renderInline"),
+  );
+  check(
+    "worker: index-tagged protocol events",
+    /post\(\{ type: "progress", page: n, total, index \}\)/.test(
+      read("tools/chat-with-pdf/worker.ts"),
+    ) && /post\(\{ type: "error", code, index \}\)/.test(read("tools/chat-with-pdf/worker.ts")),
+  );
+  check(
+    "route: prompt carries the real docCount",
+    read("src/app/api/chat/route.ts").includes("buildSystemPrompt(body.docCount)"),
+  );
+}
 
 /* ---------------- verdict ---------------- */
 

@@ -14,6 +14,7 @@ import {
   Check,
   ClipboardCheck,
   Copy,
+  Download,
   FileText,
   FileUp,
   Lightbulb,
@@ -24,49 +25,69 @@ import {
   Send,
   Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { DropZone } from "@/components/doco/tool/drop-zone";
 import { useI18n } from "@/components/providers/locale-provider";
 import { useToast } from "@/hooks/use-toast";
 import { formatBytes } from "@/lib/storage/recent-files";
 import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
 import {
-  buildDocExcerpt,
+  buildChatExport,
+  buildMultiDocExcerpt,
+  chatExportBaseName,
+  cleanDocName,
   cleanUserText,
   isLikelyScanned,
   sanitizeChatMessages,
+  type ChatDoc,
+  type ChatExportFormat,
+  type ChatExportLabels,
   type ChatMessage,
-  type DocExcerpt,
   type ExtractedPage,
+  type MultiDocExcerpt,
 } from "./model";
 
 /**
- * Chat with PDF (R8) — the workspace IS the tool (viewerOnly, like
- * view-pdf): no run step, no output file. Pipeline:
+ * Chat with PDF (R8, R9-a export, R9-b multi-file) — the workspace IS the
+ * tool (viewerOnly, like view-pdf): no run step, no output file. Pipeline:
  *
- *   file → extraction worker (on-device, page-marked text)
- *        → buildDocExcerpt (bounded head+tail)
- *        → /api/chat (ONLY excerpt + visible history)
- *        → streamed-in answer bubbles with (p. N) citation chips.
+ *   files (1..5) → extraction worker (on-device, page-marked text,
+ *                  one file at a time, index-tagged events)
+ *               → buildMultiDocExcerpt (even budget split + honest
+ *                  redistribution, === FILE "name" === sections)
+ *               → /api/chat (ONLY excerpt + visible history + docCount)
+ *               → answer bubbles with (p. N) and ("name" p. N) chips.
  *
  * Hooks discipline (the R3 house rules): no setState during render —
- * refs are read inside callbacks and effects only; the file-keyed effect
- * depends on the file ID string, so parent re-renders with a rebuilt
- * files array never restart an in-flight extraction.
+ * refs are read inside callbacks and effects only; the extraction effect
+ * depends on the file-set SIGNATURE (ids joined), so parent re-renders
+ * with a rebuilt files array never restart an in-flight extraction.
  */
 
-type Extraction =
-  | { status: "working"; page: number; total: number }
-  | { status: "ready"; doc: DocExcerpt; pages: number }
-  | { status: "scanned" }
-  | { status: "failed"; code: "encrypted" | "corrupt" };
+type FileStatus = "pending" | "ready" | "scanned" | "encrypted" | "corrupt";
+
+interface WorkingExtraction {
+  state: "working";
+  fileIndex: number;
+  fileCount: number;
+  page: number;
+  total: number;
+}
 
 interface WorkerEvent {
   type?: string;
   page?: number;
   total?: number;
+  index?: number;
   pages?: ExtractedPage[];
   code?: "encrypted" | "corrupt";
 }
@@ -79,10 +100,11 @@ const QUICK_PROMPTS = [
   { id: "extractDates", icon: CalendarClock },
 ] as const;
 
-/** Markdown-lite inline: **bold** and (p. N) → citation chip. */
+/** Markdown-lite inline: **bold**, (p. N) and ("name" p. N) citation chips. */
 function renderInline(text: string, keyBase: string): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const pattern = /\*\*([^*]+)\*\*|\(p\.\s*(\d+)\)/g;
+  const pattern =
+    /\*\*([^*]+)\*\*|\("([^"]+)"\s*p\.\s*(\d+)\)|\(p\.\s*(\d+)\)/g;
   let last = 0;
   let n = 0;
   let m: RegExpExecArray | null;
@@ -97,10 +119,22 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
     } else if (m[2] !== undefined) {
       nodes.push(
         <span
+          key={`${keyBase}-fc${n}`}
+          title={m[2]}
+          className="mx-0.5 inline-flex max-w-[13rem] items-center gap-1 truncate rounded-full bg-primary/10 px-1.5 py-px text-[11px] font-semibold text-primary"
+        >
+          <span className="truncate">{m[2]}</span>
+          <span aria-hidden>·</span>
+          <span>p.&nbsp;{m[3]}</span>
+        </span>,
+      );
+    } else if (m[4] !== undefined) {
+      nodes.push(
+        <span
           key={`${keyBase}-c${n}`}
           className="mx-0.5 inline-flex items-center rounded-full bg-primary/10 px-1.5 py-px text-[11px] font-semibold text-primary"
         >
-          p.&nbsp;{m[2]}
+          p.&nbsp;{m[4]}
         </span>,
       );
     }
@@ -178,6 +212,8 @@ function AnswerBody({ content }: { content: string }): ReactNode {
   return <div className="space-y-2 text-sm leading-relaxed">{blocks}</div>;
 }
 
+const MAX_CHAT_FILES = 5;
+
 export function ChatSurface({
   files,
   setFileOrder,
@@ -187,111 +223,163 @@ export function ChatSurface({
   const { t, locale } = useI18n();
   const { toast } = useToast();
 
-  const fileRef = files[0] ?? null;
-  const fileId = fileRef?.id ?? null;
+  const filesSig = files.map((f) => f.id).join("|");
 
-  const [extraction, setExtraction] = useState<Extraction | null>(null);
+  const [extraction, setExtraction] = useState<WorkingExtraction | null>(null);
+  const [statuses, setStatuses] = useState<FileStatus[]>([]);
+  const [multi, setMulti] = useState<MultiDocExcerpt | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pending, setPending] = useState(false);
   const [input, setInput] = useState("");
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
 
   const workerRef = useRef<Worker | null>(null);
-  const extractedIdRef = useRef<string | null>(null);
-  const fileObjRef = useRef<File | null>(null);
+  const filesRef = useRef(files);
+  const ranSigRef = useRef<string | null>(null);
   const inputElRef = useRef<HTMLTextAreaElement>(null);
   const listEndRef = useRef<HTMLDivElement>(null);
 
-  /* ------------ extraction worker lifecycle (file-keyed) ------------ */
-
-  /* Fresh file object after every render — declared BEFORE the extraction
-     effect so a changed fileId always reads the new bytes (R3 rule: refs
-     are written in effects, never during render). */
+  /* Fresh file array after every render — declared BEFORE the extraction
+     effect so a changed signature always reads the new File objects (R3
+     rule: refs are written in effects, never during render). */
   useEffect(() => {
-    fileObjRef.current = fileRef?.file ?? null;
+    filesRef.current = files;
   });
 
+  /* ---------- extraction worker lifecycle (signature-keyed) ---------- */
+
   useEffect(() => {
-    if (fileId === null) {
+    const sig = `${filesSig}#${retryTick}`;
+    if (files.length === 0) {
       workerRef.current?.terminate();
       workerRef.current = null;
-      extractedIdRef.current = null;
+      ranSigRef.current = null;
       setExtraction(null);
+      setStatuses([]);
+      setMulti(null);
       setMessages([]);
       return;
     }
-    if (extractedIdRef.current === fileId) return;
-    extractedIdRef.current = fileId;
-    const file = fileObjRef.current;
-    if (!file) return;
+    if (ranSigRef.current === sig) return;
+    ranSigRef.current = sig;
+
+    const currentFiles = filesRef.current.slice(0, MAX_CHAT_FILES);
     setMessages([]);
-    setExtraction({ status: "working", page: 0, total: 0 });
+    setMulti(null);
+    setStatuses(currentFiles.map(() => "pending" as FileStatus));
+    setExtraction({
+      state: "working",
+      fileIndex: 0,
+      fileCount: currentFiles.length,
+      page: 0,
+      total: 0,
+    });
 
     workerRef.current?.terminate();
     const worker = new Worker(new URL("./worker.ts", import.meta.url), {
       type: "module",
     });
     workerRef.current = worker;
+    let cancelled = false;
 
-    let settled = false;
     const finish = (): void => {
-      if (settled) return;
-      settled = true;
-      worker.terminate();
       if (workerRef.current === worker) workerRef.current = null;
+      worker.terminate();
     };
 
-    worker.onmessage = (ev: MessageEvent<WorkerEvent>) => {
-      const data = ev.data;
-      if (data?.type === "progress") {
-        setExtraction({
-          status: "working",
-          page: Number(data.page) || 0,
-          total: Number(data.total) || 0,
-        });
-      } else if (data?.type === "pages" && Array.isArray(data.pages)) {
-        const doc = buildDocExcerpt(data.pages);
-        setExtraction(
-          isLikelyScanned(data.pages)
-            ? { status: "scanned" }
-            : { status: "ready", doc, pages: doc.pagesTotal },
-        );
-        finish();
-      } else if (data?.type === "error") {
-        setExtraction({ status: "failed", code: data.code === "encrypted" ? "encrypted" : "corrupt" });
-        finish();
+    /** Extract one file; resolves with its pages or an honest failure. */
+    const extractOne = (
+      index: number,
+    ): Promise<
+      { pages: ExtractedPage[] } | { code: "encrypted" | "corrupt" }
+    > =>
+      new Promise((resolve) => {
+        const onMsg = (ev: MessageEvent<WorkerEvent>): void => {
+          const data = ev.data;
+          if (data?.index !== index) return;
+          if (data.type === "progress") {
+            setExtraction({
+              state: "working",
+              fileIndex: index,
+              fileCount: currentFiles.length,
+              page: Number(data.page) || 0,
+              total: Number(data.total) || 0,
+            });
+          } else if (data.type === "pages" && Array.isArray(data.pages)) {
+            worker.removeEventListener("message", onMsg);
+            resolve({ pages: data.pages });
+          } else if (data.type === "error") {
+            worker.removeEventListener("message", onMsg);
+            resolve({ code: data.code === "encrypted" ? "encrypted" : "corrupt" });
+          }
+        };
+        worker.addEventListener("message", onMsg);
+        const file = currentFiles[index]?.file;
+        if (!file) {
+          worker.removeEventListener("message", onMsg);
+          resolve({ code: "corrupt" });
+          return;
+        }
+        file
+          .arrayBuffer()
+          .then((buf) => {
+            if (cancelled) {
+              worker.removeEventListener("message", onMsg);
+              resolve({ code: "corrupt" });
+              return;
+            }
+            worker.postMessage(
+              { type: "extract", file: buf, index },
+              [buf],
+            );
+          })
+          .catch(() => {
+            worker.removeEventListener("message", onMsg);
+            resolve({ code: "corrupt" });
+          });
+      });
+
+    const run = async (): Promise<void> => {
+      const nextStatuses: FileStatus[] = currentFiles.map(() => "pending");
+      const docs: ChatDoc[] = [];
+      for (let i = 0; i < currentFiles.length; i += 1) {
+        const res = await extractOne(i);
+        if (cancelled) return;
+        if ("pages" in res) {
+          const scanned = isLikelyScanned(res.pages);
+          nextStatuses[i] = scanned ? "scanned" : "ready";
+          if (!scanned) {
+            docs.push({ name: currentFiles[i].file.name, pages: res.pages });
+          }
+        } else {
+          nextStatuses[i] = res.code;
+        }
+        setStatuses([...nextStatuses]);
       }
-    };
-    worker.onerror = () => {
-      setExtraction({ status: "failed", code: "corrupt" });
+      if (cancelled) return;
+      setMulti(docs.length > 0 ? buildMultiDocExcerpt(docs) : null);
+      setExtraction(null);
       finish();
     };
 
-    file
-      .arrayBuffer()
-      .then((buf) => {
-        if (workerRef.current !== worker) return; // switched away already
-        worker.postMessage({ type: "extract", file: buf }, [buf]);
-      })
-      .catch(() => {
-        setExtraction({ status: "failed", code: "corrupt" });
-        finish();
-      });
+    void run();
 
     return () => {
+      cancelled = true;
       if (workerRef.current === worker) {
         workerRef.current = null;
         worker.terminate();
         // StrictMode double-mount / fast file switches: if this run was
-        // torn down before its extraction settled, release the id guard
-        // so the next mount of the SAME file re-runs instead of sitting
-        // on a dead worker forever.
-        if (extractedIdRef.current === fileId) {
-          extractedIdRef.current = null;
+        // torn down before its extraction settled, release the sig guard
+        // so the next mount of the SAME file set re-runs instead of
+        // sitting on a dead worker forever.
+        if (ranSigRef.current === sig) {
+          ranSigRef.current = null;
         }
       }
     };
-  }, [fileId]);
+  }, [filesSig, retryTick]);
 
   /* Keep the newest answer in view (scroll, never setState-in-render). */
   useEffect(() => {
@@ -301,9 +389,12 @@ export function ChatSurface({
   /* ------------------------- chat transport ------------------------- */
 
   const request = async (history: ChatMessage[]): Promise<void> => {
-    const current = extraction;
-    const docFile = fileObjRef.current;
-    if (current?.status !== "ready" || !docFile) return;
+    const current = multi;
+    if (current === null) return;
+    const readyCount = statuses.filter((s) => s === "ready").length;
+    const docNames = filesRef.current
+      .filter((_, i) => statuses[i] === "ready")
+      .map((f) => f.file.name);
     setPending(true);
     try {
       const res = await fetch("/api/chat", {
@@ -311,15 +402,19 @@ export function ChatSurface({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: sanitizeChatMessages(history),
-          docExcerpt: current.doc.excerpt,
-          docName: docFile.name,
+          docExcerpt: current.excerpt,
+          docName: readyCount === 1 ? docNames[0] : undefined,
+          docCount: Math.max(1, readyCount),
           locale,
         }),
       });
       const data: unknown = await res.json().catch(() => null);
       const answer = (data as { answer?: unknown } | null)?.answer;
       if (res.ok && typeof answer === "string" && answer.trim().length > 0) {
-        setMessages((prev) => [...prev, { role: "assistant", content: answer.trim() }]);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: answer.trim() },
+        ]);
       } else {
         const code = (data as { error?: unknown } | null)?.error;
         toast({
@@ -346,7 +441,7 @@ export function ChatSurface({
 
   const send = (raw: string): void => {
     const text = cleanUserText(raw);
-    if (pending || extraction?.status !== "ready" || text.length === 0) return;
+    if (pending || multi === null || text.length === 0) return;
     const next = sanitizeChatMessages([...messages, { role: "user", content: text }]);
     setMessages(next);
     setInput("");
@@ -370,50 +465,38 @@ export function ChatSurface({
     void request(next);
   };
 
-  const retryExtraction = (): void => {
-    const file = fileObjRef.current;
-    if (!file) return;
-    setExtraction({ status: "working", page: 0, total: 0 });
-    workerRef.current?.terminate();
-    const worker = new Worker(new URL("./worker.ts", import.meta.url), {
-      type: "module",
+  /* --------------------------- R9-a: export ------------------------- */
+
+  const exportChat = (format: ChatExportFormat): void => {
+    if (messages.length === 0) return;
+    const labels: ChatExportLabels = {
+      title: t("chat.exportFileTitle"),
+      document: t("chat.exportDocumentLabel"),
+      generated: t("chat.exportGenerated"),
+      you: t("chat.youLabel"),
+      ai: t("chat.aiLabel"),
+    };
+    const text = buildChatExport(
+      messages,
+      filesRef.current.map((f) => f.file.name),
+      labels,
+      format,
+    );
+    if (text.length === 0) return;
+    const blob = new Blob([text], {
+      type: format === "markdown" ? "text/markdown" : "text/plain",
     });
-    workerRef.current = worker;
-    worker.onmessage = (ev: MessageEvent<WorkerEvent>) => {
-      const data = ev.data;
-      if (data?.type === "progress") {
-        setExtraction({
-          status: "working",
-          page: Number(data.page) || 0,
-          total: Number(data.total) || 0,
-        });
-      } else if (data?.type === "pages" && Array.isArray(data.pages)) {
-        const doc = buildDocExcerpt(data.pages);
-        setExtraction(
-          isLikelyScanned(data.pages)
-            ? { status: "scanned" }
-            : { status: "ready", doc, pages: doc.pagesTotal },
-        );
-        worker.terminate();
-      } else if (data?.type === "error") {
-        setExtraction({ status: "failed", code: data.code === "encrypted" ? "encrypted" : "corrupt" });
-        worker.terminate();
-      }
-    };
-    worker.onerror = () => {
-      setExtraction({ status: "failed", code: "corrupt" });
-      worker.terminate();
-    };
-    file
-      .arrayBuffer()
-      .then((buf) => {
-        if (workerRef.current !== worker) return;
-        worker.postMessage({ type: "extract", file: buf }, [buf]);
-      })
-      .catch(() => {
-        setExtraction({ status: "failed", code: "corrupt" });
-        worker.terminate();
-      });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${chatExportBaseName(
+      filesRef.current.map((f) => f.file.name),
+    )}-chat.${format === "markdown" ? "md" : "txt"}`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast({ title: t("chat.exportDone") });
   };
 
   const copyAnswer = async (index: number, content: string): Promise<void> => {
@@ -444,7 +527,7 @@ export function ChatSurface({
 
   /* ------------------------------ render ---------------------------- */
 
-  if (!fileRef) {
+  if (files.length === 0) {
     return (
       <div className="space-y-4">
         <div className="rounded-xl border border-border/70 bg-gradient-to-b from-primary/5 to-transparent p-6 text-center sm:p-8">
@@ -464,88 +547,179 @@ export function ChatSurface({
         </div>
         <DropZone
           labelKey="chat.dropHere"
-          multiple={false}
-          maxFiles={1}
+          multiple
+          maxFiles={MAX_CHAT_FILES}
           acceptKind="pdf"
           onAccept={addFiles}
           currentCount={0}
         />
+        <p className="text-center text-xs text-muted-foreground">
+          {t("chat.multiHint")}
+        </p>
       </div>
     );
   }
 
-  const ready = extraction?.status === "ready";
-  const trimmed =
-    ready && extraction.doc.omittedPages > 0 ? extraction.doc : null;
+  const ready = multi !== null;
+  const noTextCount = statuses.filter((s) => s === "scanned").length;
+  const anyEncrypted = statuses.includes("encrypted");
+  const anyCorrupt = statuses.includes("corrupt");
+  const firstFailureCode: "encrypted" | "corrupt" | null = anyEncrypted
+    ? "encrypted"
+    : anyCorrupt
+      ? "corrupt"
+      : null;
+
+  const statusLine = (i: number): ReactNode => {
+    const st = statuses[i] ?? "pending";
+    const working =
+      extraction?.state === "working" && extraction.fileIndex === i;
+    if (working) {
+      return (
+        <span className="flex items-center gap-1.5 text-xs text-primary">
+          <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+          {extraction.total > 0
+            ? t("chat.extractingPage", {
+                page: extraction.page,
+                total: extraction.total,
+              })
+            : t("chat.extracting")}
+        </span>
+      );
+    }
+    if (st === "ready") {
+      const entry = multi?.docs.find(
+        (d) => d.name === cleanDocName(files[i].file.name),
+      );
+      if (entry) {
+        return (
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+            <span>
+              {t("chat.docPages", { count: entry.pagesTotal })}
+            </span>
+            <span aria-hidden>·</span>
+            <span>
+              {t("chat.docChars", { count: entry.totalChars })}
+            </span>
+            {entry.omittedPages > 0 && (
+              <span className="rounded-full bg-amber-500/10 px-2 py-px text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                {t("chat.pagesOmitted", { count: entry.omittedPages })}
+              </span>
+            )}
+          </span>
+        );
+      }
+      return (
+        <span className="text-xs text-muted-foreground">
+          {t("chat.fileReady")}
+        </span>
+      );
+    }
+    if (st === "scanned") {
+      return (
+        <span className="rounded-full bg-amber-500/10 px-2 py-px text-[11px] font-medium text-amber-600 dark:text-amber-400">
+          {t("chat.fileNoText")}
+        </span>
+      );
+    }
+    if (st === "encrypted") {
+      return (
+        <span className="flex items-center gap-1 text-xs text-destructive">
+          <Lock className="h-3 w-3" aria-hidden />
+          {t("chat.fileEncrypted")}
+        </span>
+      );
+    }
+    if (st === "corrupt") {
+      return (
+        <span className="flex items-center gap-1 text-xs text-destructive">
+          <AlertTriangle className="h-3 w-3" aria-hidden />
+          {t("chat.fileUnreadable")}
+        </span>
+      );
+    }
+    return (
+      <span className="text-xs text-muted-foreground">{t("chat.filePending")}</span>
+    );
+  };
 
   return (
     <div className="space-y-3">
-      {/* Document header */}
-      <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-card p-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <FileText className="h-5 w-5" aria-hidden />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium" title={fileRef.file.name}>
-            {fileRef.file.name}
+      {/* Document list */}
+      <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
+        <div className="flex items-center justify-between gap-2 px-3 pt-2.5 pb-1.5">
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+            <FileText className="h-3.5 w-3.5 text-primary" aria-hidden />
+            {t("chat.docsLabel", { count: files.length })}
           </p>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-            <span>{formatBytes(fileRef.file.size)}</span>
-            {extraction?.status === "ready" && (
-              <>
-                <span aria-hidden>·</span>
-                <span>
-                  {t("chat.docPages", {
-                    count: (extraction as { status: "ready"; doc: DocExcerpt; pages: number }).pages,
-                  })}
-                </span>
-                <span aria-hidden>·</span>
-                <span>
-                  {t("chat.docChars", {
-                    count: (extraction as { status: "ready"; doc: DocExcerpt; pages: number }).doc.totalChars,
-                  })}
-                </span>
-              </>
-            )}
-            {trimmed && (
-              <span className="rounded-full bg-amber-500/10 px-2 py-px text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                {t("chat.pagesOmitted", { count: trimmed.omittedPages })}
+          {extraction === null && files.length > 1 && (
+            <p className="text-[11px] text-muted-foreground">
+              {t("chat.docPages", { count: multi?.pagesIncluded ?? 0 })}
+            </p>
+          )}
+        </div>
+        <div className="divide-y divide-border/60">
+          {files.map((f, i) => (
+            <div key={f.id} className="flex items-center gap-2.5 px-3 py-2">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <FileText className="h-4 w-4" aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium" title={f.file.name}>
+                  {f.file.name}
+                </p>
+                <p className="mt-0.5">{statusLine(i)}</p>
+              </div>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {formatBytes(f.file.size)}
               </span>
-            )}
-          </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={t("chat.removeFile")}
+                className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+                onClick={() =>
+                  setFileOrder(files.filter((x) => x.id !== f.id))
+                }
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+            </div>
+          ))}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={t("chat.removeFile")}
-          className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-destructive"
-          onClick={() => setFileOrder([])}
-        >
-          <Trash2 className="h-4 w-4" aria-hidden />
-        </Button>
       </div>
 
-      {/* Extraction states */}
-      {extraction?.status === "working" && (
-        <div className="rounded-xl border border-border/70 bg-card p-6 text-center">
-          <Loader2
-            className="mx-auto h-6 w-6 animate-spin text-primary"
-            aria-hidden
-          />
-          <p className="mt-3 text-sm font-medium">
-            {extraction.total > 0
-              ? t("chat.extractingPage", {
-                  page: extraction.page,
-                  total: extraction.total,
-                })
-              : t("chat.extracting")}
+      {/* Add-more zone (still under the file cap) */}
+      {files.length < MAX_CHAT_FILES && (
+        <DropZone
+          labelKey="chat.addMore"
+          multiple
+          maxFiles={MAX_CHAT_FILES}
+          acceptKind="pdf"
+          onAccept={addFiles}
+          currentCount={files.length}
+        />
+      )}
+
+      {/* Extraction overall progress */}
+      {extraction?.state === "working" && (
+        <div className="rounded-xl border border-border/70 bg-card px-4 py-3">
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden />
+            {t("chat.extractionFile", {
+              index: extraction.fileIndex + 1,
+              count: extraction.fileCount,
+            })}
           </p>
           {extraction.total > 0 && (
-            <div className="mx-auto mt-3 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
+            <div className="mx-auto mt-2.5 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
               <div
                 className="h-full rounded-full bg-primary transition-all"
                 style={{
-                  width: `${Math.min(100, Math.round((extraction.page / extraction.total) * 100))}%`,
+                  width: `${Math.min(
+                    100,
+                    Math.round((extraction.page / extraction.total) * 100),
+                  )}%`,
                 }}
               />
             </div>
@@ -556,75 +730,79 @@ export function ChatSurface({
         </div>
       )}
 
-      {extraction?.status === "failed" && (
-        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center">
-          <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
-            {extraction.code === "encrypted" ? (
-              <Lock className="h-5 w-5" aria-hidden />
-            ) : (
-              <AlertTriangle className="h-5 w-5" aria-hidden />
-            )}
-          </div>
-          <p className="mt-3 text-sm font-medium">
-            {extraction.code === "encrypted"
-              ? t("chat.errEncryptedTitle")
-              : t("chat.errCorruptTitle")}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {extraction.code === "encrypted"
-              ? t("chat.errEncryptedBody")
-              : t("chat.errCorruptBody")}
-          </p>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={retryExtraction}
-              disabled={pending}
-            >
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-              {t("chat.retry")}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setFileOrder([])}
-            >
-              <FileUp className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-              {t("chat.chooseOther")}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {extraction?.status === "scanned" && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-6 text-center">
-          <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
-            <AlertTriangle className="h-5 w-5" aria-hidden />
-          </div>
-          <p className="mt-3 text-sm font-medium">
-            {t("chat.scannedTitle")}
-          </p>
-          <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
-            {t("chat.scannedBody")}
-          </p>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-            {onChain && (
-              <Button size="sm" onClick={() => onChain("ocr-pdf")}>
-                <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                {t("chat.openOcr")}
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setFileOrder([])}
-            >
-              <FileUp className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-              {t("chat.chooseOther")}
-            </Button>
-          </div>
-        </div>
+      {/* Failure / scanned states — only when NOTHING was extracted */}
+      {extraction === null && !ready && (
+        <>
+          {noTextCount > 0 && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-6 text-center">
+              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="h-5 w-5" aria-hidden />
+              </div>
+              <p className="mt-3 text-sm font-medium">
+                {t("chat.scannedTitle")}
+              </p>
+              <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
+                {t("chat.scannedBody")}
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                {onChain && (
+                  <Button size="sm" onClick={() => onChain("ocr-pdf")}>
+                    <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    {t("chat.openOcr")}
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setFileOrder([])}
+                >
+                  <FileUp className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  {t("chat.chooseOther")}
+                </Button>
+              </div>
+            </div>
+          )}
+          {noTextCount === 0 && firstFailureCode !== null && (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center">
+              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                {firstFailureCode === "encrypted" ? (
+                  <Lock className="h-5 w-5" aria-hidden />
+                ) : (
+                  <AlertTriangle className="h-5 w-5" aria-hidden />
+                )}
+              </div>
+              <p className="mt-3 text-sm font-medium">
+                {firstFailureCode === "encrypted"
+                  ? t("chat.errEncryptedTitle")
+                  : t("chat.errCorruptTitle")}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {firstFailureCode === "encrypted"
+                  ? t("chat.errEncryptedBody")
+                  : t("chat.errCorruptBody")}
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setRetryTick((n) => n + 1)}
+                  disabled={pending}
+                >
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  {t("chat.retry")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setFileOrder([])}
+                >
+                  <FileUp className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  {t("chat.chooseOther")}
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Chat panel */}
@@ -635,6 +813,11 @@ export function ChatSurface({
               <div className="flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-primary" aria-hidden />
                 <p className="text-sm font-medium">{t("chat.askAnything")}</p>
+                {noTextCount > 0 && (
+                  <span className="rounded-full bg-amber-500/10 px-2 py-px text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                    {t("chat.someNoText", { count: noTextCount })}
+                  </span>
+                )}
               </div>
               <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {QUICK_PROMPTS.map(({ id, icon: Icon }) => (
@@ -780,17 +963,44 @@ export function ChatSurface({
               <p className="text-[11px] text-muted-foreground">
                 {t("chat.disclaimer")}
               </p>
-              {messages.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs text-muted-foreground"
-                  onClick={() => setMessages([])}
-                >
-                  <RefreshCw className="mr-1 h-3 w-3" aria-hidden />
-                  {t("chat.newChat")}
-                </Button>
-              )}
+              <div className="flex items-center gap-1">
+                {messages.length > 0 && (
+                  <>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1 px-2 text-xs text-muted-foreground"
+                          aria-label={t("chat.exportLabel")}
+                        >
+                          <Download className="mr-1 h-3 w-3" aria-hidden />
+                          {t("chat.exportLabel")}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => exportChat("markdown")}
+                        >
+                          {t("chat.exportMd")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => exportChat("txt")}>
+                          {t("chat.exportTxt")}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground"
+                      onClick={() => setMessages([])}
+                    >
+                      <RefreshCw className="mr-1 h-3 w-3" aria-hidden />
+                      {t("chat.newChat")}
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>

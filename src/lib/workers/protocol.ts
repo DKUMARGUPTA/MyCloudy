@@ -143,6 +143,10 @@ export interface RunDetail {
   dedupedImages?: number;
   /** Raw stream bytes reclaimed by the image dedupe (compress-pdf). */
   dedupeBytesSaved?: number;
+  /** Source characters translated in the run (translate-pdf R9-c). */
+  translatedChars?: number;
+  /** API batches the translation needed (translate-pdf R9-c). */
+  translatedBatches?: number;
 }
 
 export interface ToolOutput {

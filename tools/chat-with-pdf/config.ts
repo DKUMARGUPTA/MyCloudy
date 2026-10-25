@@ -1,12 +1,14 @@
 import type { ToolConfig } from "@/lib/tools/config-types";
 
 /**
- * Chat with PDF (R8) — ask the document anything. Smallpdf keeps this
- * behind a premium paywall; DocoPDF ships it free.
+ * Chat with PDF (R8; R9-a export; R9-b multi-file) — ask up to five
+ * documents anything. Smallpdf keeps this behind a premium paywall;
+ * DocoPDF ships it free.
  *
- * The FIRST (and only) DocoPDF tool with a server round-trip, and the
- * shape is the honest minimum: the PDF itself is extracted in a Web
- * Worker on the device; only a bounded, page-marked TEXT excerpt plus
+ * One of the two DocoPDF tools with a server round-trip, and the shape is
+ * the honest minimum: the PDFs themselves are extracted in a Web Worker
+ * on the device; only a bounded, page-marked TEXT excerpt (equally split
+ * across the open files, each section labeled === FILE "name" ===) plus
  * the visible chat history ever POST to /api/chat. There is no run step
  * and no output file — like view-pdf, the workspace surface IS the tool
  * (viewerOnly), so the shell never builds a Run CTA.
@@ -17,7 +19,7 @@ export const config: ToolConfig = {
   landingSurface: true,
   howKeys: ["chat.how1", "chat.how2", "chat.how3"],
   minFiles: 1,
-  maxFiles: 1,
+  maxFiles: 5,
   options: [],
   features: [
     {
@@ -35,6 +37,14 @@ export const config: ToolConfig = {
     {
       en: "Works in English and Hindi — ask in Hindi, get Hindi answers.",
       hi: "अंग्रेज़ी और हिंदी दोनों में काम करता है — हिंदी में पूछिए, हिंदी में जवाब मिलेगा।",
+    },
+    {
+      en: "Open up to 5 PDFs at once — every answer says which file a fact came from, like (\"report.pdf\" p. 3).",
+      hi: "एक साथ 5 तक PDF खोलें — हर जवाब बताता है कि कौन सी फ़ाइल से बात आई है, जैसे (\"report.pdf\" p. 3)।",
+    },
+    {
+      en: "Download the whole conversation as Markdown or plain text — questions, answers and page citations included.",
+      hi: "पूरी बातचीत Markdown या प्लेन टेक्स्ट में डाउनलोड करें — सवाल, जवाब और पेज संदर्भ सब सहित।",
     },
     {
       en: "Long documents stay honest: the middle is left out with a visible marker, and the AI says which pages it could not see.",
@@ -70,6 +80,16 @@ export const config: ToolConfig = {
       a: {
         en: "Scanned pages are images, so there is nothing to extract. Use the one-tap button in the tool to open the same file in PDF OCR, recognize the text (English and Hindi), then chat about the result.",
         hi: "स्कैन किए पेज तस्वीर होते हैं, निकालने के लिए कुछ नहीं होता। टूल में दिए एक-टैप बटन से वही फ़ाइल PDF OCR में खोलें, टेक्स्ट पहचानें (अंग्रेज़ी और हिंदी), फिर उस पर बात करें।",
+      },
+    },
+    {
+      q: {
+        en: "Can I ask about several files at once?",
+        hi: "क्या एक साथ कई फ़ाइलों के बारे में पूछ सकता हूँ?",
+      },
+      a: {
+        en: "Yes — add up to 5 PDFs. Each file gets an equal share of the AI's reading window, answers cite the file AND the page (like \"report.pdf\" p. 3), and files without selectable text are marked honestly instead of being mixed in.",
+        hi: "हाँ — 5 तक PDF जोड़ें। हर फ़ाइल को AI की पढ़ने की खिड़की का बराबर हिस्सा मिलता है, जवाब फ़ाइल और पेज दोनों बताते हैं (जैसे \"report.pdf\" p. 3), और जिन फ़ाइलों में टेक्स्ट नहीं है वे ईमानदारी से चिह्नित होती हैं।",
       },
     },
     {
