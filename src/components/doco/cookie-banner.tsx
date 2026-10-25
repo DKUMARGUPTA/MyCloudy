@@ -129,7 +129,7 @@ export function CookieBanner() {
             <h2 className="text-sm font-semibold text-foreground">
               {t("consent.title")}
             </h2>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
               {t("consent.body")}
             </p>
           </div>
@@ -155,7 +155,7 @@ export function CookieBanner() {
                 onCheckedChange={setAnalytics}
               />
             </div>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
+            <p className="text-xs leading-relaxed text-muted-foreground">
               {t("consent.essentialNote")}
             </p>
             <Button

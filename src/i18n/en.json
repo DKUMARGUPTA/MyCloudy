@@ -107,7 +107,7 @@
     "changedTo": "Language changed to {language}"
   },
   "banner": {
-    "phase0": "The foundation is live — tools are rolling out phase by phase.",
+    "phase0": "All {count} tools are live — free, private, and no signup.",
     "dismiss": "Dismiss announcement"
   },
   "hero": {
@@ -118,7 +118,7 @@
     "primaryCta": "Browse all tools",
     "secondaryCta": "How it works",
     "browseAll": "Or browse all {count} tools →",
-    "toolsPlanned": "{count} tools planned",
+    "toolsPlanned": "{count} tools live",
     "bilingual": "English + हिंदी",
     "badgePrivate": "Private — stays on your device",
     "badgeNoSignup": "No signup",
@@ -261,7 +261,7 @@
     "tagline": "Har PDF kaam, ek jagah.",
     "trust": "Most tools run inside your browser. Your files stay on your device.",
     "categoriesLabel": "Categories",
-    "phaseNote": "DocoPDF is being built in phases — the design system is live, tools are next.",
+    "phaseNote": "Built in the open — {count} tools live, more rolling out.",
     "rights": "© {year} DocoPDF. All rights reserved."
   },
   "nav": {

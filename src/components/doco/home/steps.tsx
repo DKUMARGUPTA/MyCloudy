@@ -45,19 +45,19 @@ export function Steps() {
           {steps.map(({ icon: Icon, title, description }, index) => (
             <li
               key={title}
-              className="relative rounded-card border border-border bg-card p-6 shadow-xs"
+              className="group relative overflow-hidden rounded-card border border-border bg-card p-6 shadow-xs transition-shadow hover:shadow-md"
             >
               <span
                 aria-hidden="true"
-                className="absolute right-5 top-4 text-4xl font-bold text-muted-foreground/15"
+                className="text-gradient-brand pointer-events-none absolute -top-2 right-4 select-none text-6xl font-bold leading-none tabular-nums opacity-15 transition-opacity group-hover:opacity-25"
               >
                 {String(index + 1).padStart(2, "0")}
               </span>
               <div className="flex size-12 items-center justify-center rounded-btn bg-primary/10 text-primary">
                 <Icon className="size-6" aria-hidden="true" />
               </div>
-              <h3 className="mt-4 font-semibold">{title}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
+              <h3 className="mt-4 text-lg font-semibold">{title}</h3>
+              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
                 {description}
               </p>
             </li>

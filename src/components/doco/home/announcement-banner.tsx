@@ -4,6 +4,7 @@ import { useCallback, useSyncExternalStore } from "react";
 import { Sparkles, X } from "lucide-react";
 
 import { useI18n } from "@/components/providers/locale-provider";
+import { totalToolCount } from "@/lib/tools/registry";
 
 const BANNER_STORAGE_KEY = "docopdf-banner-dismissed";
 const BANNER_EVENT = "docopdf:banner-dismissed";
@@ -57,14 +58,17 @@ export function AnnouncementBanner() {
     <div role="status" className="bg-primary text-primary-foreground">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-center gap-2 px-4 py-2">
         <Sparkles className="size-4 shrink-0" aria-hidden="true" />
-        <p className="min-w-0 truncate text-center text-xs sm:text-sm">
-          {t("banner.phase0")}
+        <p
+          className="min-w-0 truncate text-center text-xs sm:text-sm"
+          title={t("banner.phase0", { count: totalToolCount })}
+        >
+          {t("banner.phase0", { count: totalToolCount })}
         </p>
         <button
           type="button"
           onClick={dismiss}
           aria-label={t("banner.dismiss")}
-          className="ml-1 shrink-0 rounded-md p-1.5 outline-none transition-colors hover:bg-white/15 focus-visible:ring-[3px] focus-visible:ring-white/60"
+          className="ml-1 -my-2.5 flex size-11 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-white/15 focus-visible:ring-[3px] focus-visible:ring-white/60"
         >
           <X className="size-4" aria-hidden="true" />
         </button>

@@ -42,22 +42,22 @@ export function Modes() {
           <TabsList className="grid h-auto w-full max-w-md grid-cols-2 gap-1 rounded-btn p-1">
             <TabsTrigger
               value="device"
-              className="min-h-10 rounded-[calc(0.75rem-2px)] gap-1.5 text-xs sm:text-sm"
+              className="min-h-11 rounded-[calc(0.75rem-2px)] gap-1.5 text-xs sm:text-sm"
             >
-              <Lock className="size-3.5" aria-hidden="true" />
+              <Lock className="size-4" aria-hidden="true" />
               {t("modes.tabDevice")}
             </TabsTrigger>
             <TabsTrigger
               value="server"
-              className="min-h-10 rounded-[calc(0.75rem-2px)] gap-1.5 text-xs sm:text-sm"
+              className="min-h-11 rounded-[calc(0.75rem-2px)] gap-1.5 text-xs sm:text-sm"
             >
-              <Server className="size-3.5" aria-hidden="true" />
+              <Server className="size-4" aria-hidden="true" />
               {t("modes.tabServer")}
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="device" className="mt-4">
-            <article className="rounded-card border border-border bg-card p-6 shadow-xs">
+            <article className="rounded-card border border-border bg-card p-6 shadow-sm ring-1 ring-border/40 sm:p-8">
               <Badge
                 variant="private"
                 className="rounded-chip px-3 py-1 text-xs sm:text-sm"
@@ -67,9 +67,9 @@ export function Modes() {
               <p className="mt-4 text-sm text-muted-foreground sm:text-base">
                 {t("modes.deviceDesc")}
               </p>
-              <ul className="mt-4 space-y-2.5">
+              <ul className="mt-5 space-y-3">
                 {devicePoints.map((point) => (
-                  <li key={point} className="flex items-start gap-2.5 text-sm">
+                  <li key={point} className="flex items-start gap-2.5 text-sm sm:text-base">
                     <Check
                       className="mt-0.5 size-4 shrink-0 text-success"
                       aria-hidden="true"
@@ -82,7 +82,7 @@ export function Modes() {
           </TabsContent>
 
           <TabsContent value="server" className="mt-4">
-            <article className="rounded-card border border-border bg-card p-6 shadow-xs">
+            <article className="rounded-card border border-border bg-card p-6 shadow-sm ring-1 ring-border/40 sm:p-8">
               <Badge
                 variant="server"
                 className="rounded-chip px-3 py-1 text-xs sm:text-sm"
@@ -92,9 +92,9 @@ export function Modes() {
               <p className="mt-4 text-sm text-muted-foreground sm:text-base">
                 {t("modes.serverDesc")}
               </p>
-              <ul className="mt-4 space-y-2.5">
+              <ul className="mt-5 space-y-3">
                 {serverPoints.map((point) => (
-                  <li key={point} className="flex items-start gap-2.5 text-sm">
+                  <li key={point} className="flex items-start gap-2.5 text-sm sm:text-base">
                     <Check
                       className="mt-0.5 size-4 shrink-0 text-primary"
                       aria-hidden="true"

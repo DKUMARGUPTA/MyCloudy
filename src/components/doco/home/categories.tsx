@@ -47,6 +47,7 @@ export function Categories() {
           {CATEGORIES.map((category) => {
             const Icon = category.icon;
             const tools = toolsByCategory(category.id);
+            const hasServerTools = tools.some((tool) => tool.mode === "S");
             return (
               <li key={category.id}>
                 <a
@@ -55,7 +56,7 @@ export function Categories() {
                     category: category.name[locale],
                   })}
                   className={cn(
-                    "group flex w-full items-center gap-4 rounded-card border border-border bg-card p-4 text-left shadow-xs outline-none transition-all",
+                    "group flex min-h-20 w-full items-center gap-4 rounded-card border border-border bg-card p-4 text-left shadow-xs outline-none transition-all",
                     "hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-[3px] focus-visible:ring-ring/50",
                     categoryHoverClass[category.color]
                   )}
@@ -77,15 +78,16 @@ export function Categories() {
                       {t("categories.plannedCount", { count: tools.length })}
                     </span>
                   </span>
-                  <span className="flex shrink-0 flex-col items-end gap-1.5">
-                    <Badge
-                      variant="outline"
-                      className="rounded-chip border-border px-2 text-[10px] text-muted-foreground"
-                    >
-                      {tools.some((tool) => tool.mode === "S")
-                        ? `${t("categories.badgePrivate")} + ${t("categories.badgeServer")}`
-                        : t("categories.badgePrivate")}
-                    </Badge>
+                  <span className="flex shrink-0 items-center gap-2">
+                    {hasServerTools ? (
+                      <Badge
+                        variant="outline"
+                        className="rounded-chip border-border px-2 text-xs text-muted-foreground"
+                      >
+                        {t("categories.badgePrivate")} +{" "}
+                        {t("categories.badgeServer")}
+                      </Badge>
+                    ) : null}
                     <ChevronRight
                       className="size-5 text-muted-foreground transition-transform group-hover:translate-x-0.5"
                       aria-hidden="true"

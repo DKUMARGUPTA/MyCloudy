@@ -68,7 +68,7 @@ export function SiteFooter() {
                 <li key={category.id}>
                   <a
                     href={ROUTES.category(category.id)}
-                    className="flex min-h-9 items-center gap-1.5 rounded-chip border border-border bg-background px-3 py-1 text-xs text-muted-foreground outline-none transition-colors hover:border-foreground/20 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    className="flex min-h-11 items-center gap-2 rounded-chip border border-border bg-background px-3 text-xs text-muted-foreground outline-none transition-colors hover:border-foreground/20 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   >
                     <span
                       className={cn(
@@ -87,9 +87,13 @@ export function SiteFooter() {
           </ul>
         </div>
 
-        <div className="flex flex-col gap-2 border-t border-border pt-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-          <p>{t("footer.rights", { year })}</p>
-          <p>{t("footer.phaseNote")}</p>
+        <div className="flex flex-col gap-3 border-t border-border pt-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+          <p className="font-medium text-foreground/70">
+            {t("footer.rights", { year })}
+          </p>
+          <p className="leading-relaxed sm:text-right">
+            {t("footer.phaseNote", { count: totalToolCount })}
+          </p>
         </div>
       </div>
     </footer>

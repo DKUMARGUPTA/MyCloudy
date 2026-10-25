@@ -61,7 +61,7 @@ export function Hero() {
           <SmartDropZone />
         </div>
 
-        <p className="mt-4 text-xs text-muted-foreground">
+        <p className="mt-5 text-sm text-muted-foreground">
           <a
             href={ROUTES.tools}
             className="rounded-btn font-medium text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
@@ -75,17 +75,20 @@ export function Hero() {
             <li key={label}>
               <Badge
                 variant={variant}
-                className="rounded-chip px-3 py-1 text-xs sm:text-sm"
+                className="rounded-chip px-3.5 py-1.5 text-sm"
               >
-                <Icon className="size-3.5" aria-hidden="true" />
+                <Icon className="size-4" aria-hidden="true" />
                 {label}
               </Badge>
             </li>
           ))}
         </ul>
 
-        <p className="mt-6 text-xs text-muted-foreground">
-          {t("hero.toolsPlanned", { count: totalToolCount })} ·{" "}
+        <p className="mt-6 text-sm text-muted-foreground">
+          <span className="font-medium text-foreground/80">
+            {t("hero.toolsPlanned", { count: totalToolCount })}
+          </span>
+          {" · "}
           {t("hero.bilingual")}
         </p>
       </div>
