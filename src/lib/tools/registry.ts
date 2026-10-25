@@ -7,6 +7,7 @@ import {
   BadgeCheck,
   Bookmark,
   BookOpen,
+  Bot,
   Braces,
   ClipboardCheck,
   ClipboardCopy,
@@ -1291,6 +1292,25 @@ export const ALL_TOOLS: ToolDef[] = [
       hi: "तेज़ व्यूअर: थंबनेल, खोज, आउटलाइन, डार्क मोड।",
     },
     tags: { en: ["reader", "open pdf", "viewer"], hi: ["देखें", "reader", "viewer"] },
+  }),
+  def({
+    id: "chat-with-pdf",
+    category: "view",
+    mode: "D",
+    phase: "P1",
+    icon: Bot,
+    popularity: 70,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Chat with PDF", hi: "PDF से बात करें" },
+    description: {
+      en: "Ask anything about your PDF — summaries, key points, dates — with page citations, free.",
+      hi: "अपनी PDF के बारे में कुछ भी पूछें — सारांश, मुख्य बातें, तारीख़ें — पेज संदर्भों के साथ, मुफ़्त।",
+    },
+    tags: {
+      en: ["ai chat", "summarize", "ask pdf"],
+      hi: ["एआई चैट", "सारांश", "पूछें"],
+    },
   }),
   def({
     id: "compare-pdf",

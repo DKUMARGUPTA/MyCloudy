@@ -2157,6 +2157,69 @@
     "q6": "Does DocoPDF work in Hindi?",
     "a6": "Yes. The whole interface is available in Hindi, and you can write PDFs in Devanagari, fill Hindi forms and OCR scanned documents in Hindi with fully searchable output."
   },
+  "chat": {
+    "heroTitle": "Chat with your PDF",
+    "heroBody": "Open a PDF and ask anything — the AI answers only from your document and cites the page for every claim.",
+    "heroFree": "Free — no sign-up, no premium version.",
+    "how1": "Open a PDF — the text is extracted right on your device; the file itself is never uploaded.",
+    "how2": "Ask anything in English or Hindi — quick prompts or your own questions.",
+    "how3": "The AI answers only from your document and cites the page — verify anything on the spot.",
+    "dropHere": "Drop your PDF here to start chatting",
+    "docPages": "{count, plural, =1 {1 page} other {# pages}}",
+    "docChars": "{count, plural, =1 {1 character} other {# characters}} extracted",
+    "pagesOmitted": "{count, plural, =1 {middle page omitted} other {# middle pages omitted}}",
+    "removeFile": "Remove this file",
+    "extracting": "Reading your PDF on this device…",
+    "extractingPage": "Extracting page {page} of {total}…",
+    "deviceOnly": "The file never leaves your device — only extracted text is used.",
+    "errEncryptedTitle": "This PDF is password-protected",
+    "errEncryptedBody": "Unlock it first, then chat about it. The password prompt stays on your device.",
+    "errCorruptTitle": "Could not read this PDF",
+    "errCorruptBody": "The file looks damaged or is not a readable PDF. Try the Repair PDF tool, or pick another file.",
+    "retry": "Try again",
+    "chooseOther": "Choose another file",
+    "scannedTitle": "No text found — this looks like a scan",
+    "scannedBody": "Scanned pages are images, so there is nothing to chat with yet. Open the same file in PDF OCR, recognize the text, then come back.",
+    "openOcr": "Open in PDF OCR",
+    "askAnything": "Ask anything about this document",
+    "aiLabel": "DocoPDF AI",
+    "copy": "Copy",
+    "copied": "Copied",
+    "regenerate": "Regenerate",
+    "newChat": "New chat",
+    "thinking": "Reading the document…",
+    "placeholder": "Ask about this PDF… (Enter to send)",
+    "send": "Send",
+    "messagesLabel": "Chat messages",
+    "disclaimer": "AI answers only from your document — verify important claims on the cited pages.",
+    "errTitle": "Could not get an answer",
+    "errSend": "The AI service could not be reached. Check your connection and try again.",
+    "errTimeout": "The answer took too long. Try a shorter question, or try again.",
+    "errBadRequest": "That message could not be sent. Shorten it and try again.",
+    "qp": {
+    "summarize": {
+    "label": "Summarize",
+    "prompt": "Summarize this document in a few short sections: what it is about, the key points, and the main conclusion."
+  },
+    "keyPoints": {
+    "label": "Key points",
+    "prompt": "List the key points of this document as short bullets, each with a page citation."
+  },
+    "actionItems": {
+    "label": "Action items",
+    "prompt": "List every action item, task, deadline or follow-up this document asks for, with page citations."
+  },
+    "explainSimple": {
+    "label": "Explain simply",
+    "prompt": "Explain this document in simple words, as if to someone new to the topic, with page citations for the main ideas."
+  },
+    "extractDates": {
+    "label": "Dates & numbers",
+    "prompt": "Extract every date, deadline, amount and important number in this document, each with a page citation."
+    }
+    }
+  },
+
   "collage": {
     "how1": "Drop 1 to 50 photos — JPG, PNG, WEBP, GIF, HEIC and TIFF all work on-device.",
     "how2": "Pick a layout and tune the page, captions and style — the live preview is exactly what exports.",

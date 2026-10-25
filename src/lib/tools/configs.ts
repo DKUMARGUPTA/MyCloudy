@@ -23,6 +23,7 @@ import { config as changePdfDocInfo } from "../../../tools/change-pdf-doc-info/c
 import { config as removePdfMetadata } from "../../../tools/remove-pdf-metadata/config";
 import { config as fillOutPdf } from "../../../tools/fill-out-pdf/config";
 import { config as viewPdf } from "../../../tools/view-pdf/config";
+import { config as chatWithPdf } from "../../../tools/chat-with-pdf/config";
 import { config as compressPdf } from "../../../tools/compress-pdf/config";
 import { config as signPdf } from "../../../tools/sign-pdf/config";
 import { config as redactPdf } from "../../../tools/redact-pdf/config";
@@ -130,6 +131,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [removePdfMetadata.toolId]: removePdfMetadata,
   [fillOutPdf.toolId]: fillOutPdf,
   [viewPdf.toolId]: viewPdf,
+  [chatWithPdf.toolId]: chatWithPdf,
   [compressPdf.toolId]: compressPdf,
   [signPdf.toolId]: signPdf,
   [redactPdf.toolId]: redactPdf,
