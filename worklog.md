@@ -4793,3 +4793,28 @@ Stage Summary:
 - Architecture: /api/translate follows the exact /api/chat privacy shape (on-device extraction, bounded batches only, stateless, zod-gated, deadline-raced) — still only 2 server-backed tools in a 99-tool offline-first toolbox.
 - Cumulative 9 rounds: 12 BUGs found+fixed, 35+ fixes, 60+ enhancements, zero regressions every round (mutation tests + 95-smoke battery + browser E2E).
 - Next-round candidates (R10): dedicated Summarize tool (one-tap structured TL;DR export), pdf-to-excel table reconstruction (port R5's column clustering), editor page reorder/rotate/delete inside edit-pdf, ID-card double-sided scan mode, book-spread split, redaction verification report, translate more languages when fonts ship (CJK/Arabic), chat answer → write-pdf chain.
+
+---
+Task ID: R10
+Agent: main (Z.ai Code)
+Task: User-shared production screenshot (mycloudy-beta.vercel.app mobile) + "dekho isme improvement ki jarurat kaha kaha hai" — audit homepage UX gaps and fix them (no downgrade, mobile-first).
+
+Work Log:
+- VLM-analyzed the user's screenshot (upload/Screenshot_20261025_231313_Chrome.jpg) + live mobile capture section-by-section: 2 vision passes (user screenshot deep-dive; 6-section current-state sweep) + desktop pass.
+- Findings bucketed: (A) dishonest copy — site says "99 tools planned" while ALL 99 tools are LIVE (trust killer); (B) mobile a11y — sub-44px touch targets (cookie buttons borderline, modes tabs 40px, footer pills 36px, banner dismiss 31px), 10-12px text (cookie body 12px, essential note 11px, category badge 10px); (C) visual polish — steps 01/02/03 background numbers looked like artifacts, "Private" badge repeated on EVERY category row (visual noise), modes card blends into bg-surface, footer copyright too faint.
+- R10-a COPY HONESTY (en+hi): hero.toolsPlanned "{count} tools planned" → "{count} tools live"; banner.phase0 → "All {count} tools are live — free, private, and no signup."; footer.phaseNote → "Built in the open — {count} tools live, more rolling out." Components now pass totalToolCount (announcement-banner imports registry).
+- R10-b COOKIE BANNER: body text-xs → text-sm; essentialNote text-[11px] → text-xs.
+- R10-c CATEGORIES: killed per-row "Private" badge noise — badge now renders ONLY for mixed-mode categories (Private + Server); badge text-[10px] → text-xs; rows get min-h-20; badge+chevron inline row (was stacked column).
+- R10-d STEPS: 01/02/03 restyled as intentional design — text-gradient-brand, text-6xl, tabular-nums, -top-2 right-4, opacity-15→25 group-hover, pointer-events-none select-none, card overflow-hidden + hover:shadow-md; h3 → text-lg; description leading-relaxed.
+- R10-e MODES: tab triggers min-h-10 → min-h-11 (44px), icons size-3.5 → size-4; article cards shadow-xs → shadow-sm + ring-1 ring-border/40 + sm:p-8; checklist text-sm → sm:text-base, space-y-2.5 → 3.
+- R10-f FOOTER: category pills min-h-9 py-1 → min-h-11 (44px touch); copyright → font-medium text-foreground/70; phaseNote leading-relaxed + sm:text-right; bottom bar gap-2 → gap-3.
+- R10-g ANNOUNCEMENT BANNER + HERO: dismiss p-1.5 → -my-2.5 size-11 (44px tap area, banner stays thin); title attr for truncated text; hero trust badges px-3 py-1 text-xs → px-3.5 py-1.5 text-sm + size-4 icons; browseAll line text-xs → text-sm; toolsPlanned line → text-sm with count in font-medium text-foreground/80 (was near-invisible).
+- GATES ALL GREEN: tsc 0; eslint 0; i18n parity 4478 = 4478 (en/hi identical key sets); dev.log clean (only 200s).
+- BROWSER E2E (agent-browser, 390x844 mobile + 1440x900 desktop): VLM re-verify of all 6 sections → PASS ×6 ("None observed in these 6 mobile views"); popular-tools card click → #/tool/merge-pdf loads "Merge PDF"; Hindi switch → "पीडीएफ़ जोड़ें" + homepage "99 टूल लाइव" present; back to English → "99 tools live" present; desktop hero+footer PASS; 0 real console/page errors. Screenshots archived: public/qa/r10-{hero,categories,steps,modes,footer}.png.
+- Sandbox noise handled: dev daemon reaped once mid-session → relaunched via scripts/dev-daemon.py double-fork; stray 755 file-mode flips restored to 644 before commit.
+
+Stage Summary:
+- Round 10 SHIPPED (commit 73d76bf, tag audit-10-hardening, pushed main + 19 tags to DKUMARGUPTA/MyCloudy).
+- Homepage now tells the truth (99 tools LIVE, not "planned"), every interactive element on the landing page meets 44px touch-target standard, all micro-text ≥ 14px body / 12px secondary, badge noise removed, steps numbers are a deliberate design element, footer readable.
+- Cumulative 10 rounds: 12 BUGs + 35+ fixes + 65+ enhancements, zero regressions.
+- Next-round candidates (R11): dedicated Summarize tool, pdf-to-excel table reconstruction, editor page operations (reorder/rotate/delete), ID-card double-sided scan, book-spread split, chat answer → write-pdf chain, CJK/Arabic translate fonts.
