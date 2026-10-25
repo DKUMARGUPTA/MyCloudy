@@ -444,7 +444,7 @@ export function GenerateQrSurface(_props: ToolSurfaceProps): React.JSX.Element |
           }
         })
         .catch(() => {
-          toast({ title: t("tool.errorGeneric"), variant: "destructive" });
+          toast({ title: t("tool.errorGeneric", { detail: "" }), variant: "destructive" });
         });
     },
     [t, toast]
@@ -554,7 +554,7 @@ export function GenerateQrSurface(_props: ToolSurfaceProps): React.JSX.Element |
       const zip = await zipOutputs(outputs, `${base}-qr-codes.zip`);
       downloadBlob(zip.blob, zip.name);
     } catch {
-      toast({ title: t("tool.errorGeneric"), variant: "destructive" });
+      toast({ title: t("tool.errorGeneric", { detail: "" }), variant: "destructive" });
     } finally {
       setZipPct(null);
     }

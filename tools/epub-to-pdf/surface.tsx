@@ -300,7 +300,7 @@ export function EpubToPdfSurface({
             title: t("tool.errorTitle"),
             description: data.code.startsWith("epub.")
               ? t(data.code)
-              : t("tool.errorGeneric"),
+              : t("tool.errorGeneric", { detail: "" }),
             variant: "destructive",
           });
           cleanup();
@@ -311,7 +311,7 @@ export function EpubToPdfSurface({
       setPct(null);
       toast({
         title: t("tool.errorTitle"),
-        description: t("tool.errorGeneric"),
+        description: t("tool.errorGeneric", { detail: "" }),
         variant: "destructive",
       });
       cleanup();

@@ -206,6 +206,10 @@ function rgbaToRgb(rgba: Uint8ClampedArray): Uint8Array {
 
   // Fax (G4 + G3 1D/2D) — PIL/libtiff is the oracle for real CCITT files.
   // (sharp cannot write 1-bit TIFFs; Python PIL writes them via libtiff.)
+  // The oracle writes under /tmp/tiffwork — create it (the smoke used to
+  // only pass on machines where some earlier run had left the dir behind).
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync("/tmp/tiffwork", { recursive: true });
   for (const compression of ["group4", "group3"] as const) {
     const { spawnSync } = await import("node:child_process");
     const script = `

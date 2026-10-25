@@ -13,6 +13,7 @@
  * Run: bun scripts/smoke-pagenumbers.ts
  */
 import { readFile, writeFile } from "node:fs/promises";
+import { inflateSync } from "node:zlib";
 import {
   PDFDocument,
   StandardFonts,
@@ -29,6 +30,35 @@ function fail(message: string): never {
 
 function pass(message: string): void {
   console.log(`PASS ${message}`);
+}
+
+/**
+ * Extracts every `stream…endstream` payload from a saved PDF and inflates
+ * the Flate-compressed ones (pdf-lib compresses content streams). Falls
+ * back to the raw bytes when a payload is not zlib — font subsets, images
+ * and already-raw streams must not break the scan.
+ */
+function decodeAllStreams(pdf: Uint8Array): string {
+  const latin = Buffer.from(pdf).toString("latin1");
+  let out = "";
+  const re = /stream\r?\n/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(latin)) !== null) {
+    const start = match.index + match[0].length;
+    const end = latin.indexOf("endstream", start);
+    if (end < 0) break;
+    const chunk = Buffer.from(
+      latin.slice(start, end).replace(/\r\n$/, ""),
+      "latin1"
+    );
+    try {
+      out += inflateSync(chunk).toString("latin1");
+    } catch {
+      out += chunk.toString("latin1");
+    }
+    re.lastIndex = end;
+  }
+  return out;
 }
 
 /** The exact to-roman the tool will use (1-based value → lowercase roman). */
@@ -142,12 +172,21 @@ async function main(): Promise<void> {
   pass(`round-trip: ${saved.length} bytes, reload + embedFont OK`);
 
   // 5. Raw check: the saved file contains our stamped operators.
+  // pdf-lib Flate-compresses content streams, so the operators only show
+  // after decoding every stream (the old raw-bytes check went blind the
+  // moment compression landed and could never see "Tj" again).
+  const decoded = await decodeAllStreams(saved);
+  const hasTj = decoded.includes("Tj") || decoded.includes("TJ");
+  if (!hasTj) fail("no text-show operators in decoded streams");
+  // All five draws go through fontkit-embedded subsets → glyph-ID hex
+  // strings, so literal ASCII never appears in the stream; assert the
+  // operator COUNT instead (header + footer + digit strip + roman + alpha).
+  const tjCount = (decoded.match(/Tj/g) || []).length;
+  if (tjCount < 5) fail(`expected 5+ Tj operators, found ${tjCount}`);
   const raw = Buffer.from(saved).toString("latin1");
-  const hasTj = raw.includes("Tj") || raw.includes("TJ");
-  if (!hasTj) fail("no text-show operators in output");
   const fontCount = (raw.match(/\/Font/g) || []).length;
   if (fontCount < 2) fail("expected 2+ /Font refs in output");
-  pass(`output has text ops + ${fontCount} /Font refs`);
+  pass(`output has text ops + ${fontCount} /Font refs (streams decoded)`);
 
   // 6. Subset size sanity: the subset-embedded font must not be the full 243KB.
   const subsetShare = saved.length / ttf.length;

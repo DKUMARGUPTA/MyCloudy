@@ -40,14 +40,58 @@ async function run(request: WorkerRunRequest): Promise<void> {
   post({ type: "progress", runId, pct: 5, stage: "reading" });
   const baseBytes = new Uint8Array(await baseFile.arrayBuffer());
   const overlayBytes = new Uint8Array(await overlayFile.arrayBuffer());
-  const baseDoc = await PDFDocument.load(baseBytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
-  const overlayDoc = await PDFDocument.load(overlayBytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
+
+  // R6-b honesty (merge-pdf/pagegrid standard): overlay has TWO inputs, so a
+  // locked-file refusal must NAME the file — "unlock it first" is useless
+  // when the user can't tell the base from the stamp. Structural probe first
+  // (pdf-lib ignoreEncryption load + isEncrypted — never a raw-bytes
+  // "/Encrypt" sniff), then the plain load; both refusals carry the name.
+  const loadNamed = async (
+    bytes: Uint8Array,
+    fileName: string
+  ): Promise<PDFDocument | null> => {
+    let probe: PDFDocument | null = null;
+    try {
+      probe = await PDFDocument.load(bytes, {
+        ignoreEncryption: true,
+        updateMetadata: false,
+      });
+    } catch {
+      // Not parseable at all — the plain load below produces the honest
+      // corrupt refusal for this file.
+    }
+    if (probe?.isEncrypted) {
+      post({
+        type: "error",
+        runId,
+        code: "tool.errorEncrypted",
+        detail: fileName,
+      });
+      return null;
+    }
+    try {
+      return await PDFDocument.load(bytes, {
+        ignoreEncryption: false,
+        updateMetadata: false,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      post({
+        type: "error",
+        runId,
+        code: /password|encrypt/i.test(message)
+          ? "tool.errorEncrypted"
+          : "tool.errorCorrupt",
+        detail: fileName,
+      });
+      return null;
+    }
+  };
+
+  const baseDoc = await loadNamed(baseBytes, baseFile.name);
+  if (baseDoc === null) return;
+  const overlayDoc = await loadNamed(overlayBytes, overlayFile.name);
+  if (overlayDoc === null) return;
   if (overlayDoc.getPageCount() === 0) {
     post({ type: "error", runId, code: "overlay.errorNoPages" });
     return;

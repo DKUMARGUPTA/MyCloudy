@@ -63,6 +63,7 @@ import { GridCell } from "./grid-cell";
 import { useGridHistory } from "./use-grid-history";
 import {
   VIRTUALIZE_ABOVE,
+  classifyProbeError,
   createInitialGrid,
   deleteIndices,
   duplicateIndices,
@@ -80,6 +81,7 @@ import {
   serializeGrid,
   type GridPage,
   type GridPreset,
+  type ProbeProblem,
 } from "./model";
 
 /**
@@ -164,6 +166,8 @@ export function GridSurface({
     file: File;
     count: number;
     aspect: number;
+    /** R6-b: why detection failed — a locked PDF is NOT a damaged one. */
+    problem: ProbeProblem | null;
   } | null>(null);
 
   /* ---- batch per-file stores ----
@@ -175,7 +179,7 @@ export function GridSurface({
   const gridsByFileRef = useRef<Record<string, string>>({});
   const selectionsByFileRef = useRef<Record<string, string>>({});
   const docInfoByFileRef = useRef<
-    Record<string, { count: number; aspect: number }>
+    Record<string, { count: number; aspect: number; problem: ProbeProblem | null }>
   >({});
   const [batchTick, setBatchTick] = useState(0);
   const filesRef = useRef(files);
@@ -200,6 +204,17 @@ export function GridSurface({
   const syncBatchBlocked = useCallback(
     (currentFiles: ToolFileRef[]) => {
       for (const item of currentFiles) {
+        // R6-b honesty: a failed probe is never "all pages deleted" — name
+        // the real reason (password → unlock first; else damaged file).
+        const info = docInfoByFileRef.current[item.id];
+        if (info !== undefined && info.problem === "password") {
+          setRunBlocked("grid.ctaEncrypted");
+          return;
+        }
+        if (info !== undefined && info.problem === "corrupt") {
+          setRunBlocked("grid.ctaCorrupt");
+          return;
+        }
         const stored = gridsByFileRef.current[item.id];
         if (stored === undefined) {
           setRunBlocked("grid.detecting");
@@ -240,10 +255,11 @@ export function GridSurface({
       initial: GridPage[],
       count: number,
       fileAspect: number,
-      initialSelection: ReadonlySet<number>
+      initialSelection: ReadonlySet<number>,
+      problem: ProbeProblem | null = null
     ): void => {
       reset(initial);
-      setDocInfo({ file, count, aspect: fileAspect });
+      setDocInfo({ file, count, aspect: fileAspect, problem });
       setSelection(new Set(initialSelection));
       setFocusIndex(0);
       setAnchorIndex(null);
@@ -267,7 +283,8 @@ export function GridSurface({
           storedSelection !== undefined
             ? parseNumberListOption(storedSelection)
             : []
-        )
+        ),
+        cached.problem
       );
       return () => {
         cancelled = true;
@@ -278,7 +295,11 @@ export function GridSurface({
       .then(([count, fileAspect]) => {
         if (cancelled) return;
         if (activeId !== null) {
-          docInfoByFileRef.current[activeId] = { count, aspect: fileAspect };
+          docInfoByFileRef.current[activeId] = {
+            count,
+            aspect: fileAspect,
+            problem: null,
+          };
           if (gridsByFileRef.current[activeId] === undefined) {
             gridsByFileRef.current[activeId] =
               count >= 1 ? serializeGrid(createInitialGrid(count)) : "[]";
@@ -298,7 +319,7 @@ export function GridSurface({
           syncBatchBlocked(filesRef.current);
         }
         if (count < 1) {
-          setDocInfo({ file, count: 0, aspect: DEFAULT_ASPECT });
+          setDocInfo({ file, count: 0, aspect: DEFAULT_ASPECT, problem: null });
           syncBatchBlocked(filesRef.current);
           return;
         }
@@ -323,12 +344,17 @@ export function GridSurface({
           )
         );
       })
-      .catch(() => {
+      .catch((cause: unknown) => {
         if (cancelled) return;
+        // R6-b honesty split: PasswordException → "unlock it first", not
+        // "it may be damaged". The probe is the honest refuse path for the
+        // whole PageGrid family — the run can never start on a locked file.
+        const problem = classifyProbeError(cause);
         if (activeId !== null) {
           docInfoByFileRef.current[activeId] = {
             count: 0,
             aspect: DEFAULT_ASPECT,
+            problem,
           };
           if (gridsByFileRef.current[activeId] === undefined) {
             gridsByFileRef.current[activeId] = "[]";
@@ -347,7 +373,7 @@ export function GridSurface({
           setBatchTick((tick) => tick + 1);
           syncBatchBlocked(filesRef.current);
         }
-        setDocInfo({ file, count: 0, aspect: DEFAULT_ASPECT });
+        setDocInfo({ file, count: 0, aspect: DEFAULT_ASPECT, problem });
         syncBatchBlocked(filesRef.current);
       });
     return () => {
@@ -365,17 +391,25 @@ export function GridSurface({
         if (docInfoByFileRef.current[item.id] !== undefined) continue;
         let count = 0;
         let fileAspect = DEFAULT_ASPECT;
+        let problem: ProbeProblem | null = null;
         try {
           [count, fileAspect] = await Promise.all([
             getPdfPageCount(item.file),
             getPdfPageAspect(item.file),
           ]);
-        } catch {
+        } catch (cause: unknown) {
+          // R6-b honesty split (same classification as the active file):
+          // batch rows must say "password-protected", not "damaged".
           count = 0;
           fileAspect = DEFAULT_ASPECT;
+          problem = classifyProbeError(cause);
         }
         if (cancelled) return;
-        docInfoByFileRef.current[item.id] = { count, aspect: fileAspect };
+        docInfoByFileRef.current[item.id] = {
+          count,
+          aspect: fileAspect,
+          problem,
+        };
         if (gridsByFileRef.current[item.id] === undefined) {
           gridsByFileRef.current[item.id] =
             count >= 1 ? serializeGrid(createInitialGrid(count)) : "[]";
@@ -796,7 +830,11 @@ export function GridSurface({
       id: string;
       name: string;
       size: number;
-      info: { count: number; aspect: number } | undefined;
+      info: {
+        count: number;
+        aspect: number;
+        problem: ProbeProblem | null;
+      } | undefined;
       badge: { count: number; key: string; titleKey: string } | null;
       isActive: boolean;
     }>
@@ -944,13 +982,19 @@ export function GridSurface({
                       {row.name}
                     </span>
                     <span className="block truncate text-[10px] text-muted-foreground">
-                      {row.info === undefined
-                        ? t("grid.detecting")
-                        : row.info.count === 0
-                          ? t("tool.errorCorrupt")
-                          : `${formatBytes(row.size)} · ${t("tool.pageCount", {
-                              count: row.info.count,
-                            })}`}
+                      {row.info === undefined ? (
+                        t("grid.detecting")
+                      ) : row.info.problem === "password" ? (
+                        <span className="font-medium text-amber-600 dark:text-amber-400">
+                          {t("grid.encryptedRow")}
+                        </span>
+                      ) : row.info.problem === "corrupt" || row.info.count === 0 ? (
+                        t("tool.errorCorrupt")
+                      ) : (
+                        `${formatBytes(row.size)} · ${t("tool.pageCount", {
+                          count: row.info.count,
+                        })}`
+                      )}
                     </span>
                   </span>
                   {row.badge ? (
@@ -1333,7 +1377,8 @@ export function GridSurface({
           </p>
         ) : docInfo.count === 0 ? (
           <p className="px-2 py-10 text-center text-xs font-medium text-destructive">
-            {t("tool.errorCorrupt")}
+            {/* R6-b honesty split: locked ≠ damaged. */}
+            {docInfo.problem === "password" ? t("grid.encrypted") : t("tool.errorCorrupt")}
           </p>
         ) : pages.length === 0 ? (
           <p className="px-2 py-10 text-center text-xs text-muted-foreground">

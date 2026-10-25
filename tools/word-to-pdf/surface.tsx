@@ -275,7 +275,7 @@ export function WordToPdfSurface({
             title: t("tool.errorTitle"),
             description: data.code.startsWith("w2p.")
               ? t(data.code)
-              : t("tool.errorGeneric"),
+              : t("tool.errorGeneric", { detail: "" }),
             variant: "destructive",
           });
           cleanup();
@@ -286,7 +286,7 @@ export function WordToPdfSurface({
       setPct(null);
       toast({
         title: t("tool.errorTitle"),
-        description: t("tool.errorGeneric"),
+        description: t("tool.errorGeneric", { detail: "" }),
         variant: "destructive",
       });
       cleanup();

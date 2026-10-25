@@ -1141,7 +1141,7 @@ function PageEditorDialog({
                 {bitmapError ? (
                   <span className="absolute inset-0 flex items-center justify-center gap-2 bg-card/80 p-4 text-center text-xs font-medium text-destructive">
                     <TriangleAlert className="size-4 shrink-0" aria-hidden="true" />
-                    {t("tool.scan.errorDecode")}
+                    {t("tool.errorDecode", { detail: file?.name ?? "" })}
                   </span>
                 ) : null}
                 {!bitmap && !bitmapError ? (

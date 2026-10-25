@@ -15,6 +15,7 @@ import {
   PDFArray,
 } from "pdf-lib";
 import { readFileSync, writeFileSync } from "node:fs";
+import { inflateSync } from "node:zlib";
 
 const OK = (label: string) => console.log(`  ✓ ${label}`);
 const FAIL = (label: string, err: unknown) => {
@@ -100,11 +101,40 @@ try {
   const p1 = reload.getPage(0);
   const c = p1.node.Contents();
   if (!(c instanceof PDFArray)) throw new Error("reload Contents not array");
-  const raw = (c.get(0) as { getContents?: () => Uint8Array }).getContents?.();
-  const text = raw ? Buffer.from(raw).toString("latin1") : "";
-  if (text.includes("CONFIDENTIAL")) OK("reload: first stream contains the watermark text (behind order kept)");
+  // Contents holds PDFRefs — dereference the first one into the actual
+  // stream object (PDFRawStream after reload, PDFContentStream in memory).
+  const ctx = p1.node.context;
+  const streamObj = ctx.lookup(c.get(0)) as {
+    contents?: Uint8Array;
+    getContents?: () => Uint8Array;
+  } | undefined;
+  if (!streamObj) throw new Error("first Contents ref did not resolve");
+  // Reloaded streams are PDFRawStream (`.contents` bytes); in-memory ones
+  // are PDFContentStream (`.getContents()`). Support both, then decode.
+  const raw = streamObj.contents ?? streamObj.getContents?.();
+  // pdf-lib Flate-compresses content streams — decode before asserting;
+  // the old raw-bytes check went blind once compression landed.
+  let text = "";
+  if (raw) {
+    const buf = Buffer.from(raw);
+    try {
+      text = inflateSync(buf).toString("latin1");
+    } catch {
+      text = buf.toString("latin1");
+    }
+  }
+  // pdf-lib writes text-show as HEX strings (<434F…> Tj) — decode every
+  // hex literal before asserting, then also keep the plain text.
+  const hexDecoded = text.replace(/<([0-9A-Fa-f]+)>\s*Tj/g, (_, hex: string) => {
+    let plain = "";
+    for (let i = 0; i + 1 < hex.length; i += 2) {
+      plain += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+    }
+    return `(${plain}) Tj`;
+  });
+  if (hexDecoded.includes("CONFIDENTIAL") || text.includes("CONFIDENTIAL")) OK("reload: first stream contains the watermark text (behind order kept, stream decoded + hex resolved)");
   else {
-    console.log("   first stream head:", text.slice(0, 120));
+    console.log("   first stream tail:", text.slice(-140));
     throw new Error("first stream does not contain watermark ops");
   }
 } catch (err) {

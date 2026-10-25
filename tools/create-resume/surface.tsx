@@ -767,7 +767,7 @@ export function ResumeSurface(props: ToolSurfaceProps): ReactNode {
             setExportPct(null);
             toast({
               title: t("tool.errorTitle"),
-              description: t("tool.errorGeneric"),
+              description: t("tool.errorGeneric", { detail: "" }),
               variant: "destructive",
             });
             cleanup();
@@ -778,7 +778,7 @@ export function ResumeSurface(props: ToolSurfaceProps): ReactNode {
         setExportPct(null);
         toast({
           title: t("tool.errorTitle"),
-          description: t("tool.errorGeneric"),
+          description: t("tool.errorGeneric", { detail: "" }),
           variant: "destructive",
         });
         cleanup();

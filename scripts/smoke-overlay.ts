@@ -554,7 +554,131 @@ async function main(): Promise<void> {
 
 await main();
 
+/* ------------------------------------------------------------------ */
+/* 8. R6-b named refusals — the REAL worker, encrypted/corrupt inputs  */
+/* ------------------------------------------------------------------ */
+console.log("\n8. REAL worker: locked/corrupt refusals NAME the file");
+{
+  const workerGlobal = globalThis as unknown as {
+    postMessage: (msg: unknown) => void;
+    onmessage: ((event: { data: unknown }) => void) | null;
+  };
+  const inbox: { type: string; code?: string; detail?: string; runId?: number }[] = [];
+  workerGlobal.postMessage = (msg: unknown): void => {
+    inbox.push(msg as { type: string });
+  };
+  (globalThis as unknown as Record<string, unknown>).self = workerGlobal;
+  await import("../tools/overlay-pdf/worker");
+  check("worker module self-registers onmessage", typeof workerGlobal.onmessage === "function");
+
+  const makeEncrypted = async (): Promise<Uint8Array> => {
+    const { PDFDocument: CantooDoc } = await import("@cantoo/pdf-lib");
+    const doc = await CantooDoc.create();
+    doc.addPage([300, 300]);
+    doc.encrypt({ userPassword: "secret", algorithm: "AES-256" });
+    return doc.save({ useObjectStreams: false });
+  };
+
+  const drive = async (
+    runId: number,
+    files: File[]
+  ): Promise<typeof inbox> => {
+    const before = inbox.length;
+    workerGlobal.onmessage!({
+      data: {
+        type: "run",
+        runId,
+        toolId: "overlay-pdf",
+        options: {},
+        files,
+      },
+    });
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      const terminal = inbox
+        .slice(before)
+        .some((m) => m.type === "result" || m.type === "error");
+      if (terminal) return inbox.slice(before);
+      if (Date.now() > deadline) throw new Error(`run ${runId} did not finish`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+
+  // Fixtures need REAL page content: pdf-lib embeds overlay pages at save
+  // time and refuses pages with no /Contents ("Can't embed page with
+  // missing Contents") — content-free synthetic pages would fail the run.
+  const fineBase = await PDFDocument.create();
+  const basePage = fineBase.addPage([300, 400]);
+  basePage.drawRectangle({ x: 10, y: 10, width: 100, height: 40 });
+  const baseBytes = new Uint8Array(await fineBase.save({ useObjectStreams: false }));
+  const fineTop = await PDFDocument.create();
+  const topPage = fineTop.addPage([300, 400]);
+  topPage.drawRectangle({ x: 20, y: 20, width: 120, height: 60 });
+  const topBytes = new Uint8Array(await fineTop.save({ useObjectStreams: false }));
+  const encBytes = await makeEncrypted();
+  const garbage = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x9, 0x9, 0x9]);
+
+  // --- locked BASE names the base file ---------------------------------
+  {
+    const msgs = await drive(
+      8101,
+      [
+        new File([encBytes as BlobPart], "report.pdf"),
+        new File([topBytes as BlobPart], "stamp.pdf"),
+      ]
+    );
+    const errors = msgs.filter((m) => m.type === "error");
+    check("locked base: exactly ONE error, no result", errors.length === 1 && !msgs.some((m) => m.type === "result"), JSON.stringify(msgs.map((m) => m.type)));
+    check("locked base: code tool.errorEncrypted", errors[0]?.code === "tool.errorEncrypted", errors[0]?.code);
+    check("locked base: refusal NAMES the base file", errors[0]?.detail === "report.pdf", errors[0]?.detail);
+  }
+
+  // --- locked OVERLAY names the stamp file ------------------------------
+  {
+    const msgs = await drive(
+      8102,
+      [
+        new File([baseBytes as BlobPart], "report.pdf"),
+        new File([encBytes as BlobPart], "stamp.pdf"),
+      ]
+    );
+    const errors = msgs.filter((m) => m.type === "error");
+    check("locked overlay: exactly ONE error, no result", errors.length === 1 && !msgs.some((m) => m.type === "result"));
+    check("locked overlay: refusal NAMES the stamp file", errors[0]?.code === "tool.errorEncrypted" && errors[0]?.detail === "stamp.pdf", `${errors[0]?.code} / ${errors[0]?.detail}`);
+  }
+
+  // --- unparseable base → honest corrupt refusal with the name ----------
+  {
+    const msgs = await drive(
+      8103,
+      [
+        new File([garbage as BlobPart], "damaged.pdf"),
+        new File([topBytes as BlobPart], "stamp.pdf"),
+      ]
+    );
+    const errors = msgs.filter((m) => m.type === "error");
+    check("damaged base: exactly ONE error, no result", errors.length === 1 && !msgs.some((m) => m.type === "result"));
+    check("damaged base: code tool.errorCorrupt", errors[0]?.code === "tool.errorCorrupt", errors[0]?.code);
+    check("damaged base: refusal NAMES the damaged file", errors[0]?.detail === "damaged.pdf", errors[0]?.detail);
+  }
+
+  // --- happy path still intact after the probe refactor -----------------
+  {
+    const msgs = await drive(
+      8104,
+      [
+        new File([baseBytes as BlobPart], "report.pdf"),
+        new File([topBytes as BlobPart], "stamp.pdf"),
+      ]
+    );
+    const results = msgs.filter((m) => m.type === "result");
+    check("fine inputs: exactly ONE result, no error", results.length === 1 && !msgs.some((m) => m.type === "error"), JSON.stringify(msgs.map((m) => m.type === "error" ? `${m.code}/${m.detail ?? ""}` : m.type)));
+  }
+}
+
 console.log(
   `\n${pass} passed, ${fail} failed (${pass + fail} checks)`
 );
-if (fail > 0) process.exit(1);
+// Unconditional exit — on success, dangling worker/sharp shims keep
+// bun’s event loop alive forever (completed-but-never-terminated hangs).
+process.exit(fail > 0 ? 1 : 0);

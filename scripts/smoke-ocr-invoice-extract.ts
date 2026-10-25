@@ -557,7 +557,13 @@ console.log("\n── 10. i18n parity + mirror byte-equality ──────�
   }
   const enLeaves = leaves(en);
   const hiLeaves = leaves(hi);
-  eq("central catalogs leaf parity (en == hi)", [enLeaves, hiLeaves], [4366, 4366]);
+  // R6: the exact 4366 pin became brittle once later rounds added their own
+  // keys (edit-pdf R6-a etc.) — keep the INVARIANT (en == hi, floor at the
+  // R5-FINAL count) instead of a count that every new feature breaks.
+  check(
+    `central catalogs leaf parity (en == hi, ≥ 4366): ${enLeaves} = ${hiLeaves}`,
+    enLeaves === hiLeaves && enLeaves >= 4366
+  );
   eq(
     "central catalogs identical key sets",
     [...keyset(en)].filter((k) => !keyset(hi).has(k)),

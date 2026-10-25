@@ -731,7 +731,7 @@ export function WriteSurface(props: ToolSurfaceProps): JSX.Element {
       setExportPct(null);
       toast({
         title: t("tool.errorTitle"),
-        description: t("tool.errorGeneric"),
+        description: t("tool.errorGeneric", { detail: "" }),
         variant: "destructive",
       });
       cleanup();

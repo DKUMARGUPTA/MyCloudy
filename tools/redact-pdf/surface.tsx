@@ -673,7 +673,7 @@ export function RedactSurface(props: ToolSurfaceProps): React.JSX.Element | null
                   className="size-4 shrink-0 text-amber-600 dark:text-amber-400"
                   aria-hidden="true"
                 />
-                {t("tool.errorEncrypted")}
+                {t("tool.errorEncrypted", { detail: file?.name ?? "" })}
               </div>
             ) : pageError === "corrupt" ? (
               <div

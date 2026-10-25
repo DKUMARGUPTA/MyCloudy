@@ -3,6 +3,7 @@
     "search": {
       "panelTitle": "Search",
       "filesQueued": "{count} files will be searched",
+      "filesQueuedOne": "1 file will be searched",
       "queryLabel": "Search for",
       "queryPlaceholder": "Text or regex…",
       "modeLabel": "Match type",
@@ -37,6 +38,7 @@
     "search": {
       "panelTitle": "खोज",
       "filesQueued": "{count} फ़ाइलों में खोजी जाएगी",
+      "filesQueuedOne": "1 फ़ाइल में खोजी जाएगी",
       "queryLabel": "क्या खोजना है",
       "queryPlaceholder": "टेक्स्ट या regex…",
       "modeLabel": "मैच टाइप",

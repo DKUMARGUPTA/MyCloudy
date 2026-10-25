@@ -26,6 +26,9 @@
  *     - extract one-per-page + remove naming unchanged (legacy path),
  *     - encrypted input, non-run messages ignored, progress beats,
  *       result detail {files, pages} summed across the batch.
+ *  3. R6-b honest locked/corrupt refusals: classifyProbeError unit
+ *     vectors, worker structural probe + file-naming detail, surface
+ *     copy/CTA locks, i18n keys in BOTH catalogs.
  *
  * Run: bun scripts/smoke-rotate.ts
  */
@@ -34,6 +37,7 @@ import { readFileSync } from "node:fs";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 
 import {
+  classifyProbeError,
   createInitialGrid,
   parseGridOption,
   serializeGrid,
@@ -503,6 +507,34 @@ console.log("── 2. REAL E2E through the shared worker ───────�
       r.type === "error" && r.code === "tool.errorEncrypted",
       codeOf(r)
     );
+    // R6-b: the batch toast must NAME the locked file (merge-pdf standard).
+    check(
+      "encrypted refusal names the locked file (detail)",
+      r.type === "error" && r.detail === "locked.pdf",
+      r.type === "error" ? r.detail : codeOf(r)
+    );
+  }
+
+  /* --- R6-b: corrupt input in a batch also names the file ---------------- */
+  {
+    const truncated = a3.slice(0, 120); // torn PDF — load fails, NOT encrypt
+    const r = await drive(runId++, "rotate-pdf-pages", [
+      { name: "fine.pdf", bytes: b2, id: "c1" },
+      { name: "damaged.pdf", bytes: truncated, id: "c2" },
+    ], {
+      grid: gridA,
+      grids: JSON.stringify({ c1: gridB, c2: gridA }),
+    });
+    check(
+      "corrupt file in batch → tool.errorCorrupt",
+      r.type === "error" && r.code === "tool.errorCorrupt",
+      codeOf(r)
+    );
+    check(
+      "corrupt refusal names the damaged file (detail)",
+      r.type === "error" && r.detail === "damaged.pdf",
+      r.type === "error" ? r.detail : codeOf(r)
+    );
   }
 
   /* --- protocol behaviour ------------------------------------------------- */
@@ -540,6 +572,84 @@ console.log("── 2. REAL E2E through the shared worker ───────�
           m.detail?.page === 2 &&
           m.detail?.pages === 2
       )
+    );
+  }
+}
+
+/* ================================================================== */
+console.log("── 3. R6-b: honest locked/corrupt refusals ───────────");
+/* ================================================================== */
+{
+  const surface = readFileSync("tools/pagegrid/grid-surface.tsx", "utf8");
+  const workerSrc = readFileSync("tools/pagegrid/worker.ts", "utf8");
+  const en = JSON.parse(readFileSync("src/i18n/en.json", "utf8")) as {
+    grid: Record<string, string>;
+  };
+  const hi = JSON.parse(readFileSync("src/i18n/hi.json", "utf8")) as {
+    grid: Record<string, string>;
+  };
+
+  /* classifyProbeError — pure model, real unit vectors */
+  const passwordErr = new Error("pdf-parse");
+  (passwordErr as { cause?: unknown }).cause = { name: "PasswordException" };
+  check(
+    "classifyProbeError: PasswordException cause → \"password\"",
+    classifyProbeError(passwordErr) === "password"
+  );
+  check(
+    "classifyProbeError: /password/i message → \"password\"",
+    classifyProbeError(new Error("Input document to `PDFDocument.load` is password protected")) ===
+      "password"
+  );
+  check(
+    "classifyProbeError: generic parse failure → \"corrupt\"",
+    classifyProbeError(new Error("Expected endstream")) === "corrupt"
+  );
+
+  /* worker: structural probe + named refusals */
+  check(
+    "worker: structural isEncrypted probe (pdf-lib ignoreEncryption load)",
+    workerSrc.includes("ignoreEncryption: true") &&
+      workerSrc.includes("probe?.isEncrypted")
+  );
+  check(
+    "worker: encrypted + corrupt refusals carry the file name",
+    workerSrc.includes('code: "tool.errorEncrypted"') &&
+      workerSrc.includes('code: /encrypt/i.test(message)') &&
+      (workerSrc.match(/detail: file\.name/g)?.length ?? 0) >= 2
+  );
+
+  /* surface: honest copy + CTA gating for locked vs damaged */
+  check(
+    "surface: probe failures classified (password vs corrupt)",
+    surface.includes("const problem = classifyProbeError(cause);") &&
+      surface.includes("problem = classifyProbeError(cause);")
+  );
+  check(
+    "surface: batch gate refuses locked files honestly (ctaEncrypted)",
+    surface.includes('setRunBlocked("grid.ctaEncrypted")') &&
+      surface.includes('setRunBlocked("grid.ctaCorrupt")')
+  );
+  check(
+    "surface: grid area says \"unlock it first\" for locked files",
+    surface.includes('docInfo.problem === "password" ? t("grid.encrypted")')
+  );
+  check(
+    "surface: batch rows show the locked-file note (encryptedRow)",
+    surface.includes('t("grid.encryptedRow")') &&
+      surface.includes('row.info.problem === "password"')
+  );
+
+  /* i18n: all four honest keys exist in BOTH catalogs, non-empty */
+  const keys = ["encrypted", "encryptedRow", "ctaEncrypted", "ctaCorrupt"];
+  for (const key of keys) {
+    check(
+      `i18n grid.${key} present in en + hi`,
+      typeof en.grid[key] === "string" &&
+        en.grid[key]!.length > 0 &&
+        typeof hi.grid[key] === "string" &&
+        hi.grid[key]!.length > 0,
+      { en: en.grid[key], hi: hi.grid[key] }
     );
   }
 }

@@ -145,7 +145,15 @@
       "draftImagesNote": "Images from that session must be re-added.",
       "draftResume": "Resume",
       "draftDiscard": "Discard",
-      "draftRestored": "Draft restored"
+      "draftRestored": "Draft restored",
+      "toolEditTextShort": "Edit text",
+      "editBarLabel": "Text editing toolbar",
+      "sizeDecrease": "Decrease size",
+      "sizeIncrease": "Increase size",
+      "hintEditReady": "Click any text to edit it — font, size and colour are matched for you.",
+      "noTextOcrCta": "Run OCR first",
+      "ocrHandoffToast": "Opening OCR — it makes a searchable copy; edit that copy here afterwards.",
+      "firstHint": "Tip: you can edit the PDF's existing text — tap \"Edit text\" below."
     }
   },
   "hi": {
@@ -294,7 +302,15 @@
       "draftImagesNote": "उस सेशन की तस्वीरें दोबारा जोड़नी होंगी।",
       "draftResume": "फिर खोलें",
       "draftDiscard": "हटाएँ",
-      "draftRestored": "ड्राफ़्ट वापस लोड हुआ"
+      "draftRestored": "ड्राफ़्ट वापस लोड हुआ",
+      "toolEditTextShort": "टेक्स्ट बदलें",
+      "editBarLabel": "टेक्स्ट एडिटिंग टूलबार",
+      "sizeDecrease": "साइज़ घटाएँ",
+      "sizeIncrease": "साइज़ बढ़ाएँ",
+      "hintEditReady": "किसी भी टेक्स्ट पर क्लिक करके उसे एडिट करें — फ़ॉन्ट, साइज़ और रंग आपके लिए मिलाए जाएँगे।",
+      "noTextOcrCta": "पहले OCR चलाएँ",
+      "ocrHandoffToast": "OCR खुल रहा है — यह एक सर्च करने योग्य कॉपी बनाता है; उस कॉपी को बाद में यहीं एडिट करें।",
+      "firstHint": "टिप: PDF का मौजूदा टेक्स्ट भी बदल सकते हैं — नीचे \"टेक्स्ट बदलें\" आज़माएँ।"
     }
   }
 }

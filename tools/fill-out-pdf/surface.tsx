@@ -491,7 +491,7 @@ export function FillSurface({
           toast({ title: t("fill.fdfApplied", { applied: applies.length, skipped }) });
         })
         .catch(() => {
-          toast({ title: t("tool.errorGeneric"), variant: "destructive" });
+          toast({ title: t("tool.errorGeneric", { detail: "" }), variant: "destructive" });
         });
     },
     [fields, fileId, onChange, t, toast]

@@ -578,6 +578,73 @@ async function main(): Promise<void> {
         !("dedupeBytesSaved" in r2.detail),
       r2.type === "result" ? JSON.stringify(r2.detail) : JSON.stringify(r2)
     );
+    /* ---------- R6-b honesty: batch refusal names the locked file ---------- */
+    {
+      // compress-pdf takes up to 5 files, so the encrypted/corrupt toast must
+      // NAME the file that stopped the run (merge-pdf standard). The worker
+      // now probes STRUCTURALLY (ignoreEncryption load + isEncrypted) before
+      // the plain load; both refusals post detail = file.name.
+      const workerSrc = await readFile("tools/compress-pdf/worker.ts", "utf8");
+      check(
+        "worker: structural isEncrypted probe (pdf-lib ignoreEncryption load)",
+        workerSrc.includes("ignoreEncryption: true") &&
+          workerSrc.includes("probe?.isEncrypted")
+      );
+      check(
+        "worker: encrypted + corrupt refusals carry the file name",
+        workerSrc.includes('code: "tool.errorEncrypted"') &&
+          workerSrc.includes("/password|encrypt/i.test(message)") &&
+          (workerSrc.match(/detail: file\.name/g)?.length ?? 0) === 2
+      );
+
+      const { PDFDocument: CantooDoc } = await import("@cantoo/pdf-lib");
+      const encDoc = await CantooDoc.create();
+      encDoc.addPage([300, 300]);
+      encDoc.encrypt({ userPassword: "secret", algorithm: "AES-256" });
+      const encBytes = new Uint8Array(
+        await encDoc.save({ useObjectStreams: false })
+      );
+      const fineDoc = await PDFDocument.create();
+      fineDoc.addPage([300, 300]);
+      const fine = new Uint8Array(await fineDoc.save({ useObjectStreams: false }));
+
+      const before = messages.length;
+      workerGlobal.onmessage!({
+        data: {
+          type: "run",
+          runId: 3,
+          toolId: "compress-pdf",
+          options: { preset: "recommended" },
+          files: [
+            new File([fine as BlobPart], "annual-report.pdf"),
+            new File([encBytes as BlobPart], "locked-scan.pdf"),
+          ],
+        } as WorkerRunRequest,
+      });
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        if (
+          messages
+            .slice(before)
+            .some((m) => m.runId === 3 && (m.type === "result" || m.type === "error"))
+        ) {
+          break;
+        }
+        if (Date.now() > deadline) throw new Error("run 3 did not finish");
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      const batch = messages.slice(before);
+      const batchErrors = batch.filter(
+        (m) => m.type === "error"
+      ) as Extract<WorkerResponse, { type: "error" }>[];
+      check("batch: exactly ONE error, no result", batchErrors.length === 1 && !batch.some((m) => m.type === "result"), JSON.stringify(batch.map((m) => m.type)));
+      check("batch: code is tool.errorEncrypted", batchErrors[0]?.code === "tool.errorEncrypted", batchErrors[0]?.code);
+      check(
+        "batch: refusal NAMES the locked file (detail)",
+        batchErrors[0]?.detail === "locked-scan.pdf",
+        batchErrors[0]?.detail
+      );
+    }
   }
 
   /* ---------- R4-b browser-QA fixture: duplicate DCT photos ---------- */
@@ -640,7 +707,10 @@ async function main(): Promise<void> {
   console.log(
     `\n${passed} passed, ${failed} failed${failed === 0 ? " — ALL PASS" : ""}`
   );
-  if (failed > 0) process.exit(1);
+  // Unconditional exit: on success, dangling sharp/worker shims keep bun's
+  // event loop alive forever (the smoke completed but never terminated —
+  // battery timeouts). House pattern: exit with the verdict, always.
+  process.exit(failed > 0 ? 1 : 0);
 }
 
 main().catch((error) => {

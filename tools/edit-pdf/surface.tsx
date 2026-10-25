@@ -9,7 +9,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { Loader2, TriangleAlert } from "lucide-react";
+import { Info, Lightbulb, Loader2, ScanText, TriangleAlert, X } from "lucide-react";
 
 import { loadPdfjs } from "@/lib/pdf/pdfjs";
 import type { PDFDocumentProxy } from "pdfjs-dist";
@@ -19,6 +19,8 @@ import {
   renderPdfThumbnail,
 } from "@/lib/pdf/thumbnails";
 import { useToast } from "@/hooks/use-toast";
+import { navigateToHash, ROUTES } from "@/hooks/use-hash-route";
+import { setChainHandoff } from "@/lib/tools/chain";
 import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
 import { useI18n } from "@/components/providers/locale-provider";
 import { BottomSheet } from "@/components/doco/bottom-sheet";
@@ -48,6 +50,7 @@ import {
   PropertiesPanel,
   SignPadDialog,
   SnapGuides,
+  TextEditBar,
   TextPieceButtons,
   type ContextMenuState,
   type FrMatchView,
@@ -144,6 +147,8 @@ const LONG_PRESS_SLOP = 8;
 const MARQUEE_MIN_PT = 4;
 /** P8.6: autosave debounce (ms). */
 const DRAFT_DEBOUNCE_MS = 1500;
+/** R6-a (D): one-time "Edit text exists" hint flag (per install). */
+const FIRST_HINT_KEY = "dp_editpdf_first_hint_v1";
 
 /** Mobile mode = coarse pointer OR narrower than the lg breakpoint. */
 function useMobileMode(): boolean {
@@ -646,6 +651,26 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
   const mobileMode = useMobileMode();
   const [moreOpen, setMoreOpen] = useState(false);
   const [propsOpen, setPropsOpen] = useState(false);
+  // R6-a (C): session-dismissible "click any text" chip (edittext mode).
+  const [editHintDismissed, setEditHintDismissed] = useState(false);
+  // R6-a (D): one-time "Edit text exists" pointer — null = not yet shown,
+  // "seen" = dismissed/shown before (persisted per install).
+  const [firstHint, setFirstHint] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(FIRST_HINT_KEY);
+    } catch {
+      return null; // private mode — just show the hint, persist nothing
+    }
+  });
+
+  const dismissFirstHint = useCallback((): void => {
+    setFirstHint("seen");
+    try {
+      localStorage.setItem(FIRST_HINT_KEY, "1");
+    } catch {
+      /* storage unavailable — session dismissal only */
+    }
+  }, []);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const zoomWrapRef = useRef<HTMLDivElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -813,6 +838,19 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     setEditingId(null);
   }, [applyObjects, editingId]);
 
+  // R6-c: auto-grow the inline editing box so it hugs its content. The
+  // object rect stays the save-time geometry, but while editing, wrapped
+  // lines must stay inside the visible white box — a plain textarea keeps
+  // its default 2-row height and spills text below it, which also fed the
+  // mini-toolbar's below-anchor a stale live height. Runs on every text
+  // patch (objects changes per keystroke), font/size change, and zoom.
+  useLayoutEffect(() => {
+    const el = textAreaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [editingId, objects, renderScale]);
+
   // --- Image + signature insertion ------------------------------------------
   const insertImageAsset = useCallback(
     (key: string, naturalW: number, naturalH: number): void => {
@@ -961,6 +999,20 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     },
     [applyObjects, base, currentView, pageDisp, selectedPage, t, toast]
   );
+
+  // --- R6-a: empty-state OCR hand-off (scan PDFs get a real next step) ------
+  // The chain bridge (src/lib/tools/chain.ts) passes the working File to
+  // ocr-pdf in memory — the same genuine hand-off the result view's "What
+  // next?" row uses; the OCR shell picks it up on mount, no re-upload.
+  const handOffToOcr = useCallback((): void => {
+    if (!file) return;
+    setChainHandoff({
+      fromToolId: "edit-pdf",
+      items: [{ id: fileId !== "" ? fileId : "ocr-handoff", file }],
+    });
+    toast({ title: t("editPdf.ocrHandoffToast") });
+    navigateToHash(ROUTES.tool("ocr-pdf"));
+  }, [file, fileId, t, toast]);
 
   // --- Find & replace (P8.3, same font rules) ---------------------------------
   const [frOpen, setFrOpen] = useState(false);
@@ -1982,6 +2034,29 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
             onFindReplace={openFindReplace}
           />
 
+          {/* R6-a (D): one-time discoverability pointer for the Edit text
+              tool on mobile (the original complaint — nobody found it in
+              the More sheet). Subtle, dismissible, once per install. */}
+          {mobileMode && viewsReady && tool !== "edittext" && firstHint === null ? (
+            <div className="flex items-start gap-2 rounded-card border border-border bg-card p-2.5">
+              <Lightbulb
+                className="mt-0.5 size-4 shrink-0 text-primary"
+                aria-hidden="true"
+              />
+              <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+                {t("editPdf.firstHint")}
+              </p>
+              <button
+                type="button"
+                className="flex size-8 shrink-0 items-center justify-center rounded-btn text-muted-foreground outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                aria-label={t("editPdf.frClose")}
+                onClick={dismissFirstHint}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
+
           {pageCount > 1 ? (
             <PreviewPageStrip
               file={file}
@@ -2090,17 +2165,37 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
                   />
                 ) : null}
 
-                {/* Live text editor — exact geometry of the text object. */}
+                {/* Live text editor — exact geometry of the text object.
+                    R6-a: taps INSIDE the box stop propagation so the
+                    overlay's marquee/deselect handler can't kill the edit
+                    (caret repositioning + mobile keyboards stay alive). */}
                 {editing && editing.kind === "text" ? (() => {
                   const disp = pdfRectToDisplay(editing, currentView);
                   return (
+                  <>
                   <textarea
                     ref={textAreaRef}
                     value={editing.text}
                     onChange={(event) =>
                       patchObject(editing.id, { text: event.target.value }, true)
                     }
-                    onBlur={endEdit}
+                    onBlur={(event) => {
+                      // R6-a (B): interacting with the floating mini-toolbar
+                      // (or its Radix portal, e.g. the font dropdown list)
+                      // keeps the edit alive — only a real click outside
+                      // closes it, matching Smallpdf.
+                      const next = event.relatedTarget as HTMLElement | null;
+                      if (
+                        next &&
+                        next.closest(
+                          "[data-text-edit-bar], [data-radix-popper-content-wrapper]"
+                        )
+                      ) {
+                        return;
+                      }
+                      endEdit();
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
                     spellCheck={false}
                     aria-label={t("editPdf.textEditorLabel")}
                     className="absolute z-20 resize-none overflow-visible rounded-sm bg-white/85 outline-2 outline-primary backdrop-blur-[1px]"
@@ -2120,6 +2215,19 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
                       padding: `${TEXT_PAD * renderScale}px`,
                     }}
                   />
+                  {/* R6-a (B): Smallpdf-style floating mini-toolbar just
+                      above the box being edited — same state, no fork. */}
+                  <TextEditBar
+                    rect={disp}
+                    dispW={pageDisp.w}
+                    dispH={pageDisp.h}
+                    scale={renderScale}
+                    obj={editing}
+                    onPatch={(patch) => patchObject(editing.id, patch)}
+                    onDelete={() => removeObject(editing.id)}
+                    editBoxRef={textAreaRef}
+                  />
+                  </>
                   );
                 })() : null}
 
@@ -2215,19 +2323,51 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
               : t(toolHintKey)}
           </p>
 
+          {/* R6-a (C): teach the click-to-edit gesture while pieces are live. */}
+          {tool === "edittext" && piecesState === "ready" && !editHintDismissed ? (
+            <div
+              role="note"
+              className="flex items-start gap-2 rounded-card border border-primary/30 bg-primary/5 p-2.5 text-primary dark:border-primary/40 dark:bg-primary/10"
+            >
+              <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <p className="min-w-0 flex-1 text-xs leading-relaxed">
+                {t("editPdf.hintEditReady")}
+              </p>
+              <button
+                type="button"
+                className="flex size-8 shrink-0 items-center justify-center rounded-btn outline-none hover:bg-primary/10 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                aria-label={t("editPdf.frClose")}
+                onClick={() => setEditHintDismissed(true)}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
+
           {tool === "edittext" && piecesState === "empty" ? (
             <div className="flex items-start gap-2.5 rounded-card border border-amber-300/60 bg-amber-50 p-3 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
               <TriangleAlert
                 className="mt-0.5 size-4 shrink-0"
                 aria-hidden="true"
               />
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold">
                   {t("editPdf.noTextTitle")}
                 </p>
                 <p className="mt-0.5 text-xs leading-relaxed">
                   {t("editPdf.noTextHint")}
                 </p>
+                {/* R6-a (C): real next step for scans — hand the SAME file
+                    to OCR through the in-memory chain bridge. */}
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-2.5 h-11 rounded-btn sm:h-9"
+                  onClick={handOffToOcr}
+                >
+                  <ScanText className="size-4" aria-hidden="true" />
+                  {t("editPdf.noTextOcrCta")}
+                </Button>
               </div>
             </div>
           ) : null}

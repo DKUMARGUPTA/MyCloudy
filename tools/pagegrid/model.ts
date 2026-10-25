@@ -26,6 +26,31 @@ export interface GridPage {
 
 export type GridPreset = "rotate" | "rearrange" | "remove" | "extract";
 
+/**
+ * Why a document probe (page count + aspect) failed — R6-b honesty split.
+ * A password-protected PDF is NOT a damaged one: pdf.js surfaces it as a
+ * PasswordException wrapped in the PdfParseError cause (sign-pdf recipe),
+ * and the family must say "unlock it first" instead of "it may be damaged".
+ */
+export type ProbeProblem = "password" | "corrupt";
+
+/**
+ * Classifies a probe failure: "password" when the cause chain carries a
+ * PasswordException (or a password-flavoured message), "corrupt" otherwise.
+ * Pure and side-effect free so smokes can unit-test it directly.
+ */
+export function classifyProbeError(error: unknown): ProbeProblem {
+  const cause = (error as { cause?: unknown })?.cause;
+  const name =
+    (cause as { name?: string } | undefined)?.name ??
+    (error as { name?: string } | undefined)?.name ??
+    "";
+  const message = String((error as Error)?.message ?? "");
+  return name === "PasswordException" || /password/i.test(message)
+    ? "password"
+    : "corrupt";
+}
+
 /** Above this page count the grid renders virtualized rows (drag off). */
 export const VIRTUALIZE_ABOVE = 150;
 

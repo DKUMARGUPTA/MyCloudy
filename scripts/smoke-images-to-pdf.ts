@@ -20,6 +20,10 @@
  * path (byte-exact passthrough), PNG keeps its fast path, and the
  * manual rotation option still swaps axes.
  *
+ * Part 3 (wiring): the R6-b scan→OCR→edit chain — images/jpg-to-pdf
+ * chain to ocr-pdf, ocr-pdf chains to edit-pdf; every chain target must
+ * be a registered tool and central i18n keeps the en==hi parity.
+ *
  * Run: bun scripts/smoke-images-to-pdf.ts
  */
 import sharp from "sharp";
@@ -825,6 +829,71 @@ async function part2(): Promise<void> {
   }
 }
 
+/* ================================================================== */
+/* Part 3 — scan→OCR→edit chain wiring (R6-b)                           */
+/* ================================================================== */
+
+/** The photo/scan loop: images→pdf chains to OCR, OCR chains to the
+ * editor (whose edittext mode now hand-offs back to OCR for scans). */
+async function part3(): Promise<void> {
+  const { readFileSync } = await import("node:fs");
+  const read = (p: string): string => readFileSync(p, "utf8");
+
+  const imagesCfg = read("tools/images-to-pdf/config.ts");
+  const jpgCfg = read("tools/jpg-to-pdf/config.ts");
+  const ocrCfg = read("tools/ocr-pdf/config.ts");
+  const registry = read("src/lib/tools/registry.ts");
+
+  assert(
+    /chainToolIds:\s*\["ocr-pdf",\s*"compress-pdf",\s*"merge-pdf",\s*"sign-pdf"\]/.test(
+      imagesCfg
+    ),
+    "images-to-pdf chains to ocr-pdf first"
+  );
+  assert(
+    /chainToolIds:\s*\["ocr-pdf",\s*"compress-pdf",\s*"merge-pdf",\s*"sign-pdf"\]/.test(
+      jpgCfg
+    ),
+    "jpg-to-pdf chains to ocr-pdf first"
+  );
+  assert(
+    /chainToolIds:\s*\["edit-pdf",\s*"pdf-to-txt",\s*"compress-pdf",\s*"lock-pdf"\]/.test(
+      ocrCfg
+    ),
+    "ocr-pdf chains to edit-pdf first"
+  );
+  // Every chain target must be a real registered tool id.
+  for (const id of [
+    "ocr-pdf",
+    "edit-pdf",
+    "pdf-to-txt",
+    "compress-pdf",
+    "merge-pdf",
+    "sign-pdf",
+  ]) {
+    assert(
+      registry.includes(`id: "${id}"`),
+      `registry has chain target ${id}`
+    );
+  }
+
+  // Central i18n parity invariant (R6-a pattern: en==hi, floored).
+  const en = JSON.parse(read("src/i18n/en.json")) as unknown;
+  const hi = JSON.parse(read("src/i18n/hi.json")) as unknown;
+  const leaves = (node: unknown): number => {
+    if (node !== null && typeof node === "object") {
+      let n = 0;
+      for (const value of Object.values(node as Record<string, unknown>)) {
+        n += leaves(value);
+      }
+      return n;
+    }
+    return 1;
+  };
+  assertEqual(leaves(en), leaves(hi), "i18n leaf parity en==hi");
+  assert(leaves(en) >= 4378, "i18n leaf floor 4378", leaves(en));
+}
+
 async function main(): Promise<void> {
   await part1();
   const part1Passed = passed;
@@ -832,8 +901,17 @@ async function main(): Promise<void> {
   console.log(`\nPart 1 (exif sniffer): ${part1Passed} passed, ${part1Failed} failed`);
 
   await part2();
+  const part2Passed = passed - part1Passed;
+  const part2Failed = failed - part1Failed;
   console.log(
-    `\nPart 2 (real worker): ${passed - part1Passed} passed, ${failed - part1Failed} failed`
+    `\nPart 2 (real worker): ${part2Passed} passed, ${part2Failed} failed`
+  );
+
+  await part3();
+  console.log(
+    `\nPart 3 (chain wiring): ${passed - part1Passed - part2Passed} passed, ${
+      failed - part1Failed - part2Failed
+    } failed`
   );
   console.log(`\nTOTAL: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

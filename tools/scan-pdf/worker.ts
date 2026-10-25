@@ -58,7 +58,7 @@ async function decodeBitmap(
 ): Promise<ScanBitmap> {
   const raw = new Uint8Array(await file.slice(0, 16).arrayBuffer());
   if (sniffImageKind(raw) === "unknown") {
-    onError("tool.scan.errorUnsupported", file.name);
+    onError("tool.errorUnsupported", file.name);
   }
   let bitmap: ImageBitmap;
   try {
@@ -70,12 +70,12 @@ async function decodeBitmap(
       new Blob([bytes], { type: file.type || "image/jpeg" })
     );
   } catch {
-    onError("tool.scan.errorDecode", file.name);
+    onError("tool.errorDecode", file.name);
   }
   try {
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) onError("tool.scan.errorDecode", file.name);
+    if (!context) onError("tool.errorDecode", file.name);
     context.drawImage(bitmap, 0, 0);
     const imageData = context.getImageData(0, 0, bitmap.width, bitmap.height);
     return {
@@ -92,7 +92,7 @@ async function decodeBitmap(
 async function encodeJpeg(bmp: ScanBitmap, quality: number): Promise<Uint8Array> {
   const canvas = new OffscreenCanvas(bmp.width, bmp.height);
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("tool.scan.errorEncode\u0000canvas");
+  if (!context) throw new Error("tool.errorEncode\u0000canvas");
   const imageData = new ImageData(
     new Uint8ClampedArray(bmp.data),
     bmp.width,
@@ -112,7 +112,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       : []);
 
   if (pages === null || pages.length === 0) {
-    post({ type: "error", runId, code: "tool.scan.errorNoPages" });
+    post({ type: "error", runId, code: "tool.errorNoPages" });
     return;
   }
 

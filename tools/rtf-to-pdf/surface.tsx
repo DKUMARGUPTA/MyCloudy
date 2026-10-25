@@ -307,7 +307,7 @@ export function RtfToPdfSurface({
             title: t("tool.errorTitle"),
             description: data.code.startsWith("rtfp.")
               ? t(data.code)
-              : t("tool.errorGeneric"),
+              : t("tool.errorGeneric", { detail: "" }),
             variant: "destructive",
           });
           cleanup();
@@ -318,7 +318,7 @@ export function RtfToPdfSurface({
       setPct(null);
       toast({
         title: t("tool.errorTitle"),
-        description: t("tool.errorGeneric"),
+        description: t("tool.errorGeneric", { detail: "" }),
         variant: "destructive",
       });
       cleanup();

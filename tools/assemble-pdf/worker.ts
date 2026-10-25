@@ -29,6 +29,23 @@ function post(response: WorkerResponse): void {
   self.postMessage(response);
 }
 
+/**
+ * Named refusal from a source-PDF load (R6-b honesty, merge-pdf standard):
+ * the plan can pull pages from MANY source PDFs, so an encrypted/corrupt
+ * refusal must NAME the file that stopped the run. Thrown by loadSource,
+ * posted with the file name by the top-level catch.
+ */
+class AssembleRefusal extends Error {
+  readonly code: string;
+  readonly fileName: string;
+  constructor(code: string, fileName: string) {
+    super(`${code}: ${fileName}`);
+    this.name = "AssembleRefusal";
+    this.code = code;
+    this.fileName = fileName;
+  }
+}
+
 function sanitizeName(raw: string, fallback: string): string {
   const cleaned = raw
     .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "")
@@ -130,10 +147,37 @@ async function run(request: WorkerRunRequest): Promise<void> {
       detail: { pages: 1 },
     });
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const doc = await PDFDocument.load(bytes, {
-      ignoreEncryption: false,
-      updateMetadata: false,
-    });
+    // R6-b honesty: probe the trailer STRUCTURALLY (pdf-lib ignoreEncryption
+    // load + isEncrypted — never a raw-bytes "/Encrypt" sniff), then the
+    // plain load; both refusals name the exact source file.
+    let probe: PDFDocument | null = null;
+    try {
+      probe = await PDFDocument.load(bytes, {
+        ignoreEncryption: true,
+        updateMetadata: false,
+      });
+    } catch {
+      // Not parseable at all — the plain load below keeps producing the
+      // honest corrupt refusal for this file.
+    }
+    if (probe?.isEncrypted) {
+      throw new AssembleRefusal("tool.errorEncrypted", file.name);
+    }
+    let doc: PDFDocument;
+    try {
+      doc = await PDFDocument.load(bytes, {
+        ignoreEncryption: false,
+        updateMetadata: false,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new AssembleRefusal(
+        /password|encrypt/i.test(message)
+          ? "tool.errorEncrypted"
+          : "tool.errorCorrupt",
+        file.name
+      );
+    }
     sources.set(fileId, doc);
     return doc;
   };
@@ -219,6 +263,17 @@ self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
   const data = event.data;
   if (data?.type !== "run") return;
   run(data).catch((error: unknown) => {
+    // R6-b: a named source refusal keeps its file name — the toast must
+    // say WHICH source PDF to unlock/replace, never the bare sentence.
+    if (error instanceof AssembleRefusal) {
+      post({
+        type: "error",
+        runId: data.runId,
+        code: error.code,
+        detail: error.fileName,
+      });
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     const code = /encrypt/i.test(message)
       ? "tool.errorEncrypted"

@@ -83,6 +83,32 @@ async function run(request: WorkerRunRequest): Promise<void> {
     });
 
     const bytes = new Uint8Array(await file.arrayBuffer());
+
+    // Encrypted-input honesty (R6-b): probe the trailer STRUCTURALLY
+    // (pdf-lib ignoreEncryption load + isEncrypted — the FIX-1b ocr-pdf
+    // pattern, never a raw-bytes "/Encrypt" sniff) and name the exact file
+    // in the toast. The bare `PDFDocument.load` failure carries no file
+    // context, which is useless in a multi-file merge.
+    let probe: PDFDocument | null = null;
+    try {
+      probe = await PDFDocument.load(bytes, {
+        ignoreEncryption: true,
+        updateMetadata: false,
+      });
+    } catch {
+      // Not parseable at all — the plain load below keeps producing the
+      // honest corrupt error for this file.
+    }
+    if (probe?.isEncrypted) {
+      post({
+        type: "error",
+        runId,
+        code: "tool.errorEncrypted",
+        detail: file.name,
+      });
+      return;
+    }
+
     const src = await PDFDocument.load(bytes, {
       ignoreEncryption: false,
       updateMetadata: false,

@@ -300,7 +300,7 @@ export function PowerpointToPdfSurface({
             title: t("tool.errorTitle"),
             description: data.code.startsWith("ppt.")
               ? t(data.code)
-              : t("tool.errorGeneric"),
+              : t("tool.errorGeneric", { detail: "" }),
             variant: "destructive",
           });
           cleanup();
@@ -311,7 +311,7 @@ export function PowerpointToPdfSurface({
       setPct(null);
       toast({
         title: t("tool.errorTitle"),
-        description: t("tool.errorGeneric"),
+        description: t("tool.errorGeneric", { detail: "" }),
         variant: "destructive",
       });
       cleanup();

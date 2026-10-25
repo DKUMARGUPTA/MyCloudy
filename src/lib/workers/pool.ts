@@ -95,7 +95,9 @@ class ToolWorkerPool {
       return {
         cancel: () => undefined,
         promise: Promise.reject(
-          new ToolRunError("tool-not-configured", toolId)
+          // Catalog-backed code (tool.notConfigured) so the toast renders
+          // an honest sentence instead of the raw internal key.
+          new ToolRunError("tool.notConfigured", toolId)
         ),
       };
     }
@@ -174,7 +176,9 @@ class ToolWorkerPool {
           if (settled) return;
           if (worker) this.discardWorker(worker);
           releaseSlotOnce();
-          settleWith(new ToolRunError("worker-crash"));
+          // Catalog-backed code (tool.workerCrash) — the toast must show an
+          // honest sentence, never the raw internal "worker-crash" key.
+          settleWith(new ToolRunError("tool.workerCrash"));
         };
         worker.postMessage({
           type: "run",

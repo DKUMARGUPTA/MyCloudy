@@ -333,10 +333,47 @@ async function run(request: WorkerRunRequest): Promise<void> {
     });
 
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const source = await PDFDocument.load(bytes, {
-      ignoreEncryption: false,
-      updateMetadata: false,
-    });
+    // R6-b honesty (merge-pdf standard): the batch can hold up to 20 files,
+    // so the encrypted/corrupt toast must NAME the file that stopped the run.
+    // Structural probe first (pdf-lib ignoreEncryption load + isEncrypted —
+    // never a raw-bytes "/Encrypt" sniff), then the plain load for corrupts.
+    let probe: PDFDocument | null = null;
+    try {
+      probe = await PDFDocument.load(bytes, {
+        ignoreEncryption: true,
+        updateMetadata: false,
+      });
+    } catch {
+      // Not parseable at all — the plain load below keeps producing the
+      // honest corrupt error for this file.
+    }
+    if (probe?.isEncrypted) {
+      post({
+        type: "error",
+        runId,
+        code: "tool.errorEncrypted",
+        detail: file.name,
+      });
+      return;
+    }
+    let source: PDFDocument;
+    try {
+      source = await PDFDocument.load(bytes, {
+        ignoreEncryption: false,
+        updateMetadata: false,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      post({
+        type: "error",
+        runId,
+        code: /encrypt/i.test(message)
+          ? "tool.errorEncrypted"
+          : "tool.errorCorrupt",
+        detail: file.name,
+      });
+      return;
+    }
 
     const emit = (fraction: number, page: number): void => {
       post({

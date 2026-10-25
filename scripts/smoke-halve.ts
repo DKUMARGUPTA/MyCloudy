@@ -555,7 +555,9 @@ async function main(): Promise<void> {
   console.log(
     `\nsmoke-halve: ${pass} passed, ${fail} failed${fail === 0 ? " — ALL GREEN" : ""}`
   );
-  if (fail > 0) process.exit(1);
+  // Unconditional exit — on success, dangling worker/sharp shims keep
+  // bun’s event loop alive forever (completed-but-never-terminated hangs).
+  process.exit(fail > 0 ? 1 : 0);
 }
 
 void main().catch((error: unknown) => {

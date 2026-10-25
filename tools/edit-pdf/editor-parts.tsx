@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowLeftRight,
   ArrowUp,
@@ -53,6 +59,7 @@ import { useI18n } from "@/components/providers/locale-provider";
 import { cn } from "@/lib/utils";
 import {
   FONT_OPTIONS,
+  clampN,
   isRotatable,
   normalizeRotation,
   pdfRectToDisplay,
@@ -147,8 +154,14 @@ export function EditorToolbar({
 // Mobile chrome (P8.6, PRD §8.2 — simplified bottom toolbar + More sheet)
 // ---------------------------------------------------------------------------
 
+/**
+ * R6-a: Edit text is FIRST-CLASS on mobile (Smallpdf parity — Smallpdf puts
+ * Edit Text right after Select). The compact short label keeps the 6 flex-1
+ * buttons ≥44px wide on a 360px screen (6×44 + 6×4 gaps + 12 padding = 308).
+ */
 const MOBILE_TOOLS: { id: ToolId; icon: typeof Type; key: string }[] = [
   { id: "select", icon: MousePointer2, key: "editPdf.toolSelect" },
+  { id: "edittext", icon: TextCursorInput, key: "editPdf.toolEditTextShort" },
   { id: "text", icon: Type, key: "editPdf.toolText" },
   { id: "draw", icon: Brush, key: "editPdf.toolDraw" },
   { id: "sign", icon: PenLine, key: "editPdf.toolSign" },
@@ -206,8 +219,8 @@ export function MobileToolbar({
   );
 }
 
+/** R6-a: edittext graduated to MOBILE_TOOLS — the sheet keeps the rest. */
 const MORE_TOOLS: { id: ToolId; icon: typeof Type; key: string }[] = [
-  { id: "edittext", icon: TextCursorInput, key: "editPdf.toolEditText" },
   { id: "rect", icon: Square, key: "editPdf.toolRect" },
   { id: "ellipse", icon: Minus, key: "editPdf.toolEllipse" },
   { id: "line", icon: Minus, key: "editPdf.toolLine" },
@@ -1388,6 +1401,325 @@ export function TextPieceButtons({
           />
         );
       })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Floating text-edit mini-toolbar (R6-a — Smallpdf parity)
+// ---------------------------------------------------------------------------
+
+/** One-tap alignment cycle: left → center → right → left. */
+const ALIGN_CYCLE: Record<TextObj["align"], TextObj["align"]> = {
+  left: "center",
+  center: "right",
+  right: "left",
+};
+
+/** Preset ink swatches in the floating colour popover (model default first). */
+const BAR_SWATCHES = [
+  "#111827",
+  "#ffffff",
+  "#dc2626",
+  "#ea580c",
+  "#16a34a",
+  "#0284c7",
+  "#7c3aed",
+  "#db2777",
+] as const;
+
+/**
+ * Smallpdf-style floating toolbar anchored JUST ABOVE the text object being
+ * inline-edited (below it when the object hugs the page top — measured, not
+ * guessed). Rendered inside the canvas overlay: the wrapper is
+ * pointer-events-none so canvas gestures keep working around it, and the bar
+ * stops pointer propagation so the overlay's marquee/deselect handler never
+ * sees a tap on it. Every control patches through the SAME onPatch/onDelete
+ * path the sidebar TextFields/ActionRow use — one state, no forks.
+ *
+ * R6-a geometry guarantees (both measured, never guessed):
+ *  - the bar is a single row (controls scroll horizontally on narrow pages
+ *    instead of wrapping) so its height never doubles;
+ *  - the flip-below anchor uses the inline textarea's LIVE rendered height
+ *    (wrapping grows it past the object rect) so the bar can never cover
+ *    the text being typed;
+ *  - when neither side fits (object spans nearly the whole page) the bar
+ *    pins to the page top edge rather than poking out of the overlay.
+ */
+export function TextEditBar({
+  rect,
+  dispW,
+  dispH,
+  scale,
+  obj,
+  onPatch,
+  onDelete,
+  editBoxRef,
+}: {
+  /** Display rect of the text object (pt, y down). */
+  rect: ObjRect;
+  dispW: number;
+  dispH: number;
+  /** CSS px per display pt (renderScale) — converts the bar height to pt. */
+  scale: number;
+  obj: TextObj;
+  onPatch: (patch: Partial<EditorObject>) => void;
+  onDelete: () => void;
+  /** Live ref to the inline textarea — its real rendered height (wrapping
+   * grows it past the object rect) feeds the flip-below anchor. */
+  editBoxRef?: React.RefObject<HTMLTextAreaElement | null>;
+}): React.JSX.Element | null {
+  const { t } = useI18n();
+  const [swatchesOpen, setSwatchesOpen] = useState(false);
+  const barBoxRef = useRef<HTMLDivElement | null>(null);
+  const [barPx, setBarPx] = useState(52);
+  const [liveH, setLiveH] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = barBoxRef.current;
+    if (!el) return;
+    const measure = (): void =>
+      setBarPx(el.getBoundingClientRect().height || 52);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // The textarea is the thing being typed into — observe its real box.
+  // Two failure modes make a plain observe-once effect stale (R6-c): the
+  // ref object's identity never changes (the editing textarea may mount
+  // after this bar), and React may REPLACE the textarea DOM node while
+  // the bar stays mounted (the old node never resizes again, so the
+  // observer goes silent and liveH freezes at a stale height — the
+  // flip-below anchor then overlaps the text being typed). Sync the
+  // observed element every frame while the bar is mounted: one ref
+  // compare + one rect read per frame, only during an active edit.
+  useLayoutEffect(() => {
+    let observer: ResizeObserver | null = null;
+    let observed: Element | null = null;
+    let raf = 0;
+    let cancelled = false;
+    const tick = (): void => {
+      if (cancelled) return;
+      const el = editBoxRef?.current ?? null;
+      if (el !== observed) {
+        observer?.disconnect();
+        observer = null;
+        observed = el;
+        if (el) {
+          const measure = (): void =>
+            setLiveH(el.getBoundingClientRect().height || 0);
+          measure();
+          observer = new ResizeObserver(measure);
+          observer.observe(el);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return (): void => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      observer?.disconnect();
+    };
+  }, [editBoxRef]);
+
+  if (dispW <= 0 || dispH <= 0) return null;
+
+  // Anchor above the bbox with a 6px gap; flip below ONLY when the bar
+  // would poke out of the page top AND below genuinely fits under the live
+  // text box (bar + box heights measured in CSS px → pt via scale).
+  const gapPx = 6;
+  const safeScale = Math.max(scale, 0.01);
+  const barPt = (barPx + gapPx) / safeScale;
+  const liveBottomPt = rect.y + Math.max(rect.h, liveH / safeScale);
+  const fitsAbove = rect.y - barPt >= 0;
+  const fitsBelow = liveBottomPt + barPt <= dispH;
+  const above = fitsAbove || !fitsBelow;
+  const anchorPct = above
+    ? (Math.max(rect.y, fitsAbove ? 0 : barPt) / dispH) * 100
+    : (liveBottomPt / dispH) * 100;
+
+  const clampSize = (n: number): number => clampN(Math.round(n), 4, 200);
+
+  const iconBtn =
+    "flex size-10 shrink-0 items-center justify-center rounded-btn outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:size-11";
+
+  return (
+    <div
+      className="pointer-events-none absolute inset-x-0 z-40"
+      style={{
+        top: `${anchorPct}%`,
+        transform: above
+          ? `translateY(calc(-100% - ${gapPx}px))`
+          : `translateY(${gapPx}px)`,
+      }}
+    >
+      <div className="flex justify-center px-1">
+        <div
+          ref={barBoxRef}
+          role="toolbar"
+          aria-label={t("editPdf.editBarLabel")}
+          data-text-edit-bar=""
+          onPointerDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          // Bar buttons must not steal the caret: a blur here would close
+          // the inline edit (see the textarea's relatedTarget guard in
+          // surface.tsx). The size number input stays focusable.
+          onMouseDown={(event) => {
+            if ((event.target as HTMLElement).closest("button")) {
+              event.preventDefault();
+            }
+          }}
+          className="pointer-events-auto flex max-w-full flex-nowrap items-center justify-center-safe gap-1 overflow-x-auto rounded-card border border-border bg-card/95 p-1 shadow-lg backdrop-blur [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {/* Font family — the same 4 FONT_OPTIONS as the sidebar select. */}
+          <Select
+            value={obj.font}
+            onValueChange={(v) => onPatch({ font: v as TextObj["font"] })}
+          >
+            <SelectTrigger
+              aria-label={t("editPdf.font")}
+              className="h-10 w-28 shrink rounded-btn text-xs pointer-coarse:h-11"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {FONT_OPTIONS.map((f) => (
+                <SelectItem key={f.id} value={f.id}>
+                  <span style={{ fontFamily: f.css }}>
+                    {t(`editPdf.font_${f.id}`)}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Size stepper — the same 4..200 caps as the sidebar input. */}
+          <span
+            role="group"
+            aria-label={t("editPdf.size")}
+            className="flex items-center rounded-btn border border-border bg-background"
+          >
+            <button
+              type="button"
+              className={cn(iconBtn, "text-muted-foreground")}
+              onClick={() => onPatch({ size: clampSize(obj.size - 1) })}
+              aria-label={t("editPdf.sizeDecrease")}
+            >
+              <Minus className="size-4" aria-hidden="true" />
+            </button>
+            <input
+              type="number"
+              min={4}
+              max={200}
+              value={Math.round(obj.size)}
+              onChange={(event) => {
+                const n = Number(event.target.value);
+                if (Number.isFinite(n)) onPatch({ size: clampSize(n) });
+              }}
+              aria-label={t("editPdf.size")}
+              className="h-10 w-10 shrink-0 bg-transparent text-center text-xs font-semibold tabular-nums text-foreground outline-none pointer-coarse:h-11 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            />
+            <button
+              type="button"
+              className={cn(iconBtn, "text-muted-foreground")}
+              onClick={() => onPatch({ size: clampSize(obj.size + 1) })}
+              aria-label={t("editPdf.sizeIncrease")}
+            >
+              <Plus className="size-4" aria-hidden="true" />
+            </button>
+          </span>
+
+          {/* Colour: swatch button → preset popover + custom picker. */}
+          <span className="relative shrink-0">
+            <button
+              type="button"
+              className={iconBtn}
+              aria-label={t("editPdf.textColor")}
+              aria-expanded={swatchesOpen}
+              onClick={() => setSwatchesOpen((open) => !open)}
+            >
+              <span
+                className="size-5 rounded-full border border-border shadow-inner"
+                style={{ background: obj.color }}
+              />
+            </button>
+            {swatchesOpen ? (
+              <span className="absolute left-1/2 top-full z-50 mt-1 flex -translate-x-1/2 items-center gap-1 rounded-btn border border-border bg-card p-1.5 shadow-lg">
+                {BAR_SWATCHES.map((hex) => (
+                  <button
+                    key={hex}
+                    type="button"
+                    className="size-7 shrink-0 rounded-full border border-border outline-none transition-transform hover:scale-110 focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:size-8"
+                    style={{ background: hex }}
+                    aria-label={`${t("editPdf.textColor")} ${hex}`}
+                    onClick={() => {
+                      onPatch({ color: hex });
+                      setSwatchesOpen(false);
+                    }}
+                  />
+                ))}
+                <input
+                  type="color"
+                  value={obj.color}
+                  onChange={(event) => onPatch({ color: event.target.value })}
+                  aria-label={t("editPdf.textColor")}
+                  className="size-7 shrink-0 cursor-pointer rounded-full border border-border bg-background p-0.5"
+                />
+              </span>
+            ) : null}
+          </span>
+
+          <span className="mx-0.5 h-6 w-px bg-border" aria-hidden="true" />
+
+          {/* Bold toggle (Smallpdf parity; italic/underline live in the
+              sidebar Properties panel). */}
+          <button
+            type="button"
+            className={cn(
+              iconBtn,
+              obj.bold
+                ? "bg-primary text-primary-foreground hover:bg-primary"
+                : "text-foreground"
+            )}
+            aria-pressed={obj.bold}
+            aria-label={t("editPdf.bold")}
+            onClick={() => onPatch({ bold: !obj.bold })}
+          >
+            <Bold className="size-4" aria-hidden="true" />
+          </button>
+
+          {/* Alignment cycle button (left → center → right). */}
+          <button
+            type="button"
+            className={cn(iconBtn, "text-foreground")}
+            aria-label={t(`editPdf.align_${obj.align}`)}
+            title={t(`editPdf.align_${obj.align}`)}
+            onClick={() => onPatch({ align: ALIGN_CYCLE[obj.align] })}
+          >
+            <Baseline
+              className={cn(
+                "size-4",
+                obj.align === "left" && "-scale-x-100",
+                obj.align === "center" && "rotate-90"
+              )}
+              aria-hidden="true"
+            />
+          </button>
+
+          {/* Delete — same undoable semantics as the sidebar ActionRow. */}
+          <button
+            type="button"
+            className={cn(iconBtn, "text-destructive hover:bg-destructive/10")}
+            aria-label={t("editPdf.delete")}
+            onClick={onDelete}
+          >
+            <Trash2 className="size-4" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -63,7 +63,7 @@ export function OcrInvoiceHandoff({ runSummary }: ToolResultExtraProps) {
     if (!stored) {
       toast({
         title: t("tool.errorTitle"),
-        description: t("tool.errorGeneric"),
+        description: t("tool.errorGeneric", { detail: "" }),
         variant: "destructive",
       });
       return;

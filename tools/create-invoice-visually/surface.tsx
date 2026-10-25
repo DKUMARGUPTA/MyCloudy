@@ -667,7 +667,7 @@ export function CreateInvoiceVisuallySurface(props: ToolSurfaceProps) {
     worker.addEventListener("error", () => {
       toast({
         title: t("tool.errorTitle"),
-        description: t("tool.errorGeneric"),
+        description: t("tool.errorGeneric", { detail: "" }),
         variant: "destructive",
       });
       cleanup();

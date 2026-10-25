@@ -14,6 +14,7 @@ export const config: ToolConfig = {
   outputKind: "pdf",
   minFiles: 1,
   maxFiles: 50,
+  chainToolIds: ["ocr-pdf", "compress-pdf", "merge-pdf", "sign-pdf"],
   options: [
     {
       kind: "select",

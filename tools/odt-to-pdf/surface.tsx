@@ -294,7 +294,7 @@ export function OdtToPdfSurface({
             title: t("tool.errorTitle"),
             description: data.code.startsWith("odt.")
               ? t(data.code)
-              : t("tool.errorGeneric"),
+              : t("tool.errorGeneric", { detail: "" }),
             variant: "destructive",
           });
           cleanup();
@@ -305,7 +305,7 @@ export function OdtToPdfSurface({
       setPct(null);
       toast({
         title: t("tool.errorTitle"),
-        description: t("tool.errorGeneric"),
+        description: t("tool.errorGeneric", { detail: "" }),
         variant: "destructive",
       });
       cleanup();

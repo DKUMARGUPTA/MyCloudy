@@ -15,7 +15,7 @@ export const config: ToolConfig = {
   outputKind: "pdf",
   minFiles: 1,
   maxFiles: 5,
-  chainToolIds: ["pdf-to-txt", "compress-pdf", "lock-pdf"],
+  chainToolIds: ["edit-pdf", "pdf-to-txt", "compress-pdf", "lock-pdf"],
   options: [
     {
       kind: "select",

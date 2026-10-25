@@ -65,10 +65,48 @@ async function run(request: WorkerRunRequest): Promise<void> {
     });
 
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const doc = await PDFDocument.load(bytes, {
-      ignoreEncryption: false,
-      updateMetadata: false,
-    });
+    // R6-b honesty (merge-pdf/pagegrid standard): with up to 5 files in the
+    // batch, the encrypted/corrupt toast must NAME the file that stopped the
+    // run. Structural probe first (pdf-lib ignoreEncryption load +
+    // isEncrypted — never a raw-bytes "/Encrypt" sniff), then the plain load
+    // for corrupts; both refusals carry the file name in detail.
+    let probe: PDFDocument | null = null;
+    try {
+      probe = await PDFDocument.load(bytes, {
+        ignoreEncryption: true,
+        updateMetadata: false,
+      });
+    } catch {
+      // Not parseable at all — the plain load below keeps producing the
+      // honest corrupt error for this file.
+    }
+    if (probe?.isEncrypted) {
+      post({
+        type: "error",
+        runId,
+        code: "tool.errorEncrypted",
+        detail: file.name,
+      });
+      return;
+    }
+    let doc: PDFDocument;
+    try {
+      doc = await PDFDocument.load(bytes, {
+        ignoreEncryption: false,
+        updateMetadata: false,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      post({
+        type: "error",
+        runId,
+        code: /password|encrypt/i.test(message)
+          ? "tool.errorEncrypted"
+          : "tool.errorCorrupt",
+        detail: file.name,
+      });
+      return;
+    }
     totalPages += doc.getPageCount();
 
     // R4-b: merge byte-identical image XObjects FIRST — every reference

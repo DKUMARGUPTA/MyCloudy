@@ -57,6 +57,16 @@ function assertEqual(
   else fail(message, { actual, expected });
 }
 
+/** R6-a section helpers (message-first shapes, ocr-invoice smoke style). */
+function check(message: string, ok: boolean): void {
+  if (ok) pass(message);
+  else fail(message);
+}
+
+function eq(label: string, actual: unknown, expected: unknown): void {
+  assertEqual(actual, expected, label);
+}
+
 /* ---- self shim: capture the worker's postMessage traffic ---- */
 type Posted = Record<string, unknown> & { type: string; runId: string };
 const inbox: Posted[] = [];
@@ -538,6 +548,291 @@ async function main(): Promise<void> {
     const x = Number(nums[0]);
     assert(Math.abs(x - (48 + 3)) <= 2, "e2e: retype x ≈ original + pad", { x });
   }
+
+  /* ---- Part 3 (R6-a): Edit Text first-class — model + wiring locks ---- */
+  // FONT_OPTIONS ids (order locked — the export z-order and the floating
+  // bar's select both follow it) + the floating mini-toolbar + mobile
+  // promotion + OCR hand-off, as regex locks on the real sources.
+  const R6_KEYS = [
+    "toolEditTextShort",
+    "editBarLabel",
+    "sizeDecrease",
+    "sizeIncrease",
+    "hintEditReady",
+    "noTextOcrCta",
+    "ocrHandoffToast",
+    "firstHint",
+  ] as const;
+
+  // --- Model: FONT_OPTIONS ids + size caps ---------------------------------
+  assertEqual(
+    model.FONT_OPTIONS.map((f) => f.id),
+    ["helvetica", "times", "courier", "devanagari"],
+    "r6: FONT_OPTIONS ids incl. devanagari (order locked)"
+  );
+  assertEqual(
+    (model.sanitizeObject(
+      { ...model.makeText(0, { x: 0, y: 0, w: 40, h: 20 }), size: 999 },
+      1,
+      new Set()
+    ) as unknown as { size: number }).size,
+    200,
+    "r6: text size clamps to 200 (floating bar stepper obeys the same cap)"
+  );
+  assertEqual(
+    (model.sanitizeObject(
+      { ...model.makeText(0, { x: 0, y: 0, w: 40, h: 20 }), size: 1 },
+      1,
+      new Set()
+    ) as unknown as { size: number }).size,
+    4,
+    "r6: text size clamps to 4"
+  );
+
+  const read = (rel: string): string => readFileSync(rel, "utf8");
+  const parts = read("tools/edit-pdf/editor-parts.tsx");
+  const surfaceSrc = read("tools/edit-pdf/surface.tsx");
+
+  // --- Mobile toolbar promotion --------------------------------------------
+  const mobileBlock = parts.match(/const MOBILE_TOOLS[\s\S]*?\n\];/)?.[0] ?? "";
+  assert(
+    /const MOBILE_TOOLS/.test(parts) && mobileBlock.includes('id: "edittext"'),
+    "r6: MOBILE_TOOLS contains edittext (promoted out of the More sheet)"
+  );
+  assertEqual(
+    (mobileBlock.match(/id: "(?:select|edittext|text|draw|sign|image)"/g) ?? []).map(
+      (s) => s.slice(5, -1)
+    ),
+    ["select", "edittext", "text", "draw", "sign", "image"],
+    "r6: MOBILE_TOOLS order = select, edittext, text, draw, sign, image"
+  );
+  assert(
+    mobileBlock.includes("editPdf.toolEditTextShort"),
+    "r6: edittext mobile entry uses the compact short label"
+  );
+  const moreBlock = parts.match(/const MORE_TOOLS[\s\S]*?\n\];/)?.[0] ?? "";
+  assert(
+    moreBlock.length > 0 && !moreBlock.includes('id: "edittext"'),
+    "r6: MORE_TOOLS no longer duplicates edittext"
+  );
+  // 6 buttons × 44px + 5 gaps × 4px + 2 × 6px padding fits a 360px screen.
+  assert(
+    (mobileBlock.match(/id: "/g) ?? []).length === 6,
+    "r6: MOBILE_TOOLS has exactly 6 entries (360px fit: 6×44 + gaps + padding = 308px)"
+  );
+
+  // --- Floating mini-toolbar (TextEditBar) ----------------------------------
+  const barStart = parts.indexOf("// Floating text-edit mini-toolbar");
+  const barEnd = parts.indexOf("export function FindReplaceDialog");
+  const barBlock = barStart >= 0 && barEnd > barStart
+    ? parts.slice(barStart, barEnd)
+    : "";
+  assert(barBlock.length > 0, "r6: TextEditBar component exists");
+  assert(
+    /pointer-events-none absolute inset-x-0 z-40/.test(barBlock) &&
+      /pointer-events-auto/.test(barBlock),
+    "r6: bar wrapper is pointer-events-none (canvas gestures pass), bar itself clickable"
+  );
+  assert(
+    /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/.test(barBlock),
+    "r6: bar stops pointer propagation (overlay marquee/deselect never fires from a bar tap)"
+  );
+  assert(
+    /<SelectTrigger[\s\S]*?aria-label=\{t\("editPdf\.font"\)\}/.test(barBlock) &&
+      /FONT_OPTIONS\.map/.test(barBlock) &&
+      /onValueChange=\{\(v\) => onPatch\(\{ font: v as TextObj\["font"\] \}\)\}/.test(barBlock),
+    "r6: bar font select = same FONT_OPTIONS + same onPatch path as the sidebar"
+  );
+  assert(
+    /size: clampSize\(obj\.size - 1\)/.test(barBlock) &&
+      /size: clampSize\(obj\.size \+ 1\)/.test(barBlock) &&
+      /clampN\(Math\.round\(n\), 4, 200\)/.test(barBlock) &&
+      /type="number"/.test(barBlock),
+    "r6: bar size stepper (− / numeric / +) clamps to the 4..200 caps"
+  );
+  assert(
+    /BAR_SWATCHES\.map/.test(barBlock) &&
+      /onPatch\(\{ color: hex \}\)/.test(barBlock) &&
+      /type="color"/.test(barBlock),
+    "r6: bar colour swatch popover (8 presets + custom picker) patches color"
+  );
+  assert(
+    /onPatch\(\{ bold: !obj\.bold \}\)/.test(barBlock) &&
+      /aria-pressed=\{obj\.bold\}/.test(barBlock),
+    "r6: bar bold toggle patches bold"
+  );
+  assert(
+    /const ALIGN_CYCLE/.test(barBlock) &&
+      /onPatch\(\{ align: ALIGN_CYCLE\[obj\.align\] \}\)/.test(barBlock) &&
+      /left: "center"/.test(barBlock) &&
+      /center: "right"/.test(barBlock) &&
+      /right: "left"/.test(barBlock),
+    "r6: bar alignment cycles left → center → right"
+  );
+  assert(
+    /aria-label=\{t\("editPdf\.delete"\)\}/.test(barBlock) &&
+      /onClick=\{onDelete\}/.test(barBlock),
+    "r6: bar delete button present (undoable, same semantics as the sidebar)"
+  );
+  assert(
+    /aria-label=\{t\("editPdf\.sizeDecrease"\)\}/.test(barBlock) &&
+      /aria-label=\{t\("editPdf\.sizeIncrease"\)\}/.test(barBlock) &&
+      /aria-label=\{t\("editPdf\.editBarLabel"\)\}/.test(barBlock),
+    "r6: bar aria-labels come from i18n (editBarLabel + size steppers)"
+  );
+  assert(
+    /pointer-coarse:size-11/.test(barBlock),
+    "r6: bar touch targets are 44px on coarse pointers"
+  );
+  // R6-a geometry guarantees: single row (no wrap → stable height) with
+  // horizontal overflow on narrow pages, and the flip-below anchor fed by
+  // the inline textarea's LIVE measured height (wrapping grows it past the
+  // object rect — a rect-only anchor covered the second line on phones).
+  assert(
+    /flex-nowrap/.test(barBlock) &&
+      /overflow-x-auto/.test(barBlock) &&
+      !/flex-wrap/.test(barBlock),
+    "r6: bar stays one row (nowrap + horizontal scroll — no 2-row wrap)"
+  );
+  assert(
+    /editBoxRef\?: React\.RefObject<HTMLTextAreaElement \| null>/.test(barBlock) &&
+      /ResizeObserver\(measure\)/.test(barBlock) &&
+      /liveBottomPt = rect\.y \+ Math\.max\(rect\.h, liveH \/ safeScale\)/.test(barBlock) &&
+      /const above = fitsAbove \|\| !fitsBelow/.test(barBlock),
+    "r6: bar flip-below anchor uses the textarea's live height (never covers the caret)"
+  );
+  assert(
+    /editBoxRef=\{textAreaRef\}/.test(surfaceSrc),
+    "r6: surface hands the real textarea ref to the bar (live measurement)"
+  );
+  // R6-c hardening: the observer must survive a textarea NODE REPLACEMENT
+  // (React re-created the node while the bar stayed mounted — the old
+  // observer went silent and liveH froze at a stale height). The bar now
+  // re-syncs the observed element every frame it is mounted.
+  assert(
+    /el !== observed/.test(barBlock) &&
+      /requestAnimationFrame\(tick\)/.test(barBlock) &&
+      /observer\?\.disconnect\(\)/.test(barBlock),
+    "r6c: bar re-syncs the observed textarea element per frame (node-replacement proof)"
+  );
+  // R6-c hardening: the editing textarea auto-grows with its content — a
+  // plain textarea kept its default 2-row height and spilled text below
+  // the white box (and fed the anchor a stale height).
+  assert(
+    /el\.style\.height = "auto"/.test(surfaceSrc) &&
+      /el\.style\.height = `\$\{el\.scrollHeight\}px`/.test(surfaceSrc) &&
+      /\[editingId, objects, renderScale\]/.test(surfaceSrc),
+    "r6c: editing textarea auto-grows with content (height auto → scrollHeight)"
+  );
+
+  // --- Surface wiring (same state, no fork) ---------------------------------
+  assert(
+    /\n  TextEditBar,/.test(surfaceSrc) && /<TextEditBar/.test(surfaceSrc),
+    "r6: surface imports and renders TextEditBar"
+  );
+  assert(
+    /onPatch=\{\(patch\) => patchObject\(editing\.id, patch\)\}/.test(surfaceSrc) &&
+      /onDelete=\{\(\) => removeObject\(editing\.id\)\}/.test(surfaceSrc),
+    "r6: bar handlers = the same patchObject/removeObject path as the sidebar"
+  );
+  assert(
+    /editing\.kind === "text" \? \(\(\) => \{/.test(surfaceSrc) &&
+      /<TextEditBar[\s\S]*?obj=\{editing\}/.test(surfaceSrc),
+    "r6: bar only renders while a text object is being inline-edited"
+  );
+  assert(
+    /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}[\s\S]{0,400}spellCheck=\{false\}/.test(
+      surfaceSrc
+    ),
+    "r6: inline textarea stops pointer propagation (taps inside keep the edit alive)"
+  );
+
+  // --- edittext mode hint chip + empty-state OCR CTA ------------------------
+  assert(
+    /tool === "edittext" && piecesState === "ready" && !editHintDismissed/.test(
+      surfaceSrc
+    ) &&
+      /t\("editPdf\.hintEditReady"\)/.test(surfaceSrc) &&
+      /setEditHintDismissed\(true\)/.test(surfaceSrc),
+    "r6: ready-state hint chip is dismissible and i18n-fed"
+  );
+  assert(
+    /tool === "edittext" && piecesState === "empty"/.test(surfaceSrc) &&
+      /onClick=\{handOffToOcr\}/.test(surfaceSrc) &&
+      /t\("editPdf\.noTextOcrCta"\)/.test(surfaceSrc),
+    "r6: empty state (scan) carries the Run-OCR-first primary CTA"
+  );
+  assert(
+    /import \{ setChainHandoff \} from "@\/lib\/tools\/chain";/.test(surfaceSrc) &&
+      /setChainHandoff\(\{/.test(surfaceSrc) &&
+      /fromToolId: "edit-pdf"/.test(surfaceSrc) &&
+      /navigateToHash\(ROUTES\.tool\("ocr-pdf"\)\)/.test(surfaceSrc),
+    "r6: CTA hands the File to ocr-pdf via the real chain bridge (no fake handoff)"
+  );
+  assert(
+    /t\("editPdf\.ocrHandoffToast"\)/.test(surfaceSrc),
+    "r6: hand-off tells the user honestly where the file went"
+  );
+
+  // --- One-time first-open hint (D) ------------------------------------------
+  assert(
+    /FIRST_HINT_KEY = "dp_editpdf_first_hint_v1"/.test(surfaceSrc) &&
+      /t\("editPdf\.firstHint"\)/.test(surfaceSrc) &&
+      /onClick=\{dismissFirstHint\}/.test(surfaceSrc),
+    "r6: one-time Edit-text discoverability hint (localStorage flag)"
+  );
+
+  // --- i18n: 8 new keys in all 4 places (central en/hi + mirror en/hi) ------
+  const catEn = JSON.parse(read("src/i18n/en.json")) as {
+    editPdf: Record<string, string>;
+  };
+  const catHi = JSON.parse(read("src/i18n/hi.json")) as { editPdf: Record<string, string> };
+  const mirror = JSON.parse(read("tools/edit-pdf/i18n.json")) as {
+    en: { editPdf: Record<string, string> };
+    hi: { editPdf: Record<string, string> };
+  };
+  for (const key of R6_KEYS) {
+    eq(
+      `editPdf.${key} EN mirror byte-equal to central`,
+      mirror.en.editPdf[key],
+      catEn.editPdf[key]
+    );
+    eq(
+      `editPdf.${key} HI mirror byte-equal to central`,
+      mirror.hi.editPdf[key],
+      catHi.editPdf[key]
+    );
+    check(
+      `editPdf.${key} HI is a real Hindi translation`,
+      /[\u0900-\u097F]/.test(String(catHi.editPdf[key])) &&
+        catHi.editPdf[key] !== catEn.editPdf[key]
+    );
+  }
+  eq(
+    "editPdf.noTextOcrCta EN pinned",
+    catEn.editPdf.noTextOcrCta,
+    "Run OCR first"
+  );
+  eq(
+    "editPdf.toolEditTextShort EN pinned",
+    catEn.editPdf.toolEditTextShort,
+    "Edit text"
+  );
+  // Whole-catalog leaf parity — both sides grew by ≥ 8 (4366 + 8); no exact
+  // pin so parallel rounds adding other tools' keys cannot false-fail this.
+  function leaves6(d: unknown): number {
+    let n = 0;
+    for (const v of Object.values(d as Record<string, unknown>)) {
+      n += typeof v === "object" && v !== null ? leaves6(v) : 1;
+    }
+    return n;
+  }
+  const enLeaves6 = leaves6(JSON.parse(read("src/i18n/en.json")));
+  const hiLeaves6 = leaves6(JSON.parse(read("src/i18n/hi.json")));
+  assert(
+    enLeaves6 === hiLeaves6 && enLeaves6 >= 4374,
+    `r6: central catalogs leaf parity ${enLeaves6} = ${hiLeaves6} (≥ 4366 + 8 new)`
+  );
 
   /* ---- summary ---- */
   console.log(`\n${passed} passed, ${failed} failed`);

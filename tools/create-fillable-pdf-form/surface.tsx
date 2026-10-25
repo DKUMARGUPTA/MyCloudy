@@ -1206,7 +1206,7 @@ export function FormSurface(props: ToolSurfaceProps): ReactNode {
     } catch {
       toast({
         title: t("tool.errorTitle"),
-        description: t("tool.errorGeneric"),
+        description: t("tool.errorGeneric", { detail: "" }),
         variant: "destructive",
       });
     }
@@ -1282,7 +1282,7 @@ export function FormSurface(props: ToolSurfaceProps): ReactNode {
           setExportPct(null);
           toast({
             title: t("tool.errorTitle"),
-            description: t("tool.errorGeneric"),
+            description: t("tool.errorGeneric", { detail: "" }),
             variant: "destructive",
           });
           cleanup();
@@ -1293,7 +1293,7 @@ export function FormSurface(props: ToolSurfaceProps): ReactNode {
       setExportPct(null);
       toast({
         title: t("tool.errorTitle"),
-        description: t("tool.errorGeneric"),
+        description: t("tool.errorGeneric", { detail: "" }),
         variant: "destructive",
       });
       cleanup();
