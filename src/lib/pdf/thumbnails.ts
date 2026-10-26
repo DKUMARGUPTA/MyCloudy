@@ -295,6 +295,9 @@ function release(): void {
  * Queued — call freely for many pages; only two render at once.
  * R13: `rotation` (0 | 90 | 180 | 270) replaces the page's own /Rotate in
  * the viewport — the edit-pdf workspace uses it for user page rotation.
+ * R14: `rotateOffset` adds ON TOP of the page's own /Rotate (pdf.js
+ * `page.rotate` + offset, normalized) — the assemble-pdf cells preview
+ * effective rotation without flattening what the source shipped with.
  */
 export async function renderPdfThumbnail(
   file: File | Blob,
@@ -302,6 +305,7 @@ export async function renderPdfThumbnail(
     pageIndex?: number;
     maxDim?: number;
     rotation?: number;
+    rotateOffset?: number;
   } = {}
 ): Promise<Thumbnail> {
   const pageIndex = options.pageIndex ?? 0;
@@ -310,19 +314,21 @@ export async function renderPdfThumbnail(
   try {
     const doc = await openDocument(file);
     const page = await doc.getPage(pageIndex + 1); // 1-based in pdf.js
+    const rotation =
+      options.rotation !== undefined
+        ? options.rotation
+        : options.rotateOffset !== undefined
+          ? (((page.rotate + options.rotateOffset) % 360) + 360) % 360
+          : undefined;
     // Bound maxDim against the ROTATED page (90/270 swap the axes).
     const base = page.getViewport({
       scale: 1,
-      ...(options.rotation !== undefined
-        ? { rotation: options.rotation }
-        : {}),
+      ...(rotation !== undefined ? { rotation } : {}),
     });
     const scale = maxDim / Math.max(base.width, base.height);
     const viewport = page.getViewport({
       scale,
-      ...(options.rotation !== undefined
-        ? { rotation: options.rotation }
-        : {}),
+      ...(rotation !== undefined ? { rotation } : {}),
     });
     const width = Math.max(1, Math.round(viewport.width));
     const height = Math.max(1, Math.round(viewport.height));

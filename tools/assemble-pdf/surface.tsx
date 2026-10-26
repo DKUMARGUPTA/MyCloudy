@@ -29,11 +29,14 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   ArrowLeftToLine,
   ArrowRightToLine,
+  Copy,
   FileStack,
   Loader2,
   LockKeyhole,
   Plus,
   Redo2,
+  RotateCcw,
+  RotateCw,
   SquarePlus,
   Trash2,
   TriangleAlert,
@@ -53,10 +56,14 @@ import {
   createDocFromFile,
   createEmptyDoc,
   deletePages,
+  duplicatePage,
   movePageWithinDoc,
+  nextRotationOffset,
+  pageRotateOffset,
   removeDoc,
   renameDoc,
   reverseDocPages,
+  rotatePage,
   serializeAssemble,
   transferPage,
   type AsmDoc,
@@ -408,6 +415,12 @@ export function AssembleSurface({
           {" · "}
           {t("asm.statPages", { count: stats.pages })}
         </span>
+        {stats.rotated > 0 ? (
+          <span className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+            <RotateCw className="size-3" aria-hidden="true" />
+            {t("asm.statRotated", { count: stats.rotated })}
+          </span>
+        ) : null}
         {reading !== null ? (
           <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
             <Loader2 className="size-3 animate-spin" aria-hidden="true" />
@@ -504,6 +517,28 @@ export function AssembleSurface({
               onDeletePage={(index) =>
                 apply((prev) => deletePages(prev, doc.id, [index]), true)
               }
+              onRotatePage={(index, delta) => {
+                const ref = docsRef.current.find(
+                  (entry) => entry.id === doc.id
+                )?.pages[index];
+                if (ref === undefined) return;
+                const deg = nextRotationOffset(ref, delta);
+                apply((prev) => rotatePage(prev, doc.id, index, delta), true);
+                toast({
+                  title: t("asm.pageRotatedToast", { page: index + 1, deg }),
+                });
+              }}
+              onDuplicatePage={(index) => {
+                const next = duplicatePage(docsRef.current, doc.id, index);
+                if (next === docsRef.current) {
+                  toast({ title: t("asm.dupCapToast") });
+                  return;
+                }
+                apply(() => next, true);
+                toast({
+                  title: t("asm.pageDuplicatedToast", { page: index + 1 }),
+                });
+              }}
             />
           ))}
 
@@ -550,6 +585,8 @@ function DocColumn({
   onDelete,
   onMoveToNeighbor,
   onDeletePage,
+  onRotatePage,
+  onDuplicatePage,
 }: {
   doc: AsmDoc;
   docIndex: number;
@@ -564,6 +601,8 @@ function DocColumn({
   onDelete: () => void;
   onMoveToNeighbor: (fromIndex: number, direction: -1 | 1) => void;
   onDeletePage: (index: number) => void;
+  onRotatePage: (index: number, delta: number) => void;
+  onDuplicatePage: (index: number) => void;
 }) {
   const { t } = useI18n();
 
@@ -679,6 +718,8 @@ function DocColumn({
                 hasNextDoc={docIndex < docCount - 1}
                 onMoveToNeighbor={onMoveToNeighbor}
                 onDeletePage={onDeletePage}
+                onRotatePage={onRotatePage}
+                onDuplicatePage={onDuplicatePage}
               />
             ))
           )}
@@ -723,6 +764,42 @@ function ColumnAction({
 
 /* ------------------------------ page cell ------------------------------ */
 
+/** 44×44 cell op (the R13 touch standard) — both action rows share it. */
+function CellBtn({
+  label,
+  disabled,
+  destructive,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled?: boolean;
+  destructive?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      className={cn(
+        "flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-30",
+        destructive
+          ? "hover:bg-destructive/10 hover:text-destructive"
+          : "hover:bg-muted hover:text-foreground"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 function AsmCell({
   page,
   index,
@@ -734,6 +811,8 @@ function AsmCell({
   hasNextDoc,
   onMoveToNeighbor,
   onDeletePage,
+  onRotatePage,
+  onDuplicatePage,
 }: {
   page: AsmPageRef;
   index: number;
@@ -745,6 +824,8 @@ function AsmCell({
   hasNextDoc: boolean;
   onMoveToNeighbor: (fromIndex: number, direction: -1 | 1) => void;
   onDeletePage: (index: number) => void;
+  onRotatePage: (index: number, delta: number) => void;
+  onDuplicatePage: (index: number) => void;
 }) {
   const { t } = useI18n();
 
@@ -756,6 +837,22 @@ function AsmCell({
     transition,
     isDragging,
   } = useSortable({ id: page.uid });
+
+  /** R14: the user's rotation offset — 0 when untouched. */
+  const rot = pageRotateOffset(page);
+
+  /**
+   * The loaded thumbnail's TRUE aspect (the effective orientation — source
+   * /Rotate + the user's offset — decides the rendered bitmap). Keyed by
+   * `rot`: a turn invalidates it instantly (the heuristic holds the
+   * placeholder) until the fresh bitmap reports in.
+   */
+  const [sized, setSized] = useState<{
+    rot: number;
+    aspect: number;
+  } | null>(null);
+  const thumbAspect =
+    sized !== null && sized.rot === rot ? sized.aspect : null;
 
   const label = t("asm.pageLabel", {
     page: index + 1,
@@ -785,56 +882,85 @@ function AsmCell({
           "cursor-grab hover:border-primary/40 hover:ring-1 hover:ring-primary/20 active:cursor-grabbing",
           isDragging && "shadow-xl ring-2 ring-primary/40"
         )}
-        style={{ aspectRatio: 0.707 }}
+        style={{
+          // True aspect once the bitmap lands; the rot-flip heuristic only
+          // holds the shape of the loading placeholder.
+          aspectRatio: thumbAspect ?? (rot === 90 || rot === 270 ? 1.414 : 0.707),
+        }}
       >
-        <PageThumb file={file} pageIndex={sourcePage} />
+        <PageThumb
+          file={file}
+          pageIndex={sourcePage}
+          rotate={rot}
+          onSize={(width, height) =>
+            setSized({ rot, aspect: width / height })
+          }
+        />
 
         {/* Position badge (1-based inside this document) */}
         <span className="absolute left-1.5 top-1.5 flex h-6 min-w-6 items-center justify-center rounded-full bg-background/90 px-1.5 text-[10px] font-bold text-foreground/80 shadow-sm backdrop-blur-sm">
           {index + 1}
         </span>
+
+        {/* R14: amber offset badge — the user's turn, not the source's
+         * own /Rotate (four taps bring it back to nothing). */}
+        {rot !== 0 ? (
+          <span
+            className="absolute right-1.5 top-1.5 rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-white shadow-sm"
+            aria-hidden="true"
+            title={t("asm.cellRotated", { deg: rot })}
+          >
+            {rot}°
+          </span>
+        ) : null}
       </div>
 
-      {/* Cross-column moves + delete — the a11y path (PRD hard rule) */}
+      {/* Cross-column moves + delete — the a11y path (PRD hard rule).
+       * R14: every cell op is 44×44 (the R13 touch standard) and the
+       * family grew a second row — rotate ±90° flanking duplicate,
+       * mirroring the move pair flanking delete above. */}
       <div className="mt-1 flex items-center justify-between gap-0.5">
-        <button
-          type="button"
-          aria-label={t("asm.moveLeft", { page: index + 1, doc: docName })}
-          title={t("asm.moveLeft", { page: index + 1, doc: docName })}
+        <CellBtn
+          label={t("asm.moveLeft", { page: index + 1, doc: docName })}
           disabled={!hasPrevDoc}
-          onClick={(event) => {
-            event.stopPropagation();
-            onMoveToNeighbor(index, -1);
-          }}
-          className="flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-30"
+          onClick={() => onMoveToNeighbor(index, -1)}
         >
-          <ArrowLeftToLine className="size-3.5" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          aria-label={t("asm.cellDelete", { page: index + 1, doc: docName })}
-          title={t("asm.cellDelete", { page: index + 1, doc: docName })}
-          onClick={(event) => {
-            event.stopPropagation();
-            onDeletePage(index);
-          }}
-          className="flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-[3px] focus-visible:ring-ring/60"
+          <ArrowLeftToLine className="size-4" aria-hidden="true" />
+        </CellBtn>
+        <CellBtn
+          label={t("asm.cellDelete", { page: index + 1, doc: docName })}
+          destructive
+          onClick={() => onDeletePage(index)}
         >
-          <Trash2 className="size-3.5" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          aria-label={t("asm.moveRight", { page: index + 1, doc: docName })}
-          title={t("asm.moveRight", { page: index + 1, doc: docName })}
+          <Trash2 className="size-4" aria-hidden="true" />
+        </CellBtn>
+        <CellBtn
+          label={t("asm.moveRight", { page: index + 1, doc: docName })}
           disabled={!hasNextDoc}
-          onClick={(event) => {
-            event.stopPropagation();
-            onMoveToNeighbor(index, 1);
-          }}
-          className="flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-30"
+          onClick={() => onMoveToNeighbor(index, 1)}
         >
-          <ArrowRightToLine className="size-3.5" aria-hidden="true" />
-        </button>
+          <ArrowRightToLine className="size-4" aria-hidden="true" />
+        </CellBtn>
+      </div>
+      <div className="mt-0.5 flex items-center justify-between gap-0.5">
+        <CellBtn
+          label={t("asm.cellRotateLeft", { page: index + 1, doc: docName })}
+          onClick={() => onRotatePage(index, -90)}
+        >
+          <RotateCcw className="size-4" aria-hidden="true" />
+        </CellBtn>
+        <CellBtn
+          label={t("asm.cellDuplicate", { page: index + 1, doc: docName })}
+          onClick={() => onDuplicatePage(index)}
+        >
+          <Copy className="size-4" aria-hidden="true" />
+        </CellBtn>
+        <CellBtn
+          label={t("asm.cellRotateRight", { page: index + 1, doc: docName })}
+          onClick={() => onRotatePage(index, 90)}
+        >
+          <RotateCw className="size-4" aria-hidden="true" />
+        </CellBtn>
       </div>
     </div>
   );
@@ -842,16 +968,31 @@ function AsmCell({
 
 /* ------------------------------ thumbnail ------------------------------ */
 
-/** Lazy page thumbnail: renders only while near the viewport (IO). */
+/** Lazy page thumbnail: renders only while near the viewport (IO).
+ * R14: `rotate` is the user's OFFSET — it renders ON TOP of whatever
+ * /Rotate the source page shipped with (rotateOffset), so the preview
+ * shows the effective orientation and re-renders when the user turns. */
 function PageThumb({
   file,
   pageIndex,
+  rotate,
+  onSize,
 }: {
   file: File | null;
   pageIndex: number;
+  rotate: number;
+  /** Reports the rendered bitmap's true size (aspect-truth for the cell). */
+  onSize?: (width: number, height: number) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [url, setUrl] = useState<string | null>(null);
+  // Latest-callback ref: the parent's inline onSize must never retrigger
+  // the load effect — only (file, pageIndex, rotate) own it. Updated in
+  // an effect so the ref is never written during render.
+  const onSizeRef = useRef(onSize);
+  useEffect(() => {
+    onSizeRef.current = onSize;
+  });
 
   useEffect(() => {
     if (file === null) return;
@@ -866,11 +1007,13 @@ function PageThumb({
       void renderPdfThumbnail(file, {
         pageIndex,
         maxDim: THUMB_DIM,
+        ...(rotate !== 0 ? { rotateOffset: rotate } : {}),
       })
         .then((thumb) => {
           if (cancelled) return;
           objectUrl = URL.createObjectURL(thumb.blob);
           setUrl(objectUrl);
+          onSizeRef.current?.(thumb.width, thumb.height);
         })
         .catch(() => {
           /* unreadable page → placeholder stays */
@@ -901,7 +1044,7 @@ function PageThumb({
       observer?.disconnect();
       if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
     };
-  }, [file, pageIndex]);
+  }, [file, pageIndex, rotate]);
 
   return (
     <div

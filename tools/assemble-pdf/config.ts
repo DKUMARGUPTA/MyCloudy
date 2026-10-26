@@ -83,6 +83,14 @@ export const config: ToolConfig = {
       hi: "हर दस्तावेज़ साथ-साथ — पेज माउस, उंगली या कीबोर्ड से खींचकर दूसरे दस्तावेज़ में डालें।",
     },
     {
+      en: "Turn any page ±90° right in its column — sideways scans and landscape inserts read upright in the saved PDF, and four taps restore the original orientation.",
+      hi: "कोई भी पेज अपने कॉलम में ही ±90° घुमाएँ — साइडवेज़ स्कैन और लैंडस्केप पेज सेव की गई PDF में सीधे पढ़े जाएँ, और चार टैप पर पहले जैसा ओरिएंटेशन लौट आए।",
+    },
+    {
+      en: "Duplicate a page with one tap — forms, ID scans and repeating layouts snap together.",
+      hi: "एक टैप में पेज दोहराएँ — फ़ॉर्म, ID स्कैन और दोहराए जाने वाले लेआउट जल्दी जुड़ते हैं।",
+    },
+    {
       en: "Create new document columns and build exactly the file set you need.",
       hi: "नए दस्तावेज़ कॉलम बनाएँ और ठीक वही फ़ाइल सेट तैयार करें जो चाहिए।",
     },
@@ -114,6 +122,16 @@ export const config: ToolConfig = {
       a: {
         en: "Scanning a stack double-sided gives one file of fronts and one of backs. Zipper merge alternates them — 1A, 1B, 2A, 2B — back into reading order. If the backs came out reversed, reverse that column first with its ↺ button.",
         hi: "दोतरफ़ा स्कैन में एक फ़ाइल आगे के पेजों की और एक पीछे की बनती है। ज़िपर मर्ज उन्हें बारी-बारी — 1A, 1B, 2A, 2B — पढ़ने के क्रम में ले आता है। पीछे वाले उलटे आएं तो पहले उस कॉलम का ↺ बटन दबाएँ।",
+      },
+    },
+    {
+      q: {
+        en: "Can I rotate or duplicate pages while assembling?",
+        hi: "असेंबल करते समय पेज घुमा या दोहरा सकते हैं?",
+      },
+      a: {
+        en: "Yes — every page has ⟲ / ⟳ (rotate ±90°) and a duplicate button right under its thumbnail. A turned page wears an amber badge with its degrees, and four taps bring it back exactly as it shipped. Your turn adds to whatever rotation the source page already had, and a duplicated copy keeps its own rotation so you can adjust the two independently.",
+        hi: "हाँ — हर पेज के थंबनेल के ठीक नीचे ⟲ / ⟳ (±90° घुमाने) और प्रतिलिपि बटन हैं। घुमाया हुआ पेज एम्बर बैज में अपनी डिग्री दिखाता है, और चार टैप पर वह बिल्कुल वैसा ही लौट आता है जैसा वह पहले था। आपका घुमाव स्रोत पेज के मौजूदा घुमाव पर जुड़ता है, और बनी हुई प्रतिलिपि अपना घुमाव अलग रखती है — दोनों को अलग-अलग एडजस्ट कर सकते हैं।",
       },
     },
     {

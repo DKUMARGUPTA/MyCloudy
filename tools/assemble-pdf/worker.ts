@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { degrees, PDFDocument } from "pdf-lib";
 
 import type { OptionValues } from "@/lib/tools/config-types";
 import type { WorkerRunRequest, WorkerResponse } from "@/lib/workers/protocol";
@@ -88,10 +88,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const docs: AsmDoc[] = parsed.map((entry) => ({
     id: -1,
     name: entry.name,
-    pages: entry.pages.map(([fileId, page]) => ({
+    pages: entry.pages.map(([fileId, page, rotate]) => ({
       uid: -1,
       fileId,
       page,
+      // R14 wire: only TURNED pages carry the third element — an absent
+      // (or snapped-to-0) offset never writes /Rotate below.
+      ...(rotate !== undefined && rotate !== 0 ? { rotate } : {}),
     })),
   }));
 
@@ -195,7 +198,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const out = await PDFDocument.create();
 
     for (let index = 0; index < doc.pages.length; index += 1) {
-      const [fileId, pageIndex] = doc.pages[index];
+      const [fileId, pageIndex, rotate] = doc.pages[index];
       const source = await loadSource(fileId);
       if (pageIndex >= source.getPageCount()) {
         post({ type: "error", runId, code: "tool.errorInvalidPages" });
@@ -203,6 +206,26 @@ async function run(request: WorkerRunRequest): Promise<void> {
       }
       const [copied] = await out.copyPages(source, [pageIndex]);
       out.addPage(copied);
+
+      // R14: the user's rotation offset ADDS to whatever /Rotate the
+      // source page already shipped with — read from the COPIED node
+      // (copyPages carries it, so base and content are in sync by
+      // construction; the R13 stale-blob trust mask is unnecessary
+      // here). Untouched refs (rotate 0/absent) skip the write entirely:
+      // the page keeps its own /Rotate byte-for-byte — the zero-
+      // regression path for legacy 2-tuple payloads.
+      if (rotate !== undefined && rotate !== 0) {
+        const norm = (n: number): number =>
+          ((Math.trunc(n) % 360) + 360) % 360;
+        const base = norm(copied.getRotation().angle);
+        // Non-quadrant bases (damaged/tampered files) snap to 0 — the
+        // R13 quadrantRotate rule — so a broken source still exports
+        // instead of dying on pdf-lib's quadrant assert.
+        const baseQ =
+          base === 90 || base === 180 || base === 270 ? base : 0;
+        const target = norm(baseQ + rotate);
+        if (target !== base) copied.setRotation(degrees(target));
+      }
 
       donePages += 1;
       post({

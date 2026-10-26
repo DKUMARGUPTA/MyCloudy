@@ -22,6 +22,42 @@ export interface AsmPageRef {
   fileId: string;
   /** 0-based page index in that file. */
   page: number;
+  /**
+   * R14: the user's rotation OFFSET in degrees (0 | 90 | 180 | 270).
+   * Absent/0 = untouched — the source page keeps whatever /Rotate it
+   * shipped with (the preview renders it as-is; the export never writes
+   * /Rotate for it). The offset ADDS to the source's own rotation at
+   * export (R13 lesson: never flatten it), and four taps of +90 wrap
+   * back to absent — an honest reset, not a sticky 360.
+   */
+  rotate?: number;
+}
+
+/** Workspace-wide page cap for duplication (page-plan precedent). */
+export const MAX_WORKSPACE_PAGES = 2000;
+
+/** Normalizes a rotation value to [0, 360). */
+function norm360(raw: number): number {
+  return ((Math.trunc(raw) % 360) + 360) % 360;
+}
+
+/** Snaps any value to a quadrant 0 | 90 | 180 | 270 (R13 quadrantRotate rule: non-quadrant → 0). */
+export function quadrantRotation(raw: number): number {
+  const r = norm360(raw);
+  return r === 90 || r === 180 || r === 270 ? r : 0;
+}
+
+/** The user's rotation offset for a ref (0 when untouched). */
+export function pageRotateOffset(page: AsmPageRef): number {
+  return page.rotate === undefined ? 0 : quadrantRotation(page.rotate);
+}
+
+/** The offset a `delta` turn would land a ref on (toast math, pure). */
+export function nextRotationOffset(
+  page: AsmPageRef,
+  delta: number
+): number {
+  return quadrantRotation(pageRotateOffset(page) + delta);
 }
 
 /** One document column in the workspace. */
@@ -38,8 +74,9 @@ export interface AsmDoc {
 /** Output document produced by the plan (pure data — the worker executes it). */
 export interface AsmOutputDoc {
   name: string;
-  /** [fileId, pageIndex] pairs in final output order. */
-  pages: [string, number][];
+  /** [fileId, pageIndex] pairs in final output order; a third element
+   * carries the user's rotation offset when the page was turned (R14). */
+  pages: [string, number, number?][];
 }
 
 let uidSeq = 0;
@@ -195,6 +232,66 @@ export function deletePages(
 }
 
 /**
+ * R14: turns one page by a quadrant delta (±90 in the UI). The offset
+ * wraps — 270 + 90 lands back on 0, where the field is REMOVED (the
+ * honest reset: the page exports exactly as its source shipped it).
+ * Rotation never reorders or drops slots, so it stays available on any
+ * workspace size. Returns the input unchanged for bad indices or a
+ * zero delta (nothing to record in history).
+ */
+export function rotatePage(
+  docs: AsmDoc[],
+  docId: number,
+  index: number,
+  delta: number
+): AsmDoc[] {
+  if (delta % 360 === 0) return docs;
+  const doc = docs.find((entry) => entry.id === docId);
+  if (!doc || index < 0 || index >= doc.pages.length) return docs;
+  return setDocPages(
+    docs,
+    docId,
+    doc.pages.map((page, i) => {
+      if (i !== index) return page;
+      const next = quadrantRotation(pageRotateOffset(page) + delta);
+      if (next === 0) {
+        const { rotate: _dropped, ...rest } = page;
+        return rest;
+      }
+      return { ...page, rotate: next };
+    })
+  );
+}
+
+/**
+ * R14: duplicates a page in place — a fresh ref (new uid, same source
+ * page AND its current rotation) inserted right after the original, so
+ * the copy can then be turned or moved independently. No-op at the
+ * workspace-wide page cap (MAX_WORKSPACE_PAGES); the surface turns the
+ * identity return into the honest cap toast.
+ */
+export function duplicatePage(
+  docs: AsmDoc[],
+  docId: number,
+  index: number
+): AsmDoc[] {
+  const doc = docs.find((entry) => entry.id === docId);
+  if (!doc || index < 0 || index >= doc.pages.length) return docs;
+  const total = docs.reduce((sum, entry) => sum + entry.pages.length, 0);
+  if (total >= MAX_WORKSPACE_PAGES) return docs;
+  const src = doc.pages[index];
+  const copy: AsmPageRef = {
+    uid: nextUid(),
+    fileId: src.fileId,
+    page: src.page,
+    ...(src.rotate !== undefined ? { rotate: src.rotate } : {}),
+  };
+  const pages = [...doc.pages];
+  pages.splice(index + 1, 0, copy);
+  return setDocPages(docs, docId, pages);
+}
+
+/**
  * Removes every page that references a file that left the workspace.
  * Docs that BECAME empty because of the drop go away; docs that were
  * already empty (user-created columns) survive untouched.
@@ -244,6 +341,16 @@ function interleavePages(docs: AsmDoc[]): AsmPageRef[] {
   return out;
 }
 
+/** A planned page as wire data: source ref + optional rotation offset. */
+export function planPage(
+  page: AsmPageRef
+): [string, number, number?] {
+  const out: [string, number, number?] = [page.fileId, page.page];
+  const rot = pageRotateOffset(page);
+  if (rot !== 0) out.push(rot);
+  return out;
+}
+
 /**
  * Turns the edited columns into concrete output documents (pure data —
  * the worker just executes this). Merge mode returns ONE document;
@@ -259,9 +366,7 @@ export function planAssemble(
   if (options.mode === "separate") {
     return nonEmpty.map((doc) => ({
       name: doc.name,
-      pages: doc.pages.map(
-        (page): [string, number] => [page.fileId, page.page]
-      ),
+      pages: doc.pages.map(planPage),
     }));
   }
 
@@ -273,7 +378,7 @@ export function planAssemble(
   return [
     {
       name: nonEmpty[0].name,
-      pages: refs.map((page): [string, number] => [page.fileId, page.page]),
+      pages: refs.map(planPage),
     },
   ];
 }
@@ -283,12 +388,18 @@ export function planAssemble(
 /**
  * Compact wire format (option "assemble"): [[name, [[fileId, page], …]], …].
  * Uids never leave the client. Passed to the worker as a plain option.
+ * R14: a TURNED page serializes as [fileId, page, rotate] — untouched
+ * pages stay 2-tuples, so workspaces with no rotation are byte-identical
+ * to the pre-R14 format (old payloads must keep parsing forever).
  */
 export function serializeAssemble(docs: AsmDoc[]): string {
   return JSON.stringify(
     docs.map((doc) => [
       doc.name,
-      doc.pages.map((page): [string, number] => [page.fileId, page.page]),
+      doc.pages.map((page) => {
+        const planned = planPage(page);
+        return planned.length === 3 ? planned : [planned[0], planned[1]];
+      }),
     ])
   );
 }
@@ -296,7 +407,7 @@ export function serializeAssemble(docs: AsmDoc[]): string {
 /** Parses the wire format back. Returns null for anything malformed. */
 export function parseAssembleOption(
   raw: unknown
-): { name: string; pages: [string, number][] }[] | null {
+): { name: string; pages: [string, number, number?][] }[] | null {
   if (typeof raw !== "string" || raw.length === 0) return null;
   let parsed: unknown;
   try {
@@ -305,17 +416,17 @@ export function parseAssembleOption(
     return null;
   }
   if (!Array.isArray(parsed)) return null;
-  const out: { name: string; pages: [string, number][] }[] = [];
+  const out: { name: string; pages: [string, number, number?][] }[] = [];
   for (const entry of parsed) {
     if (!Array.isArray(entry) || entry.length !== 2) return null;
     const name = entry[0];
     const rawPages = entry[1];
     if (typeof name !== "string" || !Array.isArray(rawPages)) return null;
-    const pages: [string, number][] = [];
+    const pages: [string, number, number?][] = [];
     for (const ref of rawPages) {
       if (
         !Array.isArray(ref) ||
-        ref.length !== 2 ||
+        (ref.length !== 2 && ref.length !== 3) ||
         typeof ref[0] !== "string" ||
         typeof ref[1] !== "number" ||
         !Number.isInteger(ref[1]) ||
@@ -323,7 +434,18 @@ export function parseAssembleOption(
       ) {
         return null;
       }
-      pages.push([ref[0], ref[1]]);
+      // R14 third element: the rotation offset. Legacy payloads (and
+      // untouched pages) carry none. A non-quadrant value is stale or
+      // tampered data — it snaps to 0 (the R13 quadrantRotate rule), so
+      // the run proceeds with the page exactly as its source shipped it.
+      const rawRot = ref.length === 3 ? ref[2] : undefined;
+      const rot =
+        typeof rawRot === "number" && Number.isFinite(rawRot)
+          ? quadrantRotation(rawRot)
+          : 0;
+      pages.push(
+        rot === 0 ? [ref[0], ref[1]] : [ref[0], ref[1], rot]
+      );
     }
     out.push({ name, pages });
   }
@@ -336,15 +458,21 @@ export interface AsmStats {
   docs: number;
   nonEmptyDocs: number;
   pages: number;
+  /** Pages carrying a user rotation offset (R14 toolbar chip). */
+  rotated: number;
 }
 
 /** Summary for the toolbar chips. */
 export function asmStats(docs: AsmDoc[]): AsmStats {
   let pages = 0;
   let nonEmptyDocs = 0;
+  let rotated = 0;
   for (const doc of docs) {
     pages += doc.pages.length;
     if (doc.pages.length > 0) nonEmptyDocs += 1;
+    for (const page of doc.pages) {
+      if (pageRotateOffset(page) !== 0) rotated += 1;
+    }
   }
-  return { docs: docs.length, nonEmptyDocs, pages };
+  return { docs: docs.length, nonEmptyDocs, pages, rotated };
 }
