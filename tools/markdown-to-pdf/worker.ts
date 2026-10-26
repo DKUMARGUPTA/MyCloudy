@@ -114,7 +114,7 @@ async function loadMdParse(): Promise<MdParseFn> {
 const COLORS = {
   text: rgb(0.1, 0.1, 0.12),
   muted: rgb(0.45, 0.45, 0.5),
-  link: rgb(0.145, 0.388, 0.922), // #2563EB — the PRD brand blue
+  link: rgb(0.059, 0.463, 0.431), // #0F766E — DocoPDF ink teal
   codeBgClean: rgb(0.92, 0.92, 0.92),
   codeBgWarm: rgb(0.945, 0.925, 0.88),
   quoteBar: rgb(0.72, 0.72, 0.76),

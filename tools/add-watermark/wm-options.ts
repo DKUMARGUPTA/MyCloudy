@@ -55,7 +55,7 @@ export const WM_FONTS: { id: WmFontId; labelKey: string; css: string }[] = [
 
 export const WM_COLORS: string[] = [
   "#DC2626", // red — the classic
-  "#2563EB", // brand blue
+  "#2563EB", // blue
   "#6B7280", // neutral gray
   "#111827", // near black
   "#16A34A", // green

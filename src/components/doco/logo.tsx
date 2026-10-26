@@ -18,8 +18,8 @@ export function LogoMark({ className }: { className?: string }) {
           y2="30"
           gradientUnits="userSpaceOnUse"
         >
-          <stop stopColor="#2563EB" />
-          <stop offset="1" stopColor="#F97316" />
+          <stop stopColor="#0F766E" />
+          <stop offset="1" stopColor="#14B8A6" />
         </linearGradient>
       </defs>
       <rect x="2" y="2" width="28" height="28" rx="8" fill="url(#docopdf-mark)" />
@@ -27,14 +27,14 @@ export function LogoMark({ className }: { className?: string }) {
         d="M11.5 7.5h6.3l4.7 4.7V23a1.8 1.8 0 0 1-1.8 1.8H11.5A1.8 1.8 0 0 1 9.7 23V9.3a1.8 1.8 0 0 1 1.8-1.8Z"
         fill="#FFFFFF"
       />
-      <path d="M17.8 7.5l4.7 4.7h-4.7Z" fill="#BFDBFE" />
+      <path d="M17.8 7.5l4.7 4.7h-4.7Z" fill="#99F6E4" />
       <text
         x="16.1"
         y="20.6"
         textAnchor="middle"
         fontSize="6.6"
         fontWeight="700"
-        fill="#1D4ED8"
+        fill="#0F766E"
         fontFamily="Inter, system-ui, sans-serif"
       >
         PDF
