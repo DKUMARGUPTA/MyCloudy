@@ -1945,7 +1945,22 @@
     "hintEditReady": "Click any text to edit it — font, size and colour are matched for you.",
     "noTextOcrCta": "Run OCR first",
     "ocrHandoffToast": "Opening OCR — it makes a searchable copy; edit that copy here afterwards.",
-    "firstHint": "Tip: you can edit the PDF's existing text — tap \"Edit text\" below."
+    "firstHint": "Tip: you can edit the PDF's existing text — tap \"Edit text\" below.",
+    "pageDeletedToast": "Page {page} deleted — Undo in the header if that was a mistake",
+    "pageDuplicatedToast": "Page {page} duplicated",
+    "pagesLabel": "Pages",
+    "pagesHint": "Drag thumbnails to reorder — every step is undoable",
+    "pagesOpsLabel": "Page actions",
+    "pageMoveLeft": "Move page {page} left",
+    "pageMoveRight": "Move page {page} right",
+    "pageDuplicate": "Duplicate page {page}",
+    "pageDelete": "Delete page {page}",
+    "pagesDisabledTruncated": "Page tools are off for documents over 500 pages",
+    "pagesLockedCap": "Workspace is at the 500-page limit",
+    "pagesLastPage": "Can't delete the only page",
+    "stripLabel": "Pages — drag to reorder",
+    "stripPageLabel": "Page {page}",
+    "stripMovedTitle": "Reordered page"
   },
   "ann": {
     "how1": "Upload a PDF — it opens right on your device, ready to mark up.",

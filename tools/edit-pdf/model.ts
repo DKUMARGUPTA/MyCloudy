@@ -151,6 +151,13 @@ export interface PageView {
   y1: number;
   /** /Rotate 0 | 90 | 180 | 270 (normalized). */
   rotate: number;
+  /**
+   * R12 page ops: index of the SOURCE page this workspace slot shows.
+   * Identity documents (no page ops) have views[i].src === i. Reorders
+   * permute the array; deletes splice it; duplicates repeat a src.
+   * Optional on the wire — absent (stale blobs/drafts) means identity.
+   */
+  src?: number;
 }
 
 /** Display (visible) page size in points, /Rotate applied. */
@@ -222,6 +229,147 @@ export function displayRectToPdf(rect: ObjRect, view: PageView): ObjRect {
   const x = Math.min(...xs);
   const y = Math.min(...ys);
   return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+}
+
+// ---------------------------------------------------------------------------
+// R12 — Page operations (delete / reorder / duplicate), PURE
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalises wire views: repairs missing/garbage `src` to the identity
+ * position and clamps out-of-range sources. Old blobs and v1 drafts (no
+ * src field) come back as identity — page ops never fire on stale data.
+ */
+export function normalizeViews(
+  views: PageView[],
+  srcCount: number
+): PageView[] {
+  return views.map((view, i) => {
+    const raw = view?.src;
+    const src =
+      typeof raw === "number" && Number.isFinite(raw) && raw >= 0
+        ? Math.min(Math.trunc(raw), Math.max(0, srcCount - 1))
+        : i;
+    return { ...view, src };
+  });
+}
+
+/**
+ * True when the workspace still shows the document 1:1 (every slot i
+ * shows source page i). Truncated workspaces (fewer views than sources,
+ * the >500-page clamp) count as identity — the untouched tail keeps
+ * exporting exactly as before R12 (zero-regression path in the worker).
+ */
+export function isIdentityOrder(views: PageView[], srcCount: number): boolean {
+  if (views.length > srcCount) return false;
+  return views.every((view, i) => (view.src ?? i) === i);
+}
+
+/**
+ * Permutation for a drag move: old workspace position → new position.
+ * `from` lands exactly on `to`; everything between shifts by one
+ * (forward move: from+1..to shift DOWN; backward: to..from-1 shift UP).
+ */
+export function movePermutation(
+  from: number,
+  to: number,
+  count: number
+): number[] {
+  const perm = Array.from({ length: count }, (_, i) => i);
+  if (
+    from < 0 || to < 0 || from >= count || to >= count || from === to
+  ) {
+    return perm;
+  }
+  if (from < to) {
+    for (let i = from + 1; i <= to; i += 1) perm[i] = i - 1;
+  } else {
+    for (let i = to; i < from; i += 1) perm[i] = i + 1;
+  }
+  perm[from] = to;
+  return perm;
+}
+
+/** Move one workspace page (drag / Move left / Move right). */
+export function movePageViews(
+  views: PageView[],
+  from: number,
+  to: number
+): PageView[] {
+  const count = views.length;
+  if (from < 0 || to < 0 || from >= count || to >= count) return views;
+  const next = [...views];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/**
+ * Delete one workspace page (guarded — never the last page). Returns the
+ * same array reference when the delete is out of bounds or would empty
+ * the workspace.
+ */
+export function deletePageViews(views: PageView[], pos: number): PageView[] {
+  if (pos < 0 || pos >= views.length || views.length <= 1) return views;
+  const next = [...views];
+  next.splice(pos, 1);
+  return next;
+}
+
+/**
+ * Duplicate one workspace page — the new slot (at pos + 1) shows the SAME
+ * source page. User objects are NOT cloned (the honest organize rule: the
+ * copy duplicates the page content, not the annotations on it).
+ */
+export function duplicatePageViews(views: PageView[], pos: number): PageView[] {
+  if (pos < 0 || pos >= views.length) return views;
+  const view = views[pos];
+  if (view === undefined) return views;
+  const next = [...views];
+  next.splice(pos + 1, 0, { ...view });
+  return next;
+}
+
+/**
+ * Remaps object `page` fields after a delete (drop objects on the deleted
+ * page, shift the ones above it down) or a duplicate (shift the ones above
+ * the insertion point up).
+ */
+export function remapObjectsForPageOp(
+  objects: EditorObject[],
+  pos: number,
+  kind: "delete" | "duplicate"
+): EditorObject[] {
+  if (pos < 0) return objects;
+  if (kind === "delete") {
+    return objects
+      .filter((o) => o.page !== pos)
+      .map((o) => (o.page > pos ? { ...o, page: o.page - 1 } : o));
+  }
+  return objects.map((o) => (o.page > pos ? { ...o, page: o.page + 1 } : o));
+}
+
+/** Remaps object `page` fields through a full permutation (drag move). */
+export function remapObjectsByPermutation(
+  objects: EditorObject[],
+  perm: number[]
+): EditorObject[] {
+  return objects.map((o) => {
+    const next = perm[o.page];
+    return next === undefined || next === o.page ? o : { ...o, page: next };
+  });
+}
+
+/** Every workspace position currently showing source page `src`. */
+export function workspacePositionsForSrc(
+  views: PageView[],
+  src: number
+): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < views.length; i += 1) {
+    if ((views[i]?.src ?? i) === src) out.push(i);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1038,10 +1186,13 @@ export function sanitizeObject(
   const o = raw as Record<string, unknown>;
   const kind = KINDS.includes(o.kind as ObjKind) ? (o.kind as ObjKind) : null;
   if (kind === null) return null;
-  const page = Math.min(
-    Math.max(0, Math.trunc(num(o.page, 0))),
-    Math.max(0, pageCount - 1)
-  );
+  // R12: an object whose page fell outside the document is DROPPED, not
+  // clamped — content must never land on a page the user didn't put it on
+  // (deletes/tampered blobs); the surface's remaps keep real objects
+  // in-range, so only genuinely stale/hostile objects reach this guard.
+  const pageRaw = Math.trunc(num(o.page, 0));
+  if (pageRaw < 0 || pageRaw >= Math.max(1, pageCount)) return null;
+  const page = pageRaw;
   const base = {
     id: str(o.id, nextObjId("x")),
     page,

@@ -277,8 +277,8 @@ async function main(): Promise<void> {
     3,
     assets
   );
-  assertEqual(sanitized.length, 3, "sanitize drops hidden/garbage/missing asset");
-  assertEqual(sanitized.find((o) => o.kind === "text" && o.page === 2) !== undefined, true, "page 99 clamped to last page");
+  assertEqual(sanitized.length, 2, "sanitize drops hidden/garbage/missing asset/out-of-range page");
+  assertEqual(sanitized.find((o) => o.kind === "text" && o.page === 2) === undefined, true, "page 99 dropped honestly (R12: never clamped onto a page the user didn't choose)");
 
   /* ---- Part 2: the worker (real module) ---- */
   await import("../tools/edit-pdf/worker");

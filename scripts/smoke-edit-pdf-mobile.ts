@@ -418,7 +418,7 @@ async function main(): Promise<void> {
     "draft: encode→decode round-trip"
   );
   assertEqual(
-    drafts.decodeDraft(encoded.replace('"v":1', '"v":99')),
+    drafts.decodeDraft(encoded.replace(/"v":\d+/, '"v":99')),
     null,
     "draft: wrong schema version → null"
   );

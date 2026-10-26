@@ -4,9 +4,27 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   ArrowLeftRight,
   ArrowUp,
@@ -17,6 +35,8 @@ import {
   Bold,
   Brush,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Ellipsis,
   Eraser,
@@ -56,6 +76,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { BottomSheet } from "@/components/doco/bottom-sheet";
 import { useI18n } from "@/components/providers/locale-provider";
+import { renderPdfThumbnail } from "@/lib/pdf/thumbnails";
 import { cn } from "@/lib/utils";
 import {
   FONT_OPTIONS,
@@ -2497,4 +2518,323 @@ function arrowHeadPoints(
     `${x2 + size * Math.cos(a1)},${y2 + size * Math.sin(a1)}`,
     `${x2 + size * Math.cos(a2)},${y2 + size * Math.sin(a2)}`,
   ].join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// R12 — EditorPageStrip: page operations rail (delete / reorder / duplicate)
+// ---------------------------------------------------------------------------
+
+const EDITOR_STRIP_MAX = 12;
+
+function editorStripWindow(selected: number, pageCount: number): number[] {
+  if (pageCount <= EDITOR_STRIP_MAX) {
+    return Array.from({ length: pageCount }, (_, i) => i);
+  }
+  const start = Math.min(
+    Math.max(0, selected - Math.floor(EDITOR_STRIP_MAX / 2)),
+    pageCount - EDITOR_STRIP_MAX
+  );
+  return Array.from({ length: EDITOR_STRIP_MAX }, (_, i) => start + i);
+}
+
+/** One sortable page thumbnail (drag handle + selection + marks). */
+function EditorStripThumb({
+  slot,
+  src,
+  url,
+  selected,
+  marked,
+  onSelect,
+}: {
+  slot: number;
+  src: number;
+  url: string | null;
+  selected: boolean;
+  marked: boolean;
+  onSelect: () => void;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: slot });
+  const style: React.CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+  };
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      style={style}
+      {...attributes}
+      {...listeners}
+      onClick={onSelect}
+      role="option"
+      aria-selected={selected}
+      aria-label={t("editPdf.stripPageLabel", { page: slot + 1 })}
+      className={cn(
+        "relative shrink-0 cursor-grab touch-none overflow-hidden rounded-md border transition-all active:cursor-grabbing",
+        selected
+          ? "border-primary scale-105 ring-2 ring-primary/30"
+          : "border-border opacity-80 hover:opacity-100"
+      )}
+    >
+      {url === null ? (
+        <span className="flex h-16 w-12 items-center justify-center bg-muted">
+          <span className="size-3 animate-pulse rounded-full bg-muted-foreground/40" />
+        </span>
+      ) : (
+        <img src={url} alt="" className="h-16 w-auto" loading="lazy" />
+      )}
+      <span
+        className={cn(
+          "absolute bottom-0.5 right-0.5 rounded bg-background/85 px-1 text-[9px] font-semibold tabular-nums text-foreground",
+          marked && "text-primary"
+        )}
+      >
+        {slot + 1}
+      </span>
+      {marked ? (
+        <span
+          className="absolute left-0.5 top-0.5 size-1.5 rounded-full bg-primary"
+          aria-hidden="true"
+        />
+      ) : null}
+      {src !== slot ? (
+        <span
+          className="absolute left-0.5 bottom-0.5 rounded bg-primary/90 px-1 text-[8px] font-bold tabular-nums text-primary-foreground"
+          aria-hidden="true"
+          title={t("editPdf.stripMovedTitle")}
+        >
+          ↺
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+/**
+ * The editor's page rail (R12): the shared preview strip, upgraded with
+ * page operations — drag (or arrow buttons) to reorder, duplicate, delete,
+ * every step undoable from the header. Ops act on the SELECTED page.
+ *
+ * `opsDisabled` covers >500-page documents (the workspace is truncated, a
+ * plan change would drop the untouched tail); `opsLocked` covers the
+ * 500-slot cap for duplicates.
+ */
+export function EditorPageStrip({
+  file,
+  pageCount,
+  selected,
+  onSelect,
+  markedSet,
+  planKey,
+  opsDisabled,
+  opsLocked,
+  onMove,
+  onDelete,
+  onDuplicate,
+}: {
+  file: File;
+  pageCount: number;
+  selected: number;
+  onSelect: (pageIndex: number) => void;
+  markedSet: ReadonlySet<number>;
+  /** The plan fingerprint (comma-separated src per slot) — the single
+   *  source of truth: srcs are derived from it, so thumbnails refresh
+   *  when (and only when) the plan actually changes. */
+  planKey: string;
+  opsDisabled: boolean;
+  opsLocked: boolean;
+  onMove: (from: number, to: number) => void;
+  onDelete: (pos: number) => void;
+  onDuplicate: (pos: number) => void;
+}): React.JSX.Element | null {
+  const { t } = useI18n();
+  const window = editorStripWindow(selected, pageCount);
+
+  // The src array, derived from the plan fingerprint (content-keyed —
+  // object-only parent commits never re-render thumbnails).
+  const srcs = useMemo<number[]>(() => {
+    if (planKey.length === 0) return [];
+    return planKey.split(",").map((part) => {
+      const n = Number(part);
+      return Number.isFinite(n) ? n : -1;
+    });
+  }, [planKey]);
+  const srcOf = (slot: number): number => srcs[slot] ?? slot;
+
+  const [thumbs, setThumbs] = useState<{ slot: number; src: number; url: string }[]>([]);
+  const thumbsRef = useRef<{ slot: number; src: number; url: string }[]>([]);
+
+  // Thumbnails for the visible window — keyed by SOURCE page so reordered
+  // slots re-fetch only when the plan actually changes (planKey dep).
+  useEffect(() => {
+    if (pageCount === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const next: { slot: number; src: number; url: string }[] = [];
+      for (const slot of editorStripWindow(selected, pageCount)) {
+        const thumb = await renderPdfThumbnail(file, {
+          pageIndex: srcOf(slot),
+          maxDim: 72,
+        });
+        if (cancelled) return;
+        next.push({ slot, src: srcOf(slot), url: URL.createObjectURL(thumb.blob) });
+      }
+      for (const old of thumbsRef.current) URL.revokeObjectURL(old.url);
+      thumbsRef.current = next;
+      setThumbs(next);
+    })().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [file, pageCount, selected, planKey]);
+
+  useEffect(() => {
+    return () => {
+      for (const old of thumbsRef.current) URL.revokeObjectURL(old.url);
+    };
+  }, []);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 4 },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 120, tolerance: 6 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const onDragEnd = (event: DragEndEvent): void => {
+    const { active, over } = event;
+    if (over === null || active.id === over.id) return;
+    const from = Number(active.id);
+    const to = Number(over.id);
+    if (Number.isInteger(from) && Number.isInteger(to)) onMove(from, to);
+  };
+
+  const urlFor = (slot: number, src: number): string | null => {
+    const hit = thumbs.find((item) => item.slot === slot && item.src === src);
+    return hit !== undefined ? hit.url : null;
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold text-muted-foreground">
+          {t("editPdf.pagesLabel")}
+        </span>
+        <span className="hidden text-[11px] text-muted-foreground/80 sm:inline">
+          {t("editPdf.pagesHint")}
+        </span>
+        <div
+          className="ml-auto flex items-center gap-1"
+          role="group"
+          aria-label={t("editPdf.pagesOpsLabel")}
+        >
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-11 rounded-btn"
+            disabled={opsDisabled || selected === 0}
+            onClick={() => onMove(selected, selected - 1)}
+            aria-label={t("editPdf.pageMoveLeft", { page: selected + 1 })}
+            title={opsDisabled ? t("editPdf.pagesDisabledTruncated") : undefined}
+          >
+            <ChevronLeft className="size-4" aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-11 rounded-btn"
+            disabled={opsDisabled || selected >= pageCount - 1}
+            onClick={() => onMove(selected, selected + 1)}
+            aria-label={t("editPdf.pageMoveRight", { page: selected + 1 })}
+            title={opsDisabled ? t("editPdf.pagesDisabledTruncated") : undefined}
+          >
+            <ChevronRight className="size-4" aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-11 rounded-btn"
+            disabled={opsDisabled || opsLocked}
+            onClick={() => onDuplicate(selected)}
+            aria-label={t("editPdf.pageDuplicate", { page: selected + 1 })}
+            title={
+              opsDisabled
+                ? t("editPdf.pagesDisabledTruncated")
+                : opsLocked
+                  ? t("editPdf.pagesLockedCap")
+                  : t("editPdf.pageDuplicate", { page: selected + 1 })
+            }
+          >
+            <Copy className="size-4" aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-11 rounded-btn text-destructive hover:bg-destructive/10 hover:text-destructive"
+            disabled={opsDisabled || pageCount <= 1}
+            onClick={() => onDelete(selected)}
+            aria-label={t("editPdf.pageDelete", { page: selected + 1 })}
+            title={
+              opsDisabled
+                ? t("editPdf.pagesDisabledTruncated")
+                : pageCount <= 1
+                  ? t("editPdf.pagesLastPage")
+                  : t("editPdf.pageDelete", { page: selected + 1 })
+            }
+          >
+            <Trash2 className="size-4" aria-hidden="true" />
+          </Button>
+        </div>
+      </div>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={onDragEnd}
+        onDragStart={() => {
+          onSelect(selected);
+        }}
+      >
+        <SortableContext
+          items={window}
+          strategy={horizontalListSortingStrategy}
+        >
+          <div
+            className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1 scrollbar-thin"
+            role="listbox"
+            aria-label={t("editPdf.stripLabel")}
+          >
+            {window.map((slot) => (
+              <EditorStripThumb
+                key={slot}
+                slot={slot}
+                src={srcOf(slot)}
+                url={urlFor(slot, srcOf(slot))}
+                selected={slot === selected}
+                marked={markedSet.has(slot)}
+                onSelect={() => onSelect(slot)}
+              />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
+    </div>
+  );
 }

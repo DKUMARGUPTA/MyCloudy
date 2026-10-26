@@ -14,11 +14,16 @@ import type { WorkerRunRequest, WorkerResponse } from "@/lib/workers/protocol";
 import { loadStampFonts } from "../stamp-common/worker-lib";
 import type { StampFontId } from "../stamp-common/layout";
 import {
+  applyPagePlan,
+  MAX_WORKSPACE_PAGES,
+} from "./page-plan";
+import {
   FIELD_CHECKED,
   LINE_HEIGHT,
   TEXT_PAD,
   displayToPdfPoint,
   hexToRgb,
+  isIdentityOrder,
   lineEndpoints,
   pdfRectToDisplay,
   rotateDisplayPoint,
@@ -65,6 +70,9 @@ interface WireBlob {
   objects: unknown;
   pageViews: PageView[];
   assetOrder: string[];
+  /** R12: >500-page source — an identity-prefix plan means the workspace
+   * is capped, not that tail pages were deleted. */
+  truncated?: boolean;
 }
 
 function parseBlob(raw: unknown): WireBlob | null {
@@ -75,7 +83,12 @@ function parseBlob(raw: unknown): WireBlob | null {
     const order = Array.isArray(parsed.assetOrder)
       ? parsed.assetOrder.filter((k): k is string => typeof k === "string")
       : [];
-    return { objects: parsed.objects, pageViews: views, assetOrder: order };
+    return {
+      objects: parsed.objects,
+      pageViews: views,
+      truncated: parsed.truncated === true,
+      assetOrder: order,
+    };
   } catch {
     return null;
   }
@@ -91,8 +104,22 @@ function parseViews(raw: unknown): PageView[] {
       x1: typeof v.x1 === "number" ? v.x1 : 612,
       y1: typeof v.y1 === "number" ? v.y1 : 792,
       rotate: v.rotate === 90 || v.rotate === 180 || v.rotate === 270 ? v.rotate : 0,
+      // R12: src stays undefined for absent/garbage values — the run()
+      // side decides defaults AFTER it knows the source page count
+      // (stale pre-R12 blobs vs explicit duplicate plans differ there).
+      src:
+        typeof v.src === "number" && Number.isFinite(v.src) && v.src >= 0
+          ? Math.trunc(v.src)
+          : undefined,
     }));
 }
+
+/**
+ * R12: the page-plan application lives in page-plan.ts (shared with the
+ * smoke script — the exact shipping algorithm is bun-tested); run()
+ * decides identity vs surgery using srcs + the truncated flag.
+ */
+// (see ./page-plan.ts)
 
 // ---------------------------------------------------------------------------
 // Font resolution (standard 14 + italic variants + self-hosted Devanagari)
@@ -641,6 +668,11 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const blob = parseBlob(opts[`e:${ekey}`]);
   const assetOrder = blob?.assetOrder ?? [];
   const pageViews = parseViews(blob?.pageViews);
+  // Tampered-blob guard: the surface caps the workspace at 500 slots.
+  if (pageViews.length > MAX_WORKSPACE_PAGES) {
+    post({ type: "error", runId, code: "tool.errorCorrupt" });
+    return;
+  }
 
   post({ type: "progress", runId, pct: 4, stage: "reading" });
 
@@ -664,14 +696,55 @@ async function run(request: WorkerRunRequest): Promise<void> {
   if (doc.isEncrypted) {
     throw new Error("PDF_PASSWORD");
   }
-  const pages = doc.getPages();
-  const views: PageView[] = pages.map((_, i) => pageViews[i] ?? pageViews[0] ?? {
-    x0: 0,
-    y0: 0,
-    x1: 612,
-    y1: 792,
-    rotate: 0,
-  });
+  const originalPages = doc.getPages();
+  const srcCount = originalPages.length;
+  // R12: stale pre-R12 blobs carry NO src fields — views beyond the source
+  // count are junk exactly like the old padded array ignored them, so they
+  // truncate to the source count and read as identity. Explicit-src plans
+  // (the only thing the surface sends) may legitimately exceed srcCount
+  // (duplicates). Tamper-proofing: clamp every src into the document.
+  const hasExplicitSrc = pageViews.some((v) => v.src !== undefined);
+  const bounded = hasExplicitSrc
+    ? pageViews
+    : pageViews.slice(0, srcCount);
+  const planViews = bounded.map((v, i) => ({
+    ...v,
+    src: Math.min(v.src ?? i, Math.max(0, srcCount - 1)),
+  }));
+
+  // R12 page ops: identity plans keep today's EXACT path — every original
+  // page, views padded with the first view / the default. Three flavors of
+  // identity: stale/empty blobs, a full-length in-order plan, and the
+  // >500-page truncated workspace (identity prefix + the truncated flag —
+  // without the flag a shorter plan is a TAIL DELETE and gets surgery).
+  // Non-identity plans rebuild the tree in place (see applyPagePlan).
+  let pages = originalPages;
+  let views: PageView[];
+  const identity =
+    planViews.length === 0 ||
+    (isIdentityOrder(planViews, srcCount) &&
+      (planViews.length === srcCount || blob?.truncated === true));
+  if (identity) {
+    views = originalPages.map(
+      (_, i) => planViews[i] ?? planViews[0] ?? {
+        x0: 0,
+        y0: 0,
+        x1: 612,
+        y1: 792,
+        rotate: 0,
+      }
+    );
+  } else {
+    post({
+      type: "progress",
+      runId,
+      pct: 10,
+      stage: "processing",
+      detail: { pages: planViews.length },
+    });
+    pages = await applyPagePlan(doc, originalPages, planViews);
+    views = planViews;
+  }
 
   post({ type: "progress", runId, pct: 12, stage: "processing" });
 

@@ -27,7 +27,6 @@ import { BottomSheet } from "@/components/doco/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import {
   PreviewFileHeader,
-  PreviewPageStrip,
 } from "../stamp-common/preview-parts";
 import {
   addImageFile,
@@ -40,6 +39,7 @@ import {
 import {
   CanvasHeader,
   EditorContextMenu,
+  EditorPageStrip,
   EditorToolbar,
   FindReplaceDialog,
   LayersPanel,
@@ -77,11 +77,13 @@ import {
   buildReplacePieceObjects,
   clampN,
   computeSnap,
+  deletePageViews,
   displayAngle,
   displayRectToPdf,
   displaySize,
   duplicateObject,
   duplicateObjects,
+  duplicatePageViews,
   groupPiecesIntoLines,
   isRotatable,
   lowerOne,
@@ -94,14 +96,19 @@ import {
   makeWhiteout,
   marqueeSelection,
   medianRgb,
+  movePageViews,
+  movePermutation,
   normaliseDraw,
   normalizeRotation,
+  normalizeViews,
   pdfRectToDisplay,
   pickInkFromPixels,
   pieceRect,
   planLineReplacements,
   raiseOne,
   redoStep,
+  remapObjectsByPermutation,
+  remapObjectsForPageOp,
   rgbToHex,
   roundPt,
   sendManyToBack,
@@ -110,6 +117,7 @@ import {
   takenFieldNames,
   unionRects,
   undoStep,
+  workspacePositionsForSrc,
   type EditorObject,
   type HarvestPiece,
   type HitEdge,
@@ -181,6 +189,10 @@ interface EditorBlob {
   objects: EditorObject[];
   pageViews: PageView[];
   assetOrder: string[];
+  /** R12: true when the source document exceeds EDITOR_MAX_PAGES — the
+   * worker then treats an identity-prefix plan as truncated (tail kept)
+   * instead of a tail-page delete. */
+  truncated?: boolean;
 }
 
 type CreateKind =
@@ -261,6 +273,8 @@ async function collectPageViews(
       x1: raw[2],
       y1: raw[3],
       rotate: r === 90 || r === 180 || r === 270 ? r : 0,
+      // R12: identity source index — page ops permute/splice/repeat these.
+      src: p - 1,
     });
   }
   return views;
@@ -273,9 +287,15 @@ function parseBlob(raw: unknown): EditorBlob {
       objects: Array.isArray(parsed.objects)
         ? (parsed.objects as EditorObject[])
         : [],
+      // Stale blobs (pre-R12) carry no src — identity positions, exactly
+      // what the worker's parseViews assumes for absent srcs.
       pageViews: Array.isArray(parsed.pageViews)
-        ? (parsed.pageViews as PageView[])
+        ? (parsed.pageViews as PageView[]).map((v, i) => ({
+            ...v,
+            src: typeof v?.src === "number" ? v.src : i,
+          }))
         : [],
+      truncated: parsed.truncated === true,
       assetOrder: Array.isArray(parsed.assetOrder)
         ? parsed.assetOrder.filter((k): k is string => typeof k === "string")
         : [],
@@ -445,6 +465,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         JSON.stringify({
           objects: nextObjects,
           pageViews: nextViews,
+          truncated: truncatedRef.current,
           assetOrder: order,
         })
       );
@@ -457,9 +478,19 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     if (fileId !== "") onChange(EKEY_ID, fileId);
   }, [fileId, onChange]);
 
+  // --- Document state (page-positioning half — needed by history) --------
+  // R12: pageCount is the WORKSPACE page count (changes with page ops);
+  // srcPageCount is the ORIGINAL file's page count (find & replace scans
+  // and draft validation run against the source document).
+  const [pageCount, setPageCount] = useState(0);
+  const [selectedPage, setSelectedPage] = useState(0);
+  const [srcPageCount, setSrcPageCount] = useState(0);
+
   // --- History (undo/redo snapshot stack) --------------------------------
   // Stacks live in a ref (mutated from handlers only); their LENGTHS are
   // mirrored into state so canUndo/canRedo stay render-safe.
+  // R12: a snapshot = objects AND page views ({o, v}) — undo/redo of a
+  // delete/reorder/duplicate restores the page plan with its objects.
   const histRef = useRef<{
     past: string[];
     future: string[];
@@ -474,6 +505,17 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     });
   }, []);
 
+  // R12: live views mirror — the same write-only-in-handlers discipline
+  // as objectsRef, so a page op and an object edit in one tick cohere.
+  // truncatedRef mirrors the >500-page flag for the blob the worker reads.
+  const viewsRef = useRef<PageView[]>([]);
+  const truncatedRef = useRef(false);
+  const snapshot = useCallback(
+    (): string =>
+      JSON.stringify({ o: objectsRef.current, v: viewsRef.current }),
+    []
+  );
+
   const applyObjects = useCallback(
     (next: EditorObject[], groupKey: string, history = true): void => {
       if (history) {
@@ -484,7 +526,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         } else {
           h.past = [
             ...h.past,
-            JSON.stringify(objectsRef.current),
+            snapshot(),
           ].slice(-HISTORY_LIMIT);
           h.future = [];
           h.lastKey = groupKey;
@@ -493,45 +535,160 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         syncLens();
       }
       objectsRef.current = next;
-      commit(next);
+      commit(next, viewsRef.current);
     },
-    [commit, syncLens]
+    [commit, snapshot, syncLens]
+  );
+
+  /** Restores a history snapshot (objects + page plan) into the live state. */
+  const restoreSnapshot = useCallback(
+    (raw: string): void => {
+      const parsed = JSON.parse(raw) as {
+        o: EditorObject[];
+        v: PageView[];
+      };
+      objectsRef.current = parsed.o;
+      viewsRef.current = parsed.v;
+      commit(parsed.o, parsed.v);
+      setPageCount(parsed.v.length);
+      setSelectedPage((p) => Math.min(p, Math.max(0, parsed.v.length - 1)));
+    },
+    [commit]
+  );
+
+  // --- R12: page operations (delete / reorder / duplicate) -----------------
+  /** Commits a page plan change with its remapped objects, as ONE undo step. */
+  const applyPageOp = useCallback(
+    (
+      nextObjects: EditorObject[],
+      nextViews: PageView[],
+      groupKey: string,
+      nextSelected?: number
+    ): void => {
+      const h = histRef.current;
+      const now = Date.now();
+      if (h.lastKey === groupKey && now - h.lastAt < 800) {
+        h.lastAt = now;
+      } else {
+        h.past = [...h.past, snapshot()].slice(-HISTORY_LIMIT);
+        h.future = [];
+        h.lastKey = groupKey;
+        h.lastAt = now;
+      }
+      syncLens();
+      objectsRef.current = nextObjects;
+      viewsRef.current = nextViews;
+      commit(nextObjects, nextViews);
+      setPageCount(nextViews.length);
+      if (nextSelected !== undefined) setSelectedPage(nextSelected);
+      else
+        setSelectedPage((p) => Math.min(p, Math.max(0, nextViews.length - 1)));
+    },
+    [commit, snapshot, syncLens]
+  );
+
+  const deletePage = useCallback(
+    (pos: number): void => {
+      const views = viewsRef.current;
+      if (pos < 0 || pos >= views.length || views.length <= 1) return;
+      const nextViews = deletePageViews(views, pos);
+      const nextObjects = remapObjectsForPageOp(
+        objectsRef.current,
+        pos,
+        "delete"
+      );
+      const next =
+        selectedPage === pos
+          ? Math.min(pos, nextViews.length - 1)
+          : selectedPage > pos
+            ? selectedPage - 1
+            : selectedPage;
+      applyPageOp(nextObjects, nextViews, `page:delete:${pos}`, next);
+      toast({ title: t("editPdf.pageDeletedToast", { page: pos + 1 }) });
+    },
+    [applyPageOp, selectedPage, t, toast]
+  );
+
+  const movePage = useCallback(
+    (from: number, to: number): void => {
+      const views = viewsRef.current;
+      if (
+        from < 0 ||
+        to < 0 ||
+        from >= views.length ||
+        to >= views.length ||
+        from === to
+      ) {
+        return;
+      }
+      const perm = movePermutation(from, to, views.length);
+      const nextViews = movePageViews(views, from, to);
+      const nextObjects = remapObjectsByPermutation(
+        objectsRef.current,
+        perm
+      );
+      applyPageOp(
+        nextObjects,
+        nextViews,
+        `page:move:${from}:${to}`,
+        perm[selectedPage] ?? selectedPage
+      );
+    },
+    [applyPageOp, selectedPage]
+  );
+
+  const duplicatePage = useCallback(
+    (pos: number): void => {
+      const views = viewsRef.current;
+      if (
+        pos < 0 ||
+        pos >= views.length ||
+        views.length >= EDITOR_MAX_PAGES
+      ) {
+        return;
+      }
+      const nextViews = duplicatePageViews(views, pos);
+      if (nextViews === views) return;
+      const nextObjects = remapObjectsForPageOp(
+        objectsRef.current,
+        pos,
+        "duplicate"
+      );
+      const next = selectedPage > pos ? selectedPage + 1 : selectedPage;
+      applyPageOp(nextObjects, nextViews, `page:dup:${pos}`, next);
+      toast({ title: t("editPdf.pageDuplicatedToast", { page: pos + 1 }) });
+    },
+    [applyPageOp, selectedPage, t, toast]
   );
 
   const undo = useCallback((): void => {
-    const current = JSON.stringify(objectsRef.current);
+    const current = snapshot();
     const step = undoStep(histRef.current.past, histRef.current.future, current);
     if (step.snapshot === null) return;
     histRef.current.past = step.past;
     histRef.current.future = step.future;
     histRef.current.lastKey = "";
     histRef.current.lastAt = 0;
-    const restored = JSON.parse(step.snapshot) as EditorObject[];
-    objectsRef.current = restored;
-    commit(restored);
+    restoreSnapshot(step.snapshot);
     syncLens();
-  }, [commit, syncLens]);
+  }, [restoreSnapshot, snapshot, syncLens]);
 
   const redo = useCallback((): void => {
-    const current = JSON.stringify(objectsRef.current);
+    const current = snapshot();
     const step = redoStep(histRef.current.past, histRef.current.future, current);
     if (step.snapshot === null) return;
     histRef.current.past = step.past;
     histRef.current.future = step.future;
     histRef.current.lastKey = "";
     histRef.current.lastAt = 0;
-    const restored = JSON.parse(step.snapshot) as EditorObject[];
-    objectsRef.current = restored;
-    commit(restored);
+    restoreSnapshot(step.snapshot);
     syncLens();
-  }, [commit, syncLens]);
+  }, [restoreSnapshot, snapshot, syncLens]);
 
   const canUndo = histLens.past > 0;
   const canRedo = histLens.future > 0;
 
   // --- Document state -----------------------------------------------------
-  const [pageCount, setPageCount] = useState(0);
-  const [selectedPage, setSelectedPage] = useState(0);
   const [pageError, setPageError] = useState<"password" | "corrupt" | null>(null);
   const [viewsReady, setViewsReady] = useState(false);
   const [truncated, setTruncated] = useState(false);
@@ -557,13 +714,19 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       setTruncated(false);
       const count = await getPdfPageCount(file);
       if (cancelled || viewToken.current !== token) return;
-      setPageCount(count);
-      setTruncated(count > EDITOR_MAX_PAGES);
+      setSrcPageCount(count);
+      const isTruncated = count > EDITOR_MAX_PAGES;
+      truncatedRef.current = isTruncated;
+      setTruncated(isTruncated);
       const views = await collectPageViews(file, EDITOR_MAX_PAGES);
       if (cancelled || viewToken.current !== token) return;
       objectsRef.current = [];
+      viewsRef.current = views;
       histRef.current = { past: [], future: [], lastKey: "", lastAt: 0 };
       syncLens();
+      // R12: the workspace starts as the document's identity plan (capped
+      // at EDITOR_MAX_PAGES for monster files) — pageCount tracks it.
+      setPageCount(views.length);
       commit([], views);
       setViewsReady(true);
     })().catch((error: unknown) => {
@@ -596,16 +759,24 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
   }, []);
 
   // --- Page preview render -------------------------------------------------
+  // R12: the canvas renders the SOURCE page the selected slot shows; the
+  // plan string (not the array identity) is the dep, so object-only
+  // commits never re-render the page bitmap.
+  const planKey = useMemo(
+    () => pageViews.map((v) => v.src ?? -1).join(","),
+    [pageViews]
+  );
   useEffect(() => {
     if (!file || pageCount === 0) return;
+    const src = viewsRef.current[selectedPage]?.src ?? selectedPage;
     let cancelled = false;
     void (async () => {
       const [thumb, pixel] = await Promise.all([
         renderPdfThumbnail(file, {
-          pageIndex: selectedPage,
+          pageIndex: src,
           maxDim: Math.min(2800, Math.round(PREVIEW_MAX_DIM * zoom * 2)),
         }),
-        getPdfPagePixelSize(file, 1, selectedPage),
+        getPdfPagePixelSize(file, 1, src),
       ]);
       if (cancelled) return;
       const bitmap = await createImageBitmap(thumb.blob);
@@ -618,7 +789,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     return () => {
       cancelled = true;
     };
-  }, [file, pageCount, selectedPage, zoom]);
+  }, [file, pageCount, selectedPage, zoom, planKey]);
 
   // Actual rendered page width (CSS px) — the object overlay scales by it.
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -941,7 +1112,10 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       setPieces([]);
       return;
     }
-    const cached = pieceCacheRef.current.get(selectedPage);
+    // R12: pieces are SOURCE-page-indexed (they harvest from the file), so
+    // the cache survives reorders/deletes/duplicates of the same src.
+    const src = viewsRef.current[selectedPage]?.src ?? selectedPage;
+    const cached = pieceCacheRef.current.get(src);
     if (cached) {
       setPieces(cached);
       setPiecesState(cached.length === 0 ? "empty" : "ready");
@@ -953,9 +1127,9 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     setPieces([]);
     void (async () => {
       try {
-        const harvested = await harvestPageText(file, selectedPage);
+        const harvested = await harvestPageText(file, src);
         if (harvestToken.current !== token) return;
-        pieceCacheRef.current.set(selectedPage, harvested);
+        pieceCacheRef.current.set(src, harvested);
         setPieces(harvested);
         setPiecesState(harvested.length === 0 ? "empty" : "ready");
       } catch {
@@ -964,7 +1138,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         setPiecesState("empty");
       }
     })();
-  }, [tool, file, selectedPage, viewsReady]);
+  }, [tool, file, selectedPage, viewsReady, planKey]);
 
   const pickPiece = useCallback(
     (piece: HarvestPiece): void => {
@@ -1034,9 +1208,11 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       setFrScan({ page: 0, pages: 0 });
       void (async () => {
         try {
+          // R12: the scan walks SOURCE pages (its page refs are original
+          // indices) — page ops in the workspace never stale it.
           const all = await scanPagesText(
             file,
-            Math.max(1, pageCount || EDITOR_MAX_PAGES),
+            Math.max(1, srcPageCount || EDITOR_MAX_PAGES),
             (p) => setFrScan({ page: p.page, pages: p.pages })
           );
           frPiecesRef.current = all;
@@ -1056,7 +1232,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         }
       })();
     }
-  }, [file, pageCount]);
+  }, [file, srcPageCount]);
 
   const frMatches = useMemo<FrMatchView[]>(() => {
     void frVersion; // recomputes once the scan lands
@@ -1069,7 +1245,10 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       const key = `${m.page}:${m.line}:${m.start}`;
       out.push({
         key,
-        page: m.page,
+        // R12: the row shows the CURRENT workspace position of that source
+        // page (what the jump selects); the key stays source-based so the
+        // replace bookkeeping is untouched by reorders.
+        page: workspacePositionsForSrc(pageViews, m.page)[0] ?? m.page,
         before:
           (m.start > PAD ? "…" : "") + text.slice(Math.max(0, m.start - PAD), m.start),
         hit: text.slice(m.start, m.end),
@@ -1080,7 +1259,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       });
     }
     return out;
-  }, [frVersion, frQuery, frCase, frDone]);
+  }, [frVersion, frQuery, frCase, frDone, pageViews]);
 
   const applyLineReplacements = useCallback(
     (firstOnly: boolean): void => {
@@ -1111,23 +1290,32 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       for (const [lineIdx, ms] of chosen) {
         const line = lines[lineIdx];
         const pagePieces = all[line.page] ?? [];
-        const view = pageViews[line.page];
+        // R12: the line lives on SOURCE page line.page — the replacement
+        // lands on EVERY workspace slot showing that source (duplicated
+        // pages get their copy fixed too, what "replace across the
+        // document" means after page ops). The view comes from the first
+        // such slot: every slot showing one src shares its geometry.
+        const targets = workspacePositionsForSrc(pageViews, line.page);
+        const slots = targets.length > 0 ? targets : [line.page];
+        const view = pageViews[slots[0]];
         if (!view) continue;
         const newText = substituteOccurrences(
           line.text,
           ms.map((m) => ({ start: m.start, end: m.end })),
           frReplacement
         );
-        const { cover, text } = buildReplaceLineObjects(
-          line.page,
-          view,
-          line,
-          pagePieces,
-          newText,
-          DEFAULT_BG,
-          DEFAULT_INK
-        );
-        added.push(cover, text);
+        for (const q of slots) {
+          const { cover, text } = buildReplaceLineObjects(
+            q,
+            view,
+            line,
+            pagePieces,
+            newText,
+            DEFAULT_BG,
+            DEFAULT_INK
+          );
+          added.push(cover, text);
+        }
         for (const m of ms) newDone.add(`${m.page}:${m.line}:${m.start}`);
         replacedLines += 1;
       }
@@ -1833,33 +2021,66 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     void (async () => {
       try {
         const found = await loadDraft(draftKey);
-        if (found) setDraft(found);
+        if (!found) return;
+        // R12: a draft carrying a page plan is only resumable when that
+        // plan fits THIS document (every src inside the real page count,
+        // within the workspace cap) — otherwise its objects could land on
+        // the wrong pages; drop it honestly instead.
+        if (found.pageViews !== undefined) {
+          const valid =
+            found.pageViews.length > 0 &&
+            found.pageViews.length <= EDITOR_MAX_PAGES &&
+            found.pageViews.every(
+              (v) =>
+                Number.isInteger(v.src) &&
+                (v.src ?? 0) >= 0 &&
+                (v.src ?? 0) < Math.max(1, srcPageCount)
+            );
+          if (!valid) {
+            void deleteDraft(draftKey);
+            return;
+          }
+        }
+        setDraft(found);
       } catch {
         /* private mode / IDB unavailable — autosave silently off */
       }
     })();
-  }, [viewsReady, file, draftKey, fileId]);
+  }, [viewsReady, file, draftKey, fileId, srcPageCount]);
 
   const resumeDraft = useCallback((): void => {
     if (!draft) return;
-    setSelectedPage(Math.min(draft.page, Math.max(0, pageCount - 1)));
     setZoom(clampN(draft.zoom, 0.75, 3));
-    applyObjects(
-      [...objectsRef.current, ...draft.objects],
-      `draft:resume:${draft.savedAt}`
-    );
+    const views = draft.pageViews;
+    if (views !== undefined && views.length > 0) {
+      // R12: restore the saved page plan WITH its objects as one undoable
+      // step (normalize clamps srcs against the real page count again).
+      const plan = normalizeViews(views, Math.max(1, srcPageCount));
+      applyPageOp(
+        [...objectsRef.current, ...draft.objects],
+        plan,
+        `draft:resume:${draft.savedAt}`,
+        Math.min(draft.page, plan.length - 1)
+      );
+    } else {
+      setSelectedPage(Math.min(draft.page, Math.max(0, pageCount - 1)));
+      applyObjects(
+        [...objectsRef.current, ...draft.objects],
+        `draft:resume:${draft.savedAt}`
+      );
+    }
     setDraft(null);
     toast({ title: t("editPdf.draftRestored") });
-  }, [applyObjects, draft, pageCount, t, toast]);
+  }, [applyObjects, applyPageOp, draft, pageCount, srcPageCount, t, toast]);
 
   const discardDraft = useCallback((): void => {
     setDraft(null);
     if (draftKey) void deleteDraft(draftKey);
   }, [draftKey]);
 
-  // Debounced autosave — only objects JSON (never file bytes), skipped while
-  // the resume banner is up; any manual edit dismisses the banner and takes
-  // over the draft slot.
+  // Debounced autosave — objects JSON + the R12 page plan (never file
+  // bytes), skipped while the resume banner is up; any manual edit
+  // dismisses the banner and takes over the draft slot.
   useEffect(() => {
     if (!viewsReady || !draftKey || !fileId) return;
     if (objects.length === 0) return;
@@ -1868,7 +2089,15 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       return;
     }
     const handle = window.setTimeout(() => {
-      void saveDraft(draftKey, encodeDraft(objectsRef.current, selectedPage, zoom));
+      void saveDraft(
+        draftKey,
+        encodeDraft(
+          objectsRef.current,
+          selectedPage,
+          zoom,
+          viewsRef.current
+        )
+      );
     }, DRAFT_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
   }, [objects, selectedPage, zoom, viewsReady, draftKey, fileId, draft]);
@@ -2058,12 +2287,18 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
           ) : null}
 
           {pageCount > 1 ? (
-            <PreviewPageStrip
+            <EditorPageStrip
               file={file}
               pageCount={pageCount}
               selected={selectedPage}
               onSelect={setSelectedPage}
               markedSet={touchedPages}
+              planKey={planKey}
+              opsDisabled={truncated}
+              opsLocked={pageViews.length >= EDITOR_MAX_PAGES}
+              onMove={movePage}
+              onDelete={deletePage}
+              onDuplicate={duplicatePage}
             />
           ) : null}
 
@@ -2588,7 +2823,12 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
           onJump={(index) => {
             const match = frMatches[index];
             if (match) {
-              setSelectedPage(match.page);
+              // R12: the match names a SOURCE page — jump to the first
+              // workspace slot showing it.
+              const target =
+                workspacePositionsForSrc(pageViews, match.page)[0] ??
+                match.page;
+              setSelectedPage(Math.min(target, Math.max(0, pageCount - 1)));
               setFrOpen(false);
             }
           }}

@@ -11,10 +11,15 @@
  * not the current shape, so an old draft can never crash the editor.
  */
 
-import type { EditorObject } from "./model";
+import type { EditorObject, PageView } from "./model";
 
-/** Bump on any wire change — old drafts are rejected (decode → null). */
-export const DRAFT_SCHEMA_VERSION = 1;
+/**
+ * v1: objects + page + zoom. v2 (R12): + pageViews — a draft saved after
+ * deleting/reordering/duplicating pages must restore the SAME workspace,
+ * or its object page indices would point at the wrong pages. v1 drafts
+ * (no views) resume onto an identity workspace, exactly as before.
+ */
+export const DRAFT_SCHEMA_VERSION = 2;
 /** Drafts older than this are ignored + deleted (stale sessions). */
 export const DRAFT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -24,6 +29,8 @@ export interface EditDraft {
   objects: EditorObject[];
   page: number;
   zoom: number;
+  /** v2 only: the workspace page plan (src per slot). */
+  pageViews?: PageView[];
 }
 
 // ---------------------------------------------------------------------------
@@ -53,7 +60,8 @@ function isFiniteNumber(v: unknown): v is number {
 export function encodeDraft(
   objects: EditorObject[],
   page: number,
-  zoom: number
+  zoom: number,
+  pageViews?: PageView[]
 ): string {
   return JSON.stringify({
     v: DRAFT_SCHEMA_VERSION,
@@ -61,12 +69,43 @@ export function encodeDraft(
     objects,
     page,
     zoom,
+    ...(pageViews !== undefined && pageViews.length > 0
+      ? { pageViews }
+      : {}),
   });
 }
 
+/** A draft's pageViews are usable only as a whole: finite srcs ≥ 0. */
+function validDraftViews(raw: unknown): PageView[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const views: PageView[] = [];
+  for (const v of raw) {
+    if (typeof v !== "object" || v === null) return undefined;
+    const view = v as Record<string, unknown>;
+    if (
+      typeof view.x0 !== "number" || typeof view.y0 !== "number" ||
+      typeof view.x1 !== "number" || typeof view.y1 !== "number" ||
+      typeof view.rotate !== "number" || typeof view.src !== "number" ||
+      !Number.isFinite(view.src) || (view.src as number) < 0
+    ) {
+      return undefined;
+    }
+    views.push({
+      x0: view.x0,
+      y0: view.y0,
+      x1: view.x1,
+      y1: view.y1,
+      rotate: view.rotate,
+      src: view.src as number,
+    });
+  }
+  return views.length > 0 ? views : undefined;
+}
+
 /**
- * Parses a stored draft. null for: garbage JSON, wrong schema version,
- * missing/non-array objects, absurd page/zoom or a stale save.
+ * Parses a stored draft. null for: garbage JSON, unknown schema version,
+ * missing/non-array objects, absurd page/zoom, a stale save, or a v2 draft
+ * whose pageViews are malformed (never resume onto a broken page plan).
  */
 export function decodeDraft(
   raw: string | undefined | null,
@@ -81,7 +120,7 @@ export function decodeDraft(
   }
   if (typeof parsed !== "object" || parsed === null) return null;
   const o = parsed as Record<string, unknown>;
-  if (o.v !== DRAFT_SCHEMA_VERSION) return null;
+  if (o.v !== DRAFT_SCHEMA_VERSION && o.v !== 1) return null;
   if (!isFiniteNumber(o.savedAt)) return null;
   if (now - o.savedAt > DRAFT_MAX_AGE_MS) return null;
   if (!Array.isArray(o.objects) || o.objects.length === 0) return null;
@@ -89,12 +128,18 @@ export function decodeDraft(
   const zoom = isFiniteNumber(o.zoom)
     ? Math.min(3, Math.max(0.75, o.zoom))
     : 1;
+  let views: PageView[] | undefined;
+  if (o.v === DRAFT_SCHEMA_VERSION && o.pageViews !== undefined) {
+    views = validDraftViews(o.pageViews);
+    if (views === undefined) return null;
+  }
   return {
-    v: DRAFT_SCHEMA_VERSION,
-    savedAt: o.savedAt,
+    v: o.v as number,
+    savedAt: o.savedAt as number,
     objects: o.objects as EditorObject[],
     page,
     zoom,
+    ...(views !== undefined ? { pageViews: views } : {}),
   };
 }
 
