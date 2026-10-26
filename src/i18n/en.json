@@ -237,7 +237,9 @@
     "results": "Results",
     "seeAll": "See all results",
     "openHint": "press ↵ to open",
-    "soonHint": "coming {phase}"
+    "soonHint": "coming {phase}",
+    "routeHeading": "Smart route",
+    "routeSteps": "{count, plural, one {# step} other {# steps}}"
   },
   "consent": {
     "title": "Your choice, your data",

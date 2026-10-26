@@ -5000,3 +5000,19 @@ Work Log:
 
 Stage Summary:
 - QR generation + invoice QR + all consumers now ride our OWN encoder (spec-derived tables, no external package). Next: P3 smart format router, P4 PDF finishing chain, P5 advanced tools, P6 own PDF micro-engine, P7 quality moat.
+
+---
+Task ID: P3 (smart format router)
+Agent: main (Z.ai Code session)
+Task: Own route planner over the tool registry (multi-hop "docx to png" suggestions in the search palette).
+
+Work Log:
+- BUILT src/lib/tools/router.ts: format-graph (nodes=formats, edges=tools — curated produces-map + registry accepts), BFS findRoutes (max 3 hops, hop-count then popularity ranking, no loops, direct-pair echo suppressed), parseRouteQuery ("docx to png"/"epub → jpg"/"heic 2 pdf" + aliases jpeg→jpg/word→docx/excel→xlsx), routeStepLabel locale-aware.
+- SURFACE: search palette (Ctrl+K) — "Smart route" section above results; routes render "docx → png · Word to PDF → PDF to PNG · 2 steps" and navigate to the first hop's tool.
+- I18N: palette.routeHeading + routeSteps (ICU plurals) en+hi.
+- SMOKE scripts/smoke-router.ts: 31 checks (graph integrity vs registry, direct/multi-hop vectors, ranking, loop-safety, parsing incl. aliases + rejects, palette wiring, labels both locales) — 31/31.
+- E2E: Ctrl+K → typed "docx to png" → palette shows स्मार्ट रूट with 2 routes (2-hop via pdf-to-png and 3-hop via webp alternative) in Hindi locale; 0 errors. i18n params smoke 26/26.
+- GATES: tsc 0, eslint 0.
+
+Stage Summary:
+- Search now answers format-conversion questions we have no single tool for, with honest multi-hop chains (every hop a live tool). Next: P4 PDF finishing chain, P5 advanced tools, P6 own PDF micro-engine, P7 quality moat.

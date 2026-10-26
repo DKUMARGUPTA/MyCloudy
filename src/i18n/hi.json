@@ -237,7 +237,9 @@
     "results": "नतीजे",
     "seeAll": "सभी नतीजे देखें",
     "openHint": "खोलने के लिए ↵",
-    "soonHint": "{phase} में"
+    "soonHint": "{phase} में",
+    "routeHeading": "स्मार्ट रूट",
+    "routeSteps": "{count, plural, one {# कदम} other {# कदम}}"
   },
   "consent": {
     "title": "आपकी मर्ज़ी, आपका डेटा",
