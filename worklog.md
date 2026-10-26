@@ -4917,3 +4917,27 @@ Stage Summary:
 - Design decision worth remembering: assemble tracks the user's OFFSET (not effective rotation) because the worker reads the copied node's own /Rotate at export — client never needs to know the source's rotation; preview computes effective = pdf.js page.rotate + offset via the new rotateOffset mode.
 - Cumulative 14 rounds: 20 BUGs fixed (R1–R13), 105+ enhancements, 99 smokes green, zero regressions.
 - Next-round candidates (R15): editor page CROP via view crop-box override (transform layer already supports it), ID-card double-sided scan mode, book-spread split, summarize → translate chain, CJK/Arabic translate fonts, assemble rotate on the ZIPPER preview order hint.
+
+---
+Task ID: R15
+Agent: main (Z.ai Code session)
+Task: Round 15 — Edit PDF inline page CROP (view crop-box override; the transform layer already supported it per R14's next-round list).
+
+Work Log:
+- CONTEXT RECOVERY: R15 was implemented by the previous session but committed by the cron QA loop under a UUID message (5b5578e) with NO worklog entry — this session recovered the state, re-verified every gate, and wrote this entry. Code: model +155, editor-parts +369 (CropOverlay), surface +129, worker +47, thumbnails +86, drafts +6, smoke-edit-crop.ts 787 lines / 122 checks, r15 fixtures.
+- MODEL (tools/edit-pdf/model.ts): PageView.crop? = user-space rect [x0,y0,x1,y1] PDF points; MIN_CROP_PT=24; validCropShape (finite, positive — garbage → undefined = identity, the R13 rotate rule applied to crop); sanitizeCrop (clamp into view box + minimum size); viewCrop/effectiveView/cropSignature (planKey fingerprint gains crop — object-only commits never re-render); cropPageViews (crop op as one history/undo step). Crop rides every plan op (move/rotate/dup/delete carry it by construction).
+- CROPOVERLAY (editor-parts): box-shadow mask dimmer (0 0 0 9999px slate/55), rule-of-thirds guides, 8 handles at corners+edges (44px touch targets, R13 standard), live w×h pt size readout, fixed-to-viewport bottom action bar (Apply / Reset when hadCrop / Cancel) — fixed because crop canvases are routinely taller than the viewport (caught in the original R15 E2E), keyboard-reachable buttons.
+- WORKER: slots whose WIRE view carried a well-shaped crop get the output page's /CropBox set (clamped by sanitizeCrop) — objects added by the user stay where they were placed (crop-box semantics, content is hidden not deleted); absent/garbage crops are identity. Crop never reorders or drops pages, so it stays available on truncated >500-page workspaces (the R14 rotate lesson).
+- THUMBNAILS (src/lib/pdf/thumbnails.ts): RenderCrop user-space rect mapped through the viewport (rotation-aware — the R13 user-space pivot pays off again); strip thumbs render the cropped region; cache keyed with cropSignature.
+- STRIP + BADGES: cropped slots wear an emerald badge (scissors); crop button in the Pages rail 44×44; toasts pageCropped/cropReset; strip title stripCroppedTitle.
+- DRAFTS: crop rides the v2 draft blob; malformed crop DROPPED with the draft still resuming (honest degradation — that page just stays uncropped).
+- I18N: 11 new editPdf.* keys (pageCrop, cropModeLabel, cropHint, cropApply, cropReset, cropCancel, cropSize, pageCroppedToast, cropResetToast, stripCroppedTitle) in BOTH master catalogs and tools/edit-pdf/i18n.json, en+hi parity locked by smoke. CONFIG: feature line + crop FAQ (honest about hidden-not-deleted, >500p, reset).
+- THIS SESSION'S RE-VERIFICATION (all green on the recovered state): tsc 0; eslint 0; smoke-edit-crop 122/0; smoke-i18n-params 26/0; smoke-edit-pdf-pages 114/0; smoke-edit-pdf-rotate 104/0.
+- BROWSER E2E (fresh, this session, 1280×900): upload r15-crop-doc.pdf (4 pages) → Pages rail → Crop page 1 → crop mode (frame + thirds + readout + fixed action bar); DRAGGED the bottom-right handle (found the hit-test subtlety: the handle's center sits exactly on the page edge where the canvas container clips pointer hit-testing — pressing 1px inside works) → frame 595×842 → 470×732; Apply → toast "Page 1 cropped" + emerald badge + canvas re-rendered 470×732; Edit PDF → → Download → byte-verified via pdf-lib: 4 pages, MediaBox 595.28×841.89, CropBox [0, 110, 470.28, 731.89] — cropped:true. 0 console/page errors.
+- Screenshots kept: download/r15-verify-mode.png, r15-verify-dragged.png, r15-verify-applied.png.
+
+Stage Summary:
+- Round 15 SHIPPED (code in 5b5578e + this worklog commit, tag audit-15-hardening): the flagship editor's organize story is now delete/reorder/duplicate/rotate/CROP — crop via a drag-frame overlay (mask + thirds + 44px handles + live size), per-slot /CropBox export, emerald badges, >500-page-safe, draft-persistent, fully undoable.
+- E2E hit-test lesson worth remembering: 44px corner handles centered on the page edge lose their outer half to the canvas container's clipping — press INSIDE the page edge when automating.
+- Cumulative 15 rounds: 20+ BUGs found+fixed, 110+ enhancements, zero regressions (battery + browser E2E each round).
+- Next-round candidates (R16+): ID-card double-sided scan mode, book-spread split, summarize → translate chain, CJK/Arabic translate fonts, assemble ZIPPER preview order hint.
