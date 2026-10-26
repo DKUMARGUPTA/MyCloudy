@@ -162,6 +162,9 @@ export async function runHalve(
   const srcPages = src.getPages();
   const planned = entries.map((entry) => {
     const source = srcPages[entry.sourceIndex];
+    if (entry.half === "whole") {
+      return { box: source.getCropBox() };
+    }
     const halves = halveBoxes(
       source.getCropBox(),
       source.getRotation().angle,

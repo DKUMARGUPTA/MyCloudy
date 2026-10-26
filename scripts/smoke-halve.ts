@@ -330,7 +330,7 @@ async function main(): Promise<void> {
 
   /* -------------------------------------------------------------- */
   console.log("\n4. Pure engine — planHalves output order");
-  const seq = planHalves([0, 5, 9], { reverse: false });
+  const seq = planHalves([0, 5, 9], { reverse: false, firstPageCover: false });
   check(
     "3 selected pages → 6 entries, primary then secondary per page",
     seq.length === 6 &&
@@ -341,7 +341,24 @@ async function main(): Promise<void> {
       seq[4]?.sourceIndex === 9 && seq[4]?.half === "primary" &&
       seq[5]?.sourceIndex === 9 && seq[5]?.half === "secondary"
   );
-  const rev = planHalves([0, 5, 9], { reverse: true });
+  const rev = planHalves([0, 5, 9], { reverse: true, firstPageCover: false });
+  const cover = planHalves([0, 1, 2], { reverse: false, firstPageCover: true });
+  check(
+    "book-spread cover: first page whole, rest halved (P5)",
+    cover.length === 5 &&
+      cover[0]?.sourceIndex === 0 && cover[0]?.half === "whole" &&
+      cover[1]?.sourceIndex === 1 && cover[1]?.half === "primary" &&
+      cover[2]?.sourceIndex === 1 && cover[2]?.half === "secondary" &&
+      cover[3]?.sourceIndex === 2 && cover[3]?.half === "primary" &&
+      cover[4]?.sourceIndex === 2 && cover[4]?.half === "secondary",
+    `[${cover.map((e) => `${e.sourceIndex}:${e.half}`).join(" ")}]`
+  );
+  const coverRev = planHalves([0, 1, 2], { reverse: true, firstPageCover: true });
+  check(
+    "book-spread cover + reverse still puts the whole page last",
+    coverRev.length === 5 && coverRev[4]?.half === "whole",
+    `[${coverRev.map((e) => `${e.sourceIndex}:${e.half}`).join(" ")}]`
+  );
   check(
     "reverse flips the WHOLE sequence (last half first)",
     rev.length === 6 &&

@@ -28,6 +28,7 @@ export const HALVE_IDS = {
   position: "cutPosition",
   reverse: "reverseOrder",
   pages: "pages",
+  firstPageCover: "firstPageCover",
 } as const;
 
 export type HalveCut = "vertical" | "horizontal";
@@ -47,6 +48,12 @@ export interface HalveOptions {
   /** Reverse the whole output order (last half first). */
   reverse: boolean;
   pages: string;
+  /**
+   * Book-spread mode (P5): the FIRST selected page passes through whole
+   * (the scanned cover) and every later page is cut into two — the
+   * classic "cover, then spreads" scan order.
+   */
+  firstPageCover: boolean;
 }
 
 export const HALVE_DEFAULTS: HalveOptions = {
@@ -56,6 +63,7 @@ export const HALVE_DEFAULTS: HalveOptions = {
   positionPct: 50,
   reverse: false,
   pages: "all",
+  firstPageCover: false,
 };
 
 function asNumber(value: unknown, fallback: number): number {
@@ -85,6 +93,7 @@ export function resolveHalveOptions(values: OptionValues): HalveOptions {
       typeof values[HALVE_IDS.pages] === "string"
         ? (values[HALVE_IDS.pages] as string)
         : HALVE_DEFAULTS.pages,
+    firstPageCover: values[HALVE_IDS.firstPageCover] === true,
   };
 }
 
@@ -243,7 +252,8 @@ export function halveBoxes(
 export interface HalveEntry {
   /** 0-based index into the SOURCE document. */
   sourceIndex: number;
-  half: "primary" | "secondary";
+  /** "whole" = book-spread cover pass-through (no cut). */
+  half: "primary" | "secondary" | "whole";
 }
 
 /**
@@ -254,13 +264,17 @@ export interface HalveEntry {
  */
 export function planHalves(
   indices: readonly number[],
-  opts: Pick<HalveOptions, "reverse">
+  opts: Pick<HalveOptions, "reverse" | "firstPageCover">
 ): HalveEntry[] {
   const plan: HalveEntry[] = [];
-  for (const sourceIndex of indices) {
+  indices.forEach((sourceIndex, i) => {
+    if (i === 0 && opts.firstPageCover) {
+      plan.push({ sourceIndex, half: "whole" });
+      return;
+    }
     plan.push({ sourceIndex, half: "primary" });
     plan.push({ sourceIndex, half: "secondary" });
-  }
+  });
   if (opts.reverse) plan.reverse();
   return plan;
 }

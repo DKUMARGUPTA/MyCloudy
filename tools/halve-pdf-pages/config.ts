@@ -87,6 +87,16 @@ export const config: ToolConfig = {
       default: false,
     },
     {
+      kind: "switch",
+      id: "firstPageCover",
+      label: { en: "First page is the cover", hi: "पहला पेज कवर है" },
+      hint: {
+        en: "Book spreads: keep page 1 whole, cut every page after it",
+        hi: "बुक स्प्रेड: पेज 1 पूरा रखें, उसके बाद हर पेज काटें",
+      },
+      default: false,
+    },
+    {
       kind: "pages",
       id: "pages",
       label: { en: "Pages", hi: "पेज" },
@@ -128,6 +138,16 @@ export const config: ToolConfig = {
       a: {
         en: "Each half is a window onto the same page content — nothing is re-compressed or re-rendered. The two halves together still contain everything the original page had; the cut only sets which part each output page shows.",
         hi: "हर आधा उसी पेज कंटेंट की खिड़की है — कुछ भी दोबारा कंप्रेस या रेंडर नहीं होता। दोनों आधे मिलकर पुराना पेज पूरा रखते हैं; काट सिर्फ़ तय करती है कि हर आउटपुट पेज कौन-सा हिस्सा दिखाए।",
+      },
+    },
+    {
+      q: {
+        en: "My scan starts with the book cover — can it stay whole?",
+        hi: "मेरे स्कैन में पहले किताब का कवर है — क्या वह पूरा रह सकता है?",
+      },
+      a: {
+        en: "Yes — turn on \"First page is the cover\". Page 1 then passes through uncut and every page after it is split into its two reading halves: cover, left, right, left, right… Combine it with \"Left half first\" for the classic front-to-back book order.",
+        hi: "हाँ — \"पहला पेज कवर है\" चालू करें। तब पेज 1 बिना कटे पूरा निकलेगा और उसके बाद हर पेज अपने दो पढ़ने-वाले हिस्सों में बंटेगा: कवर, बायाँ, दायाँ, बायाँ, दायाँ… क्लासिक किताब-क्रम के लिए \"पहले बायाँ आधा\" के साथ चुनें।",
       },
     },
     {

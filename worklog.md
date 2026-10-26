@@ -5030,3 +5030,28 @@ Work Log:
 
 Stage Summary:
 - Every PDF-producing tool now has an instant finishing layer (a competitor idea from the audit, implemented as our own client-side non-destructive card). Next: P5 advanced tool upgrades, P6 own PDF micro-engine, P7 quality moat.
+
+---
+Task ID: P5-partial (book-spread cover mode) + session wrap
+Agent: main (Z.ai Code session)
+Task: Phase-wise self-dependency program — session wrap after P0–P4 + P5's book-spread item.
+
+Work Log:
+- P5 ITEM SHIPPED — book-spread cover mode in halve-pdf-pages: new firstPageCover switch (schema-driven, en+hi), HalveEntry gains "whole" (cover passes through uncut), planHalves emits cover→primary/secondary per spread, worker keeps the full view box for whole entries, FAQ entry, 2 new smoke vectors (cover order + cover+reverse) — smoke-halve 43/43.
+- E2E (Hindi): halve tool → 4-page r15 fixture → "पहला पेज कवर है" ON → run → "1 फ़ाइलें, 7 पेज" (1 whole + 3 spreads × 2) → downloaded PDF byte-verified: page 1 = 595×842 FULL, pages 2-7 = 298×842 halves. 0 errors.
+- GATES: tsc 0, eslint 0, battery 103/103.
+
+SESSION SUMMARY (P0→P5-partial, all pushed):
+- P0: 18 dead packages + 6 unused components purged (commit ef28af0).
+- P1: DocoPDF "Ink" identity — teal #0f766e/#2dd4bf on charcoal, category hue redistribution, logo+favicon+apple-touch-icon redrawn, VLM-verified.
+- P2-a: OWN ZIP/DEFLATE engine (7 files: CRC32/Adler32/Inflate/Deflate-with-exact-Kraft-limiter/zlib+gzip/ZIP writer+zip64 reader) — fflate REMOVED; 21 files + 11 smokes migrated; bidirectional cross-verify before removal; 3 real bugs found+fixed (LZ77 insert-before-search self-match, Huffman symbol group shift, per-entry level).
+- P2-b: OWN QR engine (RS/GF(256), spec-derived block tables verified 160/160, N1-N4 exact, polynomial-division BCH, PNG via own zlib) — qrcode REMOVED; 28/28 full-matrix cross-verify before removal; 3 consumers migrated.
+- P3: Smart format router — own BFS over the tool registry, multi-hop "docx→png" chains in the search palette (Smart route section, en+hi), 31/31 smoke.
+- P4: PDF finishing chain — ResultView card for EVERY PDF tool: 45° watermark (opacity+colors) → page numbers (6 pos × 3 formats) → AES-256 lock; fresh-copy non-destructive; E2E watermark byte-verified.
+- P5-partial: book-spread cover mode (above).
+
+REMAINING (next session / cron):
+- P5 rest: translate-pdf CJK/Arabic font subsetting (embedFont subset:true + self-hosted Noto SC/JP/AR), pdf-to-excel table rebuild, ID-card double-sided scan.
+- P6: own PDF micro-engine behind an engine seam (organize family first — page-plan.ts surgery already proven).
+- P7: quality moat — a11y-name smoke (every icon button labeled), magic-byte detection everywhere, VLM i18n render battery.
+- Known noise unchanged: agent-browser hydration warnings; gateway UUID commits with download/ artifacts.
