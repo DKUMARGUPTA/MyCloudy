@@ -172,7 +172,17 @@
       "pageRotateLeft": "Rotate page {page} left",
       "pageRotateRight": "Rotate page {page} right",
       "pageRotatedToast": "Page {page} is now at {deg}°",
-      "stripRotatedTitle": "Rotated {deg}°"
+      "stripRotatedTitle": "Rotated {deg}°",
+      "pageCrop": "Crop page {page}",
+      "cropModeLabel": "Crop mode — drag the frame, then apply",
+      "cropHint": "Drag the frame to choose what stays visible. Everything outside it is hidden — Reset brings the full page back.",
+      "cropApply": "Apply",
+      "cropReset": "Reset",
+      "cropCancel": "Cancel",
+      "cropSize": "{w} × {h} pt",
+      "pageCroppedToast": "Page {page} cropped",
+      "cropResetToast": "Page {page} back to full size",
+      "stripCroppedTitle": "Cropped"
     }
   },
   "hi": {
@@ -348,7 +358,17 @@
       "pageRotateLeft": "पेज {page} बाएँ घुमाएँ",
       "pageRotateRight": "पेज {page} दाएँ घुमाएँ",
       "pageRotatedToast": "पेज {page} अब {deg}° पर है",
-      "stripRotatedTitle": "{deg}° घुमाया गया"
+      "stripRotatedTitle": "{deg}° घुमाया गया",
+      "pageCrop": "पेज {page} क्रॉप करें",
+      "cropModeLabel": "क्रॉप मोड — फ़्रेम खींचें, फिर लागू करें",
+      "cropHint": "फ़्रेम खींचकर चुनें कि क्या दिखना रहे। इसके बाहर की हर चीज़ छिप जाती है — रीसेट पूरा पेज वापस लाता है।",
+      "cropApply": "लागू करें",
+      "cropReset": "रीसेट",
+      "cropCancel": "रद्द करें",
+      "cropSize": "{w} × {h} पॉ.",
+      "pageCroppedToast": "पेज {page} क्रॉप हो गया",
+      "cropResetToast": "पेज {page} फिर पूरा दिखने लगा",
+      "stripCroppedTitle": "क्रॉप किया गया"
     }
   }
 }

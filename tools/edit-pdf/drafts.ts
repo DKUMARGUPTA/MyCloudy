@@ -12,6 +12,7 @@
  */
 
 import type { EditorObject, PageView } from "./model";
+import { validCropShape } from "./model";
 
 /**
  * v1: objects + page + zoom. v2 (R12): + pageViews — a draft saved after
@@ -90,6 +91,7 @@ function validDraftViews(raw: unknown): PageView[] | undefined {
     ) {
       return undefined;
     }
+    const crop = validCropShape(view.crop);
     views.push({
       x0: view.x0,
       y0: view.y0,
@@ -102,6 +104,10 @@ function validDraftViews(raw: unknown): PageView[] | undefined {
       ...(typeof view.srcRotate === "number" && Number.isFinite(view.srcRotate)
         ? { srcRotate: view.srcRotate }
         : {}),
+      // R15: the page crop rides the plan too — a malformed crop is
+      // DROPPED (not fatal: the draft still resumes, that page just
+      // stays uncropped — the honest degradation).
+      ...(crop ? { crop } : {}),
     });
   }
   return views.length > 0 ? views : undefined;

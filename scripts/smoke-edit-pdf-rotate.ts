@@ -551,16 +551,21 @@ async function main(): Promise<void> {
     "wiring: rotation history key carries the landing angle"
   );
   assert(
-    surface.includes("pageViews.map((v) => `${v.src ?? -1}@${v.rotate}`).join(\",\")"),
-    "wiring: planKey fingerprint carries src@rotate"
+    surface.includes(
+      "pageViews\n        .map((v) => `${v.src ?? -1}@${v.rotate}@${cropSignature(v)}`)\n        .join(\",\")"
+    ) ||
+      surface.includes(
+        "pageViews.map((v) => `${v.src ?? -1}@${v.rotate}`).join(\",\")"
+      ),
+    "wiring: planKey fingerprint carries src@rotate (R15: + crop sig)"
   );
   assert(
     surface.includes("...(rotation !== undefined ? { rotation } : {})"),
     "wiring: preview thumbnail renders the effective rotation"
   );
   assert(
-    /getPdfPagePixelSize\(file, 1, src, rotation\)/.test(surface),
-    "wiring: preview pixel size is rotation-aware"
+    /getPdfPagePixelSize\(file, 1, src, rotation(, crop)?\)/.test(surface),
+    "wiring: preview pixel size is rotation-aware (R15: + crop)"
   );
   assert(
     surface.includes("srcRotate: rotate,"),

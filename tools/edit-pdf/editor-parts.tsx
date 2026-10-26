@@ -38,6 +38,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Crop,
   Ellipsis,
   Eraser,
   FormInput,
@@ -46,6 +47,7 @@ import {
   Layers,
   Lock,
   LockOpen,
+  Maximize2,
   Minus,
   MousePointer2,
   PenLine,
@@ -2548,6 +2550,7 @@ function EditorStripThumb({
   slot,
   src,
   rotDeg,
+  cropped,
   url,
   selected,
   marked,
@@ -2557,6 +2560,8 @@ function EditorStripThumb({
   src: number;
   /** R13: the user's rotation offset for the slot (0 = untouched). */
   rotDeg: number;
+  /** R15: the slot is cropped to a sub-region. */
+  cropped: boolean;
   url: string | null;
   selected: boolean;
   marked: boolean;
@@ -2633,8 +2638,29 @@ function EditorStripThumb({
           {rotDeg}°
         </span>
       ) : null}
+      {cropped ? (
+        <span
+          className="absolute left-1/2 top-0.5 flex -translate-x-1/2 items-center rounded bg-emerald-600 px-1 text-[8px] font-bold text-white"
+          aria-hidden="true"
+          title={t("editPdf.stripCroppedTitle")}
+        >
+          <Crop className="size-2.5" />
+        </span>
+      ) : null}
     </button>
   );
+}
+
+/** Parses a plan-key crop signature ("c12:34:56:78") back to a rect. */
+function cropOfSig(
+  raw: string | undefined
+): { x0: number; y0: number; x1: number; y1: number } | undefined {
+  if (typeof raw !== "string" || raw.charAt(0) !== "c") return undefined;
+  const parts = raw.slice(1).split(":").map(Number);
+  if (parts.length !== 4 || parts.some((v) => !Number.isFinite(v))) {
+    return undefined;
+  }
+  return { x0: parts[0], y0: parts[1], x1: parts[2], y1: parts[3] };
 }
 
 /**
@@ -2643,12 +2669,15 @@ function EditorStripThumb({
  * every step undoable from the header. Ops act on the SELECTED page.
  * R13 adds inline page rotation (±90° per slot): thumbnails render the
  * EFFECTIVE rotation and rotated slots wear an amber degrees badge.
+ * R15 adds crop: thumbnails render the cropped region and cropped slots
+ * wear an emerald crop badge.
  *
  * `opsDisabled` covers >500-page documents (the workspace is truncated, a
  * plan change would drop the untouched tail); `opsLocked` covers the
- * 500-slot cap for duplicates. Rotation stays available in BOTH states —
- * it never reorders or drops slots and the worker bounds its /Rotate
- * writes to the plan, so the untouched tail keeps its own rotation.
+ * 500-slot cap for duplicates. Rotation AND crop stay available in BOTH
+ * states — neither reorders or drops slots and the worker bounds their
+ * page-dict writes to the plan, so the untouched tail keeps its own
+ * rotation and crop box.
  */
 export function EditorPageStrip({
   file,
@@ -2660,6 +2689,9 @@ export function EditorPageStrip({
   planKey,
   opsDisabled,
   opsLocked,
+  cropMode,
+  cropDisabled,
+  onToggleCrop,
   onMove,
   onDelete,
   onDuplicate,
@@ -2672,12 +2704,18 @@ export function EditorPageStrip({
   markedSet: ReadonlySet<number>;
   /** R13: per-slot user rotation offsets (0 = untouched) — badges. */
   rotOffsets: number[];
-  /** The plan fingerprint (src@rotate per slot) — the single source of
-   *  truth: srcs and rotations derive from it, so thumbnails refresh
-   *  when (and only when) the plan actually changes. */
+  /** The plan fingerprint (src@rotate@crop per slot) — the single source
+   *  of truth: srcs, rotations and crops derive from it, so thumbnails
+   *  refresh when (and only when) the plan actually changes. */
   planKey: string;
   opsDisabled: boolean;
   opsLocked: boolean;
+  /** R15: crop mode is live (the Crop button stays highlighted). */
+  cropMode: boolean;
+  /** R15: no rendered canvas to crop against yet. */
+  cropDisabled: boolean;
+  /** R15: enter/leave crop mode for the selected page. */
+  onToggleCrop: () => void;
   onMove: (from: number, to: number) => void;
   onDelete: (pos: number) => void;
   onDuplicate: (pos: number) => void;
@@ -2687,51 +2725,84 @@ export function EditorPageStrip({
   const { t } = useI18n();
   const window = editorStripWindow(selected, pageCount);
 
-  // The src/rotation arrays, derived from the plan fingerprint
+  // The src/rotation/crop arrays, derived from the plan fingerprint
   // (content-keyed — object-only parent commits never re-render thumbs).
-  const sigs = useMemo<{ src: number; rot: number }[]>(() => {
+  const sigs = useMemo<
+    {
+      src: number;
+      rot: number;
+      cropSig: string;
+      crop: { x0: number; y0: number; x1: number; y1: number } | undefined;
+    }[]
+  >(() => {
     if (planKey.length === 0) return [];
     return planKey.split(",").map((part) => {
-      const [srcRaw, rotRaw] = part.split("@");
+      const [srcRaw, rotRaw, cropRaw] = part.split("@");
       const n = Number(srcRaw);
       const r = Number(rotRaw);
+      const crop = cropOfSig(cropRaw);
       return {
         src: Number.isFinite(n) ? n : -1,
         rot: Number.isFinite(r) ? r : 0,
+        cropSig: cropRaw ?? "-",
+        crop,
       };
     });
   }, [planKey]);
   const srcOf = (slot: number): number => sigs[slot]?.src ?? slot;
   const rotOf = (slot: number): number => sigs[slot]?.rot ?? 0;
+  const croppedOf = (slot: number): boolean =>
+    (sigs[slot]?.cropSig ?? "-") !== "-";
 
   const [thumbs, setThumbs] = useState<
-    { slot: number; src: number; rot: number; url: string }[]
+    {
+      slot: number;
+      src: number;
+      rot: number;
+      cropSig: string;
+      url: string;
+    }[]
   >([]);
   const thumbsRef = useRef<
-    { slot: number; src: number; rot: number; url: string }[]
+    {
+      slot: number;
+      src: number;
+      rot: number;
+      cropSig: string;
+      url: string;
+    }[]
   >([]);
 
   // Thumbnails for the visible window — keyed by SOURCE page + EFFECTIVE
-  // rotation so reordered or rotated slots re-fetch only when the plan
-  // actually changes (planKey dep).
+  // rotation + crop signature so reordered, rotated or cropped slots
+  // re-fetch only when the plan actually changes (planKey dep; sigs is
+  // its memo).
   useEffect(() => {
     if (pageCount === 0) return;
     let cancelled = false;
     void (async () => {
-      const next: { slot: number; src: number; rot: number; url: string }[] =
-        [];
+      const next: {
+        slot: number;
+        src: number;
+        rot: number;
+        cropSig: string;
+        url: string;
+      }[] = [];
       for (const slot of editorStripWindow(selected, pageCount)) {
+        const sig = sigs[slot];
         const rot = rotOf(slot);
         const thumb = await renderPdfThumbnail(file, {
           pageIndex: srcOf(slot),
           maxDim: 72,
           ...(rot !== 0 ? { rotation: rot } : {}),
+          ...(sig?.crop ? { crop: sig.crop } : {}),
         });
         if (cancelled) return;
         next.push({
           slot,
           src: srcOf(slot),
           rot,
+          cropSig: sig?.cropSig ?? "-",
           url: URL.createObjectURL(thumb.blob),
         });
       }
@@ -2770,9 +2841,18 @@ export function EditorPageStrip({
     if (Number.isInteger(from) && Number.isInteger(to)) onMove(from, to);
   };
 
-  const urlFor = (slot: number, src: number, rot: number): string | null => {
+  const urlFor = (
+    slot: number,
+    src: number,
+    rot: number,
+    cropSig: string
+  ): string | null => {
     const hit = thumbs.find(
-      (item) => item.slot === slot && item.src === src && item.rot === rot
+      (item) =>
+        item.slot === slot &&
+        item.src === src &&
+        item.rot === rot &&
+        item.cropSig === cropSig
     );
     return hit !== undefined ? hit.url : null;
   };
@@ -2857,6 +2937,21 @@ export function EditorPageStrip({
           >
             <RotateCw className="size-4" aria-hidden="true" />
           </Button>
+          {/* R15: crop mode — allowed on truncated workspaces too (never
+              reorders or drops slots; see the docblock). */}
+          <Button
+            type="button"
+            variant={cropMode ? "secondary" : "outline"}
+            size="icon"
+            className="size-11 rounded-btn"
+            disabled={cropDisabled}
+            onClick={onToggleCrop}
+            aria-pressed={cropMode}
+            aria-label={t("editPdf.pageCrop", { page: selected + 1 })}
+            title={t("editPdf.pageCrop", { page: selected + 1 })}
+          >
+            <Crop className="size-4" aria-hidden="true" />
+          </Button>
           <Button
             type="button"
             variant="outline"
@@ -2900,7 +2995,13 @@ export function EditorPageStrip({
                 slot={slot}
                 src={srcOf(slot)}
                 rotDeg={rotOffsets[slot] ?? 0}
-                url={urlFor(slot, srcOf(slot), rotOf(slot))}
+                cropped={croppedOf(slot)}
+                url={urlFor(
+                  slot,
+                  srcOf(slot),
+                  rotOf(slot),
+                  sigs[slot]?.cropSig ?? "-"
+                )}
                 selected={slot === selected}
                 marked={markedSet.has(slot)}
                 onSelect={() => onSelect(slot)}
@@ -2909,6 +3010,238 @@ export function EditorPageStrip({
           </div>
         </SortableContext>
       </DndContext>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// R15 — CropOverlay: drag handles that frame a page's visible region
+// ---------------------------------------------------------------------------
+
+const CROP_HANDLES: { m: string; x: string; y: string; cursor: string }[] = [
+  { m: "nw", x: "0%", y: "0%", cursor: "nwse-resize" },
+  { m: "n", x: "50%", y: "0%", cursor: "ns-resize" },
+  { m: "ne", x: "100%", y: "0%", cursor: "nesw-resize" },
+  { m: "e", x: "100%", y: "50%", cursor: "ew-resize" },
+  { m: "se", x: "100%", y: "100%", cursor: "nwse-resize" },
+  { m: "s", x: "50%", y: "100%", cursor: "ns-resize" },
+  { m: "sw", x: "0%", y: "100%", cursor: "nesw-resize" },
+  { m: "w", x: "0%", y: "50%", cursor: "ew-resize" },
+];
+
+/**
+ * R15: the crop frame over the canvas. The rect lives in DISPLAY points
+ * of the CURRENT effective view (the same space every object overlay
+ * uses); the surface maps it back to user space on Apply. Handles are
+ * 44px touch targets; Escape cancels; the whole-view frame means
+ * "reset" (the surface decides). Pointer/touch only — the buttons stay
+ * keyboard-reachable and every control keeps its label.
+ */
+export function CropOverlay({
+  dispW,
+  dispH,
+  minPt,
+  hadCrop,
+  onApply,
+  onReset,
+  onCancel,
+}: {
+  /** Display size of the current view, in points. */
+  dispW: number;
+  dispH: number;
+  /** Minimum frame edge, in points (MIN_CROP_PT). */
+  minPt: number;
+  /** The page already carries a crop (shows the Reset button). */
+  hadCrop: boolean;
+  /** Commit the frame (display points, current view). */
+  onApply: (rect: ObjRect) => void;
+  /** Remove the page's crop entirely. */
+  onReset: () => void;
+  /** Leave crop mode without changing anything. */
+  onCancel: () => void;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // The frame + the geometry it was built against. When the view changes
+  // size under us (a rotation mid-crop), the DISPLAYED rect derives back
+  // to the full view until the next drag — no effect, no stale frame.
+  const [frame, setFrame] = useState<{
+    rect: ObjRect;
+    w: number;
+    h: number;
+  }>(() => ({
+    rect: { x: 0, y: 0, w: dispW, h: dispH },
+    w: dispW,
+    h: dispH,
+  }));
+  const rect: ObjRect =
+    frame.w === dispW && frame.h === dispH
+      ? frame.rect
+      : { x: 0, y: 0, w: dispW, h: dispH };
+  const dragRef = useRef<null | {
+    mode: string;
+    px: number;
+    py: number;
+    orig: ObjRect;
+  }>(null);
+
+  // Escape cancels (keyboard parity with the Cancel button).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  const pointOf = (event: React.PointerEvent): { x: number; y: number } => {
+    const box = rootRef.current?.getBoundingClientRect();
+    if (!box) return { x: 0, y: 0 };
+    return {
+      x: ((event.clientX - box.left) / Math.max(1, box.width)) * dispW,
+      y: ((event.clientY - box.top) / Math.max(1, box.height)) * dispH,
+    };
+  };
+
+  const startDrag = (event: React.PointerEvent, mode: string): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    const p = pointOf(event);
+    dragRef.current = { mode, px: p.x, py: p.y, orig: { ...rect } };
+  };
+
+  const setRect = (next: ObjRect): void => {
+    setFrame({ rect: next, w: dispW, h: dispH });
+  };
+
+  const moveDrag = (event: React.PointerEvent): void => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const p = pointOf(event);
+    const dx = p.x - drag.px;
+    const dy = p.y - drag.py;
+    const o = drag.orig;
+    if (drag.mode === "move") {
+      const nx = Math.min(Math.max(o.x + dx, 0), dispW - o.w);
+      const ny = Math.min(Math.max(o.y + dy, 0), dispH - o.h);
+      setRect({ x: nx, y: ny, w: o.w, h: o.h });
+      return;
+    }
+    let x0 = o.x;
+    let y0 = o.y;
+    let x1 = o.x + o.w;
+    let y1 = o.y + o.h;
+    const m = drag.mode;
+    if (m.includes("w")) x0 = Math.min(Math.max(o.x + dx, 0), x1 - minPt);
+    if (m.includes("e")) x1 = Math.max(Math.min(o.x + o.w + dx, dispW), x0 + minPt);
+    if (m.includes("n")) y0 = Math.min(Math.max(o.y + dy, 0), y1 - minPt);
+    if (m.includes("s")) y1 = Math.max(Math.min(o.y + o.h + dy, dispH), y0 + minPt);
+    setRect({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+  };
+
+  const endDrag = (): void => {
+    dragRef.current = null;
+  };
+
+  return (
+    <div
+      ref={rootRef}
+      className="absolute inset-0 z-50 touch-none"
+      role="group"
+      aria-label={t("editPdf.cropModeLabel")}
+    >
+      {/* The frame: dim everything outside via the box-shadow mask. */}
+      <div
+        className="absolute cursor-move"
+        style={{
+          left: `${(rect.x / dispW) * 100}%`,
+          top: `${(rect.y / dispH) * 100}%`,
+          width: `${(rect.w / dispW) * 100}%`,
+          height: `${(rect.h / dispH) * 100}%`,
+          boxShadow: "0 0 0 9999px rgb(15 23 42 / 0.55)",
+          outline: "1px solid rgb(255 255 255 / 0.9)",
+          touchAction: "none",
+        }}
+        onPointerDown={(event) => startDrag(event, "move")}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
+        {/* Rule-of-thirds guides inside the frame. */}
+        <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+          <div className="absolute inset-y-0 left-1/3 w-px bg-white/40" />
+          <div className="absolute inset-y-0 left-2/3 w-px bg-white/40" />
+          <div className="absolute inset-x-0 top-1/3 h-px bg-white/40" />
+          <div className="absolute inset-x-0 top-2/3 h-px bg-white/40" />
+        </div>
+        {CROP_HANDLES.map((h) => (
+          <div
+            key={h.m}
+            role="presentation"
+            aria-hidden="true"
+            className="absolute flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
+            style={{
+              left: h.x,
+              top: h.y,
+              cursor: h.cursor,
+              touchAction: "none",
+            }}
+            onPointerDown={(event) => startDrag(event, h.m)}
+            onPointerMove={moveDrag}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+          >
+            <span className="size-3 rounded-full border border-primary bg-white shadow" />
+          </div>
+        ))}
+      </div>
+
+      {/* Live size readout. */}
+      <div className="pointer-events-none absolute left-1/2 top-2 -translate-x-1/2 rounded-full bg-background/90 px-2.5 py-1 text-[11px] font-medium tabular-nums text-foreground shadow-sm">
+        {t("editPdf.cropSize", {
+          w: Math.round(rect.w),
+          h: Math.round(rect.h),
+        })}
+      </div>
+
+      {/* Action bar (keyboard-reachable). FIXED to the viewport bottom —
+          crop canvases are routinely taller than the viewport, and an
+          overlay-anchored bar would sit off-screen until scrolled to
+          (caught in the R15 E2E). */}
+      <div className="fixed bottom-4 left-1/2 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-1.5 overflow-x-auto rounded-card border border-border bg-card p-1.5 shadow-lg">
+        <Button
+          type="button"
+          size="sm"
+          className="h-11 rounded-btn px-4"
+          onClick={() => onApply(rect)}
+        >
+          <Check className="size-4" aria-hidden="true" />
+          {t("editPdf.cropApply")}
+        </Button>
+        {hadCrop ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-11 rounded-btn px-4"
+            onClick={onReset}
+          >
+            <Maximize2 className="size-4" aria-hidden="true" />
+            {t("editPdf.cropReset")}
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-11 rounded-btn px-4"
+          onClick={onCancel}
+        >
+          <X className="size-4" aria-hidden="true" />
+          {t("editPdf.cropCancel")}
+        </Button>
+      </div>
     </div>
   );
 }

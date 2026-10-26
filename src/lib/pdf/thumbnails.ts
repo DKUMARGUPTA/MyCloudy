@@ -92,15 +92,50 @@ export async function getPdfPageAspect(
   return viewport.width / height;
 }
 
+/** A user-space crop rect ([x0, y0, x1, y1], PDF points) for renders. */
+export interface RenderCrop {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/**
+ * Maps a user-space crop rect through a viewport (rotation-aware) to its
+ * axis-aligned DISPLAY-space bounds — the render window.
+ */
+function cropRegion(
+  viewport: { convertToViewportRectangle: (rect: number[]) => number[] },
+  crop: RenderCrop
+): { x: number; y: number; w: number; h: number } {
+  const rect = viewport.convertToViewportRectangle([
+    crop.x0,
+    crop.y0,
+    crop.x1,
+    crop.y1,
+  ]);
+  const x = Math.min(rect[0], rect[2]);
+  const y = Math.min(rect[1], rect[3]);
+  return {
+    x,
+    y,
+    w: Math.max(rect[0], rect[2]) - x,
+    h: Math.max(rect[1], rect[3]) - y,
+  };
+}
+
 /**
  * Pixel dimensions a page will have when rasterized at `scale`
  * (pdf-to-jpg/pdf-to-png live preview). Viewport-only — no render.
+ * R15: an optional user-space `crop` sizes the render to the crop's
+ * display bounds (rotation swaps the axes, exactly like the viewport).
  */
 export async function getPdfPagePixelSize(
   file: File | Blob,
   scale: number,
   pageIndex = 0,
-  rotation?: number
+  rotation?: number,
+  crop?: RenderCrop
 ): Promise<{ width: number; height: number }> {
   const doc = await openDocument(file);
   const page = await doc.getPage(pageIndex + 1); // 1-based in pdf.js
@@ -109,13 +144,18 @@ export async function getPdfPagePixelSize(
   // EFFECTIVE rotation so bitmap, size and overlay always agree.
   const viewport = page.getViewport({
     scale,
-    ...(rotation !== undefined
-      ? { rotation }
-      : {}),
+    ...(rotation !== undefined ? { rotation } : {}),
   });
+  if (!crop) {
+    return {
+      width: Math.max(1, Math.round(viewport.width)),
+      height: Math.max(1, Math.round(viewport.height)),
+    };
+  }
+  const region = cropRegion(viewport, crop);
   return {
-    width: Math.max(1, Math.round(viewport.width)),
-    height: Math.max(1, Math.round(viewport.height)),
+    width: Math.max(1, Math.round(region.w)),
+    height: Math.max(1, Math.round(region.h)),
   };
 }
 
@@ -298,6 +338,10 @@ function release(): void {
  * R14: `rotateOffset` adds ON TOP of the page's own /Rotate (pdf.js
  * `page.rotate` + offset, normalized) — the assemble-pdf cells preview
  * effective rotation without flattening what the source shipped with.
+ * R15: `crop` renders only that user-space region — the viewport maps the
+ * rect into display space (rotation-aware), the canvas is sized to the
+ * region's bounds and the render is shifted so the region fills it
+ * (pdf.js's canvas `transform`, the HiDPI pattern with a translation).
  */
 export async function renderPdfThumbnail(
   file: File | Blob,
@@ -306,6 +350,7 @@ export async function renderPdfThumbnail(
     maxDim?: number;
     rotation?: number;
     rotateOffset?: number;
+    crop?: RenderCrop;
   } = {}
 ): Promise<Thumbnail> {
   const pageIndex = options.pageIndex ?? 0;
@@ -320,18 +365,34 @@ export async function renderPdfThumbnail(
         : options.rotateOffset !== undefined
           ? (((page.rotate + options.rotateOffset) % 360) + 360) % 360
           : undefined;
-    // Bound maxDim against the ROTATED page (90/270 swap the axes).
+    // Bound maxDim against the ROTATED page (90/270 swap the axes) — or
+    // against the CROP's display bounds when one is given (a cropped
+    // region gets the full maxDim budget: a tighter, sharper preview).
     const base = page.getViewport({
       scale: 1,
       ...(rotation !== undefined ? { rotation } : {}),
     });
-    const scale = maxDim / Math.max(base.width, base.height);
+    const region = options.crop ? cropRegion(base, options.crop) : null;
+    const boundDim = region
+      ? Math.max(region.w, region.h)
+      : Math.max(base.width, base.height);
+    const scale = maxDim / Math.max(1, boundDim);
     const viewport = page.getViewport({
       scale,
       ...(rotation !== undefined ? { rotation } : {}),
     });
-    const width = Math.max(1, Math.round(viewport.width));
-    const height = Math.max(1, Math.round(viewport.height));
+    // Canvas-space translation for the crop window (applied before the
+    // viewport transform — pdf.js composes ctx = transform ∘ viewport).
+    const shifted = region
+      ? cropRegion(viewport, options.crop as RenderCrop)
+      : null;
+    const transform = shifted ? [1, 0, 0, 1, -shifted.x, -shifted.y] : null;
+    const width = shifted
+      ? Math.max(1, Math.round(shifted.w))
+      : Math.max(1, Math.round(viewport.width));
+    const height = shifted
+      ? Math.max(1, Math.round(shifted.h))
+      : Math.max(1, Math.round(viewport.height));
 
     let blob: Blob;
     if (typeof OffscreenCanvas !== "undefined") {
@@ -345,6 +406,7 @@ export async function renderPdfThumbnail(
         .render({
           canvasContext: context as unknown as CanvasRenderingContext2D,
           viewport,
+          ...(transform ? { transform } : {}),
         })
         .promise;
       blob = await canvas.convertToBlob({ type: "image/png" });
@@ -357,7 +419,9 @@ export async function renderPdfThumbnail(
       if (!context) throw new Error("canvas-2d-unavailable");
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, width, height);
-      await page.render({ canvasContext: context, viewport }).promise;
+      await page
+        .render({ canvasContext: context, viewport, ...(transform ? { transform } : {}) })
+        .promise;
       blob = await new Promise<Blob | null>((resolve) =>
         canvas.toBlob(resolve, "image/png")
       ).then((result) => result ?? new Blob([], { type: "image/png" }));

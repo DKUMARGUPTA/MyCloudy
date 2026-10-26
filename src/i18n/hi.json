@@ -1972,7 +1972,17 @@
     "pageRotateLeft": "पेज {page} बाएँ घुमाएँ",
     "pageRotateRight": "पेज {page} दाएँ घुमाएँ",
     "pageRotatedToast": "पेज {page} अब {deg}° पर है",
-    "stripRotatedTitle": "{deg}° घुमाया गया"
+    "stripRotatedTitle": "{deg}° घुमाया गया",
+    "pageCrop": "पेज {page} क्रॉप करें",
+    "cropModeLabel": "क्रॉप मोड — फ़्रेम खींचें, फिर लागू करें",
+    "cropHint": "फ़्रेम खींचकर चुनें कि क्या दिखना रहे। इसके बाहर की हर चीज़ छिप जाती है — रीसेट पूरा पेज वापस लाता है।",
+    "cropApply": "लागू करें",
+    "cropReset": "रीसेट",
+    "cropCancel": "रद्द करें",
+    "cropSize": "{w} × {h} पॉ.",
+    "pageCroppedToast": "पेज {page} क्रॉप हो गया",
+    "cropResetToast": "पेज {page} फिर पूरा दिखने लगा",
+    "stripCroppedTitle": "क्रॉप किया गया"
   },
   "ann": {
     "how1": "एक PDF अपलोड करें — वह सीधे आपके डिवाइस पर खुलकर टिप्पणी के लिए तैयार होती है।",

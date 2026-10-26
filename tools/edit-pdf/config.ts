@@ -27,8 +27,8 @@ export const config: ToolConfig = {
   collectAssets: () => collectRunAssets(),
   features: [
     {
-      en: "Organize pages inside the editor — drag thumbnails to reorder, rotate, delete or duplicate pages, with full undo/redo",
-      hi: "एडिटर के अंदर ही पेज सुधारें — थंबनेल खींचकर क्रम बदलें, पेज घुमाएँ, हटाएँ या उनकी प्रतिलिपि बनाएँ, पूरा अनडू/रीडू साथ",
+      en: "Organize pages inside the editor — drag thumbnails to reorder, rotate, delete, duplicate or crop pages, with full undo/redo",
+      hi: "एडिटर के अंदर ही पेज सुधारें — थंबनेल खींचकर क्रम बदलें, पेज घुमाएँ, हटाएँ, प्रतिलिपि बनाएँ या क्रॉप करें, पूरा अनडू/रीडू साथ",
     },
     {
       en: "Edit text already on the page — click any line to retype it with a matched font (Hindi too), or find & replace across the document",
@@ -56,6 +56,16 @@ export const config: ToolConfig = {
     },
   ],
   faq: [
+    {
+      q: {
+        en: "Can I crop pages in the editor?",
+        hi: "क्या एडिटर में पेज क्रॉप कर सकते हैं?",
+      },
+      a: {
+        en: "Yes — pick the Crop button in the Pages rail, drag the frame over the page and apply. Everything outside the frame is hidden (the PDF crop box), objects you add stay where you placed them, and each crop is one undo step. Cropped pages wear an emerald badge; Reset brings the full page back. Crops work on documents over 500 pages too — they never reorder or drop pages.",
+        hi: "हाँ — 'पेज' रेल का क्रॉप बटन दबाएँ, पेज पर फ़्रेम खींचें और लागू करें। फ़्रेम के बाहर की हर चीज़ छिप जाती है (PDF का क्रॉप बॉक्स), आपके जोड़े ऑब्जेक्ट अपनी जगह रहते हैं, और हर क्रॉप एक अनडू कदम है। क्रॉप किए पेज पर हरे रंग का बैज लगता है; रीसेट पूरा पेज वापस लाता है। क्रॉप 500 से ज़्यादा पेज वाले दस्तावेज़ों में भी काम करता है — इससे क्रम या कोई पेज नहीं छूटता।",
+      },
+    },
     {
       q: {
         en: "Can I rotate pages in the editor?",

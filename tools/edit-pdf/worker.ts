@@ -22,13 +22,16 @@ import {
   LINE_HEIGHT,
   TEXT_PAD,
   displayToPdfPoint,
+  effectiveView,
   hexToRgb,
   isIdentityOrder,
   lineEndpoints,
   pdfRectToDisplay,
   rotateDisplayPoint,
   rotationAnchor,
+  sanitizeCrop,
   sanitizeObjects,
+  validCropShape,
   wrapText,
   type DrawObj,
   type EditorObject,
@@ -111,6 +114,11 @@ function parseViews(raw: unknown): PageView[] {
         typeof v.src === "number" && Number.isFinite(v.src) && v.src >= 0
           ? Math.trunc(v.src)
           : undefined,
+      // R15: the crop rides the wire only when it is a well-shaped rect
+      // (finite, positive). The box clamp + minimum size run in run()
+      // where the view box is known; absent/garbage → undefined = identity
+      // (the R13 rotate rule, applied to crop).
+      ...(validCropShape(v.crop) ? { crop: v.crop } : {}),
     }));
 }
 
@@ -774,6 +782,39 @@ async function run(request: WorkerRunRequest): Promise<void> {
     }
   }
 
+  // R15 page crop: slots whose WIRE view carried a well-shaped crop get
+  // the output page's /CropBox set to it (clamped into the view box + the
+  // minimum size by sanitizeCrop — the same guard the surface's commit
+  // path runs). Objects outside the final crop are clipped by every
+  // reader's CropBox rule — the WYSIWYG semantic — and the drawing pass
+  // below pivots through the EFFECTIVE (cropped) view, so text wrap and
+  // bg clamps agree with what the user saw on the canvas.
+  //
+  // TRUST: only slots whose wire view carried an explicit, well-shaped
+  // crop. A stale blob (pre-R15) carries none — rewriting /CropBox from a
+  // defaulted view would RESIZE a page the user never cropped (the R13
+  // rotate-flattening lesson, applied to crop). The loop is bounded by the
+  // plan, so a truncated (>500-page) workspace leaves the untouched tail's
+  // own /CropBox exactly as the document shipped it.
+  const cropExplicit = (
+    Array.isArray(blob?.pageViews) ? blob.pageViews : []
+  ).map((v) => validCropShape((v as PageView | undefined)?.crop) !== undefined);
+  let croppedCount = 0;
+  for (let i = 0; i < rotSlots && i < pages.length; i += 1) {
+    if (!cropExplicit[i]) continue;
+    const view = views[i];
+    if (!view) continue;
+    const crop = sanitizeCrop(view.crop, view);
+    if (!crop) continue;
+    pages[i].setCropBox(
+      crop.x0,
+      crop.y0,
+      crop.x1 - crop.x0,
+      crop.y1 - crop.y0
+    );
+    croppedCount += 1;
+  }
+
   post({ type: "progress", runId, pct: 12, stage: "processing" });
 
   const knownAssets = new Set(assetOrder);
@@ -845,13 +886,16 @@ async function run(request: WorkerRunRequest): Promise<void> {
   post({ type: "progress", runId, pct: 30, stage: "processing" });
 
   // Group by page (array order = z-order), draw in order.
+  // R15: the draw view is the EFFECTIVE (cropped) one — clampToPage, text
+  // wrap and the display round-trips all pivot through the crop window,
+  // byte-identical for uncropped slots (effectiveView is ref-stable).
   let drawn = 0;
   const total = Math.max(objects.length, 1);
   for (let p = 0; p < pages.length; p += 1) {
     const pageObjects = objects.filter((o) => o.page === p);
     const ctx: DrawCtx = {
       page: pages[p],
-      view: views[p],
+      view: effectiveView(views[p]),
       fonts: fontBag,
       imageFor,
     };
@@ -929,6 +973,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       objects: drawn,
       images: embedded,
       fields: counters.added,
+      ...(croppedCount > 0 ? { cropped: croppedCount } : {}),
     },
   });
 }

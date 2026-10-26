@@ -38,6 +38,7 @@ import {
 } from "./asset-store";
 import {
   CanvasHeader,
+  CropOverlay,
   EditorContextMenu,
   EditorPageStrip,
   EditorToolbar,
@@ -69,6 +70,7 @@ import {
 import {
   HISTORY_LIMIT,
   LINE_HEIGHT,
+  MIN_CROP_PT,
   MIN_OBJ_PT,
   TEXT_PAD,
   bringManyToFront,
@@ -77,6 +79,8 @@ import {
   buildReplacePieceObjects,
   clampN,
   computeSnap,
+  cropPageViews,
+  cropSignature,
   deletePageViews,
   displayAngle,
   displayRectToPdf,
@@ -84,6 +88,7 @@ import {
   duplicateObject,
   duplicateObjects,
   duplicatePageViews,
+  effectiveView,
   groupPiecesIntoLines,
   isRotatable,
   lowerOne,
@@ -120,7 +125,9 @@ import {
   takenFieldNames,
   unionRects,
   undoStep,
+  viewCrop,
   workspacePositionsForSrc,
+  type CropRect,
   type EditorObject,
   type HarvestPiece,
   type HitEdge,
@@ -695,6 +702,33 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     [applyPageOp, selectedPage, t, toast]
   );
 
+  // --- R15: page crop (the last organize op) --------------------------------
+  // cropPage commits a cropped/reset view exactly like rotatePage — objects
+  // stay in user space, so it's a views-only commit; the selection stays.
+  // Crop is allowed even on truncated (>500-page) workspaces: it never
+  // reorders or drops slots, and the worker bounds its /CropBox writes to
+  // the plan (the untouched tail keeps its own box).
+  const cropPage = useCallback(
+    (pos: number, crop: CropRect | null): void => {
+      const views = viewsRef.current;
+      const nextViews = cropPageViews(views, pos, crop);
+      if (nextViews === views) return;
+      applyPageOp(
+        objectsRef.current,
+        nextViews,
+        crop === null ? `page:cropreset:${pos}` : `page:crop:${pos}`,
+        selectedPage
+      );
+      toast({
+        title:
+          crop === null
+            ? t("editPdf.cropResetToast", { page: pos + 1 })
+            : t("editPdf.pageCroppedToast", { page: pos + 1 }),
+      });
+    },
+    [applyPageOp, selectedPage, t, toast]
+  );
+
   const undo = useCallback((): void => {
     const current = snapshot();
     const step = undoStep(histRef.current.past, histRef.current.future, current);
@@ -746,6 +780,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
       setPageError(null);
       setSelectedPage(0);
       setTruncated(false);
+      setCropMode(false);
       const count = await getPdfPageCount(file);
       if (cancelled || viewToken.current !== token) return;
       setSrcPageCount(count);
@@ -799,14 +834,22 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
   // R13: the fingerprint carries src AND effective rotation (src@rotate),
   // so a page rotation re-renders the bitmap; the pdf.js viewport gets
   // the rotation as an explicit override (replaces /Rotate).
+  // R15: the fingerprint also carries the crop signature (3rd part) — a
+  // crop re-renders the bitmap AND its display size (getPdfPagePixelSize
+  // gets the same crop), so canvas, size and overlay always agree.
   const planKey = useMemo(
-    () => pageViews.map((v) => `${v.src ?? -1}@${v.rotate}`).join(","),
+    () =>
+      pageViews
+        .map((v) => `${v.src ?? -1}@${v.rotate}@${cropSignature(v)}`)
+        .join(","),
     [pageViews]
   );
   useEffect(() => {
     if (!file || pageCount === 0) return;
-    const src = viewsRef.current[selectedPage]?.src ?? selectedPage;
-    const rotation = viewsRef.current[selectedPage]?.rotate;
+    const view = viewsRef.current[selectedPage];
+    const src = view?.src ?? selectedPage;
+    const rotation = view?.rotate;
+    const crop = viewCrop(view);
     let cancelled = false;
     void (async () => {
       const [thumb, pixel] = await Promise.all([
@@ -814,8 +857,9 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
           pageIndex: src,
           maxDim: Math.min(2800, Math.round(PREVIEW_MAX_DIM * zoom * 2)),
           ...(rotation !== undefined ? { rotation } : {}),
+          ...(crop ? { crop } : {}),
         }),
-        getPdfPagePixelSize(file, 1, src, rotation),
+        getPdfPagePixelSize(file, 1, src, rotation, crop),
       ]);
       if (cancelled) return;
       const bitmap = await createImageBitmap(thumb.blob);
@@ -846,8 +890,53 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     return () => observer.disconnect();
   }, [base]);
 
-  const currentView = pageViews[selectedPage] ?? null;
+  const currentView = pageViews[selectedPage]
+    ? effectiveView(pageViews[selectedPage])
+    : null;
   const pageDisp = currentView ? displaySize(currentView) : null;
+
+  // R15 crop mode (see cropPage above): the overlay state lives here so it
+  // can read the effective view + display size.
+  const [cropMode, setCropMode] = useState(false);
+  const canvasReady = base !== null && !failed;
+  const toggleCropMode = useCallback((): void => {
+    setCropMode((on) => {
+      if (on) return false;
+      if (!canvasReady) return false;
+      // Object chrome (selection handles, edit boxes) would fight the
+      // crop handles for pointer events — clear it for the session.
+      setSelectedIds([]);
+      return true;
+    });
+  }, [canvasReady]);
+
+  // Applying from the overlay: the rect arrives in DISPLAY points of the
+  // CURRENT effective view — mapped to user space (rotation-aware) before
+  // the commit. A rect covering (almost) the whole view resets the crop
+  // instead of storing a pointless whole-page crop.
+  const applyCropFromDisplay = useCallback(
+    (disp: ObjRect): void => {
+      if (!currentView || !pageDisp) return;
+      const isFull =
+        disp.x <= 0.5 &&
+        disp.y <= 0.5 &&
+        disp.w >= pageDisp.w - 1 &&
+        disp.h >= pageDisp.h - 1;
+      const user = displayRectToPdf(disp, currentView);
+      cropPage(selectedPage, isFull ? null : {
+        x0: user.x,
+        y0: user.y,
+        x1: user.x + user.w,
+        y1: user.y + user.h,
+      });
+      setCropMode(false);
+    },
+    [cropPage, currentView, pageDisp, selectedPage]
+  );
+  const resetCrop = useCallback((): void => {
+    cropPage(selectedPage, null);
+    setCropMode(false);
+  }, [cropPage, selectedPage]);
 
   // --- Selection + tools ----------------------------------------------------
   const [tool, setTool] = useState<ToolId>("select");
@@ -2340,6 +2429,9 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
               planKey={planKey}
               opsDisabled={truncated}
               opsLocked={pageViews.length >= EDITOR_MAX_PAGES}
+              cropMode={cropMode && canvasReady}
+              cropDisabled={!canvasReady}
+              onToggleCrop={toggleCropMode}
               onMove={movePage}
               onDelete={deletePage}
               onDuplicate={duplicatePage}
@@ -2554,6 +2646,23 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
                 ) : null}
               </div>
             );
+            // R15: the crop overlay — a SIBLING of the object overlay, never
+            // a child of it: the overlay's gesture handlers capture every
+            // pointerdown bubbling through them, which would eat the action
+            // bar's clicks (caught live in the browser E2E). Keyed per page
+            // so switching slots resets the frame.
+            const cropLayer = cropMode ? (
+              <CropOverlay
+                key={fileId + selectedPage}
+                dispW={pageDisp.w}
+                dispH={pageDisp.h}
+                minPt={MIN_CROP_PT}
+                hadCrop={viewCrop(pageViews[selectedPage]) !== undefined}
+                onApply={applyCropFromDisplay}
+                onReset={resetCrop}
+                onCancel={() => setCropMode(false)}
+              />
+            ) : null;
             if (zoomed) {
               return (
                 <div
@@ -2569,6 +2678,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
                   >
                     {canvas}
                     {overlay}
+                    {cropLayer}
                   </div>
                 </div>
               );
@@ -2580,6 +2690,7 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
               >
                 {canvas}
                 {overlay}
+                {cropLayer}
               </div>
             );
           })() : (
@@ -2601,9 +2712,11 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
           )}
 
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {tool === "edittext" && piecesState === "loading"
-              ? t("editPdf.pieceLoading")
-              : t(toolHintKey)}
+            {cropMode
+              ? t("editPdf.cropHint")
+              : tool === "edittext" && piecesState === "loading"
+                ? t("editPdf.pieceLoading")
+                : t(toolHintKey)}
           </p>
 
           {/* R6-a (C): teach the click-to-edit gesture while pieces are live. */}

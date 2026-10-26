@@ -165,6 +165,113 @@ export interface PageView {
    * Optional on the wire — absent (stale blobs/drafts) means identity.
    */
   src?: number;
+  /**
+   * R15 page crop: the user's visible-region OVERRIDE, inside the view
+   * box above (source user space, y from the bottom). Absent = show the
+   * whole source crop box. Every display transform pivots through
+   * `effectiveView(view)` — the crop merged into x0..y1.
+   */
+  crop?: CropRect;
+}
+
+/**
+ * R15: the user-space rect a page is cropped to (see PageView.crop).
+ * A rectangle [x0, y0, x1, y1] in PDF user space, exactly like the
+ * view box.
+ */
+export interface CropRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** Smallest crop edge the UI (and the blob guard) allows, in points. */
+export const MIN_CROP_PT = 24;
+
+/**
+ * Shape check only (no box context): finite numbers forming a positive
+ * rect after sorting. Used by the worker's trust mask and by
+ * sanitizeCrop — garbage never reaches setCropBox.
+ */
+export function validCropShape(raw: unknown): CropRect | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const c = raw as Partial<Record<keyof CropRect, unknown>>;
+  if (
+    typeof c.x0 !== "number" || typeof c.y0 !== "number" ||
+    typeof c.x1 !== "number" || typeof c.y1 !== "number" ||
+    !Number.isFinite(c.x0) || !Number.isFinite(c.y0) ||
+    !Number.isFinite(c.x1) || !Number.isFinite(c.y1)
+  ) {
+    return undefined;
+  }
+  const x0 = Math.min(c.x0, c.x1);
+  const x1 = Math.max(c.x0, c.x1);
+  const y0 = Math.min(c.y0, c.y1);
+  const y1 = Math.max(c.y0, c.y1);
+  if (x1 - x0 <= 0 || y1 - y0 <= 0) return undefined;
+  return { x0, y0, x1, y1 };
+}
+
+/**
+ * Full guard: clamps a candidate crop INTO the view box and enforces the
+ * minimum size. Returns undefined for anything degenerate — a crop that
+ * survives is always a sane, non-empty window inside the page. (The R13
+ * lesson, applied to crop: never trust the wire — garbage crops drop to
+ * identity, they never resize a page.)
+ */
+export function sanitizeCrop(
+  raw: unknown,
+  view: Pick<PageView, "x0" | "y0" | "x1" | "y1">
+): CropRect | undefined {
+  const shaped = validCropShape(raw);
+  if (!shaped) return undefined;
+  const x0 = Math.max(shaped.x0, view.x0);
+  const y0 = Math.max(shaped.y0, view.y0);
+  const x1 = Math.min(shaped.x1, view.x1);
+  const y1 = Math.min(shaped.y1, view.y1);
+  if (x1 - x0 < MIN_CROP_PT || y1 - y0 < MIN_CROP_PT) return undefined;
+  return { x0, y0, x1, y1 };
+}
+
+/** The slot's crop after the full sanitize guard (undefined = uncropped). */
+export function viewCrop(
+  view: PageView | undefined
+): CropRect | undefined {
+  if (!view?.crop) return undefined;
+  return sanitizeCrop(view.crop, view);
+}
+
+/**
+ * R15: the view every display transform should pivot through — the crop
+ * merged into the box. All the /Rotate-aware point/rect mappers only ever
+ * read view.x0..x1/y0..y1, so swapping the box for the crop makes the
+ * whole surface (objects, gestures, harvest pieces, F&R) crop-native
+ * with zero further changes. Ref-stable for uncropped views.
+ */
+export function effectiveView(view: PageView): PageView {
+  const crop = viewCrop(view);
+  if (!crop) return view;
+  return {
+    ...view,
+    x0: crop.x0,
+    y0: crop.y0,
+    x1: crop.x1,
+    y1: crop.y1,
+  };
+}
+
+/**
+ * R15: compact crop signature for plan fingerprints ("-" when none) —
+ * integer points are plenty for re-render triggers (a drag commits
+ * once, far coarser than 1pt).
+ */
+export function cropSignature(view: PageView | undefined): string {
+  const crop = viewCrop(view);
+  if (!crop) return "-";
+  return `c${Math.round(crop.x0)}:${Math.round(crop.y0)}:${Math.round(
+    crop.x1
+  )}:${Math.round(crop.y1)}`;
 }
 
 /** Display (visible) page size in points, /Rotate applied. */
@@ -268,11 +375,17 @@ export function normalizeViews(
         ? Math.min(Math.trunc(raw), Math.max(0, srcCount - 1))
         : i;
     const rotate = quadrantRotate(view?.rotate);
+    // R15: garbage/degenerate crops drop to identity here (clamped into
+    // the view box + the minimum size); a surviving crop is re-attached
+    // so the raw wire field never leaks through unsanitised.
+    const { crop: rawCrop, ...rest } = view;
+    const crop = sanitizeCrop(rawCrop, view);
     return {
-      ...view,
+      ...rest,
       src,
       rotate,
       srcRotate: quadrantRotate(view?.srcRotate ?? rotate),
+      ...(crop ? { crop } : {}),
     };
   });
 }
@@ -316,6 +429,46 @@ export function rotatePageViews(
 export function rotationOffset(view: PageView): number {
   const base = quadrantRotate(view?.srcRotate ?? view.rotate);
   return (quadrantRotate(view.rotate) - base + 360) % 360;
+}
+
+/**
+ * R15 page crop: sets (or resets, `crop === null`) one workspace slot's
+ * visible region. Pure: returns the SAME array ref for out-of-range
+ * slots, explicit no-ops and crops that fail the sanitize guard (the UI
+ * already clamps drags — a failure here means a tampered caller, and the
+ * honest answer is "nothing changed"). The crop is USER-space, so it
+ * rides page rotations exactly like the objects do (rotate the page,
+ * rotate its crop).
+ */
+export function cropPageViews(
+  views: PageView[],
+  slot: number,
+  crop: CropRect | null
+): PageView[] {
+  if (slot < 0 || slot >= views.length) return views;
+  const view = views[slot];
+  if (crop === null) {
+    if (view.crop === undefined) return views;
+    const out = views.slice();
+    const { crop: _dropped, ...rest } = view;
+    out[slot] = rest;
+    return out;
+  }
+  const next = sanitizeCrop(crop, view);
+  if (!next) return views;
+  const current = viewCrop(view);
+  if (
+    current &&
+    current.x0 === next.x0 &&
+    current.y0 === next.y0 &&
+    current.x1 === next.x1 &&
+    current.y1 === next.y1
+  ) {
+    return views;
+  }
+  const out = views.slice();
+  out[slot] = { ...view, crop: next };
+  return out;
 }
 
 /**

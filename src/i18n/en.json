@@ -1972,7 +1972,17 @@
     "pageRotateLeft": "Rotate page {page} left",
     "pageRotateRight": "Rotate page {page} right",
     "pageRotatedToast": "Page {page} is now at {deg}°",
-    "stripRotatedTitle": "Rotated {deg}°"
+    "stripRotatedTitle": "Rotated {deg}°",
+    "pageCrop": "Crop page {page}",
+    "cropModeLabel": "Crop mode — drag the frame, then apply",
+    "cropHint": "Drag the frame to choose what stays visible. Everything outside it is hidden — Reset brings the full page back.",
+    "cropApply": "Apply",
+    "cropReset": "Reset",
+    "cropCancel": "Cancel",
+    "cropSize": "{w} × {h} pt",
+    "pageCroppedToast": "Page {page} cropped",
+    "cropResetToast": "Page {page} back to full size",
+    "stripCroppedTitle": "Cropped"
   },
   "ann": {
     "how1": "Upload a PDF — it opens right on your device, ready to mark up.",
