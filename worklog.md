@@ -4985,3 +4985,18 @@ Work Log:
 Stage Summary:
 - The app's entire ZIP/DEFLATE surface (ODF family word/excel/powerpoint/odt, epub, docx builders, pdf-to-pdfa/web-optimize zlib streams, imgconv TIFF+PNG, request-signature, repair-pdf, validate-pdfa, verify-signatures, pdf-to-word/excel/powerpoint, lib/files zip output) now runs on OUR OWN engine — zero external compression dependency.
 - Next: P2-b own QR encoder (Reed-Solomon) + QR Reader tool; then P3 router, P4 PDF finishing chain, P5 advanced tools, P6 own PDF micro-engine.
+
+---
+Task ID: P2-b (own QR engine)
+Agent: main (Z.ai Code session)
+Task: Own QR encoder replacing the `qrcode` package (self-dependency program).
+
+Work Log:
+- BUILT src/lib/own/qr/ (3 files): encoder.ts (byte-mode, versions 1-40, L/M/Q/H, RS over GF(256) poly 0x11D, block interleave, zigzag placement with col-6 skip, 8 masks + N1-N4 penalty, BCH format/version via polynomial long division), render.ts (SVG string + PNG data-URL through OUR OWN PNG encoder: IHDR/IDAT/IEND, filter-0 scanlines, zlib from our own DEFLATE), index.ts (create/toDataURL/toString surface).
+- DEV WAR STORIES (5 real bugs, all caught by the smoke/cross-verify): (1) my hand-typed EC block tables were wrong for 132 of 160 (version, level) entries — REGENERATED from the ISO/IEC 18004 standard blocks-count + EC-codewords tables with the group-split derivation, verified entry-by-entry; (2) reserved-map marked (size-8,8) repeatedly instead of the bottom-left format strip → whole tail bit-shifted; (3) format-bit write order was reversed on 3 of 4 strips (top-left pieces); (4) my N3 penalty (lookaround) differed from the reference sliding-11-bit-window (0x5D0/0x05D) → mask choice divergence; (5) version BCH recurrence grew past its register — replaced both format+version with classic polynomial division.
+- CROSS-VERIFICATION (before removal, qrcode@1.5.4 temporarily reinstalled for table extraction): FULL MATRIX EQUALITY 28/28 payload×level combos (matrix + auto mask choice) with the package forced into single byte-mode segments (its default string API does multi-segment optimization — a different, equally valid stream; our engine is single-segment byte mode by design). vCard/WiFi payloads verified apples-to-apples this way. own-qr smoke 24/24; legacy smoke-qr 89/89 on our engine.
+- MIGRATION: generate-qr-code surface (toDataURL/toString), create-invoice render (create → modules) + surface (toString) — all on @/lib/own/qr; qrcode + @types/qrcode REMOVED from package.json; both smokes made self-contained (cross-checks were the development-time proof).
+- GATES: tsc 0; eslint 0; battery 102/102; browser E2E: QR tool filled (React setter), QR rendered (blob URL), PNG 512px + SVG downloaded, VLM confirmed "valid, scannable QR code", 0 console/page errors.
+
+Stage Summary:
+- QR generation + invoice QR + all consumers now ride our OWN encoder (spec-derived tables, no external package). Next: P3 smart format router, P4 PDF finishing chain, P5 advanced tools, P6 own PDF micro-engine, P7 quality moat.

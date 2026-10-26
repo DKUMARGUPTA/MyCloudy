@@ -41,7 +41,7 @@ import {
   type DragEvent as ReactDragEvent,
   type ReactNode,
 } from "react";
-import QRCode from "qrcode";
+import { toString as ownQrToString } from "@/lib/own/qr";
 import {
   ArrowDown,
   ArrowUp,
@@ -687,7 +687,7 @@ export function InvoiceSurface(props: ToolSurfaceProps) {
   useEffect(() => {
     if (!qrPayload) return;
     let cancelled = false;
-    QRCode.toString(qrPayload, {
+    ownQrToString(qrPayload, {
       type: "svg",
       margin: 2,
       errorCorrectionLevel: "M",

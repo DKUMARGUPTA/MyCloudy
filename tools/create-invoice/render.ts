@@ -15,7 +15,7 @@
 
 import { PDFDocument, degrees, rgb } from "pdf-lib";
 import type { PDFFont, PDFPage } from "pdf-lib";
-import QRCode from "qrcode";
+import { create as ownQrCreate } from "@/lib/own/qr";
 
 import {
   calc,
@@ -591,9 +591,9 @@ function drawUpiQr(d: RenderDeps, top: number): void {
   const s = run.s;
   const payload = upiPayload(s.biz.upi, s.biz.name, c.bal, s.no);
   try {
-    const qr = QRCode.create(payload, { errorCorrectionLevel: "M" });
-    const n = qr.modules.size;
-    const data = qr.modules.data as unknown as Uint8Array;
+    const qr = ownQrCreate(payload, { errorCorrectionLevel: "M" });
+    const n = qr.size;
+    const data = qr.data;
     const x0 = RIGHT - QR_BOX;
     const quiet = (QR_BOX - 72) / 2;
     const cell = 72 / n;

@@ -1,11 +1,11 @@
 /**
- * Generate QR code smoke (P4.2) — engine unit checks + real `qrcode`
+ * Generate QR code smoke (P4.2) — engine unit checks + OUR QR engine renders
  * renders. Covers every payload builder, every validator, the color /
  * contrast math, and renders real PNG (dataURL) + SVG bytes for one
  * payload per family so the renderer options (colors, margin, EC) are
  * exercised too. Exit code = failures.
  */
-import QRCode from "qrcode";
+import { toDataURL as QRCodeToDataUrl, toString as QRCodeToString } from "../src/lib/own/qr/index";
 import { unzipSync } from "../src/lib/own/zip/index";
 import {
   buildEmailPayload,
@@ -122,7 +122,7 @@ check("contrast: gray pair between", contrastRatio("#777777", "#ffffff") > 4 && 
 check("filename", qrFileName("upi", "png") === "qr-upi.png");
 
 /* ---------------- real renders (qrcode package) ---------------- */
-const pngDataUrl = await QRCode.toDataURL("https://docopdf.example/hello", {
+const pngDataUrl = await QRCodeToDataUrl("https://docopdf.example/hello", {
   errorCorrectionLevel: "H",
   margin: 4,
   width: 512,
@@ -133,7 +133,7 @@ const pngBytes = Buffer.from(pngDataUrl.split(",")[1]!, "base64");
 check("render: PNG magic", pngBytes[0] === 0x89 && pngBytes[1] === 0x50 && pngBytes[2] === 0x4e && pngBytes[3] === 0x47);
 check("render: PNG size plausible", pngBytes.length > 1000 && pngBytes.length < 20000);
 
-const svgWifi = await QRCode.toString("WIFI:T:WPA;P:pass123;S:HomeNet;;", {
+const svgWifi = await QRCodeToString("WIFI:T:WPA;P:pass123;S:HomeNet;;", {
   type: "svg",
   errorCorrectionLevel: "M",
   margin: 2,
@@ -143,12 +143,12 @@ check("render: SVG is svg", svgWifi.startsWith("<?xml") || svgWifi.startsWith("<
 check("render: SVG carries viewBox", svgWifi.includes("viewBox"));
 check("render: SVG carries fill", svgWifi.includes("#1e293b"));
 
-const svgUpi = await QRCode.toString("upi://pay?pa=name%40okbank&am=120.50&cu=INR", { type: "svg", margin: 4 });
+const svgUpi = await QRCodeToString("upi://pay?pa=name%40okbank&am=120.50&cu=INR", { type: "svg", margin: 4 });
 check("render: SVG upi renders too", svgUpi.includes("<svg") || svgUpi.includes("<?xml"));
 
 // A long-text render at level H must still succeed (data capacity sanity).
 const longText = "DocoPDF smoke test ".repeat(40); // 380 chars
-const longPng = await QRCode.toDataURL(longText, { errorCorrectionLevel: "H", width: 1024 });
+const longPng = await QRCodeToDataUrl(longText, { errorCorrectionLevel: "H", width: 1024 });
 check("render: 380-char text at H", longPng.startsWith("data:image/png;base64,"));
 
 /* ---------------- batch CSV (R3-c) ---------------- */
@@ -246,7 +246,7 @@ console.log("batch CSV:");
   check("name: 100-char cap", qrCsvBaseName("L".repeat(140), 0).length === 100);
   check("name: blank label → row number", qrCsvBaseName("", 0) === "qr-1" && qrCsvBaseName("   ", 4) === "qr-5");
   const { zipOutputs } = await import("../src/lib/files/output");
-  const png = await QRCode.toDataURL("https://zip.example/x", { width: 256 });
+  const png = await QRCodeToDataUrl("https://zip.example/x", { width: 256 });
   const blob = new Blob([Buffer.from(png.split(",")[1]!, "base64")], {
     type: "image/png",
   });
@@ -277,7 +277,7 @@ console.log("batch CSV:");
   const { zipOutputs, sanitizeFileName } = await import("../src/lib/files/output");
   const outputs: { name: string; blob: Blob }[] = [];
   for (let i = 0; i < rows.length; i += 1) {
-    const dataUrl = await QRCode.toDataURL(rows[i].content, {
+    const dataUrl = await QRCodeToDataUrl(rows[i].content, {
       errorCorrectionLevel: "M",
       margin: 4,
       width: 512,

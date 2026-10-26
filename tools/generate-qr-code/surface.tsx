@@ -9,7 +9,8 @@ import {
   type ChangeEvent,
   type DragEvent as ReactDragEvent,
 } from "react";
-import QRCode from "qrcode";
+import { toDataURL as ownQrToDataUrl } from "@/lib/own/qr";
+import { toString as ownQrToString } from "@/lib/own/qr";
 import {
   Check,
   Copy,
@@ -210,7 +211,7 @@ async function composeQrPng(
   options: RenderOptions,
   logoDataUrl: string | null
 ): Promise<Blob> {
-  const dataUrl = await QRCode.toDataURL(payload, {
+  const dataUrl = await ownQrToDataUrl(payload, {
     errorCorrectionLevel: options.ec,
     margin: options.margin,
     width: options.width,
@@ -496,7 +497,7 @@ export function GenerateQrSurface(_props: ToolSurfaceProps): React.JSX.Element |
 
   const downloadSvg = useCallback(async (): Promise<void> => {
     if (payload === null) return;
-    const svg = await QRCode.toString(payload, {
+    const svg = await ownQrToString(payload, {
       type: "svg",
       errorCorrectionLevel: effectiveEc,
       margin: clampedMargin,
