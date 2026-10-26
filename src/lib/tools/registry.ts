@@ -1313,6 +1313,25 @@ export const ALL_TOOLS: ToolDef[] = [
     },
   }),
   def({
+    id: "summarize-pdf",
+    category: "view",
+    mode: "D",
+    phase: "P1",
+    icon: AlignLeft,
+    popularity: 74,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Summarize PDF", hi: "PDF सारांश" },
+    description: {
+      en: "One-tap TL;DR with key points, action items and page citations — English or Hindi, free.",
+      hi: "एक टैप में TL;DR — मुख्य बातें, करने के काम और पेज संदर्भों के साथ — अंग्रेज़ी या हिन्दी में, मुफ़्त।",
+    },
+    tags: {
+      en: ["summary", "tldr", "key points"],
+      hi: ["सारांश", "summary", "मुख्य बातें"],
+    },
+  }),
+  def({
     id: "compare-pdf",
     category: "view",
     mode: "D",

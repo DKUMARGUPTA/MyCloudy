@@ -20,6 +20,7 @@ import { LockSurface } from "../../../tools/lock-pdf/surface";
 import { UnlockSurface } from "../../../tools/unlock-pdf/surface";
 import { ScanSurface } from "../../../tools/scan-pdf/surface";
 import { ChatSurface } from "../../../tools/chat-with-pdf/surface";
+import { SummarizeSurface } from "../../../tools/summarize-pdf/surface";
 import { ExtractImagesSurface } from "../../../tools/extract-images/surface";
 import { SearchSurface } from "../../../tools/search-pdf/surface";
 import { CopyFromPdfSurface } from "../../../tools/copy-from-pdf/surface";
@@ -130,6 +131,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "fill-out-pdf": FillSurface,
   "view-pdf": ViewSurface,
   "chat-with-pdf": ChatSurface,
+  "summarize-pdf": SummarizeSurface,
   "sign-pdf": SignSurface,
   "redact-pdf": RedactSurface,
   "generate-password": PasswordSurface,
