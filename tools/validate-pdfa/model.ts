@@ -1,4 +1,4 @@
-import { decompressSync } from "fflate";
+import { decompressSync } from "@/lib/own/zip";
 
 import type {
   DeclaredLevel,

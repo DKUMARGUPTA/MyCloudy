@@ -33,7 +33,7 @@
  * table cells are counted honestly, never silently dropped.
  */
 
-import { unzipSync } from "fflate";
+import { unzipSync } from "@/lib/own/zip";
 
 /* ------------------------------------------------------------------ */
 /* Hard caps (mirrored by the boundary parser)                          */

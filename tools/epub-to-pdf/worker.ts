@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, type PDFFont, type PDFImage } from "pdf-lib";
-import { unzipSync as fflateUnzipSync, type Unzipped } from "fflate";
+import { unzipSync as fflateUnzipSync, type Unzipped } from "@/lib/own/zip";
 
 import {
   type WorkerRunRequest,

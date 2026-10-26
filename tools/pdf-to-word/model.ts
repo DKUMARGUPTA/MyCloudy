@@ -1,4 +1,4 @@
-import { zipSync } from "fflate";
+import { zipSync } from "@/lib/own/zip";
 
 import type { RunDetail } from "@/lib/workers/protocol";
 

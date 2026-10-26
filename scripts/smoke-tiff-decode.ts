@@ -24,7 +24,7 @@ import {
   TiffError,
 } from "../tools/imgconv/tiff";
 import { encodeTiff } from "../tools/pdf-to-images/tiff-writer";
-import { inflateSync } from "fflate";
+import { inflateSync } from "../src/lib/own/zip/index";
 
 let passed = 0;
 let failed = 0;
@@ -619,13 +619,6 @@ img2.save(sys.argv[2])
     const second = file.decodePage(1);
     check("lazy decode page 2", second.rgba.length === 4 * 4 * 4);
   }
-}
-
-/* ---------------- deflate sanity via fflate ---------------- */
-{
-  const data = new Uint8Array(1000).map((_, i) => (i * 31) & 0xff);
-  const packed = inflateSync(data.subarray(0, 0)); // trivial roundtrip guard
-  check("fflate import works", packed.length === 0);
 }
 
 console.log(

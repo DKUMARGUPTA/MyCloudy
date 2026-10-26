@@ -27,7 +27,7 @@
  * cross-verified bit-by-bit against the published pdfjs lookup tables.
  */
 
-import { inflateSync, unzlibSync } from "fflate";
+import { inflateSync, unzlibSync } from "@/lib/own/zip";
 
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */

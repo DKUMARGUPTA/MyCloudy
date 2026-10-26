@@ -1,5 +1,5 @@
 import { PDFDocument } from "pdf-lib";
-import { unzlibSync } from "fflate";
+import { unzlibSync } from "@/lib/own/zip";
 
 import type { RunDetail } from "@/lib/workers/protocol";
 

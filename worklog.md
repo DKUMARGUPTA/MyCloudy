@@ -4961,3 +4961,27 @@ Work Log:
 Stage Summary:
 - Phase-wise plan produced (see next user presentation): P0 dead-package purge; P1 own brand identity (non-blue); P2 self-built micro-engines (own ZIP/CRC/DEFLATE, own QR enc+dec, uuid removal); P3 smart format router (our own route graph — original implementation); P4 PDF finishing chain on all outputs + only-if-smaller; P5 advanced tool upgrades (ID-card scan, book-spread split, pdf-to-excel table rebuild, translate CJK/Arabic fonts, chains); P6 our own PDF micro-engine program (organize family first via engine seam); P7 quality moat (a11y-name smoke, magic-byte detection everywhere, i18n VLM battery).
 - Nothing from Filee is copied — code is C#/Avalonia (incompatible anyway), only IDEAS were studied, and every Filee idea we adopt gets our own original implementation in our stack with our design language.
+
+---
+Task ID: P0+P1+P2a (self-dependency program)
+Agent: main (Z.ai Code session)
+Task: Phase-wise self-dependency implementation (user-approved plan): P0 purge, P1 brand, P2-a own ZIP engine.
+
+Work Log:
+- P0 SHIPPED (commit ef28af0): 18 dead packages + 6 unused ui components removed (sharp, react-query, react-table, next-auth, mdxeditor, react-markdown, syntax-highlighter, date-fns, recharts, embla, input-otp, day-picker, resizable-panels, next-intl, uuid, react-hook-form, @reactuses/core, @hookform/resolvers). tsc 0, lint 0, battery 100/100, Hindi switch E2E PASS.
+- P1 SHIPPED: DocoPDF "Ink" identity — light primary #0f766e deep teal, dark #2dd4bf on charcoal-teal (#0c1210); categories redistributed (organize teal, create magenta, chart-5 pink); logo.svg + inline LogoMark + apple-touch-icon redrawn (PIL-drawn, teal gradient + white doc + teal-200 fold); markdown link default → ink teal; VLM verified light+dark ("Excellent readability"). Zero hardcoded blues anywhere (all tokens).
+- P2a SHIPPED: src/lib/own/zip/ — SEVEN self-written files replacing fflate:
+  * crc32.ts (table-based IEEE), adler32.ts (NMAX-chunked)
+  * inflate.ts — full RFC 1951 decoder (stored/fixed/dynamic, puff-style canonical Huffman)
+  * deflate.ts — hash-chain LZ77 (32K window, greedy+lazy like zlib, idempotent insert) + DYNAMIC Huffman emission with PROVABLY Kraft-complete length-limited code construction (two-phase exact balance), stored fallback
+  * zlib.ts — RFC 1950 wrap/unwrap + gzip read + decompressSync sniffing (zlib/gzip/raw)
+  * zip.ts — ZIP writer (local+CD+EOCD, STORE+DEFLATE, UTF-8 names, DOS dates, nested Zippable) + reader (EOCD scan, zip64 EOCD + extra-field sizes, data-descriptor tolerance, CRC verify)
+  * index.ts — fflate-compatible surface (zipSync/unzipSync/zlibSync/unzlibSync/inflateSync/decompressSync/strToU8 + Zippable/Unzipped types)
+- DEV WAR STORIES (3 real bugs caught by the smoke, all fixed): (1) LZ77 never inserted into hash chains → zero matches; then insert-before-search caused distance-0 self-matches → reordered search-then-insert + idempotent guard; (2) inflate Huffman symbol table filled with next[len]=offs[len+1] (start of NEXT group) shifting every symbol one group forward — fixed to offs[len] (puff semantics); (3) zipSync used archive-level level for every entry, ignoring per-entry [bytes,{level:0}] tuples (ODF mimetype must be STORED — caught by smoke-odt-to-pdf's node:zlib oracle). Plus hlit/hdist RLE trim mismatch found via bit-level event tracing.
+- CROSS-VERIFICATION (before fflate removal): smoke-own-zip 37/0 including BIDIRECTIONAL interop — our deflate→fflate.inflateSync, fflate.deflateSync→our inflate (7 corpora × 3 levels), our zipSync→fflate.unzipSync, fflate.zipSync→our unzipSync, zlib both ways, real-world epub parse byte-identical vs fflate. Kraft completeness proven over 400 random frequency vectors. The permanent smoke (33 checks) is self-contained now (cross-checks were the development-time proof).
+- MIGRATION: 21 app files + 11 smoke scripts moved to @/lib/own/zip; fflate REMOVED from package.json; node_modules purged.
+- GATES: tsc 0; eslint 0; battery 101/101 (own-zip smoke added to the suite); browser E2E word-to-pdf with sample-report.docx → 1-page valid PDF (pdf-lib verified), 0 console/page errors; Hindi UI round-trip fine.
+
+Stage Summary:
+- The app's entire ZIP/DEFLATE surface (ODF family word/excel/powerpoint/odt, epub, docx builders, pdf-to-pdfa/web-optimize zlib streams, imgconv TIFF+PNG, request-signature, repair-pdf, validate-pdfa, verify-signatures, pdf-to-word/excel/powerpoint, lib/files zip output) now runs on OUR OWN engine — zero external compression dependency.
+- Next: P2-b own QR encoder (Reed-Solomon) + QR Reader tool; then P3 router, P4 PDF finishing chain, P5 advanced tools, P6 own PDF micro-engine.

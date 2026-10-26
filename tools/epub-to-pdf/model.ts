@@ -41,7 +41,7 @@
  * text exactly as before.
  */
 
-import { unzipSync, zipSync, strToU8, type Unzipped, type Zippable } from "fflate";
+import { unzipSync, zipSync, strToU8, type Unzipped, type Zippable } from "@/lib/own/zip";
 
 import {
   decodeHtmlBytes,

@@ -1,4 +1,4 @@
-import { zipSync, strToU8, type Zippable } from "fflate";
+import { zipSync, strToU8, type Zippable } from "@/lib/own/zip";
 
 /**
  * PDF → Excel model (RB1-d — the 70th tool). PURE TypeScript: no pdfjs,

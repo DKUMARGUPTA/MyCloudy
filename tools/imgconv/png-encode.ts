@@ -9,7 +9,7 @@
  * photo data 30-50% versus no filtering.
  */
 
-import { zlibSync } from "fflate";
+import { zlibSync } from "@/lib/own/zip";
 
 /** Raw RGBA pixels: the decode-side shape this encoder consumes. */
 export interface RgbaImage {

@@ -32,7 +32,7 @@ import {
   rgb,
 } from "pdf-lib";
 import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
-import { zipSync, type Zippable } from "fflate";
+import { zipSync, type Zippable } from "@/lib/own/zip";
 
 import {
   displayRectToUser,

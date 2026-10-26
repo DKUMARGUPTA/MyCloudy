@@ -6,7 +6,7 @@
  * exercised too. Exit code = failures.
  */
 import QRCode from "qrcode";
-import { unzipSync } from "fflate";
+import { unzipSync } from "../src/lib/own/zip/index";
 import {
   buildEmailPayload,
   buildPhonePayload,

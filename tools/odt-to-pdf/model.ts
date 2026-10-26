@@ -39,7 +39,7 @@
  *    META-INF/manifest.xml) — used by the smoke as fixtures.
  */
 
-import { unzipSync, zipSync, strToU8, type Unzipped } from "fflate";
+import { unzipSync, zipSync, strToU8, type Unzipped } from "@/lib/own/zip";
 
 /* ------------------------------------------------------------------ */
 /* Hard caps (mirrored by the FAQ + the honest note)                    */

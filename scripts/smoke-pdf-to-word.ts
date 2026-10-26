@@ -34,7 +34,7 @@
  */
 import "regenerator-runtime/runtime";
 import { readFileSync, writeFileSync } from "node:fs";
-import { unzipSync } from "fflate";
+import { unzipSync } from "../src/lib/own/zip/index";
 import fontkit from "@pdf-lib/fontkit";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";

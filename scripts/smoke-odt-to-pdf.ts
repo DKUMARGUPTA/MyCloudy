@@ -17,7 +17,7 @@ import { inflateRawSync } from "node:zlib";
 
 import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import { zipSync, strToU8 } from "fflate";
+import { zipSync, strToU8 } from "../src/lib/own/zip/index";
 
 import {
   buildSampleOds,

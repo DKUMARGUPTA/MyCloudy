@@ -1,4 +1,4 @@
-import { inflateSync } from "fflate";
+import { inflateSync } from "@/lib/own/zip";
 
 import type {
   ReportLabels,

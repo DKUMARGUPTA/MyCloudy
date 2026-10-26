@@ -1,4 +1,4 @@
-import { strToU8, zipSync } from "fflate";
+import { strToU8, zipSync } from "@/lib/own/zip";
 
 /**
  * PDF → OpenDocument Text model (RB4-d). PURE TypeScript: no pdf.js, no

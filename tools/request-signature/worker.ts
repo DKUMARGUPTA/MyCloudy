@@ -1,5 +1,5 @@
 import { PDFDocument } from "pdf-lib";
-import { strToU8 } from "fflate";
+import { strToU8 } from "@/lib/own/zip";
 
 import type { OptionValues } from "@/lib/tools/config-types";
 import type {

@@ -31,7 +31,7 @@
  * not carried over.
  */
 
-import { strToU8, unzipSync, zipSync, type Unzipped } from "fflate";
+import { strToU8, unzipSync, zipSync, type Unzipped } from "@/lib/own/zip";
 
 /* ------------------------------------------------------------------ */
 /* Hard caps (mirrored by the boundary parser)                          */

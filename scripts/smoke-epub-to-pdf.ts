@@ -28,7 +28,7 @@ import {
   type PDFPage,
 } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import { unzipSync, zipSync, strToU8, type Unzipped, type Zippable } from "fflate";
+import { unzipSync, zipSync, strToU8, type Unzipped, type Zippable } from "../src/lib/own/zip/index";
 
 import { embedDocumentImage } from "../src/lib/pdf/embed-image";
 import {

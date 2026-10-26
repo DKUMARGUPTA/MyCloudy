@@ -12,7 +12,7 @@ import {
   PDFString,
 } from "pdf-lib";
 import type { PDFRef } from "pdf-lib";
-import { unzlibSync, zlibSync } from "fflate";
+import { unzlibSync, zlibSync } from "@/lib/own/zip";
 
 import type { OptionValues } from "@/lib/tools/config-types";
 import type {

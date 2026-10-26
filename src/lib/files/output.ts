@@ -1,4 +1,4 @@
-import { zipSync, type Zippable } from "fflate";
+import { zipSync, type Zippable } from "@/lib/own/zip";
 
 /**
  * Result saving helpers (PRD §6.4).

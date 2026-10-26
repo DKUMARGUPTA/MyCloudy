@@ -13,7 +13,7 @@ import { inflateSync } from "node:zlib";
 
 import { PDFDocument, StandardFonts, type PDFFont, type PDFImage } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import { unzipSync, zipSync, strToU8, type Zippable } from "fflate";
+import { unzipSync, zipSync, strToU8, type Zippable } from "../src/lib/own/zip/index";
 
 import { embedDocumentImage } from "../src/lib/pdf/embed-image";
 import { makeFixturePng } from "./fixture-png";

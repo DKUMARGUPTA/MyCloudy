@@ -26,7 +26,7 @@ import {
   PDFString,
 } from "pdf-lib";
 import type { PDFRef } from "pdf-lib";
-import { zlibSync } from "fflate";
+import { zlibSync } from "../src/lib/own/zip/index";
 
 import {
   classifyWebOptError,

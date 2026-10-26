@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { unzipSync } from "fflate";
+import { unzipSync } from "../src/lib/own/zip/index";
 
 import {
   buildOutputName,

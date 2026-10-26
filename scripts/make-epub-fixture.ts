@@ -6,7 +6,7 @@
  * Run: bun scripts/make-epub-fixture.ts
  */
 import { writeFileSync } from "node:fs";
-import { zipSync, strToU8, type Zippable } from "fflate";
+import { zipSync, strToU8, type Zippable } from "../src/lib/own/zip/index";
 
 const CONTAINER = `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">

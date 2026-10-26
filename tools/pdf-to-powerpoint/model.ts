@@ -1,4 +1,4 @@
-import { strToU8, zipSync, type Zippable } from "fflate";
+import { strToU8, zipSync, type Zippable } from "@/lib/own/zip";
 
 import type { RunDetail } from "@/lib/workers/protocol";
 

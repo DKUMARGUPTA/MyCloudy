@@ -25,7 +25,7 @@
  *    renderer as a wrong type.
  */
 
-import { unzipSync, type Unzipped } from "fflate";
+import { unzipSync, type Unzipped } from "@/lib/own/zip";
 
 /* ------------------------------------------------------------------ */
 /* Hard caps (documented in the FAQ + surfaced as honest badges)        */

@@ -7,7 +7,7 @@ import {
   PDFStream,
   PDFDocument,
 } from "pdf-lib";
-import { unzlibSync, zlibSync } from "fflate";
+import { unzlibSync, zlibSync } from "@/lib/own/zip";
 
 /**
  * Web optimize PDF engine (RB3-b, PRD §7 "optimize" family, device mode).
