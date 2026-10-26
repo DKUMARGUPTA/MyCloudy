@@ -1866,12 +1866,12 @@ export const ALL_TOOLS: ToolDef[] = [
     accepts: "pdf",
     name: { en: "Translate PDF", hi: "PDF अनुवाद" },
     description: {
-      en: "Whole-document translation into 9 languages — Hindi with real Devanagari — free.",
-      hi: "पूरे दस्तावेज़ का अनुवाद 9 भाषाओं में — हिन्दी असली देवनागरी में — मुफ़्त।",
+      en: "Whole-document translation into 13 languages — Hindi, Chinese, Japanese, Korean, Arabic with real fonts — free.",
+      hi: "पूरे दस्तावेज़ का अनुवाद 13 भाषाओं में — हिन्दी, चीनी, जापानी, कोरियाई, अरबी असली फ़ॉन्ट के साथ — मुफ़्त।",
     },
     tags: {
-      en: ["translate", "hindi", "language"],
-      hi: ["अनुवाद", "translate", "भाषा"],
+      en: ["translate", "hindi", "chinese", "japanese", "korean", "arabic", "language"],
+      hi: ["अनुवाद", "translate", "चीनी", "अरबी", "भाषा"],
     },
   }),
   def({

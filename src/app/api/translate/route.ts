@@ -9,7 +9,7 @@ import {
   translateBodySchema,
   type TranslateErrorCode,
 } from "../../../../tools/translate-pdf/api-model";
-import { targetLang } from "../../../../tools/translate-pdf/model";
+import { targetLang, type TargetLangCode } from "../../../../tools/translate-pdf/model";
 
 /**
  * POST /api/translate — one bounded text batch of "Translate PDF" (R9-c).
@@ -32,7 +32,7 @@ export const maxDuration = 120;
 
 type ValidBody = {
   text: string;
-  target: "hi" | "en" | "es" | "fr" | "de" | "mr" | "it" | "pt" | "nl";
+  target: TargetLangCode;
   locale: "en" | "hi";
 };
 

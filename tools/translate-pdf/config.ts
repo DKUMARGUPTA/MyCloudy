@@ -3,7 +3,7 @@ import type { ToolConfig } from "@/lib/tools/config-types";
 import { TARGET_LANGUAGES } from "./model";
 
 /**
- * Translate PDF (R9-c) — the whole document into 9 languages, free. The
+ * Translate PDF (R9-c) — the whole document into 13 languages, free. The
  * second (and last) DocoPDF tool with a server round-trip, same honest
  * shape as Chat with PDF: text is extracted on-device, ONLY bounded batch
  * strings ever POST to /api/translate — never file bytes.
@@ -29,8 +29,8 @@ export const config: ToolConfig = {
       id: "targetLang",
       label: { en: "Translate into", hi: "इसमें अनुवाद करें" },
       hint: {
-        en: "9 languages our embedded fonts can render — more coming",
-        hi: "9 भाषाएँ जो हमारे एम्बेडेड फ़ॉन्ट दिखा सकते हैं — और आएँगे",
+        en: "13 languages our embedded fonts can render — more coming",
+        hi: "13 भाषाएँ जो हमारे एम्बेडेड फ़ॉन्ट दिखा सकते हैं — और आएँगे",
       },
       choices: TARGET_LANGUAGES.map((l) => ({
         value: l.code,
@@ -74,8 +74,16 @@ export const config: ToolConfig = {
   ],
   features: [
     {
-      en: "Translate the whole PDF into Hindi, Marathi, Spanish, French, German, Italian, Portuguese, Dutch or English — free, no page limits per day.",
-      hi: "पूरी PDF का अनुवाद हिन्दी, मराठी, स्पेनिश, फ़्रेंच, जर्मन, इतालवी, पुर्तगाली, डच या अंग्रेज़ी में करें — मुफ़्त, कोई रोज़ की सीमा नहीं।",
+      en: "Translate the whole PDF into Hindi, Marathi, Chinese (Simplified), Japanese, Korean, Arabic, Spanish, French, German, Italian, Portuguese, Dutch or English — free, no page limits per day.",
+      hi: "पूरी PDF का अनुवाद हिन्दी, मराठी, चीनी (सरलीकृत), जापानी, कोरियाई, अरबी, स्पेनिश, फ़्रेंच, जर्मन, इतालवी, पुर्तगाली, डच या अंग्रेज़ी में करें — मुफ़्त, कोई रोज़ की सीमा नहीं।",
+    },
+    {
+      en: "Chinese, Japanese and Korean render in real self-hosted Noto CJK fonts with line-break rules that never start a line with a closing mark.",
+      hi: "चीनी, जापानी और कोरियाई असली सेल्फ़-होस्टेड नोटो CJK फ़ॉन्ट में दिखते हैं, और लाइन-ब्रेक नियम किसी लाइन की शुरुआत बंद विराम से नहीं होने देते।",
+    },
+    {
+      en: "Arabic is shaped for real: connected letter forms and lam-alef ligatures from our own shaper, right-to-left lines with readable embedded numbers and Latin.",
+      hi: "अरबी असली आकार में दिखती है: हमारे अपने शेपर से जुड़े अक्षर रूप और लाम-अलिफ़ लिगेचर, दाएँ-से-बाएँ पंक्तियाँ जिनमें अंक और लैटिन पढ़ने लायक बने रहते हैं।",
     },
     {
       en: "Bilingual mode keeps the original text in gray above every translation — perfect for checking what changed.",
@@ -117,12 +125,12 @@ export const config: ToolConfig = {
     },
     {
       q: {
-        en: "Which languages work? Why not Chinese or Arabic yet?",
-        hi: "कौन सी भाषाएँ चलती हैं? चीनी या अरबी अभी क्यों नहीं?",
+        en: "Which languages work? How good is the Arabic?",
+        hi: "कौन सी भाषाएँ चलती हैं? अरबी कितनी अच्छी है?",
       },
       a: {
-        en: "Hindi, Marathi, English, Spanish, French, German, Italian, Portuguese and Dutch. Those are exactly the scripts our embedded fonts (Helvetica + self-hosted Noto Devanagari) can render in the output PDF. Chinese, Japanese, Korean and Arabic need their own font files — we would rather ship honest support later than broken boxes today.",
-        hi: "हिन्दी, मराठी, अंग्रेज़ी, स्पेनिश, फ़्रेंच, जर्मन, इतालवी, पुर्तगाली और डच। यही वे लिपियाँ हैं जो हमारे एम्बेडेड फ़ॉन्ट (Helvetica + सेल्फ़-होस्टेड नोटो देवनागरी) आउटपुट PDF में दिखा सकते हैं। चीनी, जापानी, कोरियाई और अरबी के लिए अलग फ़ॉन्ट फ़ाइलें चाहिए — टूटे डिब्बों की जगह ईमानदार समर्थन बाद में लाना बेहतर है।",
+        en: "Hindi, Marathi, English, Spanish, French, German, Italian, Portuguese, Dutch, Simplified Chinese, Japanese, Korean and Arabic. Each non-Latin script renders in its own self-hosted Noto font embedded into the output. Arabic gets real connected letter forms and lam-alef ligatures from our own shaper, with right-to-left lines that keep numbers and embedded Latin words readable. Very exotic mixed-direction layouts and calligraphic Nastaliq styles are beyond this v1 — we would rather be honest about that than ship broken boxes.",
+        hi: "हिन्दी, मराठी, अंग्रेज़ी, स्पेनिश, फ़्रेंच, जर्मन, इतालवी, पुर्तगाली, डच, सरलीकृत चीनी, जापानी, कोरियाई और अरबी। हर गैर-लैटिन लिपि अपने सेल्फ़-होस्टेड नोटो फ़ॉन्ट में दिखती है जो आउटपुट में एम्बेड होता है। अरबी में हमारे अपने शेपर से असली जुड़े अक्षर रूप और लाम-अलिफ़ लिगेचर बनते हैं, और दाएँ-से-बाएँ पंक्तियों में अंक व लैटिन शब्द पढ़ने लायक रहते हैं। बहुत जटिल मिश्रित-दिशा लेआउट और सुलेख नस्तालीक शैली इस v1 में नहीं हैं — टूटे डिब्बों की जगह ईमानदार बात बेहतर।",
       },
     },
     {

@@ -25,18 +25,31 @@ import { join } from "node:path";
 import {
   TRANSLATE_LIMITS,
   TARGET_LANGUAGES,
+  SCRIPT_FONT,
+  adjustCjkBreak,
   batchText,
   batchesChars,
   buildBatches,
+  hasArabic,
   hasDevanagari,
+  hasHangul,
+  hasHan,
+  hasKana,
   isLikelyScanned,
   isTargetLang,
   isTranslateMode,
   normalizePageText,
+  scriptOfText,
+  targetFontUrl,
   targetLang,
   translateOutputName,
   winAnsiSafe,
 } from "../tools/translate-pdf/model";
+import {
+  bidiVisualLine,
+  shapeArabic,
+  shapeArabicLine,
+} from "../tools/translate-pdf/arabic-shape";
 import {
   TRANSLATE_API,
   buildTranslatePrompt,
@@ -67,28 +80,96 @@ function read(p: string): string {
 console.log("\n§1 model — catalog, batching, sanitizer, naming");
 
 check(
-  "catalog: 9 languages, unique codes, native labels present",
-  TARGET_LANGUAGES.length === 9 &&
-    new Set(TARGET_LANGUAGES.map((l) => l.code)).size === 9 &&
+  "catalog: 13 languages, unique codes, native labels present",
+  TARGET_LANGUAGES.length === 13 &&
+    new Set(TARGET_LANGUAGES.map((l) => l.code)).size === 13 &&
     TARGET_LANGUAGES.every((l) => l.native.length > 0 && l.english.length > 0),
   TARGET_LANGUAGES.map((l) => l.code).join(","),
 );
 check(
-  "catalog: scripts are latin|devanagari only",
-  TARGET_LANGUAGES.every(
-    (l) => l.script === "latin" || l.script === "devanagari",
-  ) &&
+  "catalog: scripts span latin|devanagari|han|kana|hangul|arabic",
+  new Set(TARGET_LANGUAGES.map((l) => l.script)).size === 6 &&
     targetLang("hi").script === "devanagari" &&
-    targetLang("mr").script === "devanagari" &&
+    targetLang("zh").script === "han" &&
+    targetLang("ja").script === "kana" &&
+    targetLang("ko").script === "hangul" &&
+    targetLang("ar").script === "arabic" &&
     targetLang("en").script === "latin",
 );
 check(
-  "isTargetLang: accepts catalog codes, rejects junk",
-  isTargetLang("hi") && isTargetLang("nl") && !isTargetLang("zh") && !isTargetLang(5) && !isTargetLang(null),
+  "catalog: every non-latin script maps to a self-hosted font URL",
+  TARGET_LANGUAGES.every(
+    (l) => (l.script === "latin" ? l.font === null : typeof l.font === "string" && l.font.startsWith("/fonts/")),
+  ) &&
+    targetFontUrl("zh") === "/fonts/NotoSansSC-Regular.ttf" &&
+    targetFontUrl("ja") === "/fonts/NotoSansJP-Regular.ttf" &&
+    targetFontUrl("ko") === "/fonts/NotoSansKR-Regular.ttf" &&
+    targetFontUrl("ar") === "/fonts/NotoNaskhArabic-Regular.ttf" &&
+    targetFontUrl("en") === null,
+);
+check(
+  "font files: 4 new TTFs present on disk with TrueType magic bytes",
+  (() => {
+    for (const f of [
+      "NotoSansSC-Regular.ttf",
+      "NotoSansJP-Regular.ttf",
+      "NotoSansKR-Regular.ttf",
+      "NotoNaskhArabic-Regular.ttf",
+    ]) {
+      const b = readFileSync(join(process.cwd(), "public/fonts", f));
+      if (b.length < 100_000) return false;
+      if (!(b[0] === 0 && b[1] === 1 && b[2] === 0 && b[3] === 0)) return false;
+    }
+    return true;
+  })(),
+  "magic 00 01 00 00 + >100KB each",
+);
+check(
+  "font files: OFL attribution text carried next to the TTFs",
+  readFileSync(join(process.cwd(), "public/fonts/NotoCJK-Arabic-OFL.txt"), "utf-8").includes("SIL OPEN FONT LICENSE"),
+);
+check(
+  "isTargetLang: accepts catalog codes incl zh/ja/ko/ar, rejects junk",
+  isTargetLang("hi") && isTargetLang("zh") && isTargetLang("ja") && isTargetLang("ko") && isTargetLang("ar") && isTargetLang("nl") && !isTargetLang("xx") && !isTargetLang(5) && !isTargetLang(null),
 );
 check(
   "hasDevanagari: range detection",
   hasDevanagari("नमस्ते") && !hasDevanagari("hello") && hasDevanagari("mixed देव text"),
+);
+check(
+  "hasHan/hasKana/hasHangul/hasArabic: detection vectors",
+  hasHan("简体汉字") && !hasHan("ひらがな") &&
+    hasKana("あいうカキク") && !hasKana("简体") &&
+    hasHangul("한국어") && !hasHangul("日本語") &&
+    hasArabic("مرحبا") && hasArabic("\u0660\u0661") && !hasArabic("hello"),
+);
+check(
+  "scriptOfText: most-distinctive-first priority",
+  scriptOfText("日本語のテキスト") === "kana" &&
+    scriptOfText("한국어 텍스트") === "hangul" &&
+    scriptOfText("你好世界") === "han" &&
+    scriptOfText("مرحبا بالعالم") === "arabic" &&
+    scriptOfText("नमस्ते दुनिया") === "devanagari" &&
+    scriptOfText("hello world") === "latin" &&
+    scriptOfText("日本語と 한국어 mixed") === "kana" &&
+    scriptOfText("") === "latin",
+);
+check(
+  "SCRIPT_FONT: covers every non-latin script with a real URL",
+  Object.keys(SCRIPT_FONT).length === 5 &&
+    SCRIPT_FONT.devanagari === "/fonts/NotoSansDevanagari-Regular.ttf" &&
+    SCRIPT_FONT.kana === "/fonts/NotoSansJP-Regular.ttf" &&
+    SCRIPT_FONT.han === "/fonts/NotoSansSC-Regular.ttf" &&
+    SCRIPT_FONT.hangul === "/fonts/NotoSansKR-Regular.ttf" &&
+    SCRIPT_FONT.arabic === "/fonts/NotoNaskhArabic-Regular.ttf",
+);
+check(
+  "adjustCjkBreak: no line starts with a closer / ends with an opener",
+  adjustCjkBreak("这是测试。再来", 4) === 3 &&
+    adjustCjkBreak("这是（测试。再来", 3) === 2 &&
+    adjustCjkBreak("hello world pad", 7) === 7 &&
+    adjustCjkBreak("देवनागरी", 3) === 3 &&
+    adjustCjkBreak("。", 1) === 1,
 );
 
 {
@@ -207,6 +288,7 @@ check(
   translateOutputName("My Report.pdf", "hi") === "My Report-hi.pdf" &&
     translateOutputName("q3/v2.pdf", "es") === "q3_v2-es.pdf" &&
     translateOutputName("", "fr") === "document-fr.pdf" &&
+    translateOutputName("报告.pdf", "ar") === "报告-ar.pdf" &&
     translateOutputName(".".repeat(200) + ".pdf", "de").length < 120,
 );
 check(
@@ -238,7 +320,7 @@ check(
   TARGET_LANGUAGES.every((l) =>
     translateBodySchema.safeParse({ text: "x", target: l.code }).success,
   ) &&
-    !translateBodySchema.safeParse({ text: "x", target: "zh" }).success &&
+    !translateBodySchema.safeParse({ text: "x", target: "xx" }).success &&
     !translateBodySchema.safeParse({ text: "x", target: 5 }).success,
 );
 check(
@@ -263,10 +345,14 @@ check(
   promptHi.includes("numbers, dates, URLs, code and file names exactly"),
 );
 check(
-  "promptLanguageName: distinct per target",
+  "promptLanguageName: distinct per target, CJK/Arabic honest",
   promptLanguageName("hi") !== promptLanguageName("en") &&
     promptLanguageName("mr").includes("Marathi") &&
-    promptLanguageName("nl") === "Dutch",
+    promptLanguageName("nl") === "Dutch" &&
+    promptLanguageName("zh").includes("Simplified Chinese") &&
+    promptLanguageName("ja").includes("Japanese") &&
+    promptLanguageName("ko").includes("Korean") &&
+    promptLanguageName("ar").includes("Arabic"),
 );
 check(
   "stripWrappingQuotes: model quote-wrapping removed, inner quotes kept",
@@ -283,6 +369,7 @@ console.log("\n§3 wiring — registry, config, worker, route, protocol");
 const registry = read("src/lib/tools/registry.ts");
 const configs = read("src/lib/tools/configs.ts");
 const config = read("tools/translate-pdf/config.ts");
+const model = read("tools/translate-pdf/model.ts");
 const worker = read("tools/translate-pdf/worker.ts");
 const route = read("src/app/api/translate/route.ts");
 const protocol = read("src/lib/workers/protocol.ts");
@@ -294,6 +381,12 @@ check(
     /icon: Languages/.test(registry) &&
     registry.includes("Languages,") &&
     registry.includes('id: "translate-pdf",\n    category: "convert-from"'),
+);
+check(
+  "registry: tagline counts all 13 languages (copy drift guard)",
+  registry.includes("13 languages") &&
+    registry.includes("Chinese, Japanese, Korean, Arabic") &&
+    registry.includes("13 भाषाओं"),
 );
 check(
   "configs: config registered by toolId",
@@ -328,15 +421,22 @@ check(
     worker.includes("tool.errorTranslateTooLong"),
 );
 check(
-  "worker: Devanagari font fetch from origin (blob-safe)",
-  worker.includes("/fonts/NotoSansDevanagari-Regular.ttf") &&
-    worker.includes("absoluteUrl") &&
-    worker.includes("subset: true"),
+  "worker: all five script fonts fetched from origin (blob-safe) + subset",
+  worker.includes("absoluteUrl") &&
+    worker.includes("subset: true") &&
+    worker.includes("loadScriptFont") &&
+    model.includes('devanagari: "/fonts/NotoSansDevanagari-Regular.ttf"') &&
+    model.includes('arabic: "/fonts/NotoNaskhArabic-Regular.ttf"') &&
+    worker.includes("SCRIPT_FONT"),
 );
 check(
-  "worker: latin draws sanitized, devanagari draws verbatim",
+  "worker: script-routed draws — latin sanitized, Arabic shaped+CJK kinsoku",
   worker.includes("latinSafe") &&
-    /needDevaFont \? pageTranslated : latinSafe\(pageTranslated\)/.test(worker),
+    worker.includes('lang.script === "latin"') &&
+    worker.includes("shapeArabic(pageTranslated)") &&
+    worker.includes("bidiVisualLine(text)") &&
+    worker.includes("adjustCjkBreak(rest, take)") &&
+    worker.includes("scriptOfText(p.text)"),
 );
 check(
   "worker: error mapping (timeout/ai/font/encrypted/corrupt)",
@@ -436,6 +536,106 @@ check(
   "catalog parity holds globally after the translate insertion",
   enKeys.size === hiKeys.size && [...enKeys].every((k) => hiKeys.has(k)),
   `${enKeys.size} = ${hiKeys.size}`,
+);
+
+/* ---------------- 5. arabic shaper ---------------- */
+
+console.log("\n§5 arabic-shape — joining, ligatures, display reorder");
+
+const cps = (s: string): number[] => [...s].map((c) => c.codePointAt(0) ?? 0);
+const hex = (s: string): string => cps(s).map((c) => c.toString(16)).join(" ");
+
+check(
+  "shape: باب joins initial+final+isolated",
+  hex(shapeArabicLine("باب")) === "fe91 fe8e fe8f",
+  hex(shapeArabicLine("باب")),
+);
+check(
+  "shape: مرحبا classic joining (meem-initial … alef-final)",
+  hex(shapeArabicLine("مرحبا")) === "fee3 feae fea3 fe92 fe8e",
+  hex(shapeArabicLine("مرحبا")),
+);
+check(
+  "shape: السلام definite article + lam-alef ligature fires mid-word",
+  hex(shapeArabicLine("السلام")) === "fe8d fedf feb4 fefc fee1",
+  hex(shapeArabicLine("السلام")),
+);
+check(
+  "shape: lam-alef ligatures — isolated, final after beh, after meem",
+  hex(shapeArabicLine("لا")) === "fefb" &&
+    hex(shapeArabicLine("بلا")) === "fe91 fefc" &&
+    hex(shapeArabicLine("ملا")) === "fee3 fefc",
+);
+check(
+  "shape: transparent marks pass through and do not break joining",
+  hex(shapeArabicLine("بُ")) === "fe8f 64f" &&
+    hex(shapeArabicLine("بُب")) === "fe91 64f fe90",
+);
+check(
+  "shape: ZWJ/ZWNJ controls stripped, non-Arabic runs untouched",
+  hex(shapeArabicLine("hello 123")) === "68 65 6c 6c 6f 20 31 32 33" &&
+    !shapeArabicLine("ب\u200dب").includes("\u200d") &&
+    shapeArabicLine("") === "",
+);
+check(
+  "shape: paragraph mode splits lines, preserves newlines",
+  shapeArabic("لا\nباب").split("\n").length === 2 &&
+    hex(shapeArabic("لا\nباب").split("\n")[0]) === "fefb",
+);
+check(
+  "bidi: pure Arabic line fully reversed",
+  hex(bidiVisualLine(shapeArabicLine("باب"))) === "fe8f fe8e fe91",
+  hex(bidiVisualLine(shapeArabicLine("باب"))),
+);
+check(
+  "bidi: Arabic + number + latin — 'دول 2024 hello' reads hello 2024 <ar>",
+  (() => {
+    const visual = bidiVisualLine(shapeArabicLine("دول 2024 hello"));
+    return (
+      visual.startsWith("hello 2024 ") &&
+      hex(visual.slice("hello 2024 ".length)) === "fedd feed fea9"
+    );
+  })(),
+  hex(bidiVisualLine(shapeArabicLine("دول 2024 hello"))),
+);
+check(
+  "bidi: letter-bounded LTR words merge across spaces (hello world)",
+  (() => {
+    const shaped = shapeArabicLine("مرحبا hello world");
+    const visual = bidiVisualLine(shaped);
+    return visual.startsWith("hello world ");
+  })(),
+);
+check(
+  "bidi: digit-bounded neighbours never merge (UAX#9 honest)",
+  (() => {
+    const visual = bidiVisualLine(shapeArabicLine("مرحبا 2024 hello"));
+    return visual.startsWith("hello 2024 ");
+  })(),
+  hex(bidiVisualLine(shapeArabicLine("مرحبا 2024 hello"))),
+);
+check(
+  "bidi: brackets hug the number (mirror + reversal net effect)",
+  (() => {
+    const visual = bidiVisualLine(shapeArabicLine("دول (2024)"));
+    return visual.startsWith("(2024)");
+  })(),
+  hex(bidiVisualLine(shapeArabicLine("دول (2024)"))),
+);
+check(
+  "bidi: pure latin/digit/empty lines never throw",
+  bidiVisualLine("hello") === "hello" &&
+    bidiVisualLine("2024") === "2024" &&
+    bidiVisualLine("") === "" &&
+    bidiVisualLine("   ") === "   ",
+);
+check(
+  "bidi: Arabic-Indic digits re-reverse as LTR tokens",
+  (() => {
+    const visual = bidiVisualLine(shapeArabicLine("دول ١٢٣٤ hello"));
+    return visual.startsWith("hello ١٢٣٤ ");
+  })(),
+  hex(bidiVisualLine(shapeArabicLine("دول ١٢٣٤ hello"))),
 );
 
 /* ---------------- verdict ---------------- */

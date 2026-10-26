@@ -73,6 +73,14 @@ export function promptLanguageName(target: TargetLangCode): string {
       return "Portuguese";
     case "nl":
       return "Dutch";
+    case "zh":
+      return "Simplified Chinese (Simplified Han script — as used in mainland China)";
+    case "ja":
+      return "Japanese (kanji, hiragana and katakana)";
+    case "ko":
+      return "Korean (Hangul script)";
+    case "ar":
+      return "Modern Standard Arabic (Arabic script)";
     default:
       return "English";
   }

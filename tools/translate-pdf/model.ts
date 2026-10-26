@@ -24,21 +24,35 @@ export const TRANSLATE_LIMITS = {
   scannedThresholdChars: 40,
 } as const;
 
-/** Target languages v1 — exactly what our embedded fonts can honestly render. */
+/**
+ * Target languages v2 — exactly what our embedded fonts can honestly render.
+ * The `font` field is the self-hosted TTF the worker embeds (subset:true);
+ * latin targets ride Helvetica and carry `font: null`.
+ */
 export const TARGET_LANGUAGES = [
-  { code: "hi", english: "Hindi", native: "हिन्दी", script: "devanagari" },
-  { code: "en", english: "English", native: "English", script: "latin" },
-  { code: "es", english: "Spanish", native: "Español", script: "latin" },
-  { code: "fr", english: "French", native: "Français", script: "latin" },
-  { code: "de", english: "German", native: "Deutsch", script: "latin" },
-  { code: "mr", english: "Marathi", native: "मराठी", script: "devanagari" },
-  { code: "it", english: "Italian", native: "Italiano", script: "latin" },
-  { code: "pt", english: "Portuguese", native: "Português", script: "latin" },
-  { code: "nl", english: "Dutch", native: "Nederlands", script: "latin" },
+  { code: "hi", english: "Hindi", native: "हिन्दी", script: "devanagari", font: "/fonts/NotoSansDevanagari-Regular.ttf" },
+  { code: "en", english: "English", native: "English", script: "latin", font: null },
+  { code: "es", english: "Spanish", native: "Español", script: "latin", font: null },
+  { code: "fr", english: "French", native: "Français", script: "latin", font: null },
+  { code: "de", english: "German", native: "Deutsch", script: "latin", font: null },
+  { code: "mr", english: "Marathi", native: "मराठी", script: "devanagari", font: "/fonts/NotoSansDevanagari-Regular.ttf" },
+  { code: "it", english: "Italian", native: "Italiano", script: "latin", font: null },
+  { code: "pt", english: "Portuguese", native: "Português", script: "latin", font: null },
+  { code: "nl", english: "Dutch", native: "Nederlands", script: "latin", font: null },
+  { code: "zh", english: "Chinese (Simplified)", native: "简体中文", script: "han", font: "/fonts/NotoSansSC-Regular.ttf" },
+  { code: "ja", english: "Japanese", native: "日本語", script: "kana", font: "/fonts/NotoSansJP-Regular.ttf" },
+  { code: "ko", english: "Korean", native: "한국어", script: "hangul", font: "/fonts/NotoSansKR-Regular.ttf" },
+  { code: "ar", english: "Arabic", native: "العربية", script: "arabic", font: "/fonts/NotoNaskhArabic-Regular.ttf" },
 ] as const;
 
 export type TargetLangCode = (typeof TARGET_LANGUAGES)[number]["code"];
-export type TargetScript = "latin" | "devanagari";
+export type TargetScript =
+  | "latin"
+  | "devanagari"
+  | "han"
+  | "kana"
+  | "hangul"
+  | "arabic";
 
 export function isTargetLang(value: unknown): value is TargetLangCode {
   return (
@@ -53,10 +67,65 @@ export function targetLang(
   return TARGET_LANGUAGES.find((l) => l.code === code) ?? TARGET_LANGUAGES[0];
 }
 
+/** Font URL for a target language (null = ride Helvetica). */
+export function targetFontUrl(code: TargetLangCode): string | null {
+  return targetLang(code).font;
+}
+
 /** True when text carries Devanagari codepoints (U+0900–U+097F). */
 export function hasDevanagari(text: string): boolean {
   return /[\u0900-\u097F]/.test(text);
 }
+
+/** True for Han (CJK unified) codepoints — shared by zh and ja sources. */
+export function hasHan(text: string): boolean {
+  return /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/.test(text);
+}
+
+/** True for kana (hiragana + katakana) — the Japanese tell. */
+export function hasKana(text: string): boolean {
+  return /[\u3041-\u30FF]/.test(text);
+}
+
+/** True for Hangul jamo + syllables — the Korean tell. */
+export function hasHangul(text: string): boolean {
+  return /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7AF]/.test(text);
+}
+
+/** True for Arabic block codepoints (letters, marks, Arabic-Indic digits). */
+export function hasArabic(text: string): boolean {
+  return /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
+}
+
+/**
+ * Dominant script of a text block — used to pick the bilingual mode's
+ * ORIGINAL-text font. Priority = most distinctive first: kana (Japanese)
+ * before han (Japanese text carries both), hangul before han, Arabic and
+ * Devanagari are unambiguous, han alone defaults to the Simplified-Chinese
+ * font (the zh/ja ambiguity only matters for pure-kanji Japanese text).
+ */
+export function scriptOfText(
+  text: string,
+): "latin" | "devanagari" | "arabic" | "kana" | "hangul" | "han" {
+  if (hasArabic(text)) return "arabic";
+  if (hasDevanagari(text)) return "devanagari";
+  if (hasKana(text)) return "kana";
+  if (hasHangul(text)) return "hangul";
+  if (hasHan(text)) return "han";
+  return "latin";
+}
+
+/** Font URL for a detected script (bilingual original text). */
+export const SCRIPT_FONT: Record<
+  Exclude<TargetScript, "latin">,
+  string
+> = {
+  devanagari: "/fonts/NotoSansDevanagari-Regular.ttf",
+  han: "/fonts/NotoSansSC-Regular.ttf",
+  kana: "/fonts/NotoSansJP-Regular.ttf",
+  hangul: "/fonts/NotoSansKR-Regular.ttf",
+  arabic: "/fonts/NotoNaskhArabic-Regular.ttf",
+};
 
 /* ----------------------- page text + batching ----------------------- */
 
@@ -188,6 +257,26 @@ export function winAnsiSafe(text: string): string {
 }
 
 /* ------------------------ output assembly ------------------------ */
+
+/**
+ * Kinsoku-lite for CJK wrapping: a visual line must not START with a
+ * closing mark nor END with an opening one. Applied to a fitted take:
+ *   - closer ahead → give the previous char to the next line instead
+ *   - opener at the edge → push it down too
+ * Latin/Devanagari/Arabic lines return the take untouched.
+ */
+const CJK_CLOSERS =
+  "\u3002\uff0c\uff01\uff1f\uff1a\uff1b\u3001\u3009\u300b\u300f\u3011\u3015\uff09\u201d\u2019\u300c\u300e";
+const CJK_OPENERS =
+  "\u3008\u300a\u300c\u300e\u3010\u3014\uff08\u201c\u2018\u3014";
+
+export function adjustCjkBreak(slice: string, take: number): number {
+  if (!hasHan(slice) && !hasKana(slice) && !hasHangul(slice)) return take;
+  let t = Math.max(1, Math.min(take, slice.length));
+  while (t > 1 && CJK_OPENERS.includes(slice[t - 1])) t -= 1;
+  if (t < slice.length && CJK_CLOSERS.includes(slice[t]) && t > 1) t -= 1;
+  return t;
+}
 
 /** Download-safe output base name: "report" → "report-hi.pdf". */
 export function translateOutputName(

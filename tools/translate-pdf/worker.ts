@@ -18,15 +18,18 @@ import {
   batchText,
   batchesChars,
   buildBatches,
-  hasDevanagari,
   isLikelyScanned,
   isTargetLang,
   isTranslateMode,
   normalizePageText,
+  scriptOfText,
+  adjustCjkBreak,
   targetLang,
   translateOutputName,
+  SCRIPT_FONT,
   type ExtractedPage,
 } from "./model";
+import { bidiVisualLine, shapeArabic } from "./arabic-shape";
 import { stripWrappingQuotes } from "./api-model";
 
 /**
@@ -41,8 +44,11 @@ import { stripWrappingQuotes } from "./api-model";
  * Layout honesty (FAQ promises exactly this): the output is NOT a pixel
  * copy of the input — text is re-flowed, page count can differ, and every
  * original page gets a small "Page N" header. Devanagari targets embed the
- * self-hosted Noto Sans Devanagari (subset:true); latin targets use
- * Helvetica with winAnsiSafe so drawText can never throw.
+ * self-hosted Noto Sans Devanagari (subset:true); CJK targets embed Noto
+ * Sans SC/JP/KR (subset:true, kinsoku-lite wrapping); Arabic targets embed
+ * Noto Naskh Arabic and go through our own presentation-form shaper +
+ * display reorder before drawText; latin targets use Helvetica with
+ * winAnsiSafe so drawText can never throw.
  */
 
 type PdfjsModule = typeof import("pdfjs-dist");
@@ -158,8 +164,6 @@ async function extractPages(file: ArrayBuffer): Promise<ExtractedPage[]> {
 
 /* ------------------------- the API round-trip ------------------------- */
 
-const DEVA_FONT_URL = "/fonts/NotoSansDevanagari-Regular.ttf";
-
 /**
  * Absolute URL for an asset/endpoint, resolved against the worker's REAL
  * base (blob: workers in dev need the origin recovered from the blob URL —
@@ -231,6 +235,10 @@ interface FlowOptions {
   headerColor: Rgb;
   font: PDFFont;
   headerFont: PDFFont;
+  /** Arabic flow: shape first, reorder each drawn line for the LTR renderer. */
+  rtl: boolean;
+  /** CJK flow: kinsoku-lite break adjustment (no line starting with 。）」). */
+  cjk: boolean;
 }
 
 class TextFlow {
@@ -266,10 +274,11 @@ class TextFlow {
     size: number,
     lineH: number,
     color: Rgb,
+    rtl = false,
   ): void {
     if (this.page === null) this.newPage();
     const page = this.page as PDFPage;
-    page.drawText(text, {
+    page.drawText(rtl ? bidiVisualLine(text) : text, {
       x: MARGIN,
       y: Math.max(MARGIN, this.y - size),
       size,
@@ -281,9 +290,12 @@ class TextFlow {
   }
 
   /** Greedy word wrap — binary search for the fitting take, then a
-   *  space-cut refinement so lines break at words whenever they can. */
+   *  space-cut refinement so lines break at words whenever they can.
+   *  CJK paragraphs get kinsoku-lite adjustment (no line starts with a
+   *  closer / ends with an opener); Arabic was shaped upstream and each
+   *  emitted line is reordered by line() when opts.rtl. */
   wrapped(text: string, opts: FlowOptions): void {
-    const { font, size, lineH, color } = opts;
+    const { font, size, lineH, color, rtl, cjk } = opts;
     for (const paragraph of text.split("\n")) {
       if (paragraph.trim().length === 0) {
         this.space(lineH * 0.55);
@@ -307,19 +319,33 @@ class TextFlow {
           const cut = rest.lastIndexOf(" ", take);
           if (cut >= Math.floor(take * 0.4)) take = Math.max(1, cut);
         }
-        this.line(rest.slice(0, take), font, size, lineH, color);
+        if (cjk) take = adjustCjkBreak(rest, take);
+        this.line(rest.slice(0, take), font, size, lineH, color, rtl);
         rest = rest.slice(take).trimStart();
       }
     }
   }
 }
 
-async function loadDevanagariFont(doc: PDFDocument): Promise<PDFFont> {
-  const res = await fetch(absoluteUrl(DEVA_FONT_URL));
+/**
+ * Script font loader with a per-run cache: the target language's font and
+ * the bilingual original's font are often the same URL — embed once.
+ * Fonts are self-hosted TTFs from /fonts (subset:true keeps output small).
+ */
+async function loadScriptFont(
+  doc: PDFDocument,
+  url: string,
+  cache: Map<string, PDFFont>,
+): Promise<PDFFont> {
+  const cached = cache.get(url);
+  if (cached) return cached;
+  const res = await fetch(absoluteUrl(url));
   if (!res.ok) throw new Error("translate-fontFetch");
   const bytes = new Uint8Array(await res.arrayBuffer());
   doc.registerFontkit(fontkit);
-  return doc.embedFont(bytes, { subset: true });
+  const font = await doc.embedFont(bytes, { subset: true });
+  cache.set(url, font);
+  return font;
 }
 
 /** WinAnsi sanitizer applied only to latin-script draws. */
@@ -411,13 +437,14 @@ async function run(req: WorkerRunRequest): Promise<void> {
   const doc = await PDFDocument.create();
   const helv = await doc.embedFont(StandardFonts.Helvetica);
   const lang = targetLang(target);
-  const needDevaFont = lang.script === "devanagari";
+  const fontCache = new Map<string, PDFFont>();
   let translatedFont = helv;
-  let devaFont: PDFFont | null = null;
-  if (needDevaFont) {
-    devaFont = await loadDevanagariFont(doc);
-    translatedFont = devaFont;
+  if (lang.font) {
+    translatedFont = await loadScriptFont(doc, lang.font, fontCache);
   }
+  const translatedRtl = lang.script === "arabic";
+  const translatedCjk =
+    lang.script === "han" || lang.script === "kana" || lang.script === "hangul";
 
   // Per-page translated text: join the batches belonging to each page.
   const perPage = new Map<number, string[]>();
@@ -435,6 +462,8 @@ async function run(req: WorkerRunRequest): Promise<void> {
     headerColor: { r: 0.45, g: 0.47, b: 0.5 },
     font: translatedFont,
     headerFont: helv,
+    rtl: translatedRtl,
+    cjk: translatedCjk,
   };
 
   for (const p of pages) {
@@ -444,10 +473,29 @@ async function run(req: WorkerRunRequest): Promise<void> {
     }
     flow.pageHeader(`Page ${p.page}`, translatedOpts);
 
+    // The translated draw: latin sanitized for Helvetica; Arabic shaped
+    // upstream of wrapping then visually reordered per line; CJK verbatim.
+    const translatedDraw =
+      lang.script === "latin"
+        ? latinSafe(pageTranslated)
+        : translatedRtl
+          ? shapeArabic(pageTranslated)
+          : pageTranslated;
+
     if (mode === "bilingual") {
-      const origDeva = hasDevanagari(p.text);
-      const origFont = origDeva ? (devaFont ?? helv) : helv;
-      const origText = origDeva ? p.text : latinSafe(p.text);
+      const origScript = scriptOfText(p.text);
+      const origFontUrl =
+        origScript === "latin" ? null : SCRIPT_FONT[origScript];
+      const origFont = origFontUrl
+        ? await loadScriptFont(doc, origFontUrl, fontCache)
+        : helv;
+      const origRtl = origScript === "arabic";
+      const origText =
+        origScript === "latin"
+          ? latinSafe(p.text)
+          : origRtl
+            ? shapeArabic(p.text)
+            : p.text;
       flow.wrapped(origText, {
         size: 9.5,
         lineH: 13,
@@ -455,18 +503,14 @@ async function run(req: WorkerRunRequest): Promise<void> {
         headerColor: translatedOpts.headerColor,
         font: origFont,
         headerFont: helv,
+        rtl: origRtl,
+        cjk: origScript === "han" || origScript === "kana" || origScript === "hangul",
       });
       flow.space(8);
-      flow.wrapped(
-        needDevaFont ? pageTranslated : latinSafe(pageTranslated),
-        translatedOpts,
-      );
+      flow.wrapped(translatedDraw, translatedOpts);
       flow.space(20);
     } else {
-      flow.wrapped(
-        needDevaFont ? pageTranslated : latinSafe(pageTranslated),
-        translatedOpts,
-      );
+      flow.wrapped(translatedDraw, translatedOpts);
       flow.space(14);
     }
   }
