@@ -2,12 +2,11 @@ import en from "./en.json";
 import hi from "./hi.json";
 
 /**
- * DocoPDF i18n core (PRD §12.3).
+ * DocoPDF i18n core (PRD §12.3) — fully self-owned, zero i18n packages.
  * en + hi (Devanagari) message catalogs with {param} interpolation.
  *
- * NOTE (deploy): in the Vercel deployment, locales are path-based (/ and /hi)
- * via next-intl routing. In this sandbox only "/" is user-visible, so the
- * active locale is app state persisted in localStorage (see LocaleProvider).
+ * NOTE: the active locale is app state persisted in localStorage (see
+ * LocaleProvider); switching is instant with no route reload.
  */
 
 export const LOCALE_STORAGE_KEY = "docopdf-locale";
