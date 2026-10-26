@@ -103,6 +103,7 @@ import {
   normalizeViews,
   pdfRectToDisplay,
   pickInkFromPixels,
+  pieceDisplayRect,
   pieceRect,
   planLineReplacements,
   raiseOne,
@@ -110,6 +111,8 @@ import {
   remapObjectsByPermutation,
   remapObjectsForPageOp,
   rgbToHex,
+  rotatePageViews,
+  rotationOffset,
   roundPt,
   sendManyToBack,
   sendToBack,
@@ -267,12 +270,16 @@ async function collectPageViews(
     const raw = (page as unknown as { view: number[] }).view ?? [0, 0, 612, 792];
     const rotateRaw = (page as unknown as { rotate: number }).rotate ?? 0;
     const r = ((rotateRaw % 360) + 360) % 360;
+    const rotate = r === 90 || r === 180 || r === 270 ? r : 0;
     views.push({
       x0: raw[0],
       y0: raw[1],
       x1: raw[2],
       y1: raw[3],
-      rotate: r === 90 || r === 180 || r === 270 ? r : 0,
+      rotate,
+      // R13: the rotation this SOURCE page shipped with — the user's
+      // offset reads as rotate − srcRotate (badges, honest resets).
+      srcRotate: rotate,
       // R12: identity source index — page ops permute/splice/repeat these.
       src: p - 1,
     });
@@ -356,17 +363,18 @@ function scratchContext(
  * just above/below the piece (works on tinted forms). Ink: the darkest
  * pixel cluster on light pages, the brightest on dark ones — with an
  * honest fallback when the contrast is too weak to trust.
+ * R13: takes the piece's DISPLAY rect (mapped through the CURRENT view)
+ * so bitmap and rect agree on every rotation.
  */
 function samplePieceColors(
   bitmap: ImageBitmap,
   dispW: number,
   dispH: number,
-  piece: HarvestPiece
+  rect: ObjRect
 ): { bg: string; ink: string } {
   try {
     const sx = bitmap.width / Math.max(1, dispW);
     const sy = bitmap.height / Math.max(1, dispH);
-    const rect = pieceRect(piece);
     const ctx = scratchContext(bitmap);
     if (!ctx) return { bg: DEFAULT_BG, ink: DEFAULT_INK };
 
@@ -661,6 +669,32 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
     [applyPageOp, selectedPage, t, toast]
   );
 
+  // R13: page rotation — objects stay in user space (they ride along with
+  // the page), so this is a views-only commit; the selection stays put.
+  // Rotation is allowed even on truncated (>500-page) workspaces: it
+  // never reorders or drops slots, and the untouched tail keeps its own
+  // /Rotate in the worker (the plan bounds the setRotation loop).
+  const rotatePage = useCallback(
+    (pos: number, delta: number): void => {
+      const views = viewsRef.current;
+      const nextViews = rotatePageViews(views, pos, delta);
+      if (nextViews === views) return;
+      applyPageOp(
+        objectsRef.current,
+        nextViews,
+        `page:rot:${pos}:${nextViews[pos]?.rotate ?? 0}`,
+        selectedPage
+      );
+      toast({
+        title: t("editPdf.pageRotatedToast", {
+          page: pos + 1,
+          deg: nextViews[pos]?.rotate ?? 0,
+        }),
+      });
+    },
+    [applyPageOp, selectedPage, t, toast]
+  );
+
   const undo = useCallback((): void => {
     const current = snapshot();
     const step = undoStep(histRef.current.past, histRef.current.future, current);
@@ -762,21 +796,26 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
   // R12: the canvas renders the SOURCE page the selected slot shows; the
   // plan string (not the array identity) is the dep, so object-only
   // commits never re-render the page bitmap.
+  // R13: the fingerprint carries src AND effective rotation (src@rotate),
+  // so a page rotation re-renders the bitmap; the pdf.js viewport gets
+  // the rotation as an explicit override (replaces /Rotate).
   const planKey = useMemo(
-    () => pageViews.map((v) => v.src ?? -1).join(","),
+    () => pageViews.map((v) => `${v.src ?? -1}@${v.rotate}`).join(","),
     [pageViews]
   );
   useEffect(() => {
     if (!file || pageCount === 0) return;
     const src = viewsRef.current[selectedPage]?.src ?? selectedPage;
+    const rotation = viewsRef.current[selectedPage]?.rotate;
     let cancelled = false;
     void (async () => {
       const [thumb, pixel] = await Promise.all([
         renderPdfThumbnail(file, {
           pageIndex: src,
           maxDim: Math.min(2800, Math.round(PREVIEW_MAX_DIM * zoom * 2)),
+          ...(rotation !== undefined ? { rotation } : {}),
         }),
-        getPdfPagePixelSize(file, 1, src),
+        getPdfPagePixelSize(file, 1, src, rotation),
       ]);
       if (cancelled) return;
       const bitmap = await createImageBitmap(thumb.blob);
@@ -897,6 +936,13 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
   const touchedPages = useMemo(
     () => new Set(objects.map((o) => o.page)),
     [objects]
+  );
+  // R13: per-slot user rotation offsets (0 = untouched) — the strip's
+  // amber degree badges read them (a rotated page needs the cue its
+  // 72px thumbnail can't give on its own).
+  const rotOffsets = useMemo(
+    () => pageViews.map((v) => rotationOffset(v)),
+    [pageViews]
   );
 
   const runGated = !viewsReady || pageError !== null;
@@ -1147,11 +1193,10 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         base.bitmap,
         base.dispW,
         base.dispH,
-        piece
+        pieceDisplayRect(piece, currentView)
       );
       const { cover, text } = buildReplacePieceObjects(
         selectedPage,
-        currentView,
         piece,
         samples.bg,
         samples.ink
@@ -1293,12 +1338,11 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         // R12: the line lives on SOURCE page line.page — the replacement
         // lands on EVERY workspace slot showing that source (duplicated
         // pages get their copy fixed too, what "replace across the
-        // document" means after page ops). The view comes from the first
-        // such slot: every slot showing one src shares its geometry.
+        // document" means after page ops). R13: line.user is view-free
+        // (user-space rect) — every slot showing one src shares it.
         const targets = workspacePositionsForSrc(pageViews, line.page);
         const slots = targets.length > 0 ? targets : [line.page];
-        const view = pageViews[slots[0]];
-        if (!view) continue;
+        if (slots.length === 0) continue;
         const newText = substituteOccurrences(
           line.text,
           ms.map((m) => ({ start: m.start, end: m.end })),
@@ -1307,7 +1351,6 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
         for (const q of slots) {
           const { cover, text } = buildReplaceLineObjects(
             q,
-            view,
             line,
             pagePieces,
             newText,
@@ -2286,19 +2329,21 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
             </div>
           ) : null}
 
-          {pageCount > 1 ? (
+          {pageCount > 0 ? (
             <EditorPageStrip
               file={file}
               pageCount={pageCount}
               selected={selectedPage}
               onSelect={setSelectedPage}
               markedSet={touchedPages}
+              rotOffsets={rotOffsets}
               planKey={planKey}
               opsDisabled={truncated}
               opsLocked={pageViews.length >= EDITOR_MAX_PAGES}
               onMove={movePage}
               onDelete={deletePage}
               onDuplicate={duplicatePage}
+              onRotate={rotatePage}
             />
           ) : null}
 
@@ -2390,12 +2435,15 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
                 {/* P8.6: snap guide lines while dragging. */}
                 <SnapGuides guides={guides} dispW={pageDisp.w} dispH={pageDisp.h} />
 
-                {/* P8.3: click-to-edit existing text pieces. */}
+                {/* P8.3: click-to-edit existing text pieces. R13: the
+                    buttons map piece USER rects through the CURRENT view —
+                    correct on user-rotated slots too. */}
                 {tool === "edittext" && piecesState === "ready" ? (
                   <TextPieceButtons
                     pieces={pieces}
                     dispW={pageDisp.w}
                     dispH={pageDisp.h}
+                    view={currentView}
                     onPick={pickPiece}
                   />
                 ) : null}

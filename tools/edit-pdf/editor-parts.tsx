@@ -52,6 +52,7 @@ import {
   Plus,
   Redo2,
   Replace,
+  RotateCcw,
   RotateCw,
   Square,
   TextCursorInput,
@@ -84,6 +85,7 @@ import {
   isRotatable,
   normalizeRotation,
   pdfRectToDisplay,
+  pieceDisplayRect,
   pieceRect,
   type EditorObject,
   type FieldObj,
@@ -1386,11 +1388,15 @@ export function TextPieceButtons({
   pieces,
   dispW,
   dispH,
+  view,
   onPick,
 }: {
   pieces: HarvestPiece[];
   dispW: number;
   dispH: number;
+  /** R13: the slot's CURRENT view — piece user rects map through it, so
+   *   the buttons land on the text even on user-rotated pages. */
+  view: PageView;
   onPick: (piece: HarvestPiece) => void;
 }): React.JSX.Element | null {
   const { t } = useI18n();
@@ -1398,7 +1404,7 @@ export function TextPieceButtons({
   return (
     <div className="pointer-events-none absolute inset-0 z-30" role="presentation">
       {pieces.map((p) => {
-        const rect = pieceRect(p);
+        const rect = pieceDisplayRect(p, view);
         const centerY = rect.y + rect.h / 2;
         // Comfortable minimum band (display pt) centred on the piece.
         const bandH = Math.max(rect.h, 22);
@@ -2541,6 +2547,7 @@ function editorStripWindow(selected: number, pageCount: number): number[] {
 function EditorStripThumb({
   slot,
   src,
+  rotDeg,
   url,
   selected,
   marked,
@@ -2548,6 +2555,8 @@ function EditorStripThumb({
 }: {
   slot: number;
   src: number;
+  /** R13: the user's rotation offset for the slot (0 = untouched). */
+  rotDeg: number;
   url: string | null;
   selected: boolean;
   marked: boolean;
@@ -2615,6 +2624,15 @@ function EditorStripThumb({
           ↺
         </span>
       ) : null}
+      {rotDeg !== 0 ? (
+        <span
+          className="absolute right-0.5 top-0.5 rounded bg-amber-600 px-1 text-[8px] font-bold tabular-nums text-white"
+          aria-hidden="true"
+          title={t("editPdf.stripRotatedTitle", { deg: rotDeg })}
+        >
+          {rotDeg}°
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -2623,10 +2641,14 @@ function EditorStripThumb({
  * The editor's page rail (R12): the shared preview strip, upgraded with
  * page operations — drag (or arrow buttons) to reorder, duplicate, delete,
  * every step undoable from the header. Ops act on the SELECTED page.
+ * R13 adds inline page rotation (±90° per slot): thumbnails render the
+ * EFFECTIVE rotation and rotated slots wear an amber degrees badge.
  *
  * `opsDisabled` covers >500-page documents (the workspace is truncated, a
  * plan change would drop the untouched tail); `opsLocked` covers the
- * 500-slot cap for duplicates.
+ * 500-slot cap for duplicates. Rotation stays available in BOTH states —
+ * it never reorders or drops slots and the worker bounds its /Rotate
+ * writes to the plan, so the untouched tail keeps its own rotation.
  */
 export function EditorPageStrip({
   file,
@@ -2634,20 +2656,24 @@ export function EditorPageStrip({
   selected,
   onSelect,
   markedSet,
+  rotOffsets,
   planKey,
   opsDisabled,
   opsLocked,
   onMove,
   onDelete,
   onDuplicate,
+  onRotate,
 }: {
   file: File;
   pageCount: number;
   selected: number;
   onSelect: (pageIndex: number) => void;
   markedSet: ReadonlySet<number>;
-  /** The plan fingerprint (comma-separated src per slot) — the single
-   *  source of truth: srcs are derived from it, so thumbnails refresh
+  /** R13: per-slot user rotation offsets (0 = untouched) — badges. */
+  rotOffsets: number[];
+  /** The plan fingerprint (src@rotate per slot) — the single source of
+   *  truth: srcs and rotations derive from it, so thumbnails refresh
    *  when (and only when) the plan actually changes. */
   planKey: string;
   opsDisabled: boolean;
@@ -2655,38 +2681,59 @@ export function EditorPageStrip({
   onMove: (from: number, to: number) => void;
   onDelete: (pos: number) => void;
   onDuplicate: (pos: number) => void;
+  /** R13: rotate a slot — delta is +90 (clockwise) or −90. */
+  onRotate: (pos: number, delta: number) => void;
 }): React.JSX.Element | null {
   const { t } = useI18n();
   const window = editorStripWindow(selected, pageCount);
 
-  // The src array, derived from the plan fingerprint (content-keyed —
-  // object-only parent commits never re-render thumbnails).
-  const srcs = useMemo<number[]>(() => {
+  // The src/rotation arrays, derived from the plan fingerprint
+  // (content-keyed — object-only parent commits never re-render thumbs).
+  const sigs = useMemo<{ src: number; rot: number }[]>(() => {
     if (planKey.length === 0) return [];
     return planKey.split(",").map((part) => {
-      const n = Number(part);
-      return Number.isFinite(n) ? n : -1;
+      const [srcRaw, rotRaw] = part.split("@");
+      const n = Number(srcRaw);
+      const r = Number(rotRaw);
+      return {
+        src: Number.isFinite(n) ? n : -1,
+        rot: Number.isFinite(r) ? r : 0,
+      };
     });
   }, [planKey]);
-  const srcOf = (slot: number): number => srcs[slot] ?? slot;
+  const srcOf = (slot: number): number => sigs[slot]?.src ?? slot;
+  const rotOf = (slot: number): number => sigs[slot]?.rot ?? 0;
 
-  const [thumbs, setThumbs] = useState<{ slot: number; src: number; url: string }[]>([]);
-  const thumbsRef = useRef<{ slot: number; src: number; url: string }[]>([]);
+  const [thumbs, setThumbs] = useState<
+    { slot: number; src: number; rot: number; url: string }[]
+  >([]);
+  const thumbsRef = useRef<
+    { slot: number; src: number; rot: number; url: string }[]
+  >([]);
 
-  // Thumbnails for the visible window — keyed by SOURCE page so reordered
-  // slots re-fetch only when the plan actually changes (planKey dep).
+  // Thumbnails for the visible window — keyed by SOURCE page + EFFECTIVE
+  // rotation so reordered or rotated slots re-fetch only when the plan
+  // actually changes (planKey dep).
   useEffect(() => {
     if (pageCount === 0) return;
     let cancelled = false;
     void (async () => {
-      const next: { slot: number; src: number; url: string }[] = [];
+      const next: { slot: number; src: number; rot: number; url: string }[] =
+        [];
       for (const slot of editorStripWindow(selected, pageCount)) {
+        const rot = rotOf(slot);
         const thumb = await renderPdfThumbnail(file, {
           pageIndex: srcOf(slot),
           maxDim: 72,
+          ...(rot !== 0 ? { rotation: rot } : {}),
         });
         if (cancelled) return;
-        next.push({ slot, src: srcOf(slot), url: URL.createObjectURL(thumb.blob) });
+        next.push({
+          slot,
+          src: srcOf(slot),
+          rot,
+          url: URL.createObjectURL(thumb.blob),
+        });
       }
       for (const old of thumbsRef.current) URL.revokeObjectURL(old.url);
       thumbsRef.current = next;
@@ -2723,8 +2770,10 @@ export function EditorPageStrip({
     if (Number.isInteger(from) && Number.isInteger(to)) onMove(from, to);
   };
 
-  const urlFor = (slot: number, src: number): string | null => {
-    const hit = thumbs.find((item) => item.slot === slot && item.src === src);
+  const urlFor = (slot: number, src: number, rot: number): string | null => {
+    const hit = thumbs.find(
+      (item) => item.slot === slot && item.src === src && item.rot === rot
+    );
     return hit !== undefined ? hit.url : null;
   };
 
@@ -2784,6 +2833,30 @@ export function EditorPageStrip({
           >
             <Copy className="size-4" aria-hidden="true" />
           </Button>
+          {/* R13: rotation works even on truncated >500-page workspaces —
+              it never reorders or drops slots (see the docblock). */}
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-11 rounded-btn"
+            onClick={() => onRotate(selected, -90)}
+            aria-label={t("editPdf.pageRotateLeft", { page: selected + 1 })}
+            title={t("editPdf.pageRotateLeft", { page: selected + 1 })}
+          >
+            <RotateCcw className="size-4" aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-11 rounded-btn"
+            onClick={() => onRotate(selected, 90)}
+            aria-label={t("editPdf.pageRotateRight", { page: selected + 1 })}
+            title={t("editPdf.pageRotateRight", { page: selected + 1 })}
+          >
+            <RotateCw className="size-4" aria-hidden="true" />
+          </Button>
           <Button
             type="button"
             variant="outline"
@@ -2826,7 +2899,8 @@ export function EditorPageStrip({
                 key={slot}
                 slot={slot}
                 src={srcOf(slot)}
-                url={urlFor(slot, srcOf(slot))}
+                rotDeg={rotOffsets[slot] ?? 0}
+                url={urlFor(slot, srcOf(slot), rotOf(slot))}
                 selected={slot === selected}
                 marked={markedSet.has(slot)}
                 onSelect={() => onSelect(slot)}

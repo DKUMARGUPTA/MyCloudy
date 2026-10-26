@@ -27,8 +27,8 @@ export const config: ToolConfig = {
   collectAssets: () => collectRunAssets(),
   features: [
     {
-      en: "Organize pages inside the editor — drag thumbnails to reorder, delete or duplicate pages, with full undo/redo",
-      hi: "एडिटर के अंदर ही पेज सुधारें — थंबनेल खींचकर क्रम बदलें, पेज हटाएँ या उनकी प्रतिलिपि बनाएँ, पूरा अनडू/रीडू साथ",
+      en: "Organize pages inside the editor — drag thumbnails to reorder, rotate, delete or duplicate pages, with full undo/redo",
+      hi: "एडिटर के अंदर ही पेज सुधारें — थंबनेल खींचकर क्रम बदलें, पेज घुमाएँ, हटाएँ या उनकी प्रतिलिपि बनाएँ, पूरा अनडू/रीडू साथ",
     },
     {
       en: "Edit text already on the page — click any line to retype it with a matched font (Hindi too), or find & replace across the document",
@@ -58,12 +58,22 @@ export const config: ToolConfig = {
   faq: [
     {
       q: {
+        en: "Can I rotate pages in the editor?",
+        hi: "क्या एडिटर में पेज घुमा सकते हैं?",
+      },
+      a: {
+        en: "Yes — the Pages rail has rotate left/right buttons (90° per tap) for the selected page. Everything on the page turns with it, each turn is one undo step, and rotated pages wear an amber degrees badge. Rotation works even on documents over 500 pages — it never reorders or drops pages.",
+        hi: "हाँ — 'पेज' रेल में चुने पेज के लिए बाएँ/दाएँ घुमाने के बटन हैं (हर टैप पर 90°)। पेज की सारी चीज़ें उसके साथ घूमती हैं, हर घुमाव एक अनडू कदम है, और घुमाए पेज पर डिग्री का नारंगी बैज लगता है। घुमाना 500 से ज़्यादा पेज वाले दस्तावेज़ों में भी काम करता है — इससे क्रम या कोई पेज नहीं छूटता।",
+      },
+    },
+    {
+      q: {
         en: "Can I delete, duplicate or reorder pages in the editor?",
         hi: "क्या एडिटर में पेज हटा सकते हैं, उनकी प्रतिलिपि बना सकते हैं या क्रम बदल सकते हैं?",
       },
       a: {
-        en: "Yes — the Pages rail above the canvas has drag-to-reorder, move left/right, duplicate and delete buttons. Every page change is one undo step, and your edits move with their pages. Documents over 500 pages keep page tools off (so no page is silently lost), and you can't delete the very last page.",
-        hi: "हाँ — कैनवास के ऊपर 'पेज' रेल में खींचकर क्रम बदलने, बाएँ/दाएँ खिसकाने, प्रतिलिपि बनाने और हटाने के बटन हैं। हर पेज-बदलाव एक अनडू कदम है, और आपकी एडिटिंग अपने पेज के साथ खिसकती है। 500 से ज़्यादा पेज वाले दस्तावेज़ों में पेज टूल बंद रहते हैं (ताकि कोई पेज चुपचाप न छूटे), और आख़िरी अकेला पेज हटाया नहीं जा सकता।",
+        en: "Yes — the Pages rail above the canvas has drag-to-reorder, move left/right, duplicate and delete buttons. Every page change is one undo step, and your edits move with their pages. On documents over 500 pages those tools stay off (so no page is silently lost) but rotation still works, and you can't delete the very last page.",
+        hi: "हाँ — कैनवास के ऊपर 'पेज' रेल में खींचकर क्रम बदलने, बाएँ/दाएँ खिसकाने, प्रतिलिपि बनाने और हटाने के बटन हैं। हर पेज-बदलाव एक अनडू कदम है, और आपकी एडिटिंग अपने पेज के साथ खिसकती है। 500 से ज़्यादा पेज वाले दस्तावेज़ों में ये टूल बंद रहते हैं (ताकि कोई पेज चुपचाप न छूटे) लेकिन घुमाना फिर भी काम करता है, और आख़िरी अकेला पेज हटाया नहीं जा सकता।",
       },
     },
     {

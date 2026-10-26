@@ -1,7 +1,7 @@
 import { loadPdfjs } from "@/lib/pdf/pdfjs";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 
-import { matchFont, type HarvestPiece } from "./model";
+import { matchFont, pieceRect, type HarvestPiece } from "./model";
 
 /**
  * Edit PDF — existing-text harvest (P8.3, PRD §8.2 "Text layer (pdf.js)
@@ -124,12 +124,29 @@ async function piecesFromPage(page: PDFPageProxy): Promise<HarvestPiece[]> {
     const meta = fontMetaFor(page as { commonObjs?: unknown }, fontName);
     const rawName =
       typeof meta?.name === "string" && meta.name.length > 0 ? meta.name : "";
+
+    // R13: the padded band mapped into PDF USER space through the page's
+    // own viewport (rotation + crop + offsets included). Every consumer
+    // pivots off user space, so a user-rotated workspace slot can never
+    // desync covers/retype boxes from the text they replace. Corner
+    // min/max keeps it axis-aligned for every quadrant rotation.
+    const band = pieceRect({ x, xEnd, baseline: sy, h });
+    const ua = viewport.convertToPdfPoint(band.x, band.y);
+    const ub = viewport.convertToPdfPoint(band.x + band.w, band.y + band.h);
+    const user = {
+      x: Math.min(ua[0], ub[0]),
+      y: Math.min(ua[1], ub[1]),
+      w: Math.abs(ub[0] - ua[0]),
+      h: Math.abs(ub[1] - ua[1]),
+    };
+
     out.push({
       index: out.length,
       x,
       xEnd,
       baseline: sy,
       h,
+      user,
       str: item.str,
       font: matchFont(rawName, {
         bold: boolOrUndef(meta?.bold),

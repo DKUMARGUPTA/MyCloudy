@@ -1960,7 +1960,11 @@
     "pagesLastPage": "अकेला पेज हटाया नहीं जा सकता",
     "stripLabel": "पेज — खींचकर क्रम बदलें",
     "stripPageLabel": "पेज {page}",
-    "stripMovedTitle": "क्रम बदला हुआ पेज"
+    "stripMovedTitle": "क्रम बदला हुआ पेज",
+    "pageRotateLeft": "पेज {page} बाएँ घुमाएँ",
+    "pageRotateRight": "पेज {page} दाएँ घुमाएँ",
+    "pageRotatedToast": "पेज {page} अब {deg}° पर है",
+    "stripRotatedTitle": "{deg}° घुमाया गया"
   },
   "ann": {
     "how1": "एक PDF अपलोड करें — वह सीधे आपके डिवाइस पर खुलकर टिप्पणी के लिए तैयार होती है।",

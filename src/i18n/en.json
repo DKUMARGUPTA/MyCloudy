@@ -1960,7 +1960,11 @@
     "pagesLastPage": "Can't delete the only page",
     "stripLabel": "Pages — drag to reorder",
     "stripPageLabel": "Page {page}",
-    "stripMovedTitle": "Reordered page"
+    "stripMovedTitle": "Reordered page",
+    "pageRotateLeft": "Rotate page {page} left",
+    "pageRotateRight": "Rotate page {page} right",
+    "pageRotatedToast": "Page {page} is now at {deg}°",
+    "stripRotatedTitle": "Rotated {deg}°"
   },
   "ann": {
     "how1": "Upload a PDF — it opens right on your device, ready to mark up.",

@@ -826,7 +826,9 @@ async function main(): Promise<void> {
   console.log(
     `\nsmoke-edit-pdf-pages: ${passed} passed, ${failed} failed`
   );
-  if (failed > 0) process.exit(1);
+  // Explicit exit: the worker import chain leaves a pending handle that
+  // keeps bun's event loop alive after a green summary.
+  process.exit(failed > 0 ? 1 : 0);
 }
 
 void main().catch((error: unknown) => {

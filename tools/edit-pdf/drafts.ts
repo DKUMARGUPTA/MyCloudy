@@ -97,6 +97,11 @@ function validDraftViews(raw: unknown): PageView[] | undefined {
       y1: view.y1,
       rotate: view.rotate,
       src: view.src as number,
+      // R13: the source rotation rides the plan (absent on pre-R13
+      // drafts → the resume path's normalizeViews back-fills it).
+      ...(typeof view.srcRotate === "number" && Number.isFinite(view.srcRotate)
+        ? { srcRotate: view.srcRotate }
+        : {}),
     });
   }
   return views.length > 0 ? views : undefined;

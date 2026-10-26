@@ -746,6 +746,34 @@ async function run(request: WorkerRunRequest): Promise<void> {
     views = planViews;
   }
 
+  // R13 page rotation: each slot's view carries the EFFECTIVE rotation
+  // (source /Rotate + the user's offset). Slots that differ from the page
+  // node's current /Rotate get it rewritten — content, annotations and
+  // user-space objects all ride along (the honest editor semantic: rotate
+  // the page, rotate everything on it). The loop is bounded by the plan,
+  // never the padded views: a truncated (>500-page) workspace leaves the
+  // untouched tail's rotation exactly as the document shipped it.
+  //
+  // TRUST: only slots whose WIRE view carried an explicit quadrant rotate.
+  // parseViews defaults absent/garbage rotate to 0 — rewriting /Rotate
+  // from that default would FLATTEN a source page's own /Rotate on stale
+  // or tampered blobs (the R12 src lesson, applied to rotate).
+  const rotateExplicit = (
+    Array.isArray(blob?.pageViews) ? blob.pageViews : []
+  ).map(
+    (v) =>
+      typeof (v as PageView | undefined)?.rotate === "number" &&
+      [0, 90, 180, 270].includes((v as PageView).rotate)
+  );
+  const rotSlots = identity ? planViews.length : views.length;
+  for (let i = 0; i < rotSlots && i < pages.length; i += 1) {
+    if (!rotateExplicit[i]) continue;
+    const target = views[i]?.rotate ?? 0;
+    if (target !== pages[i].getRotation().angle) {
+      pages[i].setRotation(degrees(target));
+    }
+  }
+
   post({ type: "progress", runId, pct: 12, stage: "processing" });
 
   const knownAssets = new Set(assetOrder);

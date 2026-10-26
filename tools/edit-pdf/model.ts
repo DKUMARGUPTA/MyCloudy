@@ -152,6 +152,13 @@ export interface PageView {
   /** /Rotate 0 | 90 | 180 | 270 (normalized). */
   rotate: number;
   /**
+   * R13 page rotation: the /Rotate this SOURCE page shipped with (captured
+   * at load, rides every plan op). The user's rotation offset reads as
+   * `rotate − srcRotate` (mod 360) — badges, thumbnails and honest resets
+   * key off it. Absent on stale blobs/pre-R13 drafts → treated as 0.
+   */
+  srcRotate?: number;
+  /**
    * R12 page ops: index of the SOURCE page this workspace slot shows.
    * Identity documents (no page ops) have views[i].src === i. Reorders
    * permute the array; deletes splice it; duplicates repeat a src.
@@ -235,10 +242,20 @@ export function displayRectToPdf(rect: ObjRect, view: PageView): ObjRect {
 // R12 — Page operations (delete / reorder / duplicate), PURE
 // ---------------------------------------------------------------------------
 
+/** Snaps any rotation value to the pdf.js quadrant 0 | 90 | 180 | 270. */
+function quadrantRotate(raw: unknown): number {
+  const n =
+    typeof raw === "number" && Number.isFinite(raw) ? raw : 0;
+  const r = ((Math.trunc(n) % 360) + 360) % 360;
+  return r === 90 || r === 180 || r === 270 ? r : 0;
+}
+
 /**
  * Normalises wire views: repairs missing/garbage `src` to the identity
  * position and clamps out-of-range sources. Old blobs and v1 drafts (no
  * src field) come back as identity — page ops never fire on stale data.
+ * R13: `rotate`/`srcRotate` snap to quadrants (display transforms only
+ * understand quadrants; anything else is tampered/stale data → 0).
  */
 export function normalizeViews(
   views: PageView[],
@@ -250,7 +267,13 @@ export function normalizeViews(
       typeof raw === "number" && Number.isFinite(raw) && raw >= 0
         ? Math.min(Math.trunc(raw), Math.max(0, srcCount - 1))
         : i;
-    return { ...view, src };
+    const rotate = quadrantRotate(view?.rotate);
+    return {
+      ...view,
+      src,
+      rotate,
+      srcRotate: quadrantRotate(view?.srcRotate ?? rotate),
+    };
   });
 }
 
@@ -263,6 +286,36 @@ export function normalizeViews(
 export function isIdentityOrder(views: PageView[], srcCount: number): boolean {
   if (views.length > srcCount) return false;
   return views.every((view, i) => (view.src ?? i) === i);
+}
+
+/**
+ * R13 page rotation: turns one workspace slot by ±90° (positive =
+ * clockwise on screen). The slot keeps its user-space geometry — objects
+ * ride along with the page, the honest editor semantic — only the view's
+ * EFFECTIVE rotation changes; export writes it as /Rotate on the output
+ * page. Pure: returns the SAME array ref for out-of-range slots or no-ops.
+ */
+export function rotatePageViews(
+  views: PageView[],
+  slot: number,
+  delta: number
+): PageView[] {
+  if (slot < 0 || slot >= views.length) return views;
+  const view = views[slot];
+  const next = quadrantRotate(view.rotate + delta);
+  if (next === view.rotate) return views;
+  const out = views.slice();
+  out[slot] = { ...view, rotate: next };
+  return out;
+}
+
+/**
+ * R13: the user's rotation offset for a view (0 | 90 | 180 | 270) — how
+ * far the slot sits from the rotation its SOURCE page shipped with.
+ */
+export function rotationOffset(view: PageView): number {
+  const base = quadrantRotate(view?.srcRotate ?? view.rotate);
+  return (quadrantRotate(view.rotate) - base + 360) % 360;
 }
 
 /**
@@ -1331,6 +1384,13 @@ export interface HarvestPiece {
   xEnd: number;
   baseline: number;
   h: number;
+  /** R13: the piece's padded band in PDF USER space (y from bottom) —
+   *  captured at harvest through the page's own viewport, so it is
+   *  rotation-proof: every consumer maps it through the CURRENT view and
+   *  a user-rotated slot can never desync covers/retype boxes from their
+   *  text. The display fields above stay source-rotation display space
+   *  (line grouping reads them). */
+  user: ObjRect;
   str: string;
   font: FontMatch;
 }
@@ -1551,21 +1611,32 @@ export function pieceRect(piece: {
 }
 
 /**
+ * R13: the piece's padded band mapped into the CURRENT view's display
+ * space (user-space pivot — correct for every /Rotate AND every user
+ * rotation offset; overlay buttons and bitmap sampling read this).
+ */
+export function pieceDisplayRect(
+  piece: Pick<HarvestPiece, "user">,
+  view: PageView
+): ObjRect {
+  return pdfRectToDisplay(piece.user, view);
+}
+
+/**
  * Builds the whiteout + retype pair for one harvested piece (PRD §8.2
  * "original text area whiteout + naya text same position par"). Both
  * objects share the piece rect; the cover is inserted BEFORE the text so
  * array z-order draws it first. One history group per call is the caller's
- * responsibility.
+ * responsibility. R13: the rect is the piece's USER-space band — the
+ * placement is view-free (rotation-proof by construction).
  */
 export function buildReplacePieceObjects(
   page: number,
-  view: PageView,
   piece: HarvestPiece,
   bgHex: string,
   inkHex: string
 ): { cover: WhiteoutObj; text: TextObj } {
-  const disp = pieceRect(piece);
-  const pdf = displayRectToPdf(disp, view);
+  const pdf = piece.user;
   const cover = makeWhiteout(page, pdf);
   cover.fill = bgHex;
   const text = makeText(page, pdf, {
@@ -1594,6 +1665,18 @@ export interface PieceLine {
   xEnd: number;
   baseline: number;
   h: number;
+  /** R13: union of the line's piece USER rects — the cover spans it on
+   *  every /Rotate / user rotation without a display round-trip. */
+  user: ObjRect;
+}
+
+/** Axis-aligned union of two user-space rects (1pt floor on each side). */
+function unionRect(a: ObjRect, b: ObjRect): ObjRect {
+  const x0 = Math.min(a.x, b.x);
+  const y0 = Math.min(a.y, b.y);
+  const x1 = Math.max(a.x + a.w, b.x + b.w);
+  const y1 = Math.max(a.y + a.h, b.y + b.h);
+  return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
 }
 
 /**
@@ -1620,6 +1703,7 @@ export function groupPiecesIntoLines(
       line.xEnd = Math.max(line.xEnd, p.xEnd);
       line.text = `${line.text} ${p.str}`;
       line.h = Math.max(line.h, p.h);
+      line.user = unionRect(line.user, p.user);
     } else {
       lines.push({
         page,
@@ -1629,6 +1713,7 @@ export function groupPiecesIntoLines(
         xEnd: p.xEnd,
         baseline: p.baseline,
         h: p.h,
+        user: p.user,
       });
     }
   }
@@ -1669,40 +1754,21 @@ export function planLineReplacements(
 
 /**
  * Builds the whiteout + retype pair for one VISUAL LINE (find & replace):
- * the cover spans the union of the line's piece rects, the retype uses the
- * dominant piece's font match and the substituted text. One history group
- * per call is the caller's responsibility.
+ * the cover spans the union of the line's piece USER rects (R13 — no
+ * display round-trip, so a user-rotated slot gets its cover exactly where
+ * the line lives), the retype uses the dominant piece's font match and
+ * the substituted text. One history group per call is the caller's
+ * responsibility.
  */
 export function buildReplaceLineObjects(
   page: number,
-  view: PageView,
   line: PieceLine,
   pagePieces: HarvestPiece[],
   newText: string,
   bgHex: string,
   inkHex: string
 ): { cover: WhiteoutObj; text: TextObj } {
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  for (const idx of line.pieces) {
-    const p = pagePieces[idx];
-    if (!p) continue;
-    const r = pieceRect(p);
-    x0 = Math.min(x0, r.x);
-    y0 = Math.min(y0, r.y);
-    x1 = Math.max(x1, r.x + r.w);
-    y1 = Math.max(y1, r.y + r.h);
-  }
-  if (!Number.isFinite(x0) || !Number.isFinite(y0)) {
-    x0 = line.x;
-    y0 = line.baseline - line.h;
-    x1 = line.xEnd;
-    y1 = line.baseline;
-  }
-  const disp = { x: x0, y: y0, w: Math.max(8, x1 - x0), h: Math.max(10, y1 - y0) };
-  const pdf = displayRectToPdf(disp, view);
+  const pdf = line.user;
   const cover = makeWhiteout(page, pdf);
   cover.fill = bgHex;
   // Dominant piece = largest em (ties: first in x order).

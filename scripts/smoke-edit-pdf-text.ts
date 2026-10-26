@@ -240,17 +240,29 @@ async function main(): Promise<void> {
   assertEqual(r2.h, 10, "pieceRect min height");
 
   // --- Replace builders (piece + line) --------------------------------------
+  // R13: pieces carry a USER-space band (captured at harvest through the
+  // source page's viewport); builders are view-free and the display map
+  // (pieceDisplayRect) pivots through user space — rotation-proof.
+  const view0: PageView = { x0: 0, y0: 0, x1: 612, y1: 792, rotate: 0 };
+  const harvestUser = (
+    x: number,
+    xEnd: number,
+    baseline: number,
+    h: number,
+    view: PageView
+  ): { x: number; y: number; w: number; h: number } =>
+    model.displayRectToPdf(model.pieceRect({ x, xEnd, baseline, h }), view);
   const piece: HarvestPiece = {
     index: 0,
     x: 100,
     xEnd: 200,
     baseline: 700,
     h: 12,
+    user: harvestUser(100, 200, 700, 12, view0),
     str: "Hello",
     font: model.matchFont("Helvetica-Bold", {}),
   };
-  const view0: PageView = { x0: 0, y0: 0, x1: 612, y1: 792, rotate: 0 };
-  const pair = model.buildReplacePieceObjects(0, view0, piece, "#f5f0e8", "#123456");
+  const pair = model.buildReplacePieceObjects(0, piece, "#f5f0e8", "#123456");
   assertEqual(pair.cover.kind, "whiteout", "builder cover kind");
   assertEqual(pair.cover.fill, "#f5f0e8", "builder cover fill = sampled bg");
   assertEqual(pair.text.kind, "text", "builder text kind");
@@ -278,27 +290,42 @@ async function main(): Promise<void> {
   assertEqual(pair.cover.page, 0, "builder page");
 
   const view90: PageView = { x0: 20, y0: 10, x1: 632, y1: 802, rotate: 90 };
-  const pair90 = model.buildReplacePieceObjects(3, view90, piece, "#ffffff", "#000000");
-  // display rect {x:99, y:688.3, w:102, h:16.2} → user space via the 90° map.
-  const expectX = 10 + 688.3; // x = dy + y0
-  const expectY = 99 + 20 - 102 + 102; // min over corners → see below
-  const c1 = { x: 688.3 + 20, y: 99 + 10 };
-  const c2 = { x: 688.3 + 16.2 + 20, y: 99 + 102 + 10 };
+  // R13: the display map pivots through USER space — a user-rotated slot
+  // shows the piece exactly where it lives. The 90° display of the user
+  // band round-trips back to the SAME user band (inverse maps).
+  const disp90 = model.pieceDisplayRect(piece, view90);
+  const back90 = model.displayRectToPdf(disp90, view90);
   assert(
-    Math.abs(pair90.cover.x - Math.min(c1.x, c2.x)) < 1e-6 &&
-      Math.abs(pair90.cover.y - Math.min(c1.y, c2.y)) < 1e-6,
-    "builder rot90 cover origin",
-    { got: { x: pair90.cover.x, y: pair90.cover.y }, c1, c2 }
+    Math.abs(back90.x - piece.user.x) < 1e-6 &&
+      Math.abs(back90.y - piece.user.y) < 1e-6 &&
+      Math.abs(back90.w - piece.user.w) < 1e-6 &&
+      Math.abs(back90.h - piece.user.h) < 1e-6,
+    "pieceDisplayRect rot90 round-trips through user space",
+    { got: back90, want: piece.user }
+  );
+  // And the 90° display rect really is the rotated band: user (x 99, y
+  // 792-704.5-16.2, w 102, h 16.2) → display swaps axes about the crop box.
+  const d1 = model.pdfToDisplayPoint(piece.user.x, piece.user.y, view90);
+  const d2 = model.pdfToDisplayPoint(
+    piece.user.x + piece.user.w,
+    piece.user.y + piece.user.h,
+    view90
   );
   assert(
-    Math.abs(pair90.cover.w - Math.abs(c1.x - c2.x)) < 1e-6 &&
-      Math.abs(pair90.cover.h - Math.abs(c1.y - c2.y)) < 1e-6,
-    "builder rot90 cover size",
-    { got: { w: pair90.cover.w, h: pair90.cover.h } }
+    Math.abs(disp90.w - Math.abs(d2.x - d1.x)) < 1e-6 &&
+      Math.abs(disp90.h - Math.abs(d2.y - d1.y)) < 1e-6,
+    "pieceDisplayRect rot90 size = rotated band",
+    { got: disp90, d1, d2 }
   );
-  void expectX;
-  void expectY;
+  const pair90 = model.buildReplacePieceObjects(3, piece, "#ffffff", "#000000");
   assertEqual(pair90.cover.page, 3, "builder page passthrough");
+  assert(
+    Math.abs(pair90.cover.x - piece.user.x) < 1e-6 &&
+      Math.abs(pair90.cover.y - piece.user.y) < 1e-6 &&
+      Math.abs(pair90.cover.w - piece.user.w) < 1e-6 &&
+      Math.abs(pair90.cover.h - piece.user.h) < 1e-6,
+    "builder is view-free: cover IS the user band (rotation-proof)"
+  );
 
   // The builders' output survives the wire sanitizer.
   const sanitizedPair = model.sanitizeObjects(
@@ -310,11 +337,11 @@ async function main(): Promise<void> {
 
   // --- Line grouping ---------------------------------------------------------
   const pagePieces: HarvestPiece[] = [
-    { index: 0, x: 58, xEnd: 120, baseline: 100, h: 10, str: "world", font: model.matchFont("Helvetica", {}) },
-    { index: 1, x: 10, xEnd: 50, baseline: 100, h: 10, str: "Hello", font: model.matchFont("Helvetica", {}) },
-    { index: 2, x: 10, xEnd: 60, baseline: 200, h: 10, str: "Second line", font: model.matchFont("Helvetica", {}) },
-    { index: 3, x: 300, xEnd: 400, baseline: 100, h: 10, str: "far", font: model.matchFont("Helvetica", {}) },
-    { index: 4, x: 12, xEnd: 22, baseline: 104, h: 10, str: "x", font: model.matchFont("Helvetica", {}) },
+    { index: 0, x: 58, xEnd: 120, baseline: 100, h: 10, user: harvestUser(58, 120, 100, 10, view0), str: "world", font: model.matchFont("Helvetica", {}) },
+    { index: 1, x: 10, xEnd: 50, baseline: 100, h: 10, user: harvestUser(10, 50, 100, 10, view0), str: "Hello", font: model.matchFont("Helvetica", {}) },
+    { index: 2, x: 10, xEnd: 60, baseline: 200, h: 10, user: harvestUser(10, 60, 200, 10, view0), str: "Second line", font: model.matchFont("Helvetica", {}) },
+    { index: 3, x: 300, xEnd: 400, baseline: 100, h: 10, user: harvestUser(300, 400, 100, 10, view0), str: "far", font: model.matchFont("Helvetica", {}) },
+    { index: 4, x: 12, xEnd: 22, baseline: 104, h: 10, user: harvestUser(12, 22, 104, 10, view0), str: "x", font: model.matchFont("Helvetica", {}) },
   ];
   const lines = model.groupPiecesIntoLines(0, pagePieces);
   // x-sorted: [1](10-50), [0](58-120) gap 8 ≤ 12 → one line; [4] baseline 104
@@ -334,6 +361,7 @@ async function main(): Promise<void> {
       xEnd: 60,
       baseline: 100,
       h: 10,
+      user: harvestUser(0, 60, 100, 10, view0),
     },
     {
       page: 1,
@@ -343,6 +371,7 @@ async function main(): Promise<void> {
       xEnd: 60,
       baseline: 100,
       h: 10,
+      user: harvestUser(0, 60, 100, 10, view0),
     },
   ];
   const matches = model.planLineReplacements(flines, "hat", false);
@@ -392,14 +421,20 @@ async function main(): Promise<void> {
     xEnd: 120,
     baseline: 100,
     h: 10,
+    // R13: lines carry the union of their piece user rects.
+    user: {
+      x: 9,
+      y: 700,
+      w: 113,
+      h: 15,
+    },
   };
   const linePagePieces: HarvestPiece[] = [
-    { index: 0, x: 10, xEnd: 50, baseline: 100, h: 10, str: "Hello", font: model.matchFont("Helvetica", {}) },
-    { index: 1, x: 58, xEnd: 120, baseline: 100, h: 14, str: "world", font: model.matchFont("Times-Bold", {}) },
+    { index: 0, x: 10, xEnd: 50, baseline: 100, h: 10, user: { x: 9, y: 700, w: 43, h: 14 }, str: "Hello", font: model.matchFont("Helvetica", {}) },
+    { index: 1, x: 58, xEnd: 120, baseline: 100, h: 14, user: { x: 57, y: 700, w: 65, h: 15 }, str: "world", font: model.matchFont("Times-Bold", {}) },
   ];
   const linePair = model.buildReplaceLineObjects(
     1,
-    view0,
     twoPieceLine,
     linePagePieces,
     "Hello friend",
@@ -413,8 +448,12 @@ async function main(): Promise<void> {
     "line builder dominant font (largest em)"
   );
   assertEqual(linePair.cover.page, 1, "line builder page");
-  // Union cover: x 9 → 121 (piece pads), y from pieceRect tops.
+  // R13: the cover IS the line's user-rect union (view-free).
   assert(Math.abs(linePair.cover.x - 9) < 1e-6, "line builder cover union x");
+  assert(
+    Math.abs(linePair.cover.w - (57 + 65 - 9)) < 1e-6,
+    "line builder cover union width"
+  );
 
   // --- Ink / background pickers ----------------------------------------------
   const white = [255, 255, 255, 255];
@@ -474,17 +513,28 @@ async function main(): Promise<void> {
   // advance ≈ widthOfTextAtSize("Original Alpha Beta", 14).
   const originalText = "Original Alpha Beta";
   const adv = srcFont.widthOfTextAtSize(originalText, 14);
+  const e2eView: PageView = { x0: 0, y0: 0, x1: 595.28, y1: 841.89, rotate: 0 };
   const harvested: HarvestPiece = {
     index: 0,
     x: 48,
     xEnd: 48 + adv,
     baseline: 841.89 - 760,
     h: 14,
+    // R13: harvest captures the user-space band (the pdf.js display →
+    // user map for a rotate-0 page is the y flip about the page height).
+    user: model.displayRectToPdf(
+      model.pieceRect({
+        x: 48,
+        xEnd: 48 + adv,
+        baseline: 841.89 - 760,
+        h: 14,
+      }),
+      e2eView
+    ),
     str: originalText,
     font: model.matchFont("Helvetica", {}),
   };
-  const e2eView: PageView = { x0: 0, y0: 0, x1: 595.28, y1: 841.89, rotate: 0 };
-  const e2ePair = model.buildReplacePieceObjects(0, e2eView, harvested, "#ffffff", "#111827");
+  const e2ePair = model.buildReplacePieceObjects(0, harvested, "#ffffff", "#111827");
   // The user edits the retyped words:
   const replacedText = { ...e2ePair.text, text: "Retyped words" };
   const e2eObjects: EditorObject[] = [e2ePair.cover, replacedText];

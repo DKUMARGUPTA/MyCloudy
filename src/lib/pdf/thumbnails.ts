@@ -99,11 +99,20 @@ export async function getPdfPageAspect(
 export async function getPdfPagePixelSize(
   file: File | Blob,
   scale: number,
-  pageIndex = 0
+  pageIndex = 0,
+  rotation?: number
 ): Promise<{ width: number; height: number }> {
   const doc = await openDocument(file);
   const page = await doc.getPage(pageIndex + 1); // 1-based in pdf.js
-  const viewport = page.getViewport({ scale });
+  // R13: an explicit rotation REPLACES the page's own /Rotate in the
+  // viewport (pdf.js contract) — the edit-pdf preview passes the slot's
+  // EFFECTIVE rotation so bitmap, size and overlay always agree.
+  const viewport = page.getViewport({
+    scale,
+    ...(rotation !== undefined
+      ? { rotation }
+      : {}),
+  });
   return {
     width: Math.max(1, Math.round(viewport.width)),
     height: Math.max(1, Math.round(viewport.height)),
@@ -284,10 +293,16 @@ function release(): void {
 /**
  * Renders one page of a PDF file into a small PNG blob, bounded by maxDim.
  * Queued — call freely for many pages; only two render at once.
+ * R13: `rotation` (0 | 90 | 180 | 270) replaces the page's own /Rotate in
+ * the viewport — the edit-pdf workspace uses it for user page rotation.
  */
 export async function renderPdfThumbnail(
   file: File | Blob,
-  options: { pageIndex?: number; maxDim?: number } = {}
+  options: {
+    pageIndex?: number;
+    maxDim?: number;
+    rotation?: number;
+  } = {}
 ): Promise<Thumbnail> {
   const pageIndex = options.pageIndex ?? 0;
   const maxDim = options.maxDim ?? 200;
@@ -295,9 +310,20 @@ export async function renderPdfThumbnail(
   try {
     const doc = await openDocument(file);
     const page = await doc.getPage(pageIndex + 1); // 1-based in pdf.js
-    const base = page.getViewport({ scale: 1 });
+    // Bound maxDim against the ROTATED page (90/270 swap the axes).
+    const base = page.getViewport({
+      scale: 1,
+      ...(options.rotation !== undefined
+        ? { rotation: options.rotation }
+        : {}),
+    });
     const scale = maxDim / Math.max(base.width, base.height);
-    const viewport = page.getViewport({ scale });
+    const viewport = page.getViewport({
+      scale,
+      ...(options.rotation !== undefined
+        ? { rotation: options.rotation }
+        : {}),
+    });
     const width = Math.max(1, Math.round(viewport.width));
     const height = Math.max(1, Math.round(viewport.height));
 

@@ -168,7 +168,11 @@
       "pagesLastPage": "Can't delete the only page",
       "stripLabel": "Pages — drag to reorder",
       "stripPageLabel": "Page {page}",
-      "stripMovedTitle": "Reordered page"
+      "stripMovedTitle": "Reordered page",
+      "pageRotateLeft": "Rotate page {page} left",
+      "pageRotateRight": "Rotate page {page} right",
+      "pageRotatedToast": "Page {page} is now at {deg}°",
+      "stripRotatedTitle": "Rotated {deg}°"
     }
   },
   "hi": {
@@ -340,7 +344,11 @@
       "pagesLastPage": "अकेला पेज हटाया नहीं जा सकता",
       "stripLabel": "पेज — खींचकर क्रम बदलें",
       "stripPageLabel": "पेज {page}",
-      "stripMovedTitle": "क्रम बदला हुआ पेज"
+      "stripMovedTitle": "क्रम बदला हुआ पेज",
+      "pageRotateLeft": "पेज {page} बाएँ घुमाएँ",
+      "pageRotateRight": "पेज {page} दाएँ घुमाएँ",
+      "pageRotatedToast": "पेज {page} अब {deg}° पर है",
+      "stripRotatedTitle": "{deg}° घुमाया गया"
     }
   }
 }
