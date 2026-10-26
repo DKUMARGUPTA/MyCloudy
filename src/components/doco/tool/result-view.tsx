@@ -34,6 +34,7 @@ import {
 } from "@/lib/files/output";
 import { formatBytes } from "@/lib/storage/recent-files";
 import { PageThumbnail } from "./page-thumbnail";
+import { PdfFinisher } from "./pdf-finisher";
 import { cn } from "@/lib/utils";
 
 /**
@@ -504,6 +505,10 @@ export function ResultView({
       {resultExtra ? (
         <div className="mt-5 flex justify-center">{resultExtra}</div>
       ) : null}
+
+      {/* PDF finishing chain (P4): watermark / numbers / lock on any PDF
+          output — client-side, applied to a fresh copy. */}
+      <PdfFinisher outputs={outputs} />
 
       {/* What next? chain (PRD §6.4) */}
       {chainTargets.length > 0 ? (

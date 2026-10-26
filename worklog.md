@@ -5016,3 +5016,17 @@ Work Log:
 
 Stage Summary:
 - Search now answers format-conversion questions we have no single tool for, with honest multi-hop chains (every hop a live tool). Next: P4 PDF finishing chain, P5 advanced tools, P6 own PDF micro-engine, P7 quality moat.
+
+---
+Task ID: P4 (PDF finishing chain)
+Agent: main (Z.ai Code session)
+Task: Watermark / page numbers / password lock on ANY tool's PDF output — the "finishing chain" idea implemented our way (client-side, non-destructive fresh copy).
+
+Work Log:
+- BUILT src/components/doco/tool/pdf-finisher.tsx: collapsible "Finish your PDF" card in the shared ResultView (appears whenever an output is a PDF — 40+ tools instantly). Three independent passes chained in order: diagonal 45° watermark (text ≤60 chars, opacity slider 5-60%, 4 color presets incl. brand teal, size scaled to page diagonal) → page numbers (6 positions, 3 formats incl. "Page 1 of N" localized ICU) → AES-256 password lock (same engine as lock-pdf; already-locked inputs honestly refused). Applied to a FRESH copy (original download untouched), auto-downloaded as "-finished.pdf".
+- i18N: pdfFinish.* (25 keys incl. nested color/pos maps + ICU numOfN/pageOfN) en+hi.
+- E2E (Hindi locale): txt-to-pdf run → finisher card present → expanded → watermark "CONFIDENTIAL" + page numbers on → "तैयार PDF बनाएँ" → sample-finished.pdf downloaded, pdf-lib reloads it (1 page, A4), zlib-decompressed stream CONTAINS the CONFIDENTIAL draw ops, VLM confirmed the card + controls; 0 console errors.
+- GATES: tsc 0, eslint 0, i18n params 26/26, battery 103/103.
+
+Stage Summary:
+- Every PDF-producing tool now has an instant finishing layer (a competitor idea from the audit, implemented as our own client-side non-destructive card). Next: P5 advanced tool upgrades, P6 own PDF micro-engine, P7 quality moat.

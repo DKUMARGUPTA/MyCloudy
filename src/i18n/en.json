@@ -4821,5 +4821,48 @@
     "generatedBy": "Generated on-device by DocoPDF — nothing was uploaded.",
     "honestyTitle": "NOT CHECKED (honesty)",
     "honestyBody": "This is an honest subset of ISO 19005 rule families, inspired by veraPDF's categories — not the full standard and not a certified validation. Roughly 15 rule families are checked; a COMPLIANT verdict means every check in this subset passed, nothing more. The PDF/UA rows are advisory hints only (full PDF/UA validation is not performed). Take archive-grade decisions to a certified validator."
+  },
+  "pdfFinish": {
+    "heading": "Finish your PDF",
+    "sub": "Add a watermark, page numbers or a password — applied on your device to a fresh copy.",
+    "wm": "Watermark",
+    "wmPlaceholder": "Watermark text (e.g. CONFIDENTIAL)",
+    "opacity": "Opacity",
+    "color": {
+      "gray": "Gray",
+      "red": "Red",
+      "teal": "Teal",
+      "dark": "Dark"
+    },
+    "num": "Page numbers",
+    "numPos": "Position",
+    "pos": {
+      "bottom-center": "Bottom center",
+      "bottom-right": "Bottom right",
+      "bottom-left": "Bottom left",
+      "top-center": "Top center",
+      "top-right": "Top right",
+      "top-left": "Top left"
+    },
+    "numFmt": "Format",
+    "fmtPageOfN": "Page 1 of N",
+    "numOfN": "{n} / {total}",
+    "numPageOfN": "Page {n} of {total}",
+    "lock": "Password lock",
+    "pwPlaceholder": "Open password (6+ chars)",
+    "pwConfirm": "Confirm password",
+    "apply": "Create finished PDF",
+    "working": "Finishing…",
+    "doneTitle": "Finished PDF ready",
+    "doneDesc": "Downloaded {name}{watermark}{numbers}{locked}",
+    "chkWm": " · watermark",
+    "chkNum": " · page numbers",
+    "chkLock": " · locked",
+    "pwShort": "Password must be at least 6 characters",
+    "pwMismatch": "Passwords do not match",
+    "wmEmpty": "Enter watermark text or turn the watermark off",
+    "errorTitle": "Could not finish the PDF",
+    "errorEncrypted": "This PDF is already password-protected — unlock it first, then finish.",
+    "errorGeneric": "Something went wrong while finishing — the original download is untouched."
   }
 }
