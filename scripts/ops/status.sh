@@ -10,9 +10,23 @@
 set -u
 
 ENV_FILE="${HOME}/.tokens/docopdf.env"
+BACKUP_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/.ops/token-backup.env"
+
+# SELF-HEAL: sandbox environment resets can wipe ~/.tokens. If the live env
+# file is missing but our gitignored backup exists, restore it automatically
+# (this exact silent failure already happened once — 2025-01 session).
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "MISSING $ENV_FILE — create it with GITHUB_TOKEN=... and VERCEL_TOKEN=..."
-  exit 1
+  if [[ -f "$BACKUP_FILE" ]]; then
+    mkdir -p "${HOME}/.tokens"
+    cp "$BACKUP_FILE" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    echo "⚠ SELF-HEALED $ENV_FILE from .ops/token-backup.env (was wiped by an environment reset)"
+  else
+    echo "FATAL: $ENV_FILE missing AND no backup at $BACKUP_FILE."
+    echo "       Recreate BOTH: put GITHUB_TOKEN=... VERCEL_TOKEN=... in $ENV_FILE,"
+    echo "       then copy it to $BACKUP_FILE (chmod 600)."
+    exit 1
+  fi
 fi
 # shellcheck disable=SC1090
 source "$ENV_FILE"

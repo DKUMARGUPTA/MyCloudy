@@ -28,6 +28,7 @@
 .env
 .env*
 .github-token
+.ops/
 .pnp.*
 .pnpm-debug.log*
 .vercel
