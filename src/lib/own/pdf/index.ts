@@ -23,10 +23,14 @@ export {
 } from "./document";
 export {
   organizePdf,
+  organizePages,
+  parseForOrganize,
   type OrganizeResult,
+  type OrganizeSource,
+  type OrganizeProgress,
   type PlanEntry,
 } from "./ops";
-export { writeDocument, type WritePage } from "./writer";
+export { writeDocument, type WritePage, type WriteProgress } from "./writer";
 export {
   type PdfObj,
   type PdfRef,

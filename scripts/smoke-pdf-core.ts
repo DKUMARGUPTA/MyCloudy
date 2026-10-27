@@ -31,9 +31,14 @@ import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 import {
   listPages,
   organizePdf,
+  organizePages,
+  parseForOrganize,
   parsePdf,
   PdfError,
   writeDocument,
+  type ParsedPdf,
+  type PdfObj,
+  type PdfPageInfo,
 } from "../src/lib/own/pdf";
 import { zlibSync } from "../src/lib/own/zip";
 import { Lexer } from "../src/lib/own/pdf/lexer";
@@ -61,6 +66,40 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
+}
+
+/**
+ * /Contents bytes for page i: stream ref, ARRAY of stream refs (pdf-lib
+ * writes this shape!), or a direct stream. Concatenates multi-stream
+ * arrays per spec semantics. Returns empty ONLY when the page truly has
+ * no content — never as a parsing cop-out (the P6-c vacuity lesson).
+ */
+function contentBytesOf(
+  doc: ParsedPdf,
+  pages: PdfPageInfo[],
+  i: number,
+): Uint8Array {
+  const value = pages[i]!.dict.get("Contents");
+  if (!value) return new Uint8Array(0);
+  const readOne = (v: PdfObj): Uint8Array => {
+    if (v.k === "stream") return v.raw;
+    if (v.k !== "ref") return new Uint8Array(0);
+    const s = doc.getObject(v.num);
+    return s && s.k === "stream" ? s.raw : new Uint8Array(0);
+  };
+  if (value.k === "arr") {
+    let total = 0;
+    const parts = value.items.map(readOne);
+    for (const p of parts) total += p.length;
+    const out = new Uint8Array(total);
+    let at = 0;
+    for (const p of parts) {
+      out.set(p, at);
+      at += p.length;
+    }
+    return out;
+  }
+  return readOne(value);
 }
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
@@ -420,12 +459,13 @@ async function main(): Promise<void> {
   {
     const src = parsePdf(fixA);
     const srcPages = listPages(src);
-    const originalContents = srcPages.map((p) => {
-      const r = p.dict.get("Contents");
-      if (!r || r.k !== "ref") return new Uint8Array(0);
-      const s = src.getObject(r.num);
-      return s && s.k === "stream" ? s.raw : new Uint8Array(0);
-    });
+    const originalContents = srcPages.map((_, i) =>
+      contentBytesOf(src, srcPages, i),
+    );
+    ok(
+      originalContents.every((c) => c.length > 0),
+      "round-trip: source content bytes CAPTURED (non-vacuous guard)",
+    );
     const plan = srcPages.map((_, i) => ({ kind: "page" as const, src: i }));
     const out = organizePdf(fixA, plan);
     ok(out.bytes.length > 1000, "round-trip: bytes emitted");
@@ -444,12 +484,13 @@ async function main(): Promise<void> {
     const backPages = listPages(back);
     eq(backPages.length, 5, "round-trip: OUR parser loads OUR output (self-compat)");
     let identical = true;
-    backPages.forEach((p, i) => {
-      const r = p.dict.get("Contents");
-      const s = r && r.k === "ref" ? back.getObject(r.num) : undefined;
-      const raw = s && s.k === "stream" ? s.raw : new Uint8Array(0);
+    let captured = 0;
+    backPages.forEach((_, i) => {
+      const raw = contentBytesOf(back, backPages, i);
+      if (raw.length > 0) captured += 1;
       if (!bytesEqual(raw, originalContents[i]!)) identical = false;
     });
+    eq(captured, 5, "round-trip: output content bytes CAPTURED (non-vacuous)");
     ok(identical, "round-trip: content streams BYTE-IDENTICAL after surgery");
   }
 
@@ -554,6 +595,100 @@ async function main(): Promise<void> {
       e3 = err instanceof PdfError ? err.code : "wrong";
     }
     eq(e3, "corrupt", "non-PDF bytes → corrupt");
+  }
+
+  console.log("== 13. duplicate source indices (pagegrid duplicate contract) ==");
+  {
+    const out = organizePdf(fixA, [
+      { kind: "page", src: 1 },
+      { kind: "page", src: 0 },
+      { kind: "page", src: 1, rotateDelta: 90 },
+    ]);
+    const backPages = listPages(parsePdf(out.bytes));
+    eq(backPages.length, 3, "duplicates: page count");
+    eq(backPages[0]!.rotate, 90, "duplicates: copy 1 keeps source rotation");
+    eq(backPages[2]!.rotate, 180, "duplicates: copy 2 gets its OWN rotation");
+    const srcDoc = parsePdf(fixA);
+    const srcPages = listPages(srcDoc);
+    const backDoc = parsePdf(out.bytes);
+    const backList = listPages(backDoc);
+    const c0 = contentBytesOf(backDoc, backList, 0);
+    const c2 = contentBytesOf(backDoc, backList, 2);
+    ok(c0.length > 0, "duplicates: copy 1 has content bytes (array /Contents)");
+    eq(
+      bytesEqual(c0, c2),
+      true,
+      "duplicates: both copies carry the source content bytes",
+    );
+    eq(
+      bytesEqual(c0, contentBytesOf(srcDoc, srcPages, 1)),
+      true,
+      "duplicates: content matches the SOURCE page",
+    );
+    const lib = await PDFDocument.load(out.bytes);
+    eq(lib.getPageCount(), 3, "duplicates: pdf-lib reload count");
+    eq(
+      lib.getPage(2).getRotation().angle,
+      180,
+      "duplicates: pdf-lib sees per-copy rotation",
+    );
+  }
+
+  console.log("== 14. split API + blank-from + progress (worker seam) ==");
+  {
+    const source = parseForOrganize(fixA); // ONE parse for everything below
+    const events: Array<[number, number]> = [];
+    const out1 = organizePages(
+      source,
+      [
+        { kind: "page", src: 0 },
+        { kind: "blank-from", src: 0 },
+        { kind: "page", src: 2, rotateDelta: 90 },
+      ],
+      (fraction, page) => events.push([fraction, page]),
+    );
+    const p1 = listPages(parsePdf(out1));
+    eq(p1.length, 3, "split API: plan length");
+    eq(
+      p1[1]!.mediaBox,
+      [0, 0, 612, 792],
+      "split API: blank-from sizes from src MediaBox",
+    );
+    eq(p1[2]!.rotate, 90, "split API: rotation delta applied");
+    eq(events.length, 3, "progress: one event per plan entry");
+    ok(
+      events.every(([f, p], i) => Math.abs(f - (i + 1) / 3) < 1e-9 && p === i + 1),
+      "progress: fractions and 1-based page numbers",
+    );
+    ok(
+      events.every(([f], i) => i === 0 || f >= events[i - 1]![0]),
+      "progress: monotonically non-decreasing",
+    );
+    // Second (and third) write from the SAME parse — the extract
+    // "one page = one file" path. Never re-parses the bytes.
+    const out2 = organizePages(source, [{ kind: "page", src: 2 }]);
+    const out3 = organizePages(source, [
+      { kind: "blank-from", src: 1 },
+      { kind: "page", src: 1 },
+    ]);
+    eq(listPages(parsePdf(out2)).length, 1, "split API: second write reuses the parse");
+    const p3 = listPages(parsePdf(out3));
+    eq(p3.length, 2, "split API: third write");
+    eq(
+      p3[0]!.mediaBox,
+      [0, 0, 300, 400],
+      "split API: blank-from on a non-first page",
+    );
+    const lib = await PDFDocument.load(out3);
+    eq(lib.getPageCount(), 2, "split API: pdf-lib reload");
+    // Degenerate MediaBox refusal for blank-from is covered by typed errors.
+    let e4 = "";
+    try {
+      organizePages(source, [{ kind: "blank", width: 0, height: 100 }]);
+    } catch (err) {
+      e4 = err instanceof PdfError ? err.code : "wrong";
+    }
+    eq(e4, "corrupt", "split API: degenerate blank size refused");
   }
 
   // Artifacts for manual inspection (VLM/pdfjs follow-ups).

@@ -1,5 +1,12 @@
 import { PDFDocument, degrees } from "pdf-lib";
 
+import {
+  PdfError,
+  organizePages,
+  parseForOrganize,
+  type OrganizeSource,
+  type PlanEntry,
+} from "@/lib/own/pdf";
 import type { OptionValues } from "@/lib/tools/config-types";
 import {
   parseGridOption,
@@ -27,9 +34,23 @@ import {
  * the legacy single-file path (options.grid / options.selected) runs
  * byte-for-byte as before.
  *
- * Device-only (PRD §2.3): pdf-lib in a Web Worker, File/Blob in and out,
- * zero network. Real per-page progress is posted while rebuilding.
+ * Device-only (PRD §2.3): Web Worker, File/Blob in and out, zero network.
+ * Real per-page progress is posted while rebuilding.
+ *
+ * ENGINE (P6-c): tools in OWN_ENGINE_TOOLS run on OUR own PDF micro-engine
+ * (src/lib/own/pdf — zero external code, one parse per file, byte-exact
+ * content passthrough). Rollout is one tool at a time; everything else
+ * still runs the pdf-lib path until its E2E round clears. The two paths
+ * share ALL batch/selection/naming logic — only the rebuild differs.
  */
+
+/** P6-c rollout set — a tool joins after its agent-browser E2E round. */
+const OWN_ENGINE_TOOLS: ReadonlySet<string> = new Set([
+  "extract-pdf-pages",
+  "rotate-pdf-pages",
+  "rearrange-pdf-pages",
+  "remove-pdf-pages",
+]);
 
 /** A4 portrait — the fallback size for leading blank pages. */
 const A4: [number, number] = [595.28, 841.89];
@@ -185,14 +206,45 @@ function resolveEntries(
   };
 }
 
+/** Maps an own-engine failure to the worker's i18n error code. */
+function engineErrorCode(error: unknown): string {
+  if (error instanceof PdfError && error.code === "encrypted") {
+    return "tool.errorEncrypted";
+  }
+  return "tool.errorCorrupt";
+}
+
 /**
- * Builds one output PDF from the given entries. Blank entries become real
- * blank pages sized like the first real page (A4 when the grid has none).
+ * Builds one output PDF from the given entries on OUR OWN engine (P6-c).
+ * Blank entries become real blank pages sized like the first real page of
+ * the OUTPUT (A4 when the grid has none) — byte-exact parity with the
+ * pdf-lib path's `copied[0]` sizing. `source` is the ONE parse for the
+ * file; every write reuses it (never re-parses the bytes).
  */
-async function buildOutput(
+function buildOutputOwn(
+  source: OrganizeSource,
+  entries: GridPage[],
+  progress: (fraction: number, page: number) => void
+): Uint8Array {
+  const firstReal = entries.find((entry) => entry.source >= 0)?.source ?? -1;
+  const plan: PlanEntry[] = entries.map((entry) => {
+    if (entry.source !== -1) {
+      return { kind: "page", src: entry.source, rotateDelta: entry.rotation };
+    }
+    return firstReal >= 0
+      ? { kind: "blank-from", src: firstReal }
+      : { kind: "blank", width: A4[0], height: A4[1] };
+  });
+  return organizePages(source, plan, progress);
+}
+
+/**
+ * Builds one output PDF from the given entries (legacy pdf-lib path —
+ * kept until each tool's own-engine E2E round clears, then P6-e removes it).
+ */
+async function buildOutputPdfLib(
   source: PDFDocument,
   entries: GridPage[],
-  runId: number,
   progress: (fraction: number, page: number) => void
 ): Promise<Uint8Array> {
   const out = await PDFDocument.create();
@@ -238,6 +290,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
   const isExtract = toolId === "extract-pdf-pages";
   const onePerPage = isExtract && options.onePerPage === true;
+  const useOwnEngine = OWN_ENGINE_TOOLS.has(toolId);
 
   // Batch mode: per-file grids keyed by workspace file id (all four family
   // tools). A malformed map is refused rather than guessed (never apply
@@ -335,6 +388,66 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     // R6-b honesty (merge-pdf standard): the batch can hold up to 20 files,
     // so the encrypted/corrupt toast must NAME the file that stopped the run.
+
+    // Per-file progress for the rebuild stage (same shape both engines).
+    const emit = (fraction: number, page: number): void => {
+      post({
+        type: "progress",
+        runId,
+        pct: Math.round(
+          ((fileIndex + fraction) / totalFiles) * 92
+        ),
+        stage: "processing",
+        detail: { page, pages: fileEntries.length },
+      });
+    };
+
+    const pushOutput = (saved: Uint8Array, name: string): void => {
+      outputs.push({
+        name,
+        mime: "application/pdf",
+        blob: new Blob([saved as unknown as BlobPart], {
+          type: "application/pdf",
+        }),
+      });
+    };
+
+    if (useOwnEngine) {
+      // ── OUR engine: ONE typed parse per file, every write reuses it ──
+      let source: OrganizeSource;
+      try {
+        source = parseForOrganize(bytes);
+      } catch (error: unknown) {
+        post({
+          type: "error",
+          runId,
+          code: engineErrorCode(error),
+          detail: file.name,
+        });
+        return;
+      }
+      if (onePerPage) {
+        for (let index = 0; index < fileEntries.length; index += 1) {
+          const saved = buildOutputOwn(source, [fileEntries[index]!], emit);
+          pushOutput(
+            saved,
+            uniqueName(`${base}_page${index + 1}.pdf`)
+          );
+        }
+      } else {
+        const saved = buildOutputOwn(source, fileEntries, emit);
+        post({
+          type: "progress",
+          runId,
+          pct: Math.round(((fileIndex + 1) / totalFiles) * 95),
+          stage: "saving",
+        });
+        pushOutput(saved, uniqueName(`${base}${suffix}.pdf`));
+      }
+      continue;
+    }
+
+    // ── Legacy pdf-lib path (until each tool's E2E round clears) ──
     // Structural probe first (pdf-lib ignoreEncryption load + isEncrypted —
     // never a raw-bytes "/Encrypt" sniff), then the plain load for corrupts.
     let probe: PDFDocument | null = null;
@@ -375,44 +488,24 @@ async function run(request: WorkerRunRequest): Promise<void> {
       return;
     }
 
-    const emit = (fraction: number, page: number): void => {
-      post({
-        type: "progress",
-        runId,
-        pct: Math.round(
-          ((fileIndex + fraction) / totalFiles) * 92
-        ),
-        stage: "processing",
-        detail: { page, pages: fileEntries.length },
-      });
-    };
-
     if (onePerPage) {
       for (let index = 0; index < fileEntries.length; index += 1) {
-        const saved = await buildOutput(source, [fileEntries[index]], runId, emit);
-        outputs.push({
-          name: uniqueName(`${base}_page${index + 1}.pdf`),
-          mime: "application/pdf",
-          blob: new Blob([saved as unknown as BlobPart], {
-            type: "application/pdf",
-          }),
-        });
+        const saved = await buildOutputPdfLib(
+          source,
+          [fileEntries[index]!],
+          emit
+        );
+        pushOutput(saved, uniqueName(`${base}_page${index + 1}.pdf`));
       }
     } else {
-      const saved = await buildOutput(source, fileEntries, runId, emit);
+      const saved = await buildOutputPdfLib(source, fileEntries, emit);
       post({
         type: "progress",
         runId,
         pct: Math.round(((fileIndex + 1) / totalFiles) * 95),
         stage: "saving",
       });
-      outputs.push({
-        name: uniqueName(`${base}${suffix}.pdf`),
-        mime: "application/pdf",
-        blob: new Blob([saved as unknown as BlobPart], {
-          type: "application/pdf",
-        }),
-      });
+      pushOutput(saved, uniqueName(`${base}${suffix}.pdf`));
     }
   }
 
@@ -428,10 +521,11 @@ self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
   const data = event.data;
   if (data?.type !== "run") return;
   run(data).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    const code = /encrypt/i.test(message)
-      ? "tool.errorEncrypted"
-      : "tool.errorCorrupt";
-    post({ type: "error", runId: data.runId, code, detail: undefined });
+    post({
+      type: "error",
+      runId: data.runId,
+      code: engineErrorCode(error),
+      detail: undefined,
+    });
   });
 };

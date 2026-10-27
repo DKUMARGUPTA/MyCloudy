@@ -68,6 +68,8 @@ interface EmitEntry {
   /** Source doc for ref remapping (undefined for pure synthetics). */
   doc?: ParsedPdf;
   obj: PdfObj;
+  /** 1-based plan position for page dicts (drives the progress hook). */
+  pageNo?: number;
 }
 
 function serialize(
@@ -133,12 +135,20 @@ function serialize(
   }
 }
 
+/** Progress hook: (fraction of pages written, 1-based page number). */
+export type WriteProgress = (fraction: number, page: number) => void;
+
 /**
  * Build the output document. Deterministic numbering:
  *   1 = catalog, 2 = /Pages tree, then each page dict (and each blank
  *   page's content stream) in plan order, then BFS-copied graphs.
+ * `onPage` fires after each plan page's object is serialized.
  */
-export function writeDocument(pages: WritePage[], version?: string): Uint8Array {
+export function writeDocument(
+  pages: WritePage[],
+  version?: string,
+  onPage?: WriteProgress,
+): Uint8Array {
   const map = new Map<string, number>(); // `${docIdx}:${srcNum}` → new num
   const emit: EmitEntry[] = [];
   const docIdx = new Map<ParsedPdf, number>();
@@ -154,11 +164,12 @@ export function writeDocument(pages: WritePage[], version?: string): Uint8Array 
   const kids: PdfObj[] = [];
 
   // ── page objects (synthetics) ──
-  for (const p of pages) {
+  for (let planIndex = 0; planIndex < pages.length; planIndex += 1) {
+    const p = pages[planIndex]!;
     if (p.type === "copy") {
       const newNum = next++;
       map.set(`${docIdx.get(p.doc)}:${p.srcNum}`, newNum);
-      emit.push({ doc: p.doc, obj: { k: "dict", m: p.dict } });
+      emit.push({ doc: p.doc, obj: { k: "dict", m: p.dict }, pageNo: planIndex + 1 });
       kids.push({ k: "ref", num: newNum, gen: 0 });
     } else {
       // Blank page: dict + empty content stream, both synthetic.
@@ -187,7 +198,7 @@ export function writeDocument(pages: WritePage[], version?: string): Uint8Array 
         m: new Map<string, PdfObj>([["Length", { k: "num", n: 0 }]]),
         raw: new Uint8Array(0),
       };
-      emit.push({ obj: { k: "dict", m: pageDict } });
+      emit.push({ obj: { k: "dict", m: pageDict }, pageNo: planIndex + 1 });
       emit.push({ obj: emptyStream });
       kids.push({ k: "ref", num: dictNum, gen: 0 });
     }
@@ -264,6 +275,10 @@ export function writeDocument(pages: WritePage[], version?: string): Uint8Array 
     sink.text(`${i + 1} 0 obj\n`);
     serialize(sink, all[i]!.obj, mapRef, all[i]!.doc);
     sink.text("\nendobj\n");
+    const entry = all[i]!;
+    if (entry.pageNo !== undefined && onPage !== undefined) {
+      onPage(entry.pageNo / pages.length, entry.pageNo);
+    }
   }
 
   const count = all.length + 1; // + free entry 0
