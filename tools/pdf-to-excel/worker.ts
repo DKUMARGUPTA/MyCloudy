@@ -4,28 +4,33 @@ import {
   workerDocumentShim,
 } from "../pdfjs-common/worker-lib";
 import {
+  axisSegmentsFromOperatorList,
   buildOutputName,
   buildXlsx,
   excelBaseName,
   extractGrid,
+  extractRuledGrid,
   gridItemsFromRaw,
   parseRun,
+  type LatticeOps,
   XLSX_MIME,
   type XlsxSheet,
 } from "./model";
 
 /**
  * PDF → Excel worker (RB1-d — the 70th tool): pdf.js runs INSIDE this
- * worker (fake-worker mode, the pdf-to-txt recipe), every page's text
- * items go through extractGrid, and the sheets become a real .xlsx via
- * the model's fflate zipSync. Device-only: the file arrives by
- * structured clone and the Blob leaves the same way.
+ * worker (fake-worker mode, the pdf-to-txt recipe). Every page's text
+ * content AND operator list are read; pages that draw their table hand
+ * their border geometry to extractRuledGrid (exact cells), everything
+ * else falls back to extractGrid. Sheets become a real .xlsx via our
+ * own ZIP engine. Device-only: the file arrives by structured clone and
+ * the Blob leaves the same way.
  *
  * Pinned lessons honoured here:
  *  - the buffer handed to getDocument is a FRESH copy (pdf.js detaches
  *    whatever it receives);
  *  - doc.destroy() in a finally, pages cleanup()ped right after their
- *    text content is read;
+ *    content is read;
  *  - scans (zero selectable text on every page) fail honestly with
  *    tool.errorNoText instead of shipping an empty workbook.
  *
@@ -48,6 +53,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   const pdfjs = await loadPdfjsInWorker();
+  const ops = (pdfjs as unknown as { OPS: LatticeOps }).OPS;
   // Fresh copy per run — pdf.js DETACHES the buffer it receives.
   const data = new Uint8Array(await file.arrayBuffer());
   const doc = await pdfjs.getDocument({
@@ -67,14 +73,33 @@ async function run(request: WorkerRunRequest): Promise<void> {
     for (let page = 1; page <= doc.numPages; page += 1) {
       const pdfPage = await doc.getPage(page);
       let content;
+      let opList: {
+        fnArray: ArrayLike<number>;
+        argsArray: ArrayLike<unknown>;
+      } | null = null;
       try {
         content = await pdfPage.getTextContent();
+        // Border geometry for the ruled-table reader; pages whose
+        // operator list cannot be read just fall back to clustering.
+        opList = (await pdfPage.getOperatorList().catch(() => null)) as {
+          fnArray: ArrayLike<number>;
+          argsArray: ArrayLike<unknown>;
+        } | null;
       } finally {
         pdfPage.cleanup();
       }
       const items = gridItemsFromRaw(content.items as unknown[]);
       itemCount += items.length;
-      grids.push(extractGrid(items));
+      let grid: string[][] | null = null;
+      if (opts.ruled && opList) {
+        const segs = axisSegmentsFromOperatorList(
+          opList.fnArray,
+          opList.argsArray,
+          ops
+        );
+        grid = extractRuledGrid(items, segs);
+      }
+      grids.push(grid ?? extractGrid(items));
       post({
         type: "progress",
         runId,

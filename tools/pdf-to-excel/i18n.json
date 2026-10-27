@@ -2,7 +2,7 @@
   "en": {
     "pdfxcel": {
       "how1": "Drop a PDF that has a table on it — the file is read right here on your device, nothing uploads.",
-      "how2": "The detector clusters the text into rows and columns and shows you the grid it found on page 1 before you commit.",
+      "how2": "Bordered tables are read cell-for-cell from their own rule lines; borderless pages fall back to position clustering — and the grid found on page 1 shows before you commit.",
       "how3": "Convert to a real .xlsx workbook — one sheet per page or one stacked sheet — and it downloads instantly.",
       "dropLabel": "Select or drop a PDF",
       "dropHint": "Table-heavy PDFs — invoices, statements, reports — give the cleanest spreadsheets.",
@@ -23,7 +23,9 @@
       "modeSingleHint": "All pages stack into one worksheet — best for one table flowing across pages.",
       "numericLabel": "Numbers as numeric cells",
       "numericHint": "Pure numbers like 42 or 80.5 become real Excel numbers; everything else stays text.",
-      "ruleNote": "Rule-based detection: aligned, tabular PDFs come out cleanest; tangled layouts may need a quick tidy-up.",
+      "ruledLabel": "Read ruled tables from their borders",
+      "ruledHint": "Pages that draw real border lines (invoices, statements) come out as exact cell grids — no guessing from spacing. Pages without borders fall back to position clustering.",
+      "ruleNote": "Rule-based detection: bordered tables read cell-for-cell; aligned, tabular PDFs come out cleanest; tangled layouts may need a quick tidy-up.",
       "limitsNote": "Limits: up to 20 sheets, 500 rows and 60 columns per sheet (extra content is dropped).",
       "convertBtn": "Convert to Excel",
       "converting": "Converting — {pct}%",
@@ -38,7 +40,7 @@
   "hi": {
     "pdfxcel": {
       "how1": "जिस PDF में टेबल हो वह डालें — फ़ाइल आपके ही डिवाइस पर पढ़ी जाती है, कहीं अपलोड नहीं होती।",
-      "how2": "डिटेक्टर टेक्स्ट को पंक्तियों और कॉलमों में बाँटकर पेज 1 पर मिला ग्रिड बदलने से पहले दिखाता है।",
+      "how2": "बॉर्डर वाली टेबल उनकी अपनी लाइनों से सेल-दर-सेल पढ़ी जाती है; बिना बॉर्डर वाले पेज पोज़िशन क्लस्टरिंग पर चलते हैं — और पेज 1 पर मिला ग्रिड बदलने से पहले दिखता है।",
       "how3": "असली .xlsx वर्कबुक में बदलें — हर पेज की अलग शीट या सब एक शीट में — फ़ाइल तुरंत डाउनलोड।",
       "dropLabel": "PDF चुनें या ड्रॉप करें",
       "dropHint": "टेबल वाली PDF — बिल, स्टेटमेंट, रिपोर्ट — सबसे साफ़ स्प्रेडशीट बनाती हैं।",
@@ -59,7 +61,9 @@
       "modeSingleHint": "सारे पेज एक ही वर्कशीट में जुड़ते हैं — कई पेजों में फैली एक टेबल के लिए।",
       "numericLabel": "नंबर असली नंबर सेल बनें",
       "numericHint": "42 या 80.5 जैसे शुद्ध नंबर Excel के असली नंबर बनते हैं; बाकी सब टेक्स्ट रहता है।",
-      "ruleNote": "नियम-आधारित पहचान: सीधी-सपाट टेबल वाली PDF सबसे साफ़ निकलती हैं; उलझे लेआउट पर थोड़ी सफ़ाई करनी पड़ सकती है।",
+      "ruledLabel": "बॉर्डर वाली टेबल लाइनों से पढ़ें",
+      "ruledHint": "जिन पेजों पर असली बॉर्डर लाइनें खिंची हैं (बिल, स्टेटमेंट) वे सटीक सेल-ग्रिड बनते हैं — फ़ासले से अंदाज़ा नहीं। बिना बॉर्डर वाले पेज पोज़िशन क्लस्टरिंग पर चलते हैं।",
+      "ruleNote": "नियम-आधारित पहचान: बॉर्डर वाली टेबल सेल-दर-सेल पढ़ी जाती है; सीधी-सपाट टेबल वाली PDF सबसे साफ़ निकलती हैं; उलझे लेआउट पर थोड़ी सफ़ाई करनी पड़ सकती है।",
       "limitsNote": "सीमाएँ: 20 शीट तक, हर शीट में 500 पंक्तियाँ और 60 कॉलम (ज़्यादा हिस्सा हट जाता है)।",
       "convertBtn": "एक्सेल में बदलें",
       "converting": "बदला जा रहा है — {pct}%",

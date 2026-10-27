@@ -21,9 +21,12 @@ import { formatBytes } from "@/lib/storage/recent-files";
 import { PDF_DOC_PARAMS, loadPdfjs } from "@/lib/pdf/pdfjs";
 import type { WorkerResponse } from "@/lib/workers/protocol";
 import {
+  axisSegmentsFromOperatorList,
   extractGrid,
+  extractRuledGrid,
   gridItemsFromRaw,
   type GridTextItem,
+  type LatticeOps,
 } from "./model";
 
 /**
@@ -33,12 +36,13 @@ import {
  *  - its own DropZone (the shared component sniffs %PDF- magic bytes,
  *    never extensions);
  *  - a live page-1 probe: pdf.js reads the first page on the MAIN
- *    thread (text content only, no render) and the same extractGrid the
- *    worker uses reports the detected rows × columns before you commit
- *    — scans and unreadable files warn honestly instead;
- *  - the sheet-mode and numeric-cell options, serialized into the
- *    worker's `excel` payload with pre-resolved labels (the UI language
- *    names the output file);
+ *    thread (text content + operator list, no render) and the SAME
+ *    ruled-then-clustered pipeline the worker uses reports the detected
+ *    rows × columns before you commit — scans and unreadable files warn
+ *    honestly instead;
+ *  - the sheet-mode, numeric-cell and ruled-table options, serialized
+ *    into the worker's `excel` payload with pre-resolved labels (the UI
+ *    language names the output file);
  *  - Convert spawns the worker, streams real progress and downloads +
  *    toasts. Device-only, like every tool here.
  */
@@ -71,6 +75,7 @@ export function PdfToExcelSurface({
 
   const [sheetMode, setSheetMode] = useState<SheetMode>("perPage");
   const [numericCells, setNumericCells] = useState(true);
+  const [ruledTables, setRuledTables] = useState(true);
   const [probe, setProbe] = useState<Probe>(null);
   const [pct, setPct] = useState<number | null>(null);
   const [done, setDone] = useState<{ name: string; blob: Blob } | null>(null);
@@ -89,6 +94,7 @@ export function PdfToExcelSurface({
     void (async () => {
       try {
         const pdfjs = await loadPdfjs();
+        const ops = (pdfjs as unknown as { OPS: LatticeOps }).OPS;
         // Fresh copy — pdf.js DETACHES the buffer it receives.
         const data = new Uint8Array(await file.arrayBuffer());
         const doc = await pdfjs.getDocument({
@@ -98,9 +104,28 @@ export function PdfToExcelSurface({
         try {
           const page = await doc.getPage(1);
           let items: GridTextItem[] = [];
+          let grid: string[][] | null = null;
           try {
             const content = await page.getTextContent();
             items = gridItemsFromRaw(content.items as unknown[]);
+            // Same pipeline as the worker: ruled lattice first, then
+            // position clustering — the preview IS the output.
+            const opList = (await page
+              .getOperatorList()
+              .catch(() => null)) as {
+              fnArray: ArrayLike<number>;
+              argsArray: ArrayLike<unknown>;
+            } | null;
+            if (ruledTables && opList && items.length > 0) {
+              grid = extractRuledGrid(
+                items,
+                axisSegmentsFromOperatorList(
+                  opList.fnArray,
+                  opList.argsArray,
+                  ops
+                )
+              );
+            }
           } finally {
             page.cleanup();
           }
@@ -109,13 +134,13 @@ export function PdfToExcelSurface({
             setProbe({ file, kind: "scan" });
             return;
           }
-          const grid = extractGrid(items);
+          const finalGrid = grid ?? extractGrid(items);
           setProbe({
             file,
             kind: "ok",
             pages: doc.numPages,
-            rows: grid.length,
-            cols: grid[0]?.length ?? 0,
+            rows: finalGrid.length,
+            cols: finalGrid[0]?.length ?? 0,
           });
         } finally {
           await doc.destroy().catch(() => undefined);
@@ -130,7 +155,7 @@ export function PdfToExcelSurface({
     return () => {
       cancelled = true;
     };
-  }, [file, setRunBlocked]);
+  }, [file, ruledTables, setRunBlocked]);
 
   /* -------- Convert (surface-driven run, create-card pattern) -------- */
 
@@ -198,6 +223,7 @@ export function PdfToExcelSurface({
         excel: JSON.stringify({
           sheetMode,
           numericCells,
+          ruled: ruledTables,
           locale,
           labels: {
             fileWord: t("pdfxcel.fileWord"),
@@ -208,7 +234,7 @@ export function PdfToExcelSurface({
       },
       files: [file],
     });
-  }, [file, locale, numericCells, sheetMode, t, toast]);
+  }, [file, locale, numericCells, ruledTables, sheetMode, t, toast]);
 
   // Never leave a worker spinning behind a remount (phase changes).
   useEffect(() => {
@@ -406,6 +432,27 @@ export function PdfToExcelSurface({
             id="pdfxcel-numeric"
             checked={numericCells}
             onCheckedChange={setNumericCells}
+            disabled={busy}
+            className="mt-0.5 shrink-0"
+          />
+        </div>
+
+        <div className="mt-4 flex items-start justify-between gap-3 border-t border-border pt-4">
+          <div className="min-w-0">
+            <Label
+              htmlFor="pdfxcel-ruled"
+              className="text-xs font-medium text-foreground"
+            >
+              {t("pdfxcel.ruledLabel")}
+            </Label>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              {t("pdfxcel.ruledHint")}
+            </p>
+          </div>
+          <Switch
+            id="pdfxcel-ruled"
+            checked={ruledTables}
+            onCheckedChange={setRuledTables}
             disabled={busy}
             className="mt-0.5 shrink-0"
           />

@@ -2,10 +2,15 @@ import { zipSync, strToU8, type Zippable } from "@/lib/own/zip";
 
 /**
  * PDF → Excel model (RB1-d — the 70th tool). PURE TypeScript: no pdfjs,
- * no DOM, no imports beyond fflate — the smoke script drives every export
- * headless in bun.
+ * no DOM, no imports beyond our own ZIP engine — the smoke script drives
+ * every export headless in bun.
  *
- * The extraction is honest rule-based geometry (the FAQ says so):
+ * Two extractors, both honest rule-based geometry:
+ *   A. extractRuledGrid (P5 "table rebuild") — pages that DRAW their
+ *      table hand their operator-list line/rect geometry to a lattice
+ *      reader; cells are exact (see the ruled-table lattice block).
+ *   B. extractGrid — text items cluster into y-bands and chain-merged
+ *      x-starts (the classic fallback):
  *   1. rows    — text items cluster into y-bands (baseline within half a
  *                font height, the pdf-to-txt recipe);
  *   2. columns — unique x-starts are chain-merged within a tolerance
@@ -272,6 +277,25 @@ export function sanitizeSheetName(
   return candidate;
 }
 
+/* --------------------------- shared sanitize -------------------------- */
+
+/** Clean GridTextItems into sortable pieces (shared by both extractors). */
+function sanitizePieces(items: GridTextItem[]): Piece[] {
+  const pieces: Piece[] = [];
+  for (const item of items) {
+    if (typeof item?.str !== "string") continue;
+    const str = item.str.replace(/\s+/g, " ").trim();
+    if (str.length === 0) continue;
+    const x = Number(item.x);
+    const y = Number(item.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const w = Number.isFinite(Number(item?.w)) ? Math.max(0, Number(item.w)) : 0;
+    const sizeRaw = Number(item?.size);
+    pieces.push({ str, x, y, w, size: sizeRaw > 0 ? sizeRaw : 10 });
+  }
+  return pieces;
+}
+
 /* ----------------------------- extractGrid ---------------------------- */
 
 interface Piece {
@@ -311,18 +335,7 @@ export function extractGrid(
   const wrapGapFactor = options.wrapGapFactor ?? WRAP_GAP_FACTOR;
 
   /* -- sanitize: collapse whitespace, drop empty/insane geometry -- */
-  const pieces: Piece[] = [];
-  for (const item of items) {
-    if (typeof item?.str !== "string") continue;
-    const str = item.str.replace(/\s+/g, " ").trim();
-    if (str.length === 0) continue;
-    const x = Number(item.x);
-    const y = Number(item.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    const w = Number.isFinite(Number(item?.w)) ? Math.max(0, Number(item.w)) : 0;
-    const sizeRaw = Number(item?.size);
-    pieces.push({ str, x, y, w, size: sizeRaw > 0 ? sizeRaw : 10 });
-  }
+  const pieces = sanitizePieces(items);
   if (pieces.length === 0) return [];
 
   /* -- 1. visual rows: y-bands, top of the page first (PDF y is up) -- */
@@ -470,6 +483,420 @@ export function extractGrid(
   );
 }
 
+/* ------------------------- ruled-table lattice ------------------------ */
+
+/**
+ * P5 "table rebuild": when a page DRAWS its table (real rule lines —
+ * invoices, statements, bank PDFs), the exact grid is read from those
+ * borders instead of guessing columns from text alignment. The operator
+ * list (pdf.js `getOperatorList`) is parsed into axis-aligned segments
+ * with a save/restore/transform CTM tracker, clustered into a lattice,
+ * and text items are dropped into the exact cells. Pages without ruling
+ * (or an incoherent lattice) fall back to extractGrid — the probe and
+ * the worker always use the same order, so the preview is the output.
+ *
+ * Honest limits: one dominant lattice per page is supported; multiple
+ * bordered structures on one page usually fail the occupancy check and
+ * fall back; text that spills outside the ruled region is re-clustered
+ * as plain rows above/below the table.
+ */
+
+/** The pdf.js OPS codes this parser understands (injected, never imported). */
+export interface LatticeOps {
+  constructPath: number;
+  save: number;
+  restore: number;
+  transform: number;
+  moveTo: number;
+  lineTo: number;
+  curveTo: number;
+  curveTo2: number;
+  curveTo3: number;
+  closePath: number;
+  rectangle: number;
+}
+
+/** Horizontal segment (y = its level, x1 < x2 after ordering). */
+export interface HSegment {
+  y: number;
+  x1: number;
+  x2: number;
+}
+
+/** Vertical segment (x = its level, y1 < y2 after ordering). */
+export interface VSegment {
+  x: number;
+  y1: number;
+  y2: number;
+}
+
+export interface AxisSegments {
+  h: HSegment[];
+  v: VSegment[];
+}
+
+/** Two coordinates off a curve op (consumed, ignored). */
+const CURVE_COORDS: Record<string, number> = {
+  curveTo: 6,
+  curveTo2: 4,
+  curveTo3: 4,
+};
+
+/** Affine matrix [a b c d e f] as pdf.js writes them. */
+type Mat = [number, number, number, number, number, number];
+
+const IDENTITY: Mat = [1, 0, 0, 1, 0, 0];
+
+/** m × n (apply m AFTER n: device = m × n × point). */
+function mulMat(m: Mat, n: Mat): Mat {
+  return [
+    m[0] * n[0] + m[1] * n[2],
+    m[0] * n[1] + m[1] * n[3],
+    m[2] * n[0] + m[3] * n[2],
+    m[2] * n[1] + m[3] * n[3],
+    m[4] * n[0] + m[5] * n[2] + n[4],
+    m[4] * n[1] + m[5] * n[3] + n[5],
+  ];
+}
+
+/** Axis-alignment tolerance for one segment after CTM mapping (pt). */
+const AXIS_TOL = 1;
+
+/**
+ * Parse one page's pdf.js operator list into axis-aligned segments in
+ * PDF user space. constructPath args = [pathOps, coords, minMax?]; the
+ * coords are UNTRANSFORMED (the canvas CTM applies at replay time), so
+ * save/restore/transform ops are tracked and applied here to land in
+ * the same space as getTextContent items. Curves are consumed but never
+ * contribute segments (table rules are straight); rectangles contribute
+ * their four edges (filled rule-bars are the classic border form).
+ */
+export function axisSegmentsFromOperatorList(
+  fnArray: ArrayLike<number>,
+  argsArray: ArrayLike<unknown>,
+  ops: LatticeOps
+): AxisSegments {
+  const out: AxisSegments = { h: [], v: [] };
+  const stack: Mat[] = [];
+  let ctm: Mat = [...IDENTITY];
+
+  const addSeg = (ax: number, ay: number, bx: number, by: number): void => {
+    if (!Number.isFinite(ax) || !Number.isFinite(ay)) return;
+    if (!Number.isFinite(bx) || !Number.isFinite(by)) return;
+    if (Math.abs(ay - by) <= AXIS_TOL && Math.abs(ax - bx) > 0) {
+      out.h.push({
+        y: (ay + by) / 2,
+        x1: Math.min(ax, bx),
+        x2: Math.max(ax, bx),
+      });
+    } else if (Math.abs(ax - bx) <= AXIS_TOL && Math.abs(ay - by) > 0) {
+      out.v.push({
+        x: (ax + bx) / 2,
+        y1: Math.min(ay, by),
+        y2: Math.max(ay, by),
+      });
+    }
+  };
+
+  for (let i = 0; i < fnArray.length; i += 1) {
+    const fn = fnArray[i];
+    if (fn === ops.save) {
+      stack.push([...ctm] as Mat);
+      continue;
+    }
+    if (fn === ops.restore) {
+      const popped = stack.pop();
+      if (popped) ctm = popped;
+      continue;
+    }
+    if (fn === ops.transform) {
+      const a = argsArray[i] as ArrayLike<number> | undefined;
+      if (a && a.length >= 6) {
+        const m: Mat = [
+          Number(a[0]) || 0,
+          Number(a[1]) || 0,
+          Number(a[2]) || 0,
+          Number(a[3]) || 0,
+          Number(a[4]) || 0,
+          Number(a[5]) || 0,
+        ];
+        ctm = mulMat(m, ctm);
+      }
+      continue;
+    }
+    if (fn !== ops.constructPath) continue;
+
+    const args = argsArray[i];
+    if (!Array.isArray(args)) continue;
+    const pathOps = args[0] as ArrayLike<number> | undefined;
+    const coords = args[1] as ArrayLike<number> | undefined;
+    if (!pathOps || !coords) continue;
+
+    let ci = 0;
+    let curX = 0;
+    let curY = 0;
+    let hasCur = false;
+    let startX = 0;
+    let startY = 0;
+    const applyCtm = (x: number, y: number): [number, number] => [
+      ctm[0] * x + ctm[2] * y + ctm[4],
+      ctm[1] * x + ctm[3] * y + ctm[5],
+    ];
+
+    for (let p = 0; p < pathOps.length; p += 1) {
+      const op = pathOps[p];
+      if (op === ops.moveTo) {
+        const [x, y] = applyCtm(coords[ci] as number, coords[ci + 1] as number);
+        ci += 2;
+        curX = x;
+        curY = y;
+        startX = x;
+        startY = y;
+        hasCur = true;
+      } else if (op === ops.lineTo) {
+        const [x, y] = applyCtm(coords[ci] as number, coords[ci + 1] as number);
+        ci += 2;
+        if (hasCur) addSeg(curX, curY, x, y);
+        curX = x;
+        curY = y;
+        hasCur = true;
+      } else if (op === ops.rectangle) {
+        const rx = coords[ci] as number;
+        const ry = coords[ci + 1] as number;
+        const rw = coords[ci + 2] as number;
+        const rh = coords[ci + 3] as number;
+        ci += 4;
+        const [x1, y1] = applyCtm(rx, ry);
+        const [x2, y2] = applyCtm(rx + rw, ry + rh);
+        addSeg(x1, y1, x2, y1);
+        addSeg(x1, y2, x2, y2);
+        addSeg(x1, y1, x1, y2);
+        addSeg(x2, y1, x2, y2);
+        hasCur = false;
+      } else if (op === ops.closePath) {
+        if (hasCur) addSeg(curX, curY, startX, startY);
+        hasCur = false;
+      } else if (
+        op === ops.curveTo ||
+        op === ops.curveTo2 ||
+        op === ops.curveTo3
+      ) {
+        ci +=
+          op === ops.curveTo
+            ? CURVE_COORDS.curveTo
+            : op === ops.curveTo2
+              ? CURVE_COORDS.curveTo2
+              : CURVE_COORDS.curveTo3;
+        hasCur = false;
+      }
+    }
+  }
+  return out;
+}
+
+/** Cluster tolerance for joining near-equal rule levels (pt). Hairline
+ *  rule-bars drawn as thin rectangles land 0.5–1 pt apart — real row
+ *  spacing never comes that close (≥ font size + padding). */
+const RULE_CLUSTER_TOL = 2.5;
+
+/** A cluster of near-equal rule levels with its union extent. */
+interface RuleCluster {
+  level: number;
+  lo: number;
+  hi: number;
+}
+
+function clusterLevels(
+  values: number[],
+  extents: Array<[number, number]>
+): RuleCluster[] {
+  const order = values
+    .map((level, i) => ({ level, i }))
+    .sort((a, b) => a.level - b.level);
+  const clusters: RuleCluster[] = [];
+  let acc: number[] = [];
+  let accExt: Array<[number, number]> = [];
+  const flush = (): void => {
+    if (acc.length === 0) return;
+    const level = acc.reduce((s, v) => s + v, 0) / acc.length;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const [a, b] of accExt) {
+      lo = Math.min(lo, a);
+      hi = Math.max(hi, b);
+    }
+    clusters.push({ level, lo, hi });
+    acc = [];
+    accExt = [];
+  };
+  for (const { level, i } of order) {
+    const last = acc[acc.length - 1];
+    if (last === undefined || Math.abs(level - last) <= RULE_CLUSTER_TOL) {
+      acc.push(level);
+      accExt.push(extents[i] as [number, number]);
+    } else {
+      flush();
+      acc = [level];
+      accExt = [extents[i] as [number, number]];
+    }
+  }
+  flush();
+  return clusters;
+}
+
+/** Minimum h/v cluster counts for a lattice (2 row-bands × 2 col-bands). */
+const MIN_RULES = 3;
+/** A column/row rule must span this share of the lattice's other axis. */
+const SPAN_SHARE = 0.6;
+/** Row/column bands must be this occupied to keep the lattice honest. */
+const ROW_OCCUPANCY = 0.6;
+const COL_OCCUPANCY = 0.5;
+
+/** One ruled table cell's pieces before joining. */
+interface CellPieces {
+  y: number;
+  x: number;
+  w: number;
+  size: number;
+  str: string;
+}
+
+/**
+ * Build the exact grid from a ruled lattice. Returns null when the page
+ * does not carry a coherent ruled table (too few rules, rules that do
+ * not span, or bands too empty — multiple boxes on one page usually
+ * fail here and fall back to position clustering, honestly).
+ */
+export function extractRuledGrid(
+  items: GridTextItem[],
+  segs: AxisSegments
+): string[][] | null {
+  if (segs.h.length === 0 || segs.v.length === 0) return null;
+
+  const pieces = sanitizePieces(items);
+  if (pieces.length === 0) return null;
+
+  /* cluster rules into levels (h: top-first, v: left-first) */
+  const hAll = clusterLevels(
+    segs.h.map((s) => s.y),
+    segs.h.map((s): [number, number] => [s.x1, s.x2])
+  ).sort((a, b) => b.level - a.level);
+  const vAll = clusterLevels(
+    segs.v.map((s) => s.x),
+    segs.v.map((s): [number, number] => [s.y1, s.y2])
+  ).sort((a, b) => a.level - b.level);
+  if (hAll.length < MIN_RULES || vAll.length < MIN_RULES) return null;
+
+  /* lattice bbox + span filter (a rule must cross most of the table) */
+  const xL = vAll[0].level;
+  const xR = vAll[vAll.length - 1].level;
+  const yTop = hAll[0].level;
+  const yBot = hAll[hAll.length - 1].level;
+  const tableW = xR - xL;
+  const tableH = yTop - yBot;
+  if (tableW <= 0 || tableH <= 0) return null;
+
+  const hRules = hAll.filter((c) => c.hi - c.lo >= SPAN_SHARE * tableW);
+  const vRules = vAll.filter((c) => c.hi - c.lo >= SPAN_SHARE * tableH);
+  if (hRules.length < MIN_RULES || vRules.length < MIN_RULES) return null;
+  const hY = hRules.map((c) => c.level);
+  const vX = vRules.map((c) => c.level);
+  const rowBands = hY.length - 1;
+  const colBands = vX.length - 1;
+
+  /* assign pieces to cells (rows: baseline sits in its band — a baseline
+   * ON a rule belongs to the row above it, glyphs grow up from it) */
+  const cells: CellPieces[][][] = Array.from({ length: rowBands }, () =>
+    Array.from({ length: colBands }, () => [] as CellPieces[])
+  );
+  const outPieces: Piece[] = [];
+  for (const piece of pieces) {
+    const cx = piece.x + piece.w / 2;
+    let row = -1;
+    for (let i = 0; i + 1 < hY.length && row < 0; i += 1) {
+      if (hY[i] >= piece.y && piece.y >= hY[i + 1]) row = i;
+    }
+    let col = -1;
+    for (let j = 0; j + 1 < vX.length && col < 0; j += 1) {
+      if (vX[j] <= cx && cx <= vX[j + 1]) col = j;
+    }
+    if (row < 0 || col < 0) {
+      outPieces.push(piece);
+    } else {
+      cells[row][col].push(piece);
+    }
+  }
+
+  /* text height bands (for wrapped-line joining inside a cell) */
+  const rowHasText = cells.map(
+    (row) => row.some((cell) => cell.length > 0)
+  );
+  const colHasText = Array.from({ length: colBands }, (_, j) =>
+    cells.some((row) => row[j].length > 0)
+  );
+
+  /* edge-prune empty bands (background rectangles wider/taller than the
+   * table add phantom edge bands; real leading/trailing empty rows-cols
+   * are vanishingly rare, inner ones always survive) */
+  let r0 = 0;
+  let r1 = rowBands;
+  let c0 = 0;
+  let c1 = colBands;
+  while (r1 - r0 > 2 && !rowHasText[r0]) r0 += 1;
+  while (r1 - r0 > 2 && !rowHasText[r1 - 1]) r1 -= 1;
+  while (c1 - c0 > 2 && !colHasText[c0]) c0 += 1;
+  while (c1 - c0 > 2 && !colHasText[c1 - 1]) c1 -= 1;
+
+  const rowsTotal = r1 - r0;
+  const colsTotal = c1 - c0;
+  if (rowsTotal < 2 || colsTotal < 2) return null;
+
+  /* occupancy: a lattice where most bands are empty is not one table
+   * (two boxes on a page) — fall back instead of shipping a ragged union */
+  const rowsFilled = rowHasText.slice(r0, r1).filter(Boolean).length;
+  const colsFilled = colHasText.slice(c0, c1).filter(Boolean).length;
+  if (rowsFilled / rowsTotal < ROW_OCCUPANCY) return null;
+  if (colsFilled / colsTotal < COL_OCCUPANCY) return null;
+
+  /* cell text: pieces sorted top-line-first then x; same-line gaps use
+   * the pdf-to-txt space rule, a new line always inserts a space */
+  const joinCell = (cell: CellPieces[]): string => {
+    const sorted = [...cell].sort(
+      (a, b) => b.y - a.y || a.x - b.x
+    );
+    let text = "";
+    let lastEnd = 0;
+    let lastY: number | null = null;
+    for (const piece of sorted) {
+      const size = piece.size > 0 ? piece.size : 10;
+      const newLine =
+        lastY !== null && Math.abs(piece.y - lastY) > Math.max(1.5, size * ROW_TOL_FACTOR);
+      const gap =
+        lastY !== null && !newLine && piece.x - lastEnd > size * CELL_SPACE_FACTOR;
+      if (text.length > 0 && (newLine || gap)) text += " ";
+      text += piece.str;
+      lastEnd = piece.x + piece.w;
+      lastY = piece.y;
+    }
+    return fixDevanagariVisual(text.trim());
+  };
+
+  const grid: string[][] = [];
+  /* out-of-table text above the ruled region, in reading order */
+  const above = outPieces.filter((p) => p.y > hY[0]);
+  const below = outPieces.filter((p) => p.y <= hY[0]);
+  if (above.length > 0) grid.push(...extractGrid(above));
+  for (let i = r0; i < r1; i += 1) {
+    grid.push(
+      Array.from({ length: colsTotal }, (_, k) =>
+        joinCell(cells[i][c0 + k] as CellPieces[])
+      )
+    );
+  }
+  if (below.length > 0) grid.push(...extractGrid(below));
+  return grid;
+}
+
 /* ------------------------------ buildXlsx ----------------------------- */
 
 export interface XlsxSheet {
@@ -526,8 +953,8 @@ function sheetXml(
 }
 
 /**
- * Build a minimal but VALID .xlsx (Office Open XML) package with fflate
- * zipSync: [Content_Types].xml, _rels/.rels, xl/workbook.xml + its
+ * Build a minimal but VALID .xlsx (Office Open XML) package with our own
+ * ZIP engine: [Content_Types].xml, _rels/.rels, xl/workbook.xml + its
  * rels, xl/styles.xml (default + bold named style) and one worksheet
  * per sheet. Everything is clamped to the limits above.
  */
@@ -647,6 +1074,8 @@ export interface ExcelRun {
   sheetMode: "single" | "perPage";
   numericCells: boolean;
   boldHeader: boolean;
+  /** Read exact grids from drawn border lines when present (default). */
+  ruled: boolean;
   locale: "en" | "hi";
   labels: ExcelRunLabels;
 }
@@ -677,6 +1106,7 @@ export function parseRun(raw: string): ExcelRun {
     sheetMode: o.sheetMode === "perPage" ? "perPage" : "single",
     numericCells: o.numericCells !== false,
     boldHeader: o.boldHeader !== false,
+    ruled: o.ruled !== false,
     locale: o.locale === "hi" ? "hi" : "en",
     labels: {
       fileWord: label(labelsIn.fileWord, 40),

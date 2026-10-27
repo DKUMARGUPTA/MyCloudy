@@ -13,8 +13,9 @@ import type { ToolConfig } from "@/lib/tools/config-types";
  * point (worker defaults when the option payload is empty).
  *
  * Honest limits (mirrored in the FAQ): detection is rule-based
- * geometry, not AI; borders, colours and formulas are not recovered;
- * scanned PDFs need the OCR tool first.
+ * geometry, not AI — but pages that DRAW their table (real border
+ * lines) are read cell-for-cell from those rules; colours and
+ * formulas are not recovered; scanned PDFs need the OCR tool first.
  */
 export const config: ToolConfig = {
   toolId: "pdf-to-excel",
@@ -36,12 +37,12 @@ export const config: ToolConfig = {
   chainToolIds: [],
   features: [
     {
-      en: "Rule-based grid detection, fully on your device — text items cluster into rows and columns by position, and every page's table becomes real spreadsheet cells.",
-      hi: "नियम-आधारित ग्रिड पहचान, पूरी आपके डिवाइस पर — टेक्स्ट आइटम जगह के हिसाब से पंक्तियों और कॉलमों में बँधते हैं, और हर पेज की टेबल असली स्प्रेडशीट सेल बनती है।",
+      en: "Two honest detectors, fully on your device: pages that draw real border lines are read as an exact cell grid straight from those rules; borderless pages cluster text into rows and columns by position.",
+      hi: "दो ईमानदार डिटेक्टर, पूरी तरह आपके डिवाइस पर: जिन पेजों पर असली बॉर्डर लाइनें खिंची हैं वे उन्हीं लाइनों से सटीक सेल-ग्रिड बनते हैं; बिना बॉर्डर वाले पेज टेक्स्ट को जगह के हिसाब से पंक्ति-कॉलम में बाँटते हैं।",
     },
     {
-      en: "A true .xlsx workbook (Office Open XML) built with fflate — inline strings, pure numbers like 42 or 80.5 as numeric cells, and a bold header row.",
-      hi: "fflate से बनी असली .xlsx वर्कबुक (Office Open XML) — इनलाइन स्ट्रिंग, 42 या 80.5 जैसे शुद्ध नंबर न्यूमेरिक सेल, और बोल्ड हेडर पंक्ति।",
+      en: "A true .xlsx workbook (Office Open XML) built with our own ZIP engine — inline strings, pure numbers like 42 or 80.5 as numeric cells, and a bold header row.",
+      hi: "हमारे अपने ZIP इंजन से बनी असली .xlsx वर्कबुक (Office Open XML) — इनलाइन स्ट्रिंग, 42 या 80.5 जैसे शुद्ध नंबर न्यूमेरिक सेल, और बोल्ड हेडर पंक्ति।",
     },
     {
       en: "One sheet per page or the whole document stacked into a single sheet — you choose before converting, with a live preview of the grid detected on page 1.",
@@ -53,6 +54,16 @@ export const config: ToolConfig = {
     },
   ],
   faq: [
+    {
+      q: {
+        en: "My table has visible borders — does that help?",
+        hi: "मेरी टेबल पर बॉर्डर दिखते हैं — इससे फ़ायदा होता है?",
+      },
+      a: {
+        en: "Yes, a lot. When a page draws real rule lines — most invoices, bank statements and price lists do — the converter reads the exact row and column grid from those borders, cell for cell, instead of inferring columns from text alignment. Pages without ruling automatically fall back to position clustering, and you can turn ruled reading off from the options.",
+        hi: "हाँ, बहुत। जब पेज पर असली लाइनें खिंची हों — ज़्यादातर बिल, बैंक स्टेटमेंट और प्राइस लिस्ट में होती हैं — तो कन्वर्टर उन्हीं बॉर्डर से सटीक पंक्ति-कॉलम ग्रिड पढ़ता है, सेल-दर-सेल; टेक्स्ट की जगह से अंदाज़ा नहीं लगाता। बिना लाइन वाले पेज अपने-आप पोज़िशन क्लस्टरिंग पर चले जाते हैं, और चाहें तो विकल्पों से बॉर्डर-पढ़ना बंद भी कर सकते हैं।",
+      },
+    },
     {
       q: {
         en: "Which PDFs convert cleanly?",
