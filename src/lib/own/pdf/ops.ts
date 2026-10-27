@@ -1,5 +1,6 @@
 /**
- * DocoPDF own PDF micro-engine — page-surgery operations (P6-a, extended P6-c).
+ * DocoPDF own PDF micro-engine — page-surgery operations (P6-a, extended
+ * P6-c + P6-d).
  *
  * Two-level API so callers that write MANY outputs from ONE source
  * (extract "one page = one file") parse exactly once:
@@ -7,6 +8,8 @@
  *   organizePages(source, plan, onProgress?) → Uint8Array
  * and the byte-level convenience wrapper:
  *   organizePdf(bytes, plan, onProgress?) → OrganizeResult
+ * Multi-document merges (P6-d) parse each input once and rebuild through:
+ *   organizeMerge(sources, plan, onProgress?) → Uint8Array
  *
  * Everything below runs on OUR parser + OUR writer — zero external code.
  */
@@ -36,6 +39,28 @@ export interface OrganizeSource {
   doc: ParsedPdf;
   pages: PdfPageInfo[];
 }
+
+/**
+ * Plan entry for MULTI-document merges (P6-d): `doc` indexes into the
+ * `sources` array passed to organizeMerge. Same three shapes as PlanEntry,
+ * each qualified with its source document.
+ */
+export type MergePlanEntry =
+  | {
+      /** Copy `sources[doc]` page `src` (0-based reading order). */
+      kind: "page";
+      doc: number;
+      src: number;
+      /** Rotation added to the page's existing /Rotate (normalized). */
+      rotateDelta?: number;
+    }
+  | { kind: "blank"; width: number; height: number }
+  | {
+      /** Blank page sized like `sources[doc]` page `src`'s MediaBox. */
+      kind: "blank-from";
+      doc: number;
+      src: number;
+    };
 
 export interface OrganizeResult {
   bytes: Uint8Array;
@@ -153,4 +178,109 @@ export function organizePdf(
     pageCount: plan.length,
     recovered: source.doc.recovered,
   };
+}
+
+/** Picks the HIGHEST PDF version among sources — never a downgrade. */
+function maxVersion(sources: OrganizeSource[]): string | undefined {
+  let best = 0;
+  let bestVersion: string | undefined;
+  for (const source of sources) {
+    const raw = source.doc.version;
+    const match = /^(\d+)\.(\d+)$/.exec(raw ?? "");
+    if (!match) continue;
+    const major = Number(match[1]);
+    const minor = Number(match[2]);
+    const value = major * 10 + minor;
+    if (value > best) {
+      best = value;
+      bestVersion = raw;
+    }
+  }
+  return bestVersion;
+}
+
+/**
+ * Rebuild ONE PDF from pages of MANY parsed sources (P6-d merge kernel on
+ * top of the same writer): any order, duplicates allowed, blanks at any
+ * position — every source graph is copied through the shared reachable-set
+ * union (a font shared by two inputs is still written once per document it
+ * came from). Output header carries the highest input version.
+ */
+export function organizeMerge(
+  sources: OrganizeSource[],
+  plan: MergePlanEntry[],
+  onProgress?: OrganizeProgress,
+): Uint8Array {
+  if (!Array.isArray(sources) || sources.length === 0) {
+    throw new PdfError("corrupt", "merge needs at least one source");
+  }
+  if (!Array.isArray(plan) || plan.length === 0) {
+    throw new PdfError("corrupt", "empty page plan");
+  }
+  if (plan.length > SANITY_LIMITS.plan) {
+    throw new PdfError("corrupt", "plan exceeds sanity cap");
+  }
+  const resolveSource = (docIndex: number): OrganizeSource => {
+    if (
+      !Number.isInteger(docIndex) ||
+      docIndex < 0 ||
+      docIndex >= sources.length
+    ) {
+      throw new PdfError("corrupt", `source index ${docIndex} out of range`);
+    }
+    return sources[docIndex]!;
+  };
+  const writePages = plan.map((entry) => {
+    if (entry.kind === "blank") {
+      if (
+        !Number.isFinite(entry.width) ||
+        !Number.isFinite(entry.height) ||
+        entry.width <= 0 ||
+        entry.height <= 0 ||
+        entry.width > SANITY_LIMITS.dimension ||
+        entry.height > SANITY_LIMITS.dimension
+      ) {
+        throw new PdfError("corrupt", "blank page size out of range");
+      }
+      return {
+        type: "blank" as const,
+        width: entry.width,
+        height: entry.height,
+      };
+    }
+    if (entry.kind === "blank-from") {
+      const refPage = resolveSource(entry.doc).pages[entry.src];
+      if (!refPage) {
+        throw new PdfError(
+          "corrupt",
+          `page index ${entry.src} out of range in source ${entry.doc}`,
+        );
+      }
+      return blankSizedLike(refPage);
+    }
+    const source = resolveSource(entry.doc);
+    const page = source.pages[entry.src];
+    if (!page) {
+      throw new PdfError(
+        "corrupt",
+        `page index ${entry.src} out of range in source ${entry.doc}`,
+      );
+    }
+    const set: Array<[string, PdfObj]> = [];
+    if (entry.rotateDelta !== undefined && entry.rotateDelta !== 0) {
+      const target = normalizeRotation(page.rotate + entry.rotateDelta);
+      set.push(["Rotate", num(target)]);
+    }
+    const dict = cloneDict(page.dict, {
+      drop: ["Parent"],
+      set: set.length > 0 ? set : undefined,
+    });
+    return {
+      type: "copy" as const,
+      doc: source.doc,
+      srcNum: page.ref.num,
+      dict,
+    };
+  });
+  return writeDocument(writePages, maxVersion(sources), onProgress);
 }

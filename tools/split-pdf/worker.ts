@@ -1,5 +1,10 @@
-import { PDFDocument } from "pdf-lib";
-
+import {
+  PdfError,
+  organizePages,
+  parseForOrganize,
+  type OrganizeSource,
+  type PlanEntry,
+} from "@/lib/own/pdf";
 import type { OptionValues } from "@/lib/tools/config-types";
 import type { WorkerRunRequest, WorkerResponse } from "@/lib/workers/protocol";
 import {
@@ -10,15 +15,18 @@ import {
 } from "./plan";
 
 /**
- * Split PDF — device-only worker (PRD §8.1; pdf-lib, MIT).
+ * Split PDF — device-only worker (PRD §8.1).
  *
- * Loads the single input PDF, computes the authoritative split plan (the
- * same pure module the panel previews with), copies each part into a new
- * document and posts real progress. Size mode verifies every part against
- * real saved bytes and splits oversized parts in half. Every output part
- * is NAMED AFTER ITS CONTENT — its actual page range ("pages-1-5",
- * "part-2-pages-6-9") — with the ZIP-style "-2" suffix on collisions.
- * Never touches the network; receives/sends File and Blob objects only.
+ * P6-d: runs 100% on OUR OWN PDF micro-engine (src/lib/own/pdf — zero
+ * external code). The single input PDF is parsed ONCE (typed refusal for
+ * encrypted inputs, typed corrupt errors); the authoritative split plan
+ * (the same pure module the panel previews with) is then written part by
+ * part through organizePages — every write reuses the ONE parse. Size
+ * mode still verifies every part against REAL saved bytes and splits
+ * oversized parts in half. Every output part is NAMED AFTER ITS CONTENT
+ * — its actual page range ("pages-1-5", "part-2-pages-6-9") — with the
+ * ZIP-style "-2" suffix on collisions. Never touches the network;
+ * receives/sends File and Blob objects only.
  *
  * Options (all optional — the panel owns the interactive values):
  *   mode: "range" | "everyN" | "bookmarks" | "size" | "visual" | "oddEven" | "blanks"
@@ -54,6 +62,14 @@ function readMode(options: OptionValues): SplitMode {
   return typeof raw === "string" && (MODES as string[]).includes(raw)
     ? (raw as SplitMode)
     : "range";
+}
+
+/** Maps an own-engine failure to the worker's i18n error code. */
+function engineErrorCode(error: unknown): string {
+  if (error instanceof PdfError && error.code === "encrypted") {
+    return "tool.errorEncrypted";
+  }
+  return "tool.errorCorrupt";
 }
 
 /**
@@ -113,12 +129,21 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 2, stage: "reading" });
 
+  // ── ONE typed parse for the whole run — every part write reuses it. ──
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const src = await PDFDocument.load(bytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
-  const pageCount = src.getPageCount();
+  let source: OrganizeSource;
+  try {
+    source = parseForOrganize(bytes);
+  } catch (error: unknown) {
+    post({
+      type: "error",
+      runId,
+      code: engineErrorCode(error),
+      detail: file.name,
+    });
+    return;
+  }
+  const pageCount = source.pages.length;
   const fileSize = file.size;
 
   post({
@@ -215,6 +240,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const built: BuiltPart[] = [];
   let pagesDone = 0;
 
+  /** Global per-page progress (PRD §6.3: "Page x of y" — across parts). */
   const postProgress = (): void => {
     post({
       type: "progress",
@@ -225,40 +251,48 @@ async function run(request: WorkerRunRequest): Promise<void> {
     });
   };
 
+  /** Writes ONE part on the own engine from the single parsed source. */
+  const writePart = (pages: number[]): Uint8Array => {
+    const entries: PlanEntry[] = pages.map((pageIndex) => ({
+      kind: "page",
+      src: pageIndex,
+    }));
+    let baseDone = pagesDone;
+    return organizePages(source, entries, (_fraction, page) => {
+      // Real per-page beats: the global counter advances with each page
+      // serialized (1-based `page` within THIS part).
+      pagesDone = baseDone + page;
+      postProgress();
+    });
+  };
+
   if (mode === "size") {
     // Estimated chunks first; every finished part is checked against real
     // saved bytes and halved while it exceeds the limit (a single
     // over-limit page stays alone — it can't be divided further).
-    const addSized = async (pages: number[]): Promise<void> => {
+    const addSized = (pages: number[]): void => {
       if (pages.length === 0) return;
-      const doc = await PDFDocument.create();
-      const copied = await doc.copyPages(src, pages);
-      for (const page of copied) doc.addPage(page);
-      const partBytes = await doc.save({ useObjectStreams: true });
+      const start = pagesDone;
+      const partBytes = writePart(pages);
       if (partBytes.length > maxBytes && pages.length > 1) {
+        // The oversized attempt is DISCARDED — restore the global page
+        // counter so the halves don't double-count its pages.
+        pagesDone = start;
         const mid = Math.ceil(pages.length / 2);
-        await addSized(pages.slice(0, mid));
-        await addSized(pages.slice(mid));
+        addSized(pages.slice(0, mid));
+        addSized(pages.slice(mid));
         return;
       }
       built.push({ pages, bytes: partBytes });
-      pagesDone += pages.length;
+      pagesDone = start + pages.length;
       postProgress();
     };
     for (const part of plan.parts) {
-      await addSized(part.pages);
+      addSized(part.pages);
     }
   } else {
     for (const part of plan.parts) {
-      const doc = await PDFDocument.create();
-      const copied = await doc.copyPages(src, part.pages);
-      for (let i = 0; i < copied.length; i += 1) {
-        doc.addPage(copied[i]);
-        // Real per-page progress (PRD §6.3: "Page x of y").
-        pagesDone += 1;
-        if (i % 5 === 0 || i === copied.length - 1) postProgress();
-      }
-      const partBytes = await doc.save({ useObjectStreams: true });
+      const partBytes = writePart(part.pages);
       built.push({ pages: part.pages, bytes: partBytes, label: part.label });
     }
     postProgress();
@@ -325,10 +359,11 @@ self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
   const data = event.data;
   if (data?.type !== "run") return;
   run(data).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    const code = /encrypt/i.test(message)
-      ? "tool.errorEncrypted"
-      : "tool.errorCorrupt";
-    post({ type: "error", runId: data.runId, code, detail: undefined });
+    post({
+      type: "error",
+      runId: data.runId,
+      code: engineErrorCode(error),
+      detail: undefined,
+    });
   });
 };

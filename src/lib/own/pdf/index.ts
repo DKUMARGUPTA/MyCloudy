@@ -22,9 +22,11 @@ export {
   type PdfPageInfo,
 } from "./document";
 export {
+  organizeMerge,
   organizePdf,
   organizePages,
   parseForOrganize,
+  type MergePlanEntry,
   type OrganizeResult,
   type OrganizeSource,
   type OrganizeProgress,

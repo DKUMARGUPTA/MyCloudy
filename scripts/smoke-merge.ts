@@ -18,7 +18,9 @@
  * Run: bun scripts/smoke-merge.ts
  */
 import { readFileSync } from "node:fs";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts } from "pdf-lib";
+import { listPages, parsePdf } from "../src/lib/own/pdf";
+import type { PdfObj } from "../src/lib/own/pdf";
 import { TOOL_CONFIGS } from "../src/lib/tools/configs";
 import { ALL_TOOLS } from "../src/lib/tools/registry";
 import type {
@@ -49,9 +51,19 @@ const read = (rel: string): string => readFileSync(`/home/z/my-project/${rel}`, 
 /* fixtures                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Fixture with REAL per-page content — every page draws its own "Page N"
+ * text, so byte-level content-identity checks are non-vacuous (the P6-c
+ * lesson: a fixture without content makes every identity check pass
+ * while proving nothing).
+ */
 async function makePdf(pages: number): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
-  for (let i = 0; i < pages; i += 1) doc.addPage([300, 400]);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  for (let i = 0; i < pages; i += 1) {
+    const page = doc.addPage([300, 400]);
+    page.drawText(`Page ${i + 1}`, { x: 24, y: 200, size: 18, font });
+  }
   return doc.save({ useObjectStreams: false });
 }
 
@@ -270,12 +282,126 @@ console.log("\n── 8. i18n: posted codes exist in BOTH catalogs ────�
   );
   const workerSrc = read("tools/merge-pdf/worker.ts");
   check(
-    "worker posts tool.errorEncrypted with the file name detail",
-    workerSrc.includes('code: "tool.errorEncrypted"') && workerSrc.includes("detail: file.name")
+    "worker maps encrypted inputs to tool.errorEncrypted naming the file",
+    workerSrc.includes("detail: file.name") &&
+      workerSrc.includes('error.code === "encrypted"') &&
+      workerSrc.includes('"tool.errorEncrypted"'),
   );
 }
 
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+
+console.log("\n── 9. P6-d own-engine byte verification ──────────────────");
+{
+  // The merged output is verified BYTE-LEVEL with BOTH engines: our own
+  // parser (structure + content identity against the sources) and pdf-lib
+  // as the independent dev-time oracle. alpha "1-2" + blank + beta all →
+  // 5 pages with exact content lineage.
+  const bytesA = await makePdf(3);
+  const bytesB = await makePdf(2);
+  const msgs = await drive(
+    6110,
+    { blankBetween: true, fileRanges: JSON.stringify({ fa: "1-2" }) },
+    [new File([bytesA as BlobPart], "alpha.pdf"), new File([bytesB as BlobPart], "beta.pdf")],
+    ["fa", "fb"],
+  );
+  const result = msgs.find(
+    (m) => m.type === "result",
+  ) as Extract<WorkerResponse, { type: "result" }>;
+  check("own-engine run: one result", Boolean(result));
+  check(
+    "own-engine run: detail.pages === 5 (2 + blank + 2)",
+    result?.detail?.pages === 5,
+    result?.detail,
+  );
+  const out = new Uint8Array(await result.outputs[0].blob.arrayBuffer());
+  const pages = listPages(parsePdf(out));
+  check("own parser: 5 output pages", pages.length === 5, pages.length);
+  check(
+    "own parser: separator is the pdf-lib-default A4 blank",
+    JSON.stringify(pages[2]!.mediaBox) === "[0,0,595.28,841.89]",
+    pages[2]!.mediaBox,
+  );
+
+  /** /Contents bytes for page i (ref | array-of-refs | direct stream). */
+  const contentBytes = (
+    doc: ReturnType<typeof parsePdf>,
+    list: ReturnType<typeof listPages>,
+    i: number,
+  ): Uint8Array => {
+    const value = list[i]!.dict.get("Contents");
+    if (!value) return new Uint8Array(0);
+    const readOne = (v: PdfObj): Uint8Array => {
+      if (v.k === "stream") return v.raw;
+      if (v.k !== "ref") return new Uint8Array(0);
+      const s = doc.getObject(v.num);
+      return s && s.k === "stream" ? s.raw : new Uint8Array(0);
+    };
+    if (value.k === "arr") {
+      let total = 0;
+      const parts = value.items.map(readOne);
+      for (const p of parts) total += p.length;
+      const joined = new Uint8Array(total);
+      let at = 0;
+      for (const p of parts) {
+        joined.set(p, at);
+        at += p.length;
+      }
+      return joined;
+    }
+    return readOne(value);
+  };
+  const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  };
+
+  const srcA = parsePdf(bytesA);
+  const listA = listPages(srcA);
+  const srcB = parsePdf(bytesB);
+  const listB = listPages(srcB);
+  const outDoc = parsePdf(out);
+  const captured = [0, 1, 3, 4].map((i) => contentBytes(outDoc, pages, i));
+  check(
+    "non-vacuous: all four copied pages carry content bytes",
+    captured.every((c) => c.length > 0),
+    captured.map((c) => c.length),
+  );
+  check(
+    "page 1 ≡ alpha source page 1 content",
+    bytesEqual(captured[0]!, contentBytes(srcA, listA, 0)),
+  );
+  check(
+    "page 2 ≡ alpha source page 2 content",
+    bytesEqual(captured[1]!, contentBytes(srcA, listA, 1)),
+  );
+  check(
+    "separator page has EMPTY content",
+    contentBytes(outDoc, pages, 2).length === 0,
+  );
+  check(
+    "page 4 ≡ beta source page 1 content",
+    bytesEqual(captured[2]!, contentBytes(srcB, listB, 0)),
+  );
+  check(
+    "page 5 ≡ beta source page 2 content",
+    bytesEqual(captured[3]!, contentBytes(srcB, listB, 1)),
+  );
+
+  const lib = await PDFDocument.load(out);
+  check("pdf-lib oracle: reloads 5 pages", lib.getPageCount() === 5);
+  check(
+    "pdf-lib oracle: separator page width is A4",
+    Math.round(lib.getPage(2).getWidth()) === 595,
+  );
+  check(
+    "pdf-lib oracle: first copied page width",
+    Math.round(lib.getPage(0).getWidth()) === 300,
+  );
+}
 
 console.log(`\nsmoke-merge: ${pass} passed, ${fail} failed`);
 if (fail > 0) {

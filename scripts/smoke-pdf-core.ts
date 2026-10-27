@@ -20,6 +20,9 @@
  *   9.  Cross-document primitive: writeDocument over TWO parsed docs
  *       (merge kernel) — pdf-lib reload verifies.
  *  10.  Self-compatibility: our parser loads our writer's output.
+ *  11.  organizeMerge (P6-d): multi-doc merge API — 3 sources, blanks,
+ *       duplicates, rotation deltas, byte-identical content, highest
+ *       input version in the header, typed error guards.
  *
  * Run: bun scripts/smoke-pdf-core.ts
  */
@@ -30,6 +33,7 @@ import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 
 import {
   listPages,
+  organizeMerge,
   organizePdf,
   organizePages,
   parseForOrganize,
@@ -689,6 +693,138 @@ async function main(): Promise<void> {
       e4 = err instanceof PdfError ? err.code : "wrong";
     }
     eq(e4, "corrupt", "split API: degenerate blank size refused");
+  }
+
+  console.log("== 15. organizeMerge — multi-doc merge API (P6-d seam) ==");
+  {
+    // Three sources: classic-xref fixA, ObjStm fixB, and a SECOND parse of
+    // the fixA bytes (distinct object identity → per-doc graph isolation).
+    const srcA = parseForOrganize(fixA);
+    const srcB = parseForOrganize(fixB);
+    const srcA2 = parseForOrganize(fixA);
+    const events: Array<[number, number]> = [];
+    const merged = organizeMerge(
+      [srcA, srcB, srcA2],
+      [
+        { kind: "page", doc: 0, src: 1 }, // fixA p2: 300×400, rot 90
+        { kind: "blank", width: 595.28, height: 841.89 }, // blankBetween A4
+        { kind: "page", doc: 1, src: 2 }, // fixB p3: 595×842, rot 180
+        { kind: "page", doc: 1, src: 2 }, // duplicate within doc 1
+        { kind: "page", doc: 2, src: 0, rotateDelta: 90 }, // fixA2 p1 +90
+        { kind: "blank-from", doc: 1, src: 0 }, // blank sized like fixB p1
+      ],
+      (fraction, page) => events.push([fraction, page]),
+    );
+    const pages = listPages(parsePdf(merged));
+    eq(pages.length, 6, "merge API: page count");
+    eq(pages[0]!.mediaBox, [0, 0, 300, 400], "merge API: doc0 box");
+    eq(pages[0]!.rotate, 90, "merge API: doc0 rotation carried");
+    eq(pages[1]!.mediaBox, [0, 0, 595.28, 841.89], "merge API: A4 blank");
+    eq(pages[2]!.mediaBox, [0, 0, 595, 842], "merge API: doc1 box");
+    eq(pages[2]!.rotate, 180, "merge API: doc1 rotation carried");
+    eq(pages[4]!.rotate, 90, "merge API: rotateDelta applied");
+    eq(pages[5]!.mediaBox, [0, 0, 612, 792], "merge API: blank-from fixB p1");
+    eq(events.length, 6, "merge API: one progress event per page");
+    ok(
+      events.every(
+        ([f, p], i) => Math.abs(f - (i + 1) / 6) < 1e-9 && p === i + 1,
+      ),
+      "merge API: progress fractions + 1-based pages",
+    );
+    // Content byte-identity through the cross-doc union — NON-VACUOUS
+    // (capture guards first: the P6-c vacuity lesson).
+    const backDoc = parsePdf(merged);
+    const backList = listPages(backDoc);
+    const b0 = contentBytesOf(backDoc, backList, 0);
+    const b2 = contentBytesOf(backDoc, backList, 2);
+    const b3 = contentBytesOf(backDoc, backList, 3);
+    const b4 = contentBytesOf(backDoc, backList, 4);
+    ok(
+      b0.length > 0 && b2.length > 0 && b4.length > 0,
+      "merge API: content bytes captured (non-vacuous)",
+    );
+    eq(
+      bytesEqual(b0, contentBytesOf(srcA.doc, srcA.pages, 1)),
+      true,
+      "merge API: p1 ≡ doc0 source content",
+    );
+    eq(
+      bytesEqual(b2, contentBytesOf(srcB.doc, srcB.pages, 2)),
+      true,
+      "merge API: p3 ≡ doc1 source content",
+    );
+    eq(
+      bytesEqual(b4, contentBytesOf(srcA2.doc, srcA2.pages, 0)),
+      true,
+      "merge API: p5 ≡ doc2 source content",
+    );
+    eq(
+      bytesEqual(b2, b3),
+      true,
+      "merge API: duplicate within doc byte-identical",
+    );
+    const lib = await PDFDocument.load(merged);
+    eq(lib.getPageCount(), 6, "merge API: pdf-lib reload count");
+    eq(Math.round(lib.getPage(0).getWidth()), 300, "merge API: pdf-lib width doc0");
+    eq(
+      Math.round(lib.getPage(3).getWidth()),
+      595,
+      "merge API: pdf-lib width doc1 duplicate",
+    );
+    eq(
+      lib.getPage(4).getRotation().angle,
+      90,
+      "merge API: pdf-lib sees rotation delta",
+    );
+    // Header carries the HIGHEST input version (fixA/fixB are pdf-lib 1.7;
+    // the wild fixture is 1.4 — 1.4 + 1.7 must merge as 1.7). The wild
+    // fixture is block-scoped to section 4, so rebuild it here.
+    const wildSrc = parseForOrganize(buildWildFixture().bytes);
+    const mergedVersions = organizeMerge(
+      [wildSrc, srcB],
+      [
+        { kind: "page", doc: 0, src: 0 },
+        { kind: "page", doc: 1, src: 0 },
+      ],
+    );
+    const header = new TextDecoder().decode(mergedVersions.slice(0, 8));
+    ok(
+      header.startsWith("%PDF-1.7"),
+      `merge API: highest input version wins (${header.trim()})`,
+    );
+    // Typed error vectors — every guard throws PdfError code "corrupt".
+    const errorCases: Array<[string, () => void]> = [
+      [
+        "empty sources",
+        () => organizeMerge([], [{ kind: "page", doc: 0, src: 0 }]),
+      ],
+      ["empty plan", () => organizeMerge([srcA], [])],
+      [
+        "doc index out of range",
+        () => organizeMerge([srcA], [{ kind: "page", doc: 1, src: 0 }]),
+      ],
+      [
+        "page index out of range",
+        () => organizeMerge([srcA], [{ kind: "page", doc: 0, src: 99 }]),
+      ],
+      [
+        "blank-from out of range",
+        () => organizeMerge([srcA], [{ kind: "blank-from", doc: 0, src: 99 }]),
+      ],
+      [
+        "fractional doc index",
+        () => organizeMerge([srcA], [{ kind: "page", doc: 0.5, src: 0 }]),
+      ],
+    ];
+    for (const [label, fn] of errorCases) {
+      let code = "none";
+      try {
+        fn();
+      } catch (err) {
+        code = err instanceof PdfError ? err.code : "wrong-error";
+      }
+      eq(code, "corrupt", `merge API: ${label} refused`);
+    }
   }
 
   // Artifacts for manual inspection (VLM/pdfjs follow-ups).
