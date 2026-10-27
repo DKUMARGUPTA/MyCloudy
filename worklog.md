@@ -5118,3 +5118,22 @@ Stage Summary:
 - ALL WORK NOW DURABLE: GitHub main @ d141084 (22 commits + 24 tags recovered), remote-tracking ref fresh.
 - P5-rest COMPLETE (ID-card duplex verified 225/225). Phase plan next: P6 own PDF micro-engine (organize family first via engine seam), P7 quality moat (a11y-name smoke, magic-byte detection everywhere, i18n VLM battery), then PRD phases 7-11 (PWA, editor, advanced tools, accounts+Pro, services/worker which closes the format-count gap vs Filee via server-side LibreOffice).
 - Filee lessons still not adopted (own-implementation backlog): transactional output allocator, invisible waiting window, progress morph, undo-of-replace via trash, "only if smaller" copy-back, localized error KEYS.
+
+---
+Task ID: P6-a (PLAN — user mandate: everything on OUR code, zero other sources, phase-wise, no mistakes)
+Agent: main (Z.ai Code session)
+Task: Deep logical phase-wise plan recorded BEFORE implementation. User directive: every implementation must depend only on OUR OWN code, never another source.
+
+Work Log:
+- GROUND TRUTH re-verified: PageGrid family (rotate/rearrange/remove/extract) all run ONE shared worker tools/pagegrid/worker.ts via pdf-lib copyPages; merge-pdf + split-pdf have own workers (pdf-lib). page-plan surgery proven in tools/edit-pdf. Our own inflate/zlib (src/lib/own/zip) already proven — P2-a. Smokes run via `bun scripts/smoke-*.ts` (relative imports + pdf-lib dev-time oracle is the ESTABLISHED pattern from own-zip/own-qr: cross-verify against the reference BEFORE migration, then migrate consumers, then remove).
+
+P6 PHASE PLAN (own PDF micro-engine — page-surgery scope first):
+- P6-a (THIS round): src/lib/own/pdf/ — objects.ts (object model), lexer.ts (byte tokenizer: numbers/names with #xx/strings with escapes+nesting/hex/dicts/arrays/refs/keywords/comments), parser.ts (header+startxref, CLASSIC xref tables with subsections+free entries, XREF STREAMS with W widths+Index+FlateDecode via OUR OWN inflate, PNG predictors None/Sub/Up/Average/Paeth (8-bit), /Prev + /XRefStm hybrid chains, ObjStm decode with pair table, indirect /Length resolution with endstream-scan fallback, /Encrypt → typed refusal, broken-xref brute-scan recovery), document.ts (catalog + page-tree walk with MediaBox/CropBox/Rotate/Resources/BleedBox/TrimBox/ArtBox INHERITANCE), writer.ts (reachable-set BFS excluding /Parent, deterministic renumbering, byte-exact stream passthrough, classic xref emit, trailer), ops.ts (organizePdf: page plan with rotation deltas + A4/blank pages → fresh doc), index.ts (typed PdfError: encrypted|corrupt|unsupported).
+- P6-a verification: scripts/smoke-pdf-core.ts — pdf-lib fixtures (useObjectStreams false=classic xref AND true=xref-stream+ObjStm), hand-crafted wild bytes (comments, indirect /Length, name #xx escapes, 2-subsection xref with free entry), hand-crafted xref STREAM with Predictor 12 (Up) fixture, /Encrypt refusal fixture, broken-xref recovery fixture, CROSS-VERIFY vs pdf-lib (page counts, MediaBox/Rotate per page), round-trip: our-write → pdf-lib reload + content-stream bytes BYTE-IDENTICAL, reordered selection [2,0,4] order-verified, rotation deltas, blank insertion, SELF-compatibility (our parser loads our writer's output), number/edge vectors.
+- P6-c (next rounds): migrate PageGrid shared worker to the engine seam one tool at a time (extract first, then rotate/rearrange/remove), agent-browser E2E each.
+- P6-d: merge-pdf + split-pdf on the own engine (multi-doc reachable-set union), E2E.
+- P6-e: organize family fully off pdf-lib (runtime), pdf-lib remains dev-time oracle in smokes only.
+- HONEST SCOPE (parity with pdf-lib copyPages): document-level extras (Outlines/Names/StructTree/AcroForm catalog refs) are NOT carried into surgery outputs — same behavior class as pdf-lib copyPages; each migration round re-checks tool UX and copy.
+
+Stage Summary:
+- Plan locked. pdf-lib = DEV-TIME ORACLE ONLY (smokes); runtime organize family will ride OUR engine. No external source in shipped code path.
