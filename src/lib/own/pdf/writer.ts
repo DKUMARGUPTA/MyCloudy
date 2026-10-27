@@ -37,6 +37,18 @@ export type WritePage =
     }
   | { type: "blank"; width: number; height: number };
 
+/**
+ * A synthetic object authored by stamp-side code (P6-f) — a stamp content
+ * stream, a base-14 font dict, an image XObject, an ExtGState… Numbering
+ * contract: synthetics occupy the output numbers right AFTER the last page
+ * object (exactly 3+pages.length for an all-copy plan — blank pages use two
+ * objects each, and this writer's `next` counter is the single source of
+ * truth), so the caller can pre-compute each object's number and reference it
+ * from page dicts via { k: "newref", num }. Objects must be self-contained
+ * except for newrefs.
+ */
+export type WriteSynthetic = PdfObj;
+
 const ENC = new TextEncoder();
 
 class ByteSink {
@@ -94,6 +106,10 @@ function serialize(
     case "str":
       sink.text(pdfStringToHex(obj.b));
       return;
+    case "newref":
+      // Synthetic-authored output-space reference — emitted verbatim.
+      sink.text(`${obj.num} 0 R`);
+      return;
     case "ref": {
       const newNum = mapRef(doc, obj);
       if (newNum === undefined) sink.text("null");
@@ -141,13 +157,15 @@ export type WriteProgress = (fraction: number, page: number) => void;
 /**
  * Build the output document. Deterministic numbering:
  *   1 = catalog, 2 = /Pages tree, then each page dict (and each blank
- *   page's content stream) in plan order, then BFS-copied graphs.
- * `onPage` fires after each plan page's object is serialized.
+ *   page's content stream) in plan order, then the caller's synthetics
+ *   (3+pages.length…, per the WriteSynthetic contract), then BFS-copied
+ *   graphs. `onPage` fires after each plan page's object is serialized.
  */
 export function writeDocument(
   pages: WritePage[],
   version?: string,
   onPage?: WriteProgress,
+  synthetics?: WriteSynthetic[],
 ): Uint8Array {
   const map = new Map<string, number>(); // `${docIdx}:${srcNum}` → new num
   const emit: EmitEntry[] = [];
@@ -204,6 +222,13 @@ export function writeDocument(
     }
   }
 
+  // ── synthetic stamp objects (fixed numbering: after the page dicts) ──
+  const syntheticEmit: EmitEntry[] = [];
+  for (const obj of synthetics ?? []) {
+    syntheticEmit.push({ obj });
+    next++; // number already implied by position: 3 + pages.length + index
+  }
+
   // ── BFS over reachable source graphs ──
   const queue: Array<{ doc: ParsedPdf; num: number }> = [];
   // Seed: refs from each copied page dict (skip /Parent — already dropped,
@@ -252,6 +277,7 @@ export function writeDocument(
     { obj: catalog },
     { obj: pagesTree },
     ...emit,
+    ...syntheticEmit,
     ...copied,
   ];
 

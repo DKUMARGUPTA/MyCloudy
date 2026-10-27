@@ -29,7 +29,16 @@ import { Lexer, PdfSyntaxError, latin1, scanObjectHeaders } from "./lexer";
 
 export class PdfError extends Error {
   constructor(
-    public readonly code: "encrypted" | "corrupt" | "unsupported",
+    public readonly code:
+      | "encrypted"
+      | "corrupt"
+      | "unsupported"
+      /** Stamp-family: an image could not be parsed (maps to the legacy
+       *  "logo…" pdf-lib error messages the workers match on). */
+      | "logo"
+      /** Stamp-family: text contains glyphs WinAnsi cannot encode (the
+       *  parity of pdf-lib's encodeText throw → tool.errorWatermarkChars). */
+      | "chars",
     message: string,
   ) {
     super(message);

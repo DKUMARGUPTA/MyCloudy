@@ -23,11 +23,17 @@
  *  11.  organizeMerge (P6-d): multi-doc merge API — 3 sources, blanks,
  *       duplicates, rotation deltas, byte-identical content, highest
  *       input version in the header, typed error guards.
+ *  16.  Stamp kernel (P6-f): measureStdText EXACT pdf-lib parity (kerning),
+ *       hex Tj parity, text stamps (resources merge, no /F1 shadowing,
+ *       behind/front order, dedup, ExtGState, rotation Tm), JPEG DCT
+ *       passthrough, PNG→RGB+SMask pixel round-trip, inherited Resources,
+ *       typed error vectors.
  *
  * Run: bun scripts/smoke-pdf-core.ts
  */
 
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { deflateSync } from "node:zlib";
 
 import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 
@@ -38,13 +44,18 @@ import {
   organizePages,
   parseForOrganize,
   parsePdf,
+  pdfNumToString,
   PdfError,
   writeDocument,
+  StampContext,
+  measureStdText,
+  encodeWinAnsiHex,
+  winAnsiEncodable,
   type ParsedPdf,
   type PdfObj,
   type PdfPageInfo,
 } from "../src/lib/own/pdf";
-import { zlibSync } from "../src/lib/own/zip";
+import { crc32, unzlibSync, zlibSync } from "../src/lib/own/zip";
 import { Lexer } from "../src/lib/own/pdf/lexer";
 import { pngUnfilter } from "../src/lib/own/pdf/parser";
 
@@ -827,6 +838,9 @@ async function main(): Promise<void> {
     }
   }
 
+  console.log("== 16. Stamp kernel (P6-f): text + images on OUR engine ==");
+  await section16();
+
   // Artifacts for manual inspection (VLM/pdfjs follow-ups).
   const outAll = organizePdf(fixB, [
     { kind: "page", src: 0 },
@@ -846,6 +860,519 @@ async function main(): Promise<void> {
 /** Minimal harness: parse one top-level array using the parser's grammar. */
 function parseValueForSmoke(lex: Lexer): ReturnType<typeof firstValue> {
   return firstValue(lex);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * SECTION 16 — the P6-f stamp kernel. Every check is NON-VACUOUS (capture
+ * guards first — the P6-c lesson) and pdf-lib is the DEV-TIME ORACLE only.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+async function section16(): Promise<void> {
+  /* ── 16.1 Width + encode parity vs pdf-lib, all 6 fonts, kerning on ── */
+  {
+    const libDoc = await PDFDocument.create();
+    const libFonts = {
+      helvetica: await libDoc.embedFont(StandardFonts.Helvetica),
+      helveticaBold: await libDoc.embedFont(StandardFonts.HelveticaBold),
+      times: await libDoc.embedFont(StandardFonts.TimesRoman),
+      timesBold: await libDoc.embedFont(StandardFonts.TimesRomanBold),
+      courier: await libDoc.embedFont(StandardFonts.Courier),
+      courierBold: await libDoc.embedFont(StandardFonts.CourierBold),
+    } as Record<import("../src/lib/own/pdf/stamp-fonts").StampFontKey, typeof libFonts.helvetica>;
+    const samples = [
+      "AVATAR WAVes To TaVo", // heavy kern pairs
+      "Waltz, bad nymph, for quick jigs vex!",
+      "page 3 of 17 — “quoted” ’98 €30 † 5‰ caf\u00e9",
+      "0123456789 .,:;!()[]{}@#&*",
+      "A",
+      "",
+    ];
+    type FontKey = import("../src/lib/own/pdf/stamp-fonts").StampFontKey;
+    const fontIds = Object.keys(libFonts) as FontKey[];
+    let widthsCompared = 0;
+    let worstDelta = 0;
+    for (const fontId of fontIds) {
+      for (const text of samples) {
+        const ours = measureStdText(text, fontId, 12);
+        const theirs = libFonts[fontId]!.widthOfTextAtSize(text, 12);
+        if (text.length > 0) {
+          ok(
+            Number.isFinite(ours) && ours >= 0,
+            `width: ${fontId} ${JSON.stringify(text.slice(0, 12))} finite`,
+          );
+        }
+        widthsCompared += 1;
+        worstDelta = Math.max(worstDelta, Math.abs(ours - theirs));
+      }
+    }
+    eq(widthsCompared, 36, "width: sample count (6 fonts × 6 strings)");
+    eq(worstDelta, 0, `width: EXACT pdf-lib parity incl. kerning (worst Δ=${worstDelta})`);
+    // Hex encode parity: our <hex> vs pdf-lib's PDFHexString body.
+    const hexOurs = encodeWinAnsiHex("Hi € 5‰ — “Q”", "helvetica");
+    const hexLib = libFonts
+      .helvetica!.encodeText("Hi € 5‰ — “Q”")
+      .asString()
+      .replace(/^</, "")
+      .replace(/>$/, "");
+    eq(hexOurs.toLowerCase(), hexLib.toLowerCase(), "encode: hex Tj parity with pdf-lib");
+    ok(!winAnsiEncodable("\u0917\u094b\u092a\u0928\u0940\u092f"), "encode: Devanagari detected as non-WinAnsi");
+    ok(winAnsiEncodable("€†‰ç ñ–—“” ŒœŠ"), "encode: WinAnsi specials encodable");
+  }
+
+  /* ── 16.2 Stamp text on a doc WITH existing fonts (merge + no shadow) ── */
+  let stampBase: Uint8Array;
+  {
+    const libDoc = await PDFDocument.create();
+    const helv = await libDoc.embedFont(StandardFonts.Helvetica); // becomes /F1
+    for (let i = 0; i < 3; i++) {
+      const page = libDoc.addPage([300, 400]);
+      page.drawText(`EXISTING-PAGE-TEXT-${i + 1}`, { x: 20, y: 200, font: helv, size: 14 });
+    }
+    stampBase = await libDoc.save();
+    ok(stampBase.length > 500, "fixture: stamp base captured (non-vacuous)");
+  }
+  {
+    const ctx = StampContext.load(stampBase);
+    eq(ctx.pageCount, 3, "stamp: page count");
+    ok(
+      ctx.pages[0]!.resources !== undefined,
+      "stamp: fixture page carries its own /Resources",
+    );
+    ctx.stampText(1, {
+      x: 40,
+      y: 60,
+      text: "OWN-ENGINE-STAMP",
+      size: 24,
+      font: "timesBold",
+      color: { r: 0.86, g: 0.15, b: 0.15 },
+      opacity: 0.5,
+      rotate: 45,
+    });
+    ctx.stampText(2, { x: 10, y: 350, text: "FRONT-MARK", size: 10, font: "courier" });
+    const out = ctx.write();
+    // Our parser reload: structure checks.
+    const back = parsePdf(out);
+    const backPages = listPages(back);
+    eq(backPages.length, 3, "stamp: reload page count");
+    // Page 1 (index 1) must have /Contents [existing, ours] and /Resources
+    // with BOTH the original /F1 and our /F2 (no shadowing).
+    const dict1 = backPages[1]!.dict;
+    const contents = dict1.get("Contents");
+    ok(contents !== undefined && contents.k === "arr", "stamp: contents became an array");
+    if (contents?.k === "arr") {
+      eq(contents.items.length, 2, "stamp: contents array = existing + ours");
+    }
+    const res = dict1.get("Resources");
+    const resMap = res?.k === "dict" ? res.m : undefined;
+    ok(resMap !== undefined, "stamp: page gained own /Resources");
+    const fontBucket = resMap?.get("Font");
+    const fontMap = fontBucket?.k === "dict" ? fontBucket.m : undefined;
+    ok(fontMap !== undefined, "stamp: /Font bucket present");
+    // pdf-lib's own font key is random-suffixed (e.g. "Helvetica-7098480789"):
+    // it must survive untouched, with our /F1 added alongside (no shadow).
+    const originalKeys = [...(fontMap?.keys() ?? [])].filter((k) => k !== "F1");
+    eq(originalKeys.length > 0, true, "stamp: original font key preserved (no shadow)");
+    eq(fontMap?.has("F1"), true, "stamp: our font allocated F1 (collision-free vs random pdf-lib keys)");
+    const f2 = fontMap?.get("F1");
+    // In the OUTPUT file our newref serialized as a plain ref — resolve it.
+    const f2Ref =
+      f2 && (f2.k === "ref" || f2.k === "newref") ? back.getObject(f2.num) : undefined;
+    const f2Map = f2Ref?.k === "dict" ? f2Ref.m : undefined;
+    eq(f2Map?.get("BaseFont")?.k === "name" ? (f2Map.get("BaseFont") as { v: string }).v : "", "Times-Bold", "stamp: our font is Times-Bold Type1 (allocated F1 — pdf-lib keys are random-suffixed)");
+    eq(
+      f2Map?.get("Encoding")?.k === "name" ? (f2Map.get("Encoding") as { v: string }).v : "",
+      "WinAnsiEncoding",
+      "stamp: our font WinAnsi encoding",
+    );
+    // Our stamp stream: the LAST content entry. Decode ops.
+    let stampBody = "";
+    if (contents?.k === "arr") {
+      const oursRef = contents.items[contents.items.length - 1]!;
+      if (oursRef.k === "ref") {
+        const stream = back.getObject(oursRef.num);
+        stampBody = stream?.k === "stream" ? new TextDecoder().decode(stream.raw) : "";
+      }
+    }
+    ok(stampBody.length > 0, "stamp: our stream bytes non-empty");
+    ok(stampBody.includes("BT") && stampBody.includes("ET"), "stamp: BT/ET present");
+    ok(stampBody.includes("0.86 0.15 0.15 rg"), "stamp: fill color rg");
+    // The Tf key must be THE key that maps to Times-Bold in this page's fonts.
+    const tfMatch = /\/(\S+) 24 Tf/.exec(stampBody);
+    ok(tfMatch !== null, "stamp: font+size Tf present");
+    if (tfMatch) {
+      eq(
+        fontMap?.get(tfMatch[1]) === f2,
+        true,
+        `stamp: Tf key ${tfMatch[1]} resolves to OUR Times-Bold entry`,
+      );
+    }
+    const cos45 = pdfNumToString(Math.cos((45 * Math.PI) / 180));
+    const sin45 = pdfNumToString(Math.sin((45 * Math.PI) / 180));
+    const negSin45 = pdfNumToString(-Math.sin((45 * Math.PI) / 180));
+    ok(
+      stampBody.includes(`${cos45} ${sin45} ${negSin45} ${cos45} 40 60 Tm`),
+      `stamp: rotation Tm (${cos45} ${sin45} ${negSin45} ${cos45} 40 60)`,
+    );
+    ok(stampBody.includes("<4f574e2d454e47494e452d5354414d50> Tj"), "stamp: hex text Tj (OWN-ENGINE-STAMP)");
+    ok(/\/GS\d+ gs/.test(stampBody), "stamp: ExtGState gs for opacity");
+    // Opacity object: find ExtGState with ca 0.5
+    let foundCa = false;
+    for (const [, obj] of iterateObjects(back)) {
+      if (obj?.k === "dict" && obj.m.get("ca")?.k === "num" && (obj.m.get("ca") as { n: number }).n === 0.5) {
+        foundCa = true;
+      }
+    }
+    eq(foundCa, true, "stamp: ExtGState /ca 0.5 emitted");
+    // pdf-lib oracle reload.
+    const lib = await PDFDocument.load(out);
+    eq(lib.getPageCount(), 3, "stamp: pdf-lib reload count");
+    // Page 0 must be UNTOUCHED (no stamp): Contents still present.
+    const dict0 = backPages[0]!.dict;
+    const contents0 = dict0.get("Contents");
+    ok(contents0 !== undefined, "stamp: unstamped page keeps /Contents");
+    // Font object DEDUP: exactly ONE Times-Bold font object in the whole doc.
+    let timesBoldCount = 0;
+    for (const [, obj] of iterateObjects(back)) {
+      if (obj?.k === "dict" && obj.m.get("Type")?.k === "name") {
+        const t = (obj.m.get("Type") as { v: string }).v;
+        const bf = obj.m.get("BaseFont");
+        if (t === "Font" && bf?.k === "name" && (bf as { v: string }).v === "Times-Bold") {
+          timesBoldCount += 1;
+        }
+      }
+    }
+    eq(timesBoldCount, 1, "stamp: Times-Bold emitted exactly once (dedup)");
+    // Existing content preserved byte-for-byte on the stamped page.
+    const baseDoc = parsePdf(stampBase);
+    const basePages = listPages(baseDoc);
+    if (contents?.k === "arr" && contents.items[0]?.k === "ref") {
+      const existingRef = contents.items[0] as { num: number };
+      const existingStream = back.getObject(existingRef.num);
+      eq(
+        bytesEqual(
+          existingStream?.k === "stream" ? existingStream.raw : new Uint8Array(0),
+          contentBytesOf(baseDoc, basePages, 1),
+        ),
+        true,
+        "stamp: existing content byte-identical",
+      );
+    }
+    // write() twice (non-destructive rebuild)
+    const out2 = ctx.write();
+    eq(bytesEqual(out, out2), true, "stamp: write() is deterministic + repeatable");
+  }
+
+  /* ── 16.3 Behind-content ordering ── */
+  {
+    const ctx = StampContext.load(stampBase);
+    ctx.stampText(0, { x: 5, y: 5, text: "BEHIND", size: 8, font: "helvetica", behind: true });
+    const out = ctx.write();
+    const back = listPages(parsePdf(out));
+    const contents = back[0]!.dict.get("Contents");
+    ok(contents?.k === "arr", "behind: contents array");
+    if (contents?.k === "arr") {
+      eq(contents.items.length, 2, "behind: two streams");
+      const first = contents.items[0]!;
+      const stream = first.k === "ref" ? parsePdf(out).getObject(first.num) : undefined;
+      const body = stream?.k === "stream" ? new TextDecoder().decode(stream.raw) : "";
+      ok(body.includes("<424548494e44>"), "behind: OUR stream is FIRST in /Contents");
+    }
+  }
+
+  /* ── 16.4 JPEG embed + stamp (DCT passthrough, oracle dims) ── */
+  {
+    const jpg = readFileSync("qa/test-photo.jpg");
+    const libDoc = await PDFDocument.create();
+    const libImg = await libDoc.embedJpg(new Uint8Array(jpg));
+    const ctx = StampContext.load(stampBase);
+    const img = ctx.embedJpeg(new Uint8Array(jpg));
+    eq(img.width, libImg.width, "jpeg: width parity with pdf-lib");
+    eq(img.height, libImg.height, "jpeg: height parity with pdf-lib");
+    ctx.stampImage(0, img, { x: 50, y: 50, width: 120, height: 90, opacity: 0.8, rotate: 30 });
+    const out = ctx.write();
+    const back = parsePdf(out);
+    const backPages = listPages(back);
+    const res = backPages[0]!.dict.get("Resources");
+    const xob = res?.k === "dict" ? res.m.get("XObject") : undefined;
+    const xobMap = xob?.k === "dict" ? xob.m : undefined;
+    const imKey = xobMap?.keys().next().value as string | undefined;
+    ok(imKey !== undefined, "jpeg: /XObject entry present");
+    const stream = imKey ? xobMap?.get(imKey) : undefined;
+    const streamNum = stream?.k === "ref" ? stream.num : undefined;
+    const imgObj = streamNum !== undefined ? back.getObject(streamNum) : undefined;
+    ok(imgObj?.k === "stream", "jpeg: image object is a stream");
+    if (imgObj?.k === "stream") {
+      eq((imgObj.m.get("Width") as { n: number } | undefined)?.n, libImg.width, "jpeg: /Width");
+      eq((imgObj.m.get("Height") as { n: number } | undefined)?.n, libImg.height, "jpeg: /Height");
+      eq((imgObj.m.get("Filter") as { v: string } | undefined)?.v, "DCTDecode", "jpeg: DCTDecode filter");
+      eq(bytesEqual(imgObj.raw, new Uint8Array(jpg)), true, "jpeg: DCT bytes passthrough EXACT");
+    }
+    // Ops: verify the cm triple + Do on page 0.
+    const contents = backPages[0]!.dict.get("Contents");
+    if (contents?.k === "arr") {
+      const last = contents.items[contents.items.length - 1]!;
+      if (last.k === "ref") {
+        const s = back.getObject(last.num);
+        const body = s?.k === "stream" ? new TextDecoder().decode(s.raw) : "";
+        ok(body.includes("1 0 0 1 50 50 cm"), "jpeg: translate cm");
+        const cos30 = Math.cos((30 * Math.PI) / 180);
+        ok(body.includes(`${cos30.toFixed(10).replace(/0+$/, "").replace(/\.$/, "")} 0.5 -0.5 ${cos30.toFixed(10).replace(/0+$/, "").replace(/\.$/, "")} 0 0 cm`) || /0\.8660\d* 0\.5 -0\.5 0\.8660\d* 0 0 cm/.test(body), "jpeg: rotate cm");
+        ok(body.includes("120 0 0 90 0 0 cm"), "jpeg: scale cm");
+        ok(body.includes(`/${imKey} Do`), "jpeg: Do operator");
+      }
+    }
+    const lib = await PDFDocument.load(out);
+    eq(lib.getPageCount(), 3, "jpeg: pdf-lib reload");
+  }
+
+  /* ── 16.5 PNG embed (opaque + alpha), pixel round-trip ── */
+  {
+    // 2×2 RGBA: red/green opaque, blue/yellow with alpha 128.
+    const png = buildPngFixture([
+      [255, 0, 0, 255], [0, 255, 0, 255],
+      [0, 0, 255, 128], [255, 255, 0, 128],
+    ]);
+    const ctx = StampContext.load(stampBase);
+    const img = ctx.embedPng(png);
+    eq(img.width, 2, "png: width");
+    eq(img.height, 2, "png: height");
+    ctx.stampImage(1, img, { x: 10, y: 10, width: 2, height: 2 });
+    const out = ctx.write();
+    const back = parsePdf(out);
+    const backPages = listPages(back);
+    const res = backPages[1]!.dict.get("Resources");
+    const xobMap = res?.k === "dict" ? res.m.get("XObject") : undefined;
+    const xmap = xobMap?.k === "dict" ? xobMap.m : undefined;
+    const imKey = xmap?.keys().next().value as string | undefined;
+    const imRef = imKey ? xmap?.get(imKey) : undefined;
+    const imgObj = imRef?.k === "ref" ? back.getObject(imRef.num) : undefined;
+    ok(imgObj?.k === "stream", "png: image stream");
+    if (imgObj?.k === "stream") {
+      eq((imgObj.m.get("ColorSpace") as { v: string } | undefined)?.v, "DeviceRGB", "png: DeviceRGB");
+      eq((imgObj.m.get("BitsPerComponent") as { n: number } | undefined)?.n, 8, "png: 8bpc");
+      eq((imgObj.m.get("Filter") as { v: string } | undefined)?.v, "FlateDecode", "png: Flate");
+      const rgb = unzlibSync(imgObj.raw);
+      eq(
+        bytesEqual(rgb, new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0])),
+        true,
+        "png: RGB pixels round-trip EXACT",
+      );
+      const smaskRef = imgObj.m.get("SMask");
+      const smaskObj = smaskRef?.k === "ref" ? back.getObject(smaskRef.num) : undefined;
+      ok(smaskObj?.k === "stream", "png: SMask stream (alpha present)");
+      if (smaskObj?.k === "stream") {
+        eq((smaskObj.m.get("ColorSpace") as { v: string } | undefined)?.v, "DeviceGray", "png: SMask gray");
+        const alpha = unzlibSync(smaskObj.raw);
+        eq(bytesEqual(alpha, new Uint8Array([255, 255, 128, 128])), true, "png: alpha round-trip EXACT");
+      }
+    }
+    // Fully opaque PNG → NO SMask (pdf-lib hasAlphaValues parity).
+    const opaquePng = buildPngFixture([
+      [1, 2, 3, 255], [4, 5, 6, 255],
+      [7, 8, 9, 255], [10, 11, 12, 255],
+    ]);
+    const ctx2 = StampContext.load(stampBase);
+    const img2 = ctx2.embedPng(opaquePng);
+    ctx2.stampImage(2, img2, { x: 0, y: 0, width: 2, height: 2 });
+    const out2 = ctx2.write();
+    let smaskCount = 0;
+    for (const [, obj] of iterateObjects(parsePdf(out2))) {
+      if (obj?.k === "stream" && obj.m.has("SMask")) smaskCount += 1;
+    }
+    eq(smaskCount, 0, "png: opaque → no SMask emitted");
+    // pdf-lib embeds the SAME pngs fine (oracle sanity)
+    const libDoc = await PDFDocument.create();
+    const libImg = await libDoc.embedPng(png);
+    eq(libImg.width, 2, "png: pdf-lib oracle loads our fixture");
+  }
+
+  /* ── 16.6 Inherited Resources (stamp a page without own /Resources) ── */
+  {
+    const inherited = buildInheritedResourcesFixture();
+    const parsed = parsePdf(inherited);
+    const pages = listPages(parsed);
+    eq(pages.length, 2, "inherit: fixture pages");
+    ok(pages[0]!.dict.get("Resources") === undefined, "inherit: page has NO own /Resources");
+    ok(pages[0]!.resources !== undefined, "inherit: engine resolves inherited entry");
+    const ctx = StampContext.load(inherited);
+    ctx.stampText(0, { x: 10, y: 20, text: "INHERIT-STAMP", size: 10, font: "helvetica" });
+    const out = ctx.write();
+    const back = listPages(parsePdf(out));
+    const res = back[0]!.dict.get("Resources");
+    const resMap = res?.k === "dict" ? res.m : undefined;
+    ok(resMap !== undefined, "inherit: stamped page gained own /Resources");
+    const fontMap = resMap?.get("Font");
+    const fMap = fontMap?.k === "dict" ? fontMap.m : undefined;
+    eq(fMap?.has("F1"), true, "inherit: parent's F1 carried into the clone");
+    eq(fMap?.has("F2"), true, "inherit: our font merged next to it");
+    const lib = await PDFDocument.load(out);
+    eq(lib.getPageCount(), 2, "inherit: pdf-lib reload");
+    // The untouched page 1 still has no own /Resources (inherits from parent).
+    eq(back[1]!.dict.get("Resources"), undefined, "inherit: unstamped page untouched");
+  }
+
+  /* ── 16.7 getTitle (latin1 + absent) ── */
+  {
+    const libDoc = await PDFDocument.create();
+    libDoc.setTitle("Fixture Title");
+    libDoc.addPage([100, 100]);
+    const bytes = await libDoc.save();
+    const ctx = StampContext.load(new Uint8Array(bytes));
+    eq(ctx.getTitle(), "Fixture Title", "title: decode parity with pdf-lib getTitle");
+    const ctx2 = StampContext.load(buildInheritedResourcesFixture());
+    eq(ctx2.getTitle(), "", "title: absent → empty string");
+  }
+
+  /* ── 16.8 Error vectors ── */
+  {
+    const ctx = StampContext.load(stampBase);
+    const cases: Array<[string, () => void, string]> = [
+      [
+        "non-WinAnsi text",
+        () =>
+          ctx.stampText(0, {
+            x: 0, y: 0, text: "\u0917\u094b\u092a\u0928\u0940\u092f", size: 12, font: "helvetica",
+          }),
+        "chars",
+      ],
+      ["bad jpeg", () => ctx.embedJpeg(new Uint8Array([1, 2, 3, 4])), "logo"],
+      ["bad png", () => ctx.embedPng(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7])), "logo"],
+      [
+        "page out of range",
+        () => ctx.stampText(9, { x: 0, y: 0, text: "x", size: 12, font: "helvetica" }),
+        "corrupt",
+      ],
+      [
+        "non-positive size",
+        () => ctx.stampText(0, { x: 0, y: 0, text: "x", size: 0, font: "helvetica" }),
+        "corrupt",
+      ],
+    ];
+    for (const [label, fn, want] of cases) {
+      let code = "none";
+      try {
+        fn();
+      } catch (err) {
+        code = err instanceof PdfError ? err.code : "wrong-error";
+      }
+      eq(code, want, `stamp error: ${label}`);
+    }
+    // Interlaced PNG refusal (hand-set the flag on a real PNG).
+    const interlaced = Uint8Array.from(buildPngFixture([[1, 2, 3, 255]]));
+    interlaced[28] = 1; // IHDR interlace byte
+    let code = "none";
+    try {
+      ctx.embedPng(interlaced);
+    } catch (err) {
+      code = err instanceof PdfError ? err.code : "wrong-error";
+    }
+    eq(code, "logo", "stamp error: interlaced PNG refused");
+    // organizePdf on a STAMPED output still works (engine composability).
+    const stamped = StampContext.load(stampBase);
+    stamped.stampText(0, { x: 1, y: 1, text: "X", size: 6, font: "helvetica" });
+    const stampedBytes = stamped.write();
+    const reorganized = organizePdf(stampedBytes, [{ kind: "page", src: 0 }]);
+    eq(listPages(parsePdf(reorganized.bytes)).length, 1, "stamp: organizePdf on stamped output");
+  }
+}
+
+/** Iterate all top-level objects of a parsed doc (num, obj). */
+function* iterateObjects(doc: ParsedPdf): Generator<[number, PdfObj | undefined]> {
+  for (const num of doc.entries.keys()) {
+    yield [num, doc.getObject(num)];
+  }
+}
+
+/**
+ * Build a 2×2 (or arbitrary len/2) RGBA PNG with zlib-deflated IDAT and NO
+ * filtering — dev-time synthesis for the stamp smokes (node:zlib allowed in
+ * scripts; runtime uses our own zip engine).
+ */
+function buildPngFixture(pixels: Array<[number, number, number, number]>): Uint8Array {
+  const width = 2;
+  const height = Math.max(1, Math.ceil(pixels.length / 2));
+  const raw: number[] = [];
+  for (let y = 0; y < height; y++) {
+    raw.push(0); // filter None
+    for (let x = 0; x < width; x++) {
+      const p = pixels[y * width + x] ?? [0, 0, 0, 255];
+      raw.push(p[0], p[1], p[2], p[3]);
+    }
+  }
+  const idat = deflateSync(new Uint8Array(raw));
+  const chunks: Uint8Array[] = [
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  ];
+  const push = (type: string, data: Uint8Array): void => {
+    const len = new Uint8Array([(data.length >>> 24) & 0xff, (data.length >>> 16) & 0xff, (data.length >>> 8) & 0xff, data.length & 0xff]);
+    const typeBytes = new TextEncoder().encode(type);
+    const crcInput = new Uint8Array(typeBytes.length + data.length);
+    crcInput.set(typeBytes, 0);
+    crcInput.set(data, typeBytes.length);
+    const crc = crc32(crcInput);
+    const crcBytes = new Uint8Array([(crc >>> 24) & 0xff, (crc >>> 16) & 0xff, (crc >>> 8) & 0xff, crc & 0xff]);
+    chunks.push(len, typeBytes, data, crcBytes);
+  };
+  const ihdr = new Uint8Array(13);
+  ihdr.set([(width >>> 24) & 0xff, (width >>> 16) & 0xff, (width >>> 8) & 0xff, width & 0xff], 0);
+  ihdr.set([(height >>> 24) & 0xff, (height >>> 16) & 0xff, (height >>> 8) & 0xff, height & 0xff], 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // RGBA
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+  push("IHDR", ihdr);
+  push("IDAT", idat);
+  push("IEND", new Uint8Array(0));
+  let len = 0;
+  for (const c of chunks) len += c.length;
+  const out = new Uint8Array(len);
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.length;
+  }
+  return out;
+}
+
+/**
+ * Hand-built 2-page PDF whose /Font /F1 lives ONLY on the /Pages tree —
+ * pages inherit it (spec §7.7.3.4). The classic inheritance stress case.
+ */
+function buildInheritedResourcesFixture(): Uint8Array {
+  const enc = new TextEncoder();
+  const objects: Array<string | null> = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /Resources << /Font << /F1 5 0 R >> >> >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 6 0 R >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 7 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>",
+    null, // 6: content stream (patched below)
+    null, // 7: content stream
+  ];
+  const body6 = "BT /F1 12 Tf 20 100 Td (INHERITED-FONT-TEXT) Tj ET";
+  const body7 = "BT /F1 12 Tf 20 100 Td (SECOND-PAGE) Tj ET";
+  const serialized: string[] = [];
+  const offsets: number[] = [];
+  let pos = enc.encode("%PDF-1.4\n").length;
+  for (let i = 0; i < objects.length; i++) {
+    const num = i + 1;
+    let body = objects[i]!;
+    if (num === 6) body = `<< /Length ${body6.length} >>\nstream\n${body6}\nendstream`;
+    if (num === 7) body = `<< /Length ${body7.length} >>\nstream\n${body7}\nendstream`;
+    const chunk = `${num} 0 obj\n${body}\nendobj\n`;
+    offsets[num - 1] = pos;
+    pos += enc.encode(chunk).length;
+    serialized.push(chunk);
+  }
+  const xrefPos = pos;
+  let pdf = `%PDF-1.4\n${serialized.join("")}`;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) {
+    pdf += `${String(off).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
+  return enc.encode(pdf);
 }
 function firstValue(lex: Lexer): import("../src/lib/own/pdf/objects").PdfObj {
   // Re-use the engine by wrapping the remaining tokens in a minimal

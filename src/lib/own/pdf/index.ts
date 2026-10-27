@@ -32,9 +32,24 @@ export {
   type OrganizeProgress,
   type PlanEntry,
 } from "./ops";
-export { writeDocument, type WritePage, type WriteProgress } from "./writer";
+export { writeDocument, type WritePage, type WriteProgress, type WriteSynthetic } from "./writer";
+export {
+  StampContext,
+  type StampImage,
+  type StampImageOptions,
+  type StampTextOptions,
+} from "./stamp";
+export {
+  encodeWinAnsiBytes,
+  encodeWinAnsiHex,
+  measureStdText,
+  winAnsiEncodable,
+  type StampFontKey,
+} from "./stamp-fonts";
+export { decodePng, parseJpeg, flateImageBytes, type JpegInfo, type PngImage } from "./images";
 export {
   type PdfObj,
+  type PdfNewRef,
   type PdfRef,
   asArr,
   asBox,
@@ -48,6 +63,7 @@ export {
   arr,
   name,
   newDict,
+  newref,
   num,
   pdfNameToString,
   pdfNumToString,

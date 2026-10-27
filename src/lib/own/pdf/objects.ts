@@ -18,6 +18,18 @@ export interface PdfRef {
   gen: number;
 }
 
+/**
+ * A reference to a SYNTHETIC object authored directly in OUTPUT numbering
+ * (P6-f stamp layer). Only stamp-side code creates these — never the parser.
+ * The writer emits `N 0 R` verbatim and the reachability BFS skips them, so a
+ * page dict can point at stamp streams/fonts/images without confusing the
+ * source-graph remapper.
+ */
+export interface PdfNewRef {
+  readonly k: "newref";
+  num: number;
+}
+
 export type PdfObj =
   | { k: "num"; n: number }
   | { k: "bool"; b: boolean }
@@ -27,9 +39,11 @@ export type PdfObj =
   | { k: "arr"; items: PdfObj[] }
   | { k: "dict"; m: Map<string, PdfObj> }
   | { k: "stream"; m: Map<string, PdfObj>; raw: Uint8Array }
-  | PdfRef;
+  | PdfRef
+  | PdfNewRef;
 
 export const ref = (num: number, gen = 0): PdfRef => ({ k: "ref", num, gen });
+export const newref = (num: number): PdfNewRef => ({ k: "newref", num });
 export const num = (n: number): PdfObj => ({ k: "num", n });
 export const name = (v: string): PdfObj => ({ k: "name", v });
 export const arr = (...items: PdfObj[]): PdfObj => ({ k: "arr", items });

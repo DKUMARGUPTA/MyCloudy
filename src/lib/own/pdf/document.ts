@@ -27,6 +27,13 @@ export interface PdfPageInfo {
   cropBox: [number, number, number, number];
   /** Normalized rotation 0|90|180|270. */
   rotate: number;
+  /**
+   * Own-or-INHERITED /Resources entry (P6-f stamp layer): a ref, a dict, or
+   * undefined when neither the page nor any ancestor declares one. Stamp code
+   * resolves refs, clones the dict, and merges its own /Font /XObject
+   * /ExtGState entries into that clone.
+   */
+  resources: PdfObj | undefined;
 }
 
 const MAX_TREE_DEPTH = 64;
@@ -94,6 +101,7 @@ export function listPages(doc: ParsedPdf): PdfPageInfo[] {
         mediaBox: media,
         cropBox: boxOr(merged.get("CropBox"), media),
         rotate: normalizeRotation(asNum(merged.get("Rotate")) ?? 0),
+        resources: merged.get("Resources"),
       });
       return;
     }
