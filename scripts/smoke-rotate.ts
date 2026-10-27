@@ -606,17 +606,19 @@ console.log("── 3. R6-b: honest locked/corrupt refusals ──────�
     classifyProbeError(new Error("Expected endstream")) === "corrupt"
   );
 
-  /* worker: structural probe + named refusals */
+  /* worker: typed structural refusal + named errors (P6-e own engine) */
   check(
-    "worker: structural isEncrypted probe (pdf-lib ignoreEncryption load)",
-    workerSrc.includes("ignoreEncryption: true") &&
-      workerSrc.includes("probe?.isEncrypted")
+    "worker: typed encrypted refusal via parseForOrganize (own engine)",
+    workerSrc.includes("parseForOrganize(bytes)") &&
+      workerSrc.includes('error.code === "encrypted"')
   );
   check(
     "worker: encrypted + corrupt refusals carry the file name",
-    workerSrc.includes('code: "tool.errorEncrypted"') &&
-      workerSrc.includes('code: /encrypt/i.test(message)') &&
-      (workerSrc.match(/detail: file\.name/g)?.length ?? 0) >= 2
+    workerSrc.includes('return "tool.errorEncrypted"') &&
+      workerSrc.includes('return "tool.errorCorrupt"') &&
+      // One consolidated typed catch covers BOTH codes with the file name
+      // (the legacy path needed two probe/load sites for the same honesty).
+      (workerSrc.match(/detail: file\.name/g)?.length ?? 0) >= 1
   );
 
   /* surface: honest copy + CTA gating for locked vs damaged */

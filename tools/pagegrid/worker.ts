@@ -1,5 +1,3 @@
-import { PDFDocument, degrees } from "pdf-lib";
-
 import {
   PdfError,
   organizePages,
@@ -37,20 +35,12 @@ import {
  * Device-only (PRD §2.3): Web Worker, File/Blob in and out, zero network.
  * Real per-page progress is posted while rebuilding.
  *
- * ENGINE (P6-c): tools in OWN_ENGINE_TOOLS run on OUR own PDF micro-engine
- * (src/lib/own/pdf — zero external code, one parse per file, byte-exact
- * content passthrough). Rollout is one tool at a time; everything else
- * still runs the pdf-lib path until its E2E round clears. The two paths
- * share ALL batch/selection/naming logic — only the rebuild differs.
+ * ENGINE (P6-c, P6-e): the whole family runs on OUR OWN PDF micro-engine
+ * (src/lib/own/pdf — zero external code, one typed parse per file,
+ * byte-exact content passthrough). All four tools cleared their
+ * agent-browser E2E rounds in P6-c; the legacy pdf-lib branch was removed
+ * in P6-e (pdf-lib stays a dev-time oracle in smokes only).
  */
-
-/** P6-c rollout set — a tool joins after its agent-browser E2E round. */
-const OWN_ENGINE_TOOLS: ReadonlySet<string> = new Set([
-  "extract-pdf-pages",
-  "rotate-pdf-pages",
-  "rearrange-pdf-pages",
-  "remove-pdf-pages",
-]);
 
 /** A4 portrait — the fallback size for leading blank pages. */
 const A4: [number, number] = [595.28, 841.89];
@@ -218,8 +208,8 @@ function engineErrorCode(error: unknown): string {
  * Builds one output PDF from the given entries on OUR OWN engine (P6-c).
  * Blank entries become real blank pages sized like the first real page of
  * the OUTPUT (A4 when the grid has none) — byte-exact parity with the
- * pdf-lib path's `copied[0]` sizing. `source` is the ONE parse for the
- * file; every write reuses it (never re-parses the bytes).
+ * retired pdf-lib path's `copied[0]` sizing. `source` is the ONE parse for
+ * the file; every write reuses it (never re-parses the bytes).
  */
 function buildOutputOwn(
   source: OrganizeSource,
@@ -238,49 +228,6 @@ function buildOutputOwn(
   return organizePages(source, plan, progress);
 }
 
-/**
- * Builds one output PDF from the given entries (legacy pdf-lib path —
- * kept until each tool's own-engine E2E round clears, then P6-e removes it).
- */
-async function buildOutputPdfLib(
-  source: PDFDocument,
-  entries: GridPage[],
-  progress: (fraction: number, page: number) => void
-): Promise<Uint8Array> {
-  const out = await PDFDocument.create();
-
-  // Copy every real page up front (duplicate indices are supported —
-  // verified: pdf-lib returns independent copies).
-  const realIndices = entries
-    .map((entry) => entry.source)
-    .filter((source) => source >= 0);
-  const copied =
-    realIndices.length > 0 ? await out.copyPages(source, realIndices) : [];
-
-  // Reference size for blanks: first real page, else A4.
-  let blankSize: [number, number] = A4;
-  if (copied.length > 0) {
-    blankSize = [copied[0].getWidth(), copied[0].getHeight()];
-  }
-
-  let realCursor = 0;
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    if (entry.source === -1) {
-      out.addPage(blankSize);
-    } else {
-      const page = copied[realCursor];
-      realCursor += 1;
-      const angle = (page.getRotation().angle + entry.rotation + 360) % 360;
-      page.setRotation(degrees(angle));
-      out.addPage(page);
-    }
-    progress((index + 1) / entries.length, index + 1);
-  }
-
-  return out.save({ useObjectStreams: true });
-}
-
 async function run(request: WorkerRunRequest): Promise<void> {
   const { runId, toolId, options, files, fileIds } = request;
   const grid = parseGridOption(options.grid);
@@ -290,7 +237,6 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
   const isExtract = toolId === "extract-pdf-pages";
   const onePerPage = isExtract && options.onePerPage === true;
-  const useOwnEngine = OWN_ENGINE_TOOLS.has(toolId);
 
   // Batch mode: per-file grids keyed by workspace file id (all four family
   // tools). A malformed map is refused rather than guessed (never apply
@@ -412,93 +358,29 @@ async function run(request: WorkerRunRequest): Promise<void> {
       });
     };
 
-    if (useOwnEngine) {
-      // ── OUR engine: ONE typed parse per file, every write reuses it ──
-      let source: OrganizeSource;
-      try {
-        source = parseForOrganize(bytes);
-      } catch (error: unknown) {
-        post({
-          type: "error",
-          runId,
-          code: engineErrorCode(error),
-          detail: file.name,
-        });
-        return;
-      }
-      if (onePerPage) {
-        for (let index = 0; index < fileEntries.length; index += 1) {
-          const saved = buildOutputOwn(source, [fileEntries[index]!], emit);
-          pushOutput(
-            saved,
-            uniqueName(`${base}_page${index + 1}.pdf`)
-          );
-        }
-      } else {
-        const saved = buildOutputOwn(source, fileEntries, emit);
-        post({
-          type: "progress",
-          runId,
-          pct: Math.round(((fileIndex + 1) / totalFiles) * 95),
-          stage: "saving",
-        });
-        pushOutput(saved, uniqueName(`${base}${suffix}.pdf`));
-      }
-      continue;
-    }
-
-    // ── Legacy pdf-lib path (until each tool's E2E round clears) ──
-    // Structural probe first (pdf-lib ignoreEncryption load + isEncrypted —
-    // never a raw-bytes "/Encrypt" sniff), then the plain load for corrupts.
-    let probe: PDFDocument | null = null;
+    // ── OUR engine: ONE typed parse per file, every write reuses it ──
+    let source: OrganizeSource;
     try {
-      probe = await PDFDocument.load(bytes, {
-        ignoreEncryption: true,
-        updateMetadata: false,
-      });
-    } catch {
-      // Not parseable at all — the plain load below keeps producing the
-      // honest corrupt error for this file.
-    }
-    if (probe?.isEncrypted) {
-      post({
-        type: "error",
-        runId,
-        code: "tool.errorEncrypted",
-        detail: file.name,
-      });
-      return;
-    }
-    let source: PDFDocument;
-    try {
-      source = await PDFDocument.load(bytes, {
-        ignoreEncryption: false,
-        updateMetadata: false,
-      });
+      source = parseForOrganize(bytes);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
       post({
         type: "error",
         runId,
-        code: /encrypt/i.test(message)
-          ? "tool.errorEncrypted"
-          : "tool.errorCorrupt",
+        code: engineErrorCode(error),
         detail: file.name,
       });
       return;
     }
-
     if (onePerPage) {
       for (let index = 0; index < fileEntries.length; index += 1) {
-        const saved = await buildOutputPdfLib(
-          source,
-          [fileEntries[index]!],
-          emit
+        const saved = buildOutputOwn(source, [fileEntries[index]!], emit);
+        pushOutput(
+          saved,
+          uniqueName(`${base}_page${index + 1}.pdf`)
         );
-        pushOutput(saved, uniqueName(`${base}_page${index + 1}.pdf`));
       }
     } else {
-      const saved = await buildOutputPdfLib(source, fileEntries, emit);
+      const saved = buildOutputOwn(source, fileEntries, emit);
       post({
         type: "progress",
         runId,
