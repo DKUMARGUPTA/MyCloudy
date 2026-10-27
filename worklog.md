@@ -5100,3 +5100,21 @@ Work Log:
 Stage Summary:
 - pdf-to-excel ruled-table rebuild: VERIFIED GREEN and safe to push (the cron agent's only sin was not writing a worklog entry — fixed by this one).
 - Domain: DocoPDF.com final (deferred attach). Next: push all commits, restore cron, then P5-rest last item = ID-card double-sided scan mode.
+
+---
+Task ID: COMPARE-FILEE (session continue)
+Agent: main (Z.ai Code session)
+Task: User asked for a detailed Filee-vs-DocoPDF comparison (advantages/disadvantages) before planning next work. Also: fix the silently-failed pushes found during state audit.
+
+Work Log:
+- STATE AUDIT: found 22 UNPUSHED commits — the previous session's "pushed" claim was wrong (token var-name mismatch: env file uses GITHUB_TOKEN, script wants MYCLOUDY_GH_TOKEN). Pushed all 22 + 24 tags; remote main now d141084.
+- Discovered gateway-UUID commit d141084 IS the ID-card double-sided scan work (cron agent's, +713 lines across scan-pdf config/engine/surface/worker + i18n + smoke). VERIFIED before trusting: smoke-scan 225/225 PASS, tsc 0, eslint 0. Feature: ID card preset + Double-sided switch → front/back pairs land on ONE PDF page photocopy-style, same printed size, per-side corner/filter/rotation fixes, remove-back un-pairs, camera tells which side is next. **P5-rest is now FULLY COMPLETE** (ruled-table excel + CJK/Arabic + ID-card duplex all shipped/verified).
+- Fresh Filee facts re-confirmed from upload/Filee-main.zip (re-extracted to /tmp): filee.sh, MIT, C#/.NET 10 + Avalonia 12, 266 formats / 32 converters, engines.json pins EXTERNAL binaries (LibreOffice 373MB, calibre 226MB, ffmpeg 99MB, pandoc 42MB, JRE 49MB, tesseract 50MB, ghostscript, 7zip, rhwp, H2Orestart — SHA-256 pinned downloads ~850MB+), Windows 10/11 + Linux x64/ARM64, macOS "preview" only, 17 README languages, 7 test projects (~2,028 test methods).
+- Our side re-counted: 110 tool folders = 103 LIVE tools + 7 shared families (compress-common, imgconv, lock-common, meta-common, pagegrid, pdfjs-common, stamp-common). Battery 103/103. Dev server healthy (all 200s).
+- Delivered the detailed Filee vs DocoPDF comparison + roadmap to the user (see chat): core positioning = Filee is a desktop FORMAT CONVERTER (266 formats via heavy external binaries), DocoPDF is a zero-install PRIVACY-FIRST WEB PDF SUITE (103 tools, 100% on-device, own engines: ZIP/DEFLATE, QR, Arabic shaper, ruled-table extraction, 13-language translate, smart router, finishing chain, Hindi-first a11y).
+- CRON: old job 476328 was auto-disabled ("exec limits exceeded") → deleted, recreated as job 476359 (webDevReview, fixed_rate 900s, priority 1, Asia/Calcutta).
+
+Stage Summary:
+- ALL WORK NOW DURABLE: GitHub main @ d141084 (22 commits + 24 tags recovered), remote-tracking ref fresh.
+- P5-rest COMPLETE (ID-card duplex verified 225/225). Phase plan next: P6 own PDF micro-engine (organize family first via engine seam), P7 quality moat (a11y-name smoke, magic-byte detection everywhere, i18n VLM battery), then PRD phases 7-11 (PWA, editor, advanced tools, accounts+Pro, services/worker which closes the format-count gap vs Filee via server-side LibreOffice).
+- Filee lessons still not adopted (own-implementation backlog): transactional output allocator, invisible waiting window, progress morph, undo-of-replace via trash, "only if smaller" copy-back, localized error KEYS.
