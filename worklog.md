@@ -5136,4 +5136,28 @@ P6 PHASE PLAN (own PDF micro-engine — page-surgery scope first):
 - HONEST SCOPE (parity with pdf-lib copyPages): document-level extras (Outlines/Names/StructTree/AcroForm catalog refs) are NOT carried into surgery outputs — same behavior class as pdf-lib copyPages; each migration round re-checks tool UX and copy.
 
 Stage Summary:
-- Plan locked. pdf-lib = DEV-TIME ORACLE ONLY (smokes); runtime organize family will ride OUR engine. No external source in shipped code path.
+- Plan locked. pdf-lib = DEV-TIME ORACLE ONLY (smokes); runtime organize family will ride OUR engine.
+
+---
+Task ID: P6-a (IMPLEMENTED + VERIFIED)
+Agent: main (Z.ai Code session)
+Task: Build the OWN PDF micro-engine core (user mandate: depend only on OUR code) — parser + page tree + writer + organize seam, verified against pdf-lib as dev-time oracle.
+
+Work Log:
+- BUILT src/lib/own/pdf/ (6 files, zero external deps; runs in Web Workers AND bun unchanged):
+  * objects.ts — PdfObj union (num/bool/null/name/str/arr/dict/stream/ref) + helpers (dget/asBox/collectRefs with skipKey/cloneDict/canonical num+name+hex-string serializers).
+  * lexer.ts — byte tokenizer per §7: ws variants, comments, ints+reals (isInt flag for ref lookahead), literal strings (nested parens, §7.3.4.2 escapes incl. octal mask 0xff + backslash-EOL continuation), hex strings (odd-nibble pad), names (#xx), <<>>/[], keywords; readStreamBody with /Length + endstream-scan fallback (trims ONE EOL); scanObjectHeaders for recovery.
+  * parser.ts — parsePdf: header sniff (junk-tolerant), last-startxref discovery, CLASSIC xref (subsections + free entries, newest-wins set-if-absent), XREF STREAMS (/W big-endian + /Index, FlateDecode via OUR OWN zip unzlibSync + raw-deflate tolerance), PNG predictors 10-15 (None/Sub/Up/Average/Paeth 8-bit; Pred=2 → typed unsupported), /Prev chains + /XRefStm hybrid (stream precedence), ObjStm (pair table, lazy inner parse, decoded-once cache), indirect /Length, /Encrypt → typed "encrypted" refusal, broken xref → brute recovery (object-header scan + last-trailer dict + /Type/Catalog scan → usable catalog even in recovery). resolve() helper. decodeForParser exported.
+  * document.ts — listPages: page-tree walk with FULL attribute INHERITANCE (MediaBox/CropBox/Resources/Rotate/BleedBox/TrimBox/ArtBox), rotation normalized {0,90,180,270}, depth cap 64, count cap 200k.
+  * writer.ts — writeDocument: deterministic renumbering (1=catalog, 2=/Pages, then page dicts/blank streams, then BFS reachable graphs per source doc), composite docIdx:objNum remap (annotations' /P back-refs remap to NEW page numbers), unresolvable refs → "null" (spec-legal), streams BYTE-EXACT subarray passthrough with /Length rewritten, classic xref emit + trailer + startxref + %%EOF. Blank pages = synthetic dict + empty stream. Cross-document primitive (multi-doc pages array) = merge kernel for P6-d.
+  * ops.ts — organizePdf(bytes, plan): PlanEntry = page{src, rotateDelta} | blank{w,h}; drops /Parent on clones, rotation normalized source+delta; typed PdfError codes.
+- DEV WAR STORIES (3 real bugs caught by the smoke before any app wiring): (1) parseIndirectAt parsed ONLY the value — stream objects (ObjStm! content streams!) came back as bare dicts, so ObjStm resolution crashed AND round-trip byte-identity checks compared [] vs [] vacuously → fixed to parseStreamObject, making every byte-identity check REAL; (2) expectEndstreamAt left the lexer mid-token on the strict path (pos reset bug) → rewrote readStreamBody with matchEndstreamFrom (save/restore); (3) brute recovery had no catalog → listPages threw on recovered files → recovery now re-reads the last intact trailer dict and falls back to scanning /Type/Catalog.
+- SMOKE scripts/smoke-pdf-core.ts — 65/65: lexer vectors (octal/unknown escapes, continuation, hex, #xx, .5 real, ref-vs-number), pdf-lib fixtures both modes (classic xref AND xref-stream+ObjStm) with per-page box/rotation agreement, hand-crafted wild bytes (comments, indirect /Length with EXACT source-form content bytes, /F#31→/F1, negative CropBox, 2-subsection xref), hand-crafted PREDICTOR-12 xref stream (encoded test-side, inflated by OUR own zlib), /Encrypt refusal, broken-xref recovery (page count + rotations), round-trip organize-all (pdf-lib reload + content streams byte-identical + SELF-compat), reordered selection [2,0,4] + rotation deltas (270+90→0 wrap) + A4 blank, cross-document merge kernel (two parsed docs, pdf-lib verified), pngUnfilter None/Up/Average/Paeth unit vectors, typed error codes.
+- GATES: tsc 0; eslint 0; smoke-pdf-core 65/65; FULL BATTERY 104/104 (fresh /tmp, includes new smoke).
+- BROWSER: dev server restarted (was down after env reset); home + #/tool/extract-pdf-pages render, 0 console errors (engine is additive — no app wiring yet by design).
+- COMMIT: p6-a-pdf-core tag, pushed (main + 25 tags).
+
+Stage Summary:
+- P6-a COMPLETE: our own PDF read/write core is proven — organize family migration can start on a verified foundation.
+- NEXT (P6-c): engine seam migration ONE tool at a time — extract-pdf-pages first (shared pagegrid worker gets an engine switch), agent-browser E2E with byte-level output verification; then rotate/rearrange/remove; then P6-d merge+split; P6-e removes pdf-lib from the organize runtime entirely (dev-time oracle only).
+- HONEST SCOPE unchanged: outputs don't carry document-level extras (Outlines/Names/StructTree/AcroForm) — same behavior class as pdf-lib copyPages; re-check tool copy at each migration. No external source in shipped code path.
