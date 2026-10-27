@@ -105,6 +105,10 @@ export const config: ToolConfig = {
       hi: "ऑटो-कैप्चर मोड पेज स्थिर होने तक शटर रोकता है, कंपोज़िशन ग्रिड शॉट संवारता है, और प्रीसेट (Document, Photo, ID card, Book, Signature) एक टैप में पूरी लुक सेट करते हैं।",
     },
     {
+      en: "Double-sided ID-card mode: with the ID card preset, flip on Double-sided and shoot the front, then the back — both sides land on one PDF page, photocopy style, printed at the same size.",
+      hi: "दो-तरफ़ा आईडी-कार्ड मोड: ID card प्रीसेट के साथ Double-sided चालू करें और पहले आगे की साइड, फिर पीछे की साइड खींचें — दोनों एक ही PDF पेज पर आती हैं, फ़ोटोकॉपी जैसे, एक ही साइज़ में छपती हैं।",
+    },
+    {
       en: "Text pages straighten themselves (tilt up to 5° is corrected), and finished scans chain straight to OCR, editing, signing or compressing — every next step keeps your pages.",
       hi: "टेक्स्ट पेज अपने आप सीधे हो जाते हैं (5° तक का झुकाव ठीक होता है), और तैयार स्कैन सीधे OCR, एडिटिंग, साइनिंग या कंप्रेशन से जुड़ते हैं — अगला कदम आपके पेज बनाए रखता है।",
     },
@@ -118,6 +122,16 @@ export const config: ToolConfig = {
     },
   ],
   faq: [
+    {
+      q: {
+        en: "How do I scan both sides of an ID card?",
+        hi: "आईडी कार्ड की दोनों साइड कैसे स्कैन करें?",
+      },
+      a: {
+        en: "Pick the ID card preset, then switch on Double-sided. The camera tells you which side is next — shoot the front, flip the card, shoot the back. Each pair becomes one PDF page with the front on top and the back below it, both printed at the same size like a photocopy. You can still fix corners, filters and rotation for each side, and the remove-back button turns a pair back into a single-sided page.",
+        hi: "ID card प्रीसेट चुनें, फिर Double-sided चालू करें। कैमरा बताता रहता है कि अगली कौन सी साइड है — पहले आगे की साइड खींचें, कार्ड पलटें, पीछे की साइड खींचें। हर जोड़ी एक PDF पेज बनती है: आगे की साइड ऊपर, पीछे की नीचे, दोनों एक ही साइज़ में, फ़ोटोकॉपी जैसे। हर साइड के कोने, फ़िल्टर और रोटेशन आप बदल सकते हैं, और पीछे-की-साइड-हटाएँ बटन जोड़ी को वापस सिंगल-साइड पेज बना देता है।",
+      },
+    },
     {
       q: { en: "How does the edge detection work?", hi: "किनारा पहचान कैसे काम करती है?" },
       a: {

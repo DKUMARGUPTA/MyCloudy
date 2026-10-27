@@ -135,6 +135,21 @@ export interface ScanPage {
   quad: Quad;
   /** Whether the current quad came from auto detection (badge copy). */
   autoDetected: boolean;
+  /**
+   * Double-sided ID-card mode (P5): the BACK side of the card, rendered
+   * on the same PDF page below the front. A pair behaves as ONE logical
+   * page — rotate/filter/adjust mirror to both sides.
+   */
+  back?: ScanSide;
+}
+
+/** One printable side of a page (front or an attached back). */
+export interface ScanSide {
+  source: number;
+  rotation: number;
+  filter: ScanFilter;
+  adjust: ScanAdjust;
+  quad: Quad;
 }
 
 /* --------------------------- page list model --------------------------- */
@@ -162,20 +177,78 @@ export function createInitialScanPages(fileCount: number): ScanPage[] {
   }));
 }
 
+/** Serializes one side (front or back) as a compact 6-field row. */
+function serializeSide(side: {
+  source: number;
+  rotation: number;
+  filter: ScanFilter;
+  quad: Quad;
+  adjust: ScanAdjust;
+}): unknown[] {
+  return [
+    side.source,
+    side.rotation,
+    side.filter,
+    Array.from(side.quad, (v) => Math.round(v * 1e4) / 1e4),
+    side.adjust.brightness,
+    side.adjust.contrast,
+  ];
+}
+
+/** Parses one side row (6 fields, shared by rows of length 6 and 7). */
+function parseSide(
+  item: unknown[],
+  fileCount: number
+): { source: number; rotation: number; filter: ScanFilter; quad: Quad; adjust: ScanAdjust } | null {
+  const [source, rotation, filter, quad, brightness, contrast] = item;
+  if (
+    typeof source !== "number" ||
+    !Number.isInteger(source) ||
+    source < 0 ||
+    source >= fileCount
+  ) {
+    return null;
+  }
+  if (
+    typeof rotation !== "number" ||
+    ![0, 90, 180, 270].includes(rotation)
+  ) {
+    return null;
+  }
+  if (typeof filter !== "string" || !SCAN_FILTERS.includes(filter as ScanFilter)) {
+    return null;
+  }
+  if (!Array.isArray(quad) || quad.length !== 8) return null;
+  const quadOut: number[] = [];
+  for (const v of quad) {
+    if (typeof v !== "number" || !Number.isFinite(v) || v < -0.05 || v > 1.05) {
+      return null;
+    }
+    quadOut.push(Math.min(1, Math.max(0, v)));
+  }
+  return {
+    source,
+    rotation,
+    filter: filter as ScanFilter,
+    quad: quadOut as Quad,
+    adjust: {
+      brightness: typeof brightness === "number" ? clampAdjust(brightness) : 0,
+      contrast: typeof contrast === "number" ? clampAdjust(contrast) : 0,
+    },
+  };
+}
+
 /**
  * Serializes the page list. Round-7 shape appends [brightness, contrast]
  * to each page row; rows of length 4 (the Round ≤6 shape) still parse, so
- * old saved options keep working. Compact JSON, 1e4-rounded quads.
+ * old saved options keep working. Double-sided pages (P5) append a 7th
+ * element: the back side as its own 6-field row (or null).
  */
 export function serializeScanPages(pages: ScanPage[]): string {
   return JSON.stringify(
     pages.map((page) => [
-      page.source,
-      page.rotation,
-      page.filter,
-      Array.from(page.quad, (v) => Math.round(v * 1e4) / 1e4),
-      page.adjust.brightness,
-      page.adjust.contrast,
+      ...serializeSide(page),
+      page.back ? serializeSide(page.back) : null,
     ])
   );
 }
@@ -202,52 +275,81 @@ export function parseScanPagesOption(
   if (!Array.isArray(raw)) return null;
   const pages: ScanPage[] = [];
   for (const item of raw) {
-    if (!Array.isArray(item) || (item.length !== 4 && item.length !== 6)) return null;
-    const [source, rotation, filter, quad, brightness, contrast] = item;
     if (
-      typeof source !== "number" ||
-      !Number.isInteger(source) ||
-      source < 0 ||
-      source >= fileCount
+      !Array.isArray(item) ||
+      (item.length !== 4 && item.length !== 6 && item.length !== 7)
     ) {
       return null;
     }
-    if (
-      typeof rotation !== "number" ||
-      ![0, 90, 180, 270].includes(rotation)
-    ) {
-      return null;
+    const front =
+      item.length === 4
+        ? parseLegacyRow(item, fileCount)
+        : parseSide(item, fileCount);
+    if (front === null) return null;
+    // P5 double-sided: 7th element = back side row (or null).
+    let back: ScanSide | undefined;
+    if (item.length === 7 && item[6] !== null) {
+      const backRow = item[6];
+      if (!Array.isArray(backRow) || backRow.length !== 6) return null;
+      const parsed = parseSide(backRow, fileCount);
+      if (parsed === null) return null;
+      if (parsed.source === front.source) return null;
+      back = parsed;
     }
-    if (typeof filter !== "string" || !SCAN_FILTERS.includes(filter as ScanFilter)) {
-      return null;
-    }
-    if (!Array.isArray(quad) || quad.length !== 8) return null;
-    let ok = true;
-    const quadOut: number[] = [];
-    for (const v of quad) {
-      if (typeof v !== "number" || !Number.isFinite(v) || v < -0.05 || v > 1.05) {
-        ok = false;
-        break;
-      }
-      quadOut.push(Math.min(1, Math.max(0, v)));
-    }
-    if (!ok) return null;
-    // Round ≤6 rows (no adjust fields) default to 0/0; Round-7 rows clamp.
-    const adjust: ScanAdjust = {
-      brightness: item.length === 6 ? clampAdjust(brightness) : 0,
-      contrast: item.length === 6 ? clampAdjust(contrast) : 0,
-    };
     pages.push({
       uid: nextUid(),
-      source,
-      rotation,
-      filter: filter as ScanFilter,
-      adjust,
-      quad: quadOut as Quad,
+      ...front,
       autoDetected: false,
+      ...(back ? { back } : {}),
     });
   }
   return pages;
+}
+
+/** Parses a Round ≤6 legacy row of length 4 (no adjust fields). */
+function parseLegacyRow(
+  item: unknown[],
+  fileCount: number
+): {
+  source: number;
+  rotation: number;
+  filter: ScanFilter;
+  quad: Quad;
+  adjust: ScanAdjust;
+} | null {
+  const [source, rotation, filter, quad] = item;
+  if (
+    typeof source !== "number" ||
+    !Number.isInteger(source) ||
+    source < 0 ||
+    source >= fileCount
+  ) {
+    return null;
+  }
+  if (
+    typeof rotation !== "number" ||
+    ![0, 90, 180, 270].includes(rotation)
+  ) {
+    return null;
+  }
+  if (typeof filter !== "string" || !SCAN_FILTERS.includes(filter as ScanFilter)) {
+    return null;
+  }
+  if (!Array.isArray(quad) || quad.length !== 8) return null;
+  const quadOut: number[] = [];
+  for (const v of quad) {
+    if (typeof v !== "number" || !Number.isFinite(v) || v < -0.05 || v > 1.05) {
+      return null;
+    }
+    quadOut.push(Math.min(1, Math.max(0, v)));
+  }
+  return {
+    source,
+    rotation,
+    filter: filter as ScanFilter,
+    quad: quadOut as Quad,
+    adjust: { ...DEFAULT_ADJUST },
+  };
 }
 
 /* ------------------------------ pure ops ------------------------------ */
@@ -263,11 +365,18 @@ export function rotateScanPages(
   delta: number
 ): ScanPage[] {
   const targets = new Set(indices);
-  return pages.map((page, index) =>
-    targets.has(index)
-      ? { ...page, rotation: normalizeRotation(page.rotation + delta) }
-      : page
-  );
+  return pages.map((page, index) => {
+    if (!targets.has(index)) return page;
+    const rotation = normalizeRotation(page.rotation + delta);
+    return {
+      ...page,
+      rotation,
+      // P5 double-sided: the pair is ONE logical page — both sides turn.
+      ...(page.back
+        ? { back: { ...page.back, rotation: normalizeRotation(page.back.rotation + delta) } }
+        : {}),
+    };
+  });
 }
 
 export function setScanFilter(
@@ -276,9 +385,14 @@ export function setScanFilter(
   filter: ScanFilter
 ): ScanPage[] {
   const targets = new Set(indices);
-  return pages.map((page, index) =>
-    targets.has(index) ? { ...page, filter } : page
-  );
+  return pages.map((page, index) => {
+    if (!targets.has(index)) return page;
+    return {
+      ...page,
+      filter,
+      ...(page.back ? { back: { ...page.back, filter } } : {}),
+    };
+  });
 }
 
 /** Sets manual adjustments on the given pages (pure op). */
@@ -289,8 +403,59 @@ export function setScanAdjust(
 ): ScanPage[] {
   const targets = new Set(indices);
   const safe = sanitizeAdjust(adjust);
-  return pages.map((page, index) =>
-    targets.has(index) ? { ...page, adjust: { ...safe } } : page
+  return pages.map((page, index) => {
+    if (!targets.has(index)) return page;
+    return {
+      ...page,
+      adjust: { ...safe },
+      ...(page.back ? { back: { ...page.back, adjust: { ...safe } } } : {}),
+    };
+  });
+}
+
+/**
+ * P5 double-sided ID-card pairing: merges consecutive NEW pages (source
+ * indexes >= fromSource, in list order) two-by-two — the first of each
+ * pair adopts the second as its `back`, the second is removed. An odd
+ * trailing page stays single (honest: half a card is still printable).
+ */
+export function pairNewScanPages(
+  pages: ScanPage[],
+  fromSource: number
+): ScanPage[] {
+  const fresh = pages.filter((page) => page.source >= fromSource);
+  const kept = pages.filter((page) => page.source < fromSource);
+  const paired: ScanPage[] = [];
+  for (let i = 0; i < fresh.length; i += 2) {
+    const front = fresh[i];
+    const back = fresh[i + 1];
+    if (back) {
+      paired.push({
+        ...front,
+        back: {
+          source: back.source,
+          rotation: back.rotation,
+          filter: back.filter,
+          adjust: { ...back.adjust },
+          quad: [...back.quad] as Quad,
+        },
+      });
+    } else {
+      paired.push(front);
+    }
+  }
+  return [...kept, ...paired];
+}
+
+/** P5: drops the back side — a double-sided page becomes single again. */
+export function detachScanBack(pages: ScanPage[], index: number): ScanPage[] {
+  return pages.map((page, i) =>
+    i === index
+      ? (() => {
+          const { back: _back, ...rest } = page;
+          return rest;
+        })()
+      : page
   );
 }
 
@@ -338,7 +503,16 @@ export function reconcileScanPages(
   const seen = new Set<number>();
   for (const page of pages) {
     if (page.source < fileCount && !seen.has(page.source)) {
-      next.push(page);
+      // P5 hardening: a pair's back must stay inside the live file list
+      // (a shrunk list drops the dangling back — honest, no crash).
+      next.push(
+        page.back && page.back.source >= fileCount
+          ? (() => {
+              const { back: _back, ...rest } = page;
+              return rest;
+            })()
+          : page
+      );
       seen.add(page.source);
     }
   }

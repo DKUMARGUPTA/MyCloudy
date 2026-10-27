@@ -83,11 +83,13 @@ import {
   createInitialScanPages,
   deleteScanPages,
   denormalizeQuad,
+  detachScanBack,
   detectDocumentQuad,
   FULL_FRAME_QUAD,
   moveScanPage,
   normalizeQuad,
   pageIsEnhanced,
+  pairNewScanPages,
   PRESET_SPECS,
   quadOutputSize,
   reconcileScanPages,
@@ -104,6 +106,7 @@ import {
   type ScanFilter,
   type ScanPage,
   type ScanPreset,
+  type ScanSide,
 } from "./engine";
 
 /**
@@ -304,6 +307,14 @@ export function ScanSurface({
   // Round-7 scan preset (Doc Scanner's Photo/ID/Document/Book/Signature).
   // null = untouched (pages keep whatever filter the user picked).
   const [preset, setPreset] = useState<ScanPreset | null>(null);
+  // P5 double-sided ID-card mode: captures pair up (front + back) and
+  // land on ONE PDF page, photocopy style.
+  const [doubleSided, setDoubleSided] = useState(false);
+  // Arming flag consumed by the reconcile effect when the camera batch
+  // lands (survives the async addFiles → files.length transition).
+  const pairArmedRef = useRef(false);
+  // Which side of a pair the editor dialog shows.
+  const [editingSide, setEditingSide] = useState<"front" | "back">("front");
   // Mirror of the latest page list for async continuations (auto-detect
   // must read the state that exists AFTER its awaits). apply() keeps it
   // current — never assigned during render.
@@ -337,31 +348,37 @@ export function ScanSurface({
   }, [pages.length, setRunBlocked]);
 
   // Auto edge detection for newly arrived full-frame pages — sequential
-  // pass, applied page by page so cards update progressively.
+  // pass, applied page by page so cards update progressively. P5: a
+  // double-sided page carries TWO photos — each side gets its own pass.
   const autoDetect = useCallback(
     (targets: ScanPage[]) => {
       const run = async () => {
         for (const target of targets) {
-          if (target.autoDetected || !isFullFrame(target.quad)) continue;
-          const fileRef = files[target.source];
-          if (!fileRef) continue;
-          try {
-            const bmp = await loadPreviewBitmap(fileRef.file, fileRef.id);
-            const det = detectDocumentQuad(bmp.data, bmp.width, bmp.height);
-            if (det.confidence > 0.45) {
-              const next = pagesRef.current.map((page) =>
-                page.uid === target.uid
-                  ? {
-                      ...page,
-                      quad: normalizeQuad(det.quad, bmp.width, bmp.height),
-                      autoDetected: true,
-                    }
-                  : page
-              );
-              apply(next);
+          const sides: Array<{ page: ScanPage; side: ScanPage | ScanSide }> = [
+            { page: target, side: target },
+            ...(target.back ? [{ page: target, side: target.back }] : []),
+          ];
+          for (const { page, side } of sides) {
+            const isFront = side === target;
+            if (isFront && target.autoDetected) continue;
+            if (!isFullFrame(side.quad)) continue;
+            const fileRef = files[side.source];
+            if (!fileRef) continue;
+            try {
+              const bmp = await loadPreviewBitmap(fileRef.file, fileRef.id);
+              const det = detectDocumentQuad(bmp.data, bmp.width, bmp.height);
+              if (det.confidence > 0.45) {
+                const quad = normalizeQuad(det.quad, bmp.width, bmp.height);
+                const next = pagesRef.current.map((p) => {
+                  if (p.uid !== page.uid) return p;
+                  if (isFront) return { ...p, quad, autoDetected: true };
+                  return p.back ? { ...p, back: { ...p.back, quad } } : p;
+                });
+                apply(next);
+              }
+            } catch {
+              // Preview decode failure — side stays full-frame, honest.
             }
-          } catch {
-            // Preview decode failure — page stays full-frame, honest.
           }
         }
       };
@@ -389,6 +406,13 @@ export function ScanSurface({
             : page
         );
       }
+      // P5 double-sided ID cards: pair the fresh camera captures
+      // two-by-two (front adopts back). The arm flag is consumed no
+      // matter what — a stale flag must never pair a later gallery add.
+      if (grew && fromSource >= 0 && pairArmedRef.current) {
+        next = pairNewScanPages(next, fromSource);
+      }
+      pairArmedRef.current = false;
       setPrevFileCount(files.length);
       apply(next);
     });
@@ -410,7 +434,13 @@ export function ScanSurface({
       if (cancelled) return;
       const current = pagesRef.current;
       if (current.length === 0) return;
-      if (current.every((page) => page.autoDetected || !isFullFrame(page.quad))) {
+      if (
+        current.every(
+          (page) =>
+            (page.autoDetected || !isFullFrame(page.quad)) &&
+            (!page.back || !isFullFrame(page.back.quad))
+        )
+ ) {
         return;
       }
       autoDetect(current);
@@ -436,11 +466,13 @@ export function ScanSurface({
     (captured: File[]) => {
       setCameraOpen(false);
       if (captured.length > 0) {
+        // P5: arm pairing only for guided double-sided ID-card captures.
+        pairArmedRef.current = doubleSided && preset === "idcard";
         addFiles(captured);
         toast({ description: t("scan.capturedToast", { count: captured.length }) });
       }
     },
-    [addFiles, t, toast]
+    [addFiles, t, toast, doubleSided, preset]
   );
 
   /** Applies a preset to every page + the matching run options. */
@@ -497,8 +529,24 @@ export function ScanSurface({
   const editingIndex = editingPage
     ? pages.findIndex((page) => page.uid === editingPage.uid)
     : -1;
+  // P5: the dialog edits ONE side at a time — a pair's back becomes a
+  // standalone view page so every dialog feature (corner drag, filters,
+  // adjust, rotate preview) works on it unchanged.
+  const editingViewBack = editingPage !== null && editingSide === "back" && editingPage.back;
+  const editingViewPage: ScanPage | null = editingPage
+    ? editingViewBack && editingPage.back
+      ? {
+          ...editingPage,
+          source: editingPage.back.source,
+          rotation: editingPage.back.rotation,
+          filter: editingPage.back.filter,
+          adjust: editingPage.back.adjust,
+          quad: editingPage.back.quad,
+        }
+      : editingPage
+    : null;
   const editingFileRef =
-    editingPage && editingIndex >= 0 ? files[editingPage.source] : undefined;
+    editingViewPage && editingIndex >= 0 ? files[editingViewPage.source] : undefined;
 
   /* ------------------------------ render ------------------------------ */
 
@@ -561,6 +609,8 @@ export function ScanSurface({
             existingCount={0}
             preset={preset}
             onPresetChange={applyPreset}
+            doubleSided={doubleSided}
+            onDoubleSidedChange={setDoubleSided}
             onDone={onCameraDone}
             onClose={() => setCameraOpen(false)}
           />
@@ -680,6 +730,25 @@ export function ScanSurface({
               </button>
             );
           })}
+          {/* P5: double-sided pairing is offered with the ID-card look. */}
+          {preset === "idcard" ? (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={doubleSided}
+              onClick={() => setDoubleSided((prev) => !prev)}
+              title={t("scan.doubleSidedHint")}
+              className={cn(
+                "flex h-9 min-h-9 shrink-0 items-center gap-1.5 rounded-btn border px-3 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                doubleSided
+                  ? "border-primary/60 bg-primary/10 text-foreground"
+                  : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground"
+              )}
+            >
+              <Layers className="size-3.5" aria-hidden="true" />
+              {t("scan.doubleSided")}
+            </button>
+          ) : null}
         </div>
         <p className="text-[11px] text-muted-foreground">{t("scan.hint")}</p>
       </div>
@@ -706,13 +775,25 @@ export function ScanSurface({
                   total={pages.length}
                   file={fileRef?.file ?? null}
                   fileKey={fileRef?.id ?? page.uid}
-                  onEdit={() => setEditingUid(page.uid)}
+                  onEdit={() => {
+                    setEditingUid(page.uid);
+                    setEditingSide("front");
+                  }}
                   onRotate={(delta) => apply(rotateScanPages(pages, [index], delta))}
                   onRemove={() => {
                     apply(deleteScanPages(pages, [index]));
                     if (editingUid === page.uid) setEditingUid(null);
                   }}
                   onMove={(from, to) => apply(moveScanPage(pages, from, to))}
+                  onDetach={
+                    page.back
+                      ? () => {
+                          apply(detachScanBack(pages, index));
+                          if (editingSide === "back") setEditingSide("front");
+                          toast({ description: t("scan.detachBackToast") });
+                        }
+                      : undefined
+                  }
                 />
               );
             })}
@@ -736,26 +817,41 @@ export function ScanSurface({
           existingCount={files.length}
           preset={preset}
           onPresetChange={applyPreset}
+          doubleSided={doubleSided}
+          onDoubleSidedChange={setDoubleSided}
           onDone={onCameraDone}
           onClose={() => setCameraOpen(false)}
         />
       ) : null}
 
-      {editingPage !== null && editingIndex >= 0 ? (
+      {editingPage !== null && editingIndex >= 0 && editingViewPage ? (
         <PageEditorDialog
-          page={editingPage}
+          page={editingViewPage}
           file={editingFileRef?.file ?? null}
-          fileKey={editingFileRef?.id ?? editingPage.uid}
+          fileKey={editingFileRef?.id ?? editingViewPage.uid}
           pageIndex={editingIndex + 1}
           total={pages.length}
           autoStraighten={values.autoStraighten !== false}
+          sides={editingPage.back ? ["front", "back"] : undefined}
+          activeSide={editingSide}
+          onSideChange={setEditingSide}
           onClose={() => setEditingUid(null)}
           onChangeQuad={(quad, autoDetected) => {
-            apply(
-              pages.map((page) =>
-                page.uid === editingPage.uid ? { ...page, quad, autoDetected } : page
-              )
-            );
+            if (editingViewBack && editingPage.back) {
+              apply(
+                pages.map((page) =>
+                  page.uid === editingPage.uid && page.back
+                    ? { ...page, back: { ...page.back, quad } }
+                    : page
+                )
+              );
+            } else {
+              apply(
+                pages.map((page) =>
+                  page.uid === editingPage.uid ? { ...page, quad, autoDetected } : page
+                )
+              );
+            }
           }}
           onChangeFilter={(filter, allPages) => {
             apply(
@@ -796,6 +892,7 @@ function ScanPageCard({
   onRotate,
   onRemove,
   onMove,
+  onDetach,
 }: {
   page: ScanPage;
   index: number;
@@ -806,6 +903,8 @@ function ScanPageCard({
   onRotate: (delta: number) => void;
   onRemove: () => void;
   onMove: (from: number, to: number) => void;
+  /** P5: present only on double-sided pages — drops the back side. */
+  onDetach?: () => void;
 }) {
   const { t } = useI18n();
   const {
@@ -897,8 +996,14 @@ function ScanPageCard({
           >
             {index + 1}
           </span>
+          {page.back ? (
+            <span className="pointer-events-none absolute right-1.5 top-1.5 flex items-center gap-1 rounded-chip bg-primary/90 px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground shadow-sm backdrop-blur">
+              <Layers className="size-3" aria-hidden="true" />
+              {t("scan.pairBadge")}
+            </span>
+          ) : null}
           {page.autoDetected ? (
-            <span className="pointer-events-none absolute right-1.5 top-1.5 flex items-center gap-1 rounded-chip bg-emerald-600/95 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-sm">
+            <span className="pointer-events-none absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-chip bg-emerald-600/95 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-sm">
               <Sparkles className="size-2.5" aria-hidden="true" />
               <span className="sr-only">{t("scan.autoBadge")}</span>
             </span>
@@ -933,6 +1038,17 @@ function ScanPageCard({
             >
               <Pencil className="size-3.5" aria-hidden="true" />
             </button>
+            {onDetach ? (
+              <button
+                type="button"
+                onClick={onDetach}
+                aria-label={t("scan.detachBack")}
+                title={t("scan.detachBack")}
+                className="flex size-8 items-center justify-center rounded-btn text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                <Layers className="size-3.5" aria-hidden="true" />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => onRotate(-90)}
@@ -1008,6 +1124,9 @@ function PageEditorDialog({
   pageIndex,
   total,
   autoStraighten,
+  sides,
+  activeSide,
+  onSideChange,
   onClose,
   onChangeQuad,
   onChangeFilter,
@@ -1020,6 +1139,10 @@ function PageEditorDialog({
   pageIndex: number;
   total: number;
   autoStraighten: boolean;
+  /** P5: front/back tabs for double-sided pages. */
+  sides?: Array<"front" | "back">;
+  activeSide?: "front" | "back";
+  onSideChange?: (side: "front" | "back") => void;
   onClose: () => void;
   onChangeQuad: (quad: Quad, autoDetected: boolean) => void;
   onChangeFilter: (filter: ScanFilter, allPages: boolean) => void;
@@ -1174,6 +1297,40 @@ function PageEditorDialog({
           <DialogDescription className="text-xs">
             {t("scan.editDesc")}
           </DialogDescription>
+          {/* P5: double-sided pages — pick which side you are editing. */}
+          {sides && sides.length > 1 && onSideChange ? (
+            <div
+              role="tablist"
+              aria-label={t("scan.sideTabsLabel")}
+              className="mt-2 flex gap-1"
+            >
+              {sides.map((side) => {
+                const on = side === (activeSide ?? "front");
+                return (
+                  <button
+                    key={side}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    onClick={() => onSideChange(side)}
+                    className={cn(
+                      "flex h-8 min-h-8 items-center gap-1.5 rounded-btn border px-3 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                      on
+                        ? "border-primary/60 bg-primary/10 text-foreground"
+                        : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground"
+                    )}
+                  >
+                    {side === "front" ? (
+                      <Layers className="size-3.5" aria-hidden="true" />
+                    ) : (
+                      <ScanLine className="size-3.5" aria-hidden="true" />
+                    )}
+                    {t(side === "front" ? "scan.sideFront" : "scan.sideBack")}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </DialogHeader>
 
         <div className="grid gap-4 p-4 sm:grid-cols-[1.25fr_1fr] sm:p-6 sm:pt-4">
@@ -1553,12 +1710,16 @@ function CameraSheet({
   existingCount,
   preset,
   onPresetChange,
+  doubleSided,
+  onDoubleSidedChange,
   onDone,
   onClose,
 }: {
   existingCount: number;
   preset: ScanPreset | null;
   onPresetChange: (next: ScanPreset | null) => void;
+  doubleSided: boolean;
+  onDoubleSidedChange: (next: boolean) => void;
   onDone: (captured: File[]) => void;
   onClose: () => void;
 }) {
@@ -1888,6 +2049,24 @@ function CameraSheet({
             </button>
           );
         })}
+        {/* P5: double-sided pairing rides with the ID-card look. */}
+        {preset === "idcard" ? (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={doubleSided}
+            onClick={() => onDoubleSidedChange(!doubleSided)}
+            className={cn(
+              "flex h-8 min-h-8 shrink-0 items-center gap-1 rounded-btn border px-2.5 text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-white/60",
+              doubleSided
+                ? "border-emerald-300/70 bg-emerald-400/20 text-emerald-100"
+                : "border-white/20 bg-white/5 text-white/80 hover:bg-white/15"
+            )}
+          >
+            <Layers className="size-3" aria-hidden="true" />
+            {t("scan.doubleSided")}
+          </button>
+        ) : null}
       </div>
 
       {/* Video stage */}
@@ -1955,6 +2134,23 @@ function CameraSheet({
                 vectorEffect="non-scaling-stroke"
               />
             </svg>
+          ) : null}
+
+          {/* P5 double-sided: which side of the card the NEXT shot is. */}
+          {doubleSided && ready && !error ? (
+            <span className="pointer-events-none absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-1.5 rounded-chip bg-primary/90 px-3 py-1.5 text-[11px] font-bold text-primary-foreground shadow-lg backdrop-blur">
+              {shots.length % 2 === 0 ? (
+                <>
+                  <Layers className="size-3" aria-hidden="true" />
+                  {t("scan.sideFront")}
+                </>
+              ) : (
+                <>
+                  <ScanLine className="size-3" aria-hidden="true" />
+                  {t("scan.sideBack")}
+                </>
+              )}
+            </span>
           ) : null}
 
           {/* Live detection overlay — normalized quad on a 0..100 viewBox
@@ -2074,7 +2270,7 @@ function CameraSheet({
                 className="size-14 object-cover"
               />
               <span className="absolute bottom-0.5 left-0.5 rounded-chip bg-black/70 px-1 text-[10px] font-bold">
-                {i + 1}
+                {doubleSided ? (i % 2 === 0 ? "F" : "B") : i + 1}
               </span>
               <button
                 type="button"

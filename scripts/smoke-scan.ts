@@ -23,6 +23,7 @@ import {
   createInitialScanPages,
   deleteScanPages,
   deskewBitmap,
+  detachScanBack,
   detectDocumentQuad,
   denormalizeQuad,
   estimateDeskewAngle,
@@ -30,6 +31,7 @@ import {
   moveScanPage,
   normalizeQuad,
   pageIsEnhanced,
+  pairNewScanPages,
   parseScanPagesOption,
   PRESET_SPECS,
   quadOutputSize,
@@ -744,10 +746,16 @@ console.log("scan-pdf engine — Round-7 worker + surface wiring locks");
   const surface = read("tools/scan-pdf/surface.tsx");
   const config = read("tools/scan-pdf/config.ts");
 
-  ok(worker.includes("applyAdjustments(warped, page.adjust)"), "worker: adjustments applied after filter");
+  ok(worker.includes("applyAdjustments(warped, side.adjust)"), "worker: adjustments applied after filter");
   ok(worker.includes("autoDeskew(warped)"), "worker: two-pass deskew applied");
   ok(worker.includes("autoStraighten !== false"), "worker: autoStraighten option honoured");
   ok(worker.includes("options.docName"), "worker: docName option read");
+  // P5 double-sided: pair composition in the worker.
+  ok(worker.includes("PAIR_GAP_PT"), "worker: pair gap constant");
+  ok(
+    worker.includes("Math.min(") && worker.includes("image.height + backImage.height"),
+    "worker: pair shares one scale factor"
+  );
 
   ok(surface.includes("FilterThumb"), "surface: filter thumbnails rendered");
   ok(surface.includes('id="scan-brightness"') && surface.includes('id="scan-contrast"'), "surface: brightness + contrast sliders");
@@ -757,6 +765,12 @@ console.log("scan-pdf engine — Round-7 worker + surface wiring locks");
   ok(surface.includes('onChain("ocr-pdf")'), "surface: OCR chain button");
   ok(surface.includes("SCAN_PRESETS.map"), "surface: preset chips rendered");
   ok(surface.includes("PRESET_SPECS[preset].filter"), "surface: new pages adopt preset filter");
+  // P5 double-sided: surface wiring.
+  ok(surface.includes("pairNewScanPages"), "surface: pairs camera captures");
+  ok(surface.includes("detachScanBack"), "surface: detach back action");
+  ok(surface.includes('aria-label={t("scan.sideTabsLabel")}'), "surface: editor side tabs");
+  ok(surface.includes('t("scan.doubleSided")'), "surface: double-sided switch copy");
+  ok(surface.includes("pairArmedRef.current = doubleSided && preset === \"idcard\""), "surface: pairing armed only for idcard");
   ok(
     surface.includes('viewBox="0 0 100 100"') && surface.includes("normalizeQuad(det.quad, width, height)"),
     "surface: camera overlay coordinate fix (normalized quad + 0..100 viewBox)"
@@ -802,6 +816,14 @@ console.log("scan-pdf engine — Round-7 worker + surface wiring locks");
     "autoCaptureOn",
     "autoCaptureIn",
     "gridLines",
+    "doubleSided",
+    "doubleSidedHint",
+    "sideFront",
+    "sideBack",
+    "sideTabsLabel",
+    "pairBadge",
+    "detachBack",
+    "detachBackToast",
   ]) {
     ok(
       typeof en.scan[key] === "string" && (en.scan[key] as string).length > 0,
@@ -820,5 +842,117 @@ console.log("scan-pdf engine — Round-7 worker + surface wiring locks");
 }
 
 console.log("");
+console.log("scan-pdf engine — P5 double-sided ID cards");
+{
+  // Pairing: 4 fresh pages (sources 0-3) → 2 pairs.
+  const fresh = createInitialScanPages(4);
+  const paired = pairNewScanPages(fresh, 0);
+  ok(paired.length === 2, "pair: 4 fresh → 2 pages");
+  ok(paired[0].back?.source === 1, "pair: first front adopts source 1");
+  ok(paired[1].back?.source === 3, "pair: second front adopts source 3");
+  ok(
+    paired[0].back?.quad.every((v, i) => v === fresh[1].quad[i]) === true,
+    "pair: back quad copied"
+  );
+
+  // Odd capture: 3 fresh → 1 pair + 1 honest single.
+  const odd = pairNewScanPages(createInitialScanPages(3), 0);
+  ok(odd.length === 2 && odd[1].back === undefined, "pair: odd count keeps single");
+
+  // Pairing only touches fresh pages; existing edits survive untouched.
+  const mixed: typeof fresh = [
+    { ...fresh[0], filter: "bw" as const, uid: "keep-0" },
+  ];
+  const withFresh = reconcileScanPages(mixed, 3, 1);
+  const pairedMixed = pairNewScanPages(withFresh, 1);
+  ok(pairedMixed.length === 2, "pair: keeps existing + 1 new pair");
+  ok(pairedMixed[0].filter === "bw" && pairedMixed[0].uid === "keep-0", "pair: existing page untouched");
+  ok(pairedMixed[1].back?.source === 2, "pair: fresh pair correct");
+
+  // Ops mirror to the back: rotate, filter, adjust.
+  const rotatedPair = rotateScanPages(paired, [0], 90);
+  ok(
+    rotatedPair[0].rotation === 90 && rotatedPair[0].back?.rotation === 90,
+    "pair: rotate mirrors to back"
+  );
+  ok(rotatedPair[1].rotation === 0, "pair: rotate leaves other pairs");
+  const filteredPair = setScanFilter(paired, [0], "magic");
+  ok(
+    filteredPair[0].filter === "magic" && filteredPair[0].back?.filter === "magic",
+    "pair: filter mirrors to back"
+  );
+  const adjustedPair = setScanAdjust(paired, [0], { brightness: 10, contrast: -5 });
+  ok(
+    adjustedPair[0].adjust.brightness === 10 &&
+      adjustedPair[0].back?.adjust.brightness === 10,
+    "pair: adjust mirrors to back"
+  );
+
+  // Serialization round-trip with backs (7-field rows).
+  const ser = serializeScanPages(paired);
+  const parsedPairs = parseScanPagesOption(ser, 4);
+  ok(parsedPairs !== null && parsedPairs.length === 2, "pair: round-trip parses");
+  ok(parsedPairs?.[0].back?.source === 1, "pair: round-trip back source");
+  ok(parsedPairs?.[0].back?.filter === paired[0].back?.filter, "pair: round-trip back filter");
+  ok(parsedPairs?.[1].back?.quad[2] === paired[1].back?.quad[2], "pair: round-trip back quad");
+  // Single pages still serialize with a null 7th element.
+  const serSingle = serializeScanPages(createInitialScanPages(1));
+  const parsedSingle = parseScanPagesOption(serSingle, 1);
+  ok(
+    parsedSingle !== null && parsedSingle[0].back === undefined,
+    "pair: null back round-trips as single"
+  );
+
+  // Parse rejections: bad back rows.
+  ok(
+    parseScanPagesOption('[[0,0,"original",[0,0,1,0,1,1,0,1],0,0,1]]', 4) === null,
+    "pair: rejects 7-field row with non-array back"
+  );
+  ok(
+    parseScanPagesOption(
+      '[[0,0,"original",[0,0,1,0,1,1,0,1],0,0,[1,0,"original",[0,0,1,0,1,1,0,1],0,0]]]',
+      2
+    ) !== null,
+    "pair: accepts well-formed back row"
+  );
+  // Back referencing the SAME source as the front is rejected (a card
+  // side must be a different photo).
+  ok(
+    parseScanPagesOption(
+      '[[0,0,"original",[0,0,1,0,1,1,0,1],0,0,[0,0,"original",[0,0,1,0,1,1,0,1],0,0]]]',
+      1
+    ) === null,
+    "pair: rejects back with same source as front"
+  );
+  // Back out of range is rejected.
+  ok(
+    parseScanPagesOption(
+      '[[0,0,"original",[0,0,1,0,1,1,0,1],0,0,[9,0,"original",[0,0,1,0,1,1,0,1],0,0]]]',
+      2
+    ) === null,
+    "pair: rejects out-of-range back source"
+  );
+
+  // Detach: pair → single, back gone, front intact.
+  const detached = detachScanBack(paired, 0);
+  ok(detached.length === 2 && detached[0].back === undefined, "pair: detach drops back");
+  ok(detached[1].back?.source === 3, "pair: detach leaves other pairs");
+
+  // Reconcile hardening: a shrunk file list drops a dangling back.
+  const shrunk = reconcileScanPages(paired, 1, 4);
+  ok(shrunk.length === 1 && shrunk[0].back === undefined, "pair: shrunk files drop dangling back");
+
+  // deleteScanPages removes the WHOLE pair (one logical page).
+  const deletedPair = deleteScanPages(paired, [0]);
+  ok(deletedPair.length === 1 && deletedPair[0].back?.source === 3, "pair: delete removes whole pair");
+
+  // Legacy rows (length 4 and 6) still parse alongside the new shape.
+  ok(parseScanPagesOption('[[0,0,"original",[0,0,1,0,1,1,0,1]]]', 1) !== null, "pair: legacy 4-row still parses");
+  ok(
+    parseScanPagesOption('[[0,0,"original",[0,0,1,0,1,1,0,1],5,-5]]', 1) !== null,
+    "pair: legacy 6-row still parses"
+  );
+}
+
 console.log(`scan-pdf engine: ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

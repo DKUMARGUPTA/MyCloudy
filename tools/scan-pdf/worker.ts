@@ -133,53 +133,110 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   const pdf = await PDFDocument.create();
 
-  for (let i = 0; i < pages.length; i += 1) {
-    const page = pages[i];
-    const file = files[page.source];
+  /** Processes one printable side: decode → warp → filter → adjust →
+   * rotate → deskew → JPEG. Shared by single pages and P5 pairs. */
+  const processSide = async (
+    side: {
+      source: number;
+      rotation: number;
+      filter: string;
+      adjust: { brightness: number; contrast: number };
+      quad: number[];
+    },
+    maxEdge: number
+  ) => {
+    const file = files[side.source];
     const source = await decodeBitmap(file, fail);
-
-    const quad = denormalizeQuad(page.quad, source.width, source.height);
+    const quad = denormalizeQuad(side.quad as Parameters<typeof denormalizeQuad>[0], source.width, source.height);
     const { width, height } = quadOutputSize(quad, maxEdge);
     let warped = warpPerspective(source, quad, width, height);
-    applyScanFilter(warped, page.filter);
-    applyAdjustments(warped, page.adjust);
-    warped = rotateQuarter(warped, page.rotation);
-    if (autoStraighten && page.rotation % 180 === 0) {
+    applyScanFilter(warped, side.filter as Parameters<typeof applyScanFilter>[1]);
+    applyAdjustments(warped, side.adjust);
+    warped = rotateQuarter(warped, side.rotation);
+    if (autoStraighten && side.rotation % 180 === 0) {
       // Two-pass estimate+rotate (strength-gated: photos and blank pages
       // pass through untouched; 90°-turned pages skip — their tilt axis is
       // outside the sweep and the corner quad already covers the fix).
       warped = autoDeskew(warped);
     }
-
     const jpeg = await encodeJpeg(warped, 0.9);
     const image = await pdf.embedJpg(jpeg);
+    return image;
+  };
 
-    // Page geometry: fixed A4/Letter chosen by the scan orientation, or
-    // fitted to the scan with margins (PRD scan flow — one scan per page).
-    let pageW: number;
-    let pageH: number;
-    if (pageSize === "fit") {
-      pageW = image.width + margin * 2;
-      pageH = image.height + margin * 2;
+  // P5 double-sided ID cards: the visual gap between front and back on
+  // the shared page (≈5 mm, like a real photocopy layout).
+  const PAIR_GAP_PT = 14;
+
+  for (let i = 0; i < pages.length; i += 1) {
+    const page = pages[i];
+    const image = await processSide(page, maxEdge);
+
+    if (page.back) {
+      // ── Pair: front on top, back below, ONE PDF page, shared scale so
+      // both sides of the card print the same size (photocopy layout).
+      const backImage = await processSide(page.back, maxEdge);
+      let pageW: number;
+      let pageH: number;
+      let scale: number;
+      if (pageSize === "fit") {
+        pageW = Math.max(image.width, backImage.width) + margin * 2;
+        pageH = image.height + backImage.height + PAIR_GAP_PT + margin * 2;
+        scale = 1;
+      } else {
+        // Stacked sides need a PORTRAIT page even for landscape photos.
+        const base = pageSize === "letter" ? LETTER : A4;
+        pageW = base[0];
+        pageH = base[1];
+        scale = Math.min(
+          (pageW - margin * 2) / image.width,
+          (pageW - margin * 2) / backImage.width,
+          (pageH - margin * 2 - PAIR_GAP_PT) / (image.height + backImage.height)
+        );
+      }
+      const pdfPage = pdf.addPage([pageW, pageH]);
+      const totalH =
+        (image.height + backImage.height) * scale + PAIR_GAP_PT;
+      const yFront = (pageH + totalH) / 2 - image.height * scale;
+      pdfPage.drawImage(image, {
+        x: (pageW - image.width * scale) / 2,
+        y: yFront,
+        width: image.width * scale,
+        height: image.height * scale,
+      });
+      pdfPage.drawImage(backImage, {
+        x: (pageW - backImage.width * scale) / 2,
+        y: yFront - PAIR_GAP_PT - backImage.height * scale,
+        width: backImage.width * scale,
+        height: backImage.height * scale,
+      });
     } else {
-      const base = pageSize === "letter" ? LETTER : A4;
-      const landscape = image.width > image.height;
-      pageW = landscape ? base[1] : base[0];
-      pageH = landscape ? base[0] : base[1];
+      // ── Single page: the classic one-scan-per-page geometry.
+      let pageW: number;
+      let pageH: number;
+      if (pageSize === "fit") {
+        pageW = image.width + margin * 2;
+        pageH = image.height + margin * 2;
+      } else {
+        const base = pageSize === "letter" ? LETTER : A4;
+        const landscape = image.width > image.height;
+        pageW = landscape ? base[1] : base[0];
+        pageH = landscape ? base[0] : base[1];
+      }
+      const pdfPage = pdf.addPage([pageW, pageH]);
+      const scale = Math.min(
+        (pageW - margin * 2) / image.width,
+        (pageH - margin * 2) / image.height
+      );
+      const drawW = image.width * scale;
+      const drawH = image.height * scale;
+      pdfPage.drawImage(image, {
+        x: (pageW - drawW) / 2,
+        y: (pageH - drawH) / 2,
+        width: drawW,
+        height: drawH,
+      });
     }
-    const pdfPage = pdf.addPage([pageW, pageH]);
-    const scale = Math.min(
-      (pageW - margin * 2) / image.width,
-      (pageH - margin * 2) / image.height
-    );
-    const drawW = image.width * scale;
-    const drawH = image.height * scale;
-    pdfPage.drawImage(image, {
-      x: (pageW - drawW) / 2,
-      y: (pageH - drawH) / 2,
-      width: drawW,
-      height: drawH,
-    });
 
     post({
       type: "progress",
