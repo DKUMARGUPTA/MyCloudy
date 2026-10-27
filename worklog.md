@@ -5082,3 +5082,21 @@ Stage Summary:
 - Translate PDF is now a 13-language tool with honest world-class CJK/Arabic typography: own shaper, own kinsoku, subset-embedded self-hosted fonts.
 - REMAINING (priority order): P5-rest leftover: pdf-to-excel table rebuild, ID-card double-sided scan mode; P6 own PDF micro-engine (organize family first via engine seam); P7 quality moat (a11y-name smoke, magic-byte detection everywhere, i18n VLM battery). Vercel follow-ups (optional, ask user): custom domain for DocoPDF on its own subdomain (e.g. docopdf.iamsdr.in — needs DNS A 76.76.21.21 + add domain to project), SSO/protection settings review.
 - Lesson: agent-browser downloads go to /home/z/Downloads; bun resolves /tmp scripts against the global cache (put test scripts INSIDE the project); VLM needs tight high-res crops to judge typography.
+
+---
+Task ID: P5-rest-verify + OPS (session continue)
+Agent: main (Z.ai Code session)
+Task: Session resume after context handoff — verify the cron QA job's unpushed pdf-to-excel table-rebuild work, record the domain decision, restore the QA cron, then continue P5-rest (ID-card double-sided scan).
+
+Work Log:
+- STATE AUDIT (no blind trust): git showed 3 local commits ahead of the last push — 97579d4 (artifacts+fonts snapshot), 48919fc (ops: token self-heal + push-time leak guard — .ops/token-backup.env recovery copy, status.sh auto-restore, push-github.sh token-leak guard), 37544c6 (cron agent's pdf-to-excel table rebuild, +800 lines, NO worklog entry, NOT pushed). Dev server healthy (all 200s in dev.log).
+- DOMAIN DECISION (user-confirmed, now recorded): **DocoPDF.com is the FINAL production domain.** Current work continues on the Vercel alias https://mycloudy-beta.vercel.app; custom-domain attach (DNS + Vercel domain add) happens only after all phases are final. Supersedes the older "docopdf.iamsdr.in" idea at line 5083.
+- VERIFIED the cron's pdf-to-excel RULED-TABLE work (commit 37544c6) end-to-end before trusting it:
+  * Feature: pages that DRAW real table borders are read as an exact cell grid straight from the ruled lattice (axisSegmentsFromOperatorList + extractRuledGrid in model.ts); borderless pages fall back to the R5 position clustering. New "Read ruled tables from their borders" switch (default ON) in surface; preview now runs the SAME ruled-then-clustered pipeline as the worker (preview IS the output). FAQ + i18n en/hi updated; honest limits copy rewritten.
+  * GATES: tsc 0; eslint 0; smoke-pdf-to-excel 79/79 (incl. new sections 5-7: synthetic ruled operator lists, REAL ruled PDF → exact cell grid, rejection vectors); FULL BATTERY 103/103 fresh (the env reset had also wiped /tmp/r6b-smoke-battery.txt — re-ran everything).
+  * BROWSER E2E (hash route #/tool/pdf-to-excel — NOTE: tool workspace is SINGULAR "tool/", "tools/<id>" is the category view): sample-table.pdf uploaded → preview "Page 1 grid: 6 rows × 2 columns" → ruled switch ON → Convert → sample-table-spreadsheet.xlsx downloaded → parsed with OUR OWN zip engine: 10 cells (Quarterly Report / Alpha 100 / Beta 250 / Gamma 310 / Delta 95 / Summary line), bold header style present, valid OOXML entries. 0 console errors. VLM confirmed switch + result UI (screenshot public/qa/p5rest-excel-e2e.png).
+- CRON QA JOB STATUS: job 476223 (15-min webDevReview) was created at 11:03 IST, ran once, then auto-disabled "exec limits exceeded". Will delete + recreate fresh this session.
+
+Stage Summary:
+- pdf-to-excel ruled-table rebuild: VERIFIED GREEN and safe to push (the cron agent's only sin was not writing a worklog entry — fixed by this one).
+- Domain: DocoPDF.com final (deferred attach). Next: push all commits, restore cron, then P5-rest last item = ID-card double-sided scan mode.
