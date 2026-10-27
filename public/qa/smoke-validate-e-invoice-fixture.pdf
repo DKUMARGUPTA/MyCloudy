@@ -1,0 +1,180 @@
+%PDF-1.7
+%ÅÅÅÅ
+
+1 0 obj
+<<
+/Type /Pages
+/Kids [ 4 0 R ]
+/Count 1
+>>
+endobj
+
+2 0 obj
+<<
+/Type /Catalog
+/Pages 1 0 R
+/AF [ 8 0 R ]
+/Names <<
+/EmbeddedFiles <<
+/Names [ <FEFF006600610063007400750072002D0078002E0078006D006C> 8 0 R ]
+>>
+>>
+/Metadata 9 0 R
+>>
+endobj
+
+3 0 obj
+<<
+/Producer <FEFF007000640066002D006C006900620020002800680074007400700073003A002F002F006700690074006800750062002E0063006F006D002F0048006F007000640069006E0067002F007000640066002D006C006900620029>
+/ModDate (D:20261021133202Z)
+/Creator <FEFF007000640066002D006C006900620020002800680074007400700073003A002F002F006700690074006800750062002E0063006F006D002F0048006F007000640069006E0067002F007000640066002D006C006900620029>
+/CreationDate (D:20261021133202Z)
+>>
+endobj
+
+4 0 obj
+<<
+/Type /Page
+/Parent 1 0 R
+/Resources <<
+/Font <<
+/Helvetica-7098480789 5 0 R
+>>
+/XObject <<
+>>
+/ExtGState <<
+>>
+>>
+/MediaBox [ 0 0 595.28 841.89 ]
+/Annots [ ]
+/Contents [ 6 0 R ]
+>>
+endobj
+
+5 0 obj
+<<
+/Type /Font
+/Subtype /Type1
+/BaseFont /Helvetica
+/Encoding /WinAnsiEncoding
+>>
+endobj
+
+6 0 obj
+<<
+/Filter /FlateDecode
+/Length 119
+>>
+stream
+xúä±
+AD˚|EjAL÷Ï$áÖxba#‰DNQ¥PƒÔwï©ﬁ{Û§uíoØ-v”˝3ΩØß„‹•ÖÖx4÷¬y¶bú{“ˇUŸÑCÑÛAÉ5ål—∞D-usÉv
+lP{µnÅÊ—KıÇ∫‚ºQŒhL:–¬m◊
+endstream
+endobj
+
+7 0 obj
+<<
+/Type /EmbeddedFile
+/Subtype /text#2Fxml
+/Params <<
+/Size 3654
+>>
+/Length 3654
+>>
+stream
+<?xml version="1.0" encoding="UTF-8"?>
+<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100" xmlns:qdt="urn:un:unece:uncefact:data:standard:QualifiedDataType:100" xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntityDataType:100" xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
+  <rsm:ExchangedDocumentContext>
+    <ram:GuidelineSpecifiedDocumentContextParameter><ram:ID>urn:factur-x.eu:1p0:basic</ram:ID></ram:GuidelineSpecifiedDocumentContextParameter>
+  </rsm:ExchangedDocumentContext>
+  <rsm:ExchangedDocument>
+    <ram:ID>RE-2024-0517</ram:ID>
+    <ram:TypeCode>380</ram:TypeCode>
+    <ram:IssueDateTime><udt:DateTimeString format="102">20240517</udt:DateTimeString></ram:IssueDateTime>
+  </rsm:ExchangedDocument>
+  <rsm:SupplyChainTradeTransaction>
+    <ram:ApplicableHeaderTradeAgreement>
+      <ram:BuyerReference>PO-4711</ram:BuyerReference>
+      <ram:SellerTradeParty><ram:Name>Acme &amp; Sons GmbH</ram:Name><ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">DE123456789</ram:ID></ram:SpecifiedTaxRegistration></ram:SellerTradeParty>
+      <ram:BuyerTradeParty><ram:Name>Globus Handels GmbH</ram:Name><ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">ATU12345675</ram:ID></ram:SpecifiedTaxRegistration></ram:BuyerTradeParty>
+      <ram:BuyerOrderReferencedDocument><ram:IssuerAssignedID>ORDER-88</ram:IssuerAssignedID></ram:BuyerOrderReferencedDocument>
+    </ram:ApplicableHeaderTradeAgreement>
+    <ram:IncludedSupplyChainTradeLineItem>
+      <ram:SpecifiedTradeProduct><ram:Name>Consulting</ram:Name></ram:SpecifiedTradeProduct>
+      <ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>100.00</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
+      <ram:SpecifiedLineTradeSettlement><ram:InvoicedQuantity>2</ram:InvoicedQuantity><ram:LineTotalAmount>200.00</ram:LineTotalAmount></ram:SpecifiedLineTradeSettlement>
+    </ram:IncludedSupplyChainTradeLineItem>
+    <ram:IncludedSupplyChainTradeLineItem>
+      <ram:SpecifiedTradeProduct><ram:Name>Hosting &amp; Support</ram:Name></ram:SpecifiedTradeProduct>
+      <ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>517.28</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
+      <ram:SpecifiedLineTradeSettlement><ram:InvoicedQuantity>2</ram:InvoicedQuantity><ram:LineTotalAmount>1034.56</ram:LineTotalAmount></ram:SpecifiedLineTradeSettlement>
+    </ram:IncludedSupplyChainTradeLineItem>
+    <ram:IncludedSupplyChainTradeLineItem>
+      <ram:SpecifiedTradeProduct><ram:Name>Hardware</ram:Name></ram:SpecifiedTradeProduct>
+      <ram:SpecifiedLineTradeAgreement></ram:SpecifiedLineTradeAgreement>
+      <ram:SpecifiedLineTradeSettlement><ram:InvoicedQuantity>1</ram:InvoicedQuantity><ram:LineTotalAmount>0</ram:LineTotalAmount></ram:SpecifiedLineTradeSettlement>
+    </ram:IncludedSupplyChainTradeLineItem>
+    <ram:ApplicableHeaderTradeSettlement>
+      <ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>
+      <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+        <ram:TaxBasisTotalAmount currencyID="EUR">1.234,56</ram:TaxBasisTotalAmount>
+        <ram:TaxTotalAmount currencyID="EUR">234.56</ram:TaxTotalAmount>
+        <ram:GrandTotalAmount currencyID="EUR">1469.12</ram:GrandTotalAmount>
+        <ram:DuePayableAmount currencyID="EUR">1469.12</ram:DuePayableAmount>
+      </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+    </ram:ApplicableHeaderTradeSettlement>
+  </rsm:SupplyChainTradeTransaction>
+</rsm:CrossIndustryInvoice>
+endstream
+endobj
+
+8 0 obj
+<<
+/Type /Filespec
+/F (factur-x.xml)
+/UF <FEFF006600610063007400750072002D0078002E0078006D006C>
+/Desc (Smoke fixture)
+/EF <<
+/F 7 0 R
+/UF 7 0 R
+>>
+/AFRelationship /Data
+>>
+endobj
+
+9 0 obj
+<<
+/Type /Metadata
+/Subtype /XML
+/Length 520
+>>
+stream
+<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/" xmlns:fx="urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#"><pdfaid:part>3</pdfaid:part><pdfaid:conformance>B</pdfaid:conformance><fx:DocumentType>INVOICE</fx:DocumentType><fx:DocumentFileName>factur-x.xml</fx:DocumentFileName></rdf:Description></rdf:RDF></x:xmpmeta>
+<?xpacket end="w"?>
+endstream
+endobj
+
+xref
+0 10
+0000000000 65535 f 
+0000000016 00000 n 
+0000000076 00000 n 
+0000000262 00000 n 
+0000000732 00000 n 
+0000000933 00000 n 
+0000001031 00000 n 
+0000001223 00000 n 
+0000004996 00000 n 
+0000005184 00000 n 
+
+trailer
+<<
+/Size 10
+/Root 2 0 R
+/Info 3 0 R
+>>
+
+startxref
+5786
+%%EOF

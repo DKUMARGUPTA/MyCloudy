@@ -1,0 +1,20 @@
+{
+  "en": {
+    "webpOut": {
+      "surfaceLabel": "PDF to WebP",
+      "hint": "Pick the pages, DPI and quality — every page becomes a small, modern WebP image, right on this device.",
+      "errorUnsupported": "This browser can't create WebP images — it returned {detail} instead. Please use PDF to PNG or PDF to JPG, or a newer browser.",
+      "successTitle": "WebP images ready",
+      "successNote": "{count, plural, =1 {1 WebP image} other {# WebP images}} — typically 25–35% smaller than JPG at the same quality."
+    }
+  },
+  "hi": {
+    "webpOut": {
+      "surfaceLabel": "पीडीएफ़ से WebP",
+      "hint": "पेज, DPI और क्वालिटी चुनें — हर पेज इसी डिवाइस पर एक छोटी, नई WebP तस्वीर बन जाता है।",
+      "errorUnsupported": "यह ब्राउज़र WebP तस्वीरें नहीं बना सकता — इसने उसकी जगह {detail} दिया। कृपया PDF to PNG या PDF to JPG इस्तेमाल करें, या कोई नया ब्राउज़र।",
+      "successTitle": "WebP तस्वीरें तैयार",
+      "successNote": "{count, plural, =1 {1 WebP तस्वीर} other {# WebP तस्वीरें}} — आमतौर पर उसी क्वालिटी पर JPG से 25–35% छोटी।"
+    }
+  }
+}

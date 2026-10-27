@@ -1,0 +1,7 @@
+{
+  "name": "sidocs-request-sign-service",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "id": "/",
+  "name": "Sidocs — Free Document Tools",
+  "short_name": "Sidocs",
+  "description": "Free, privacy-first document tools — convert, merge, edit, sign and OCR PDF files 100% on your device. English + हिंदी. No signup, no uploads.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#FFFFFF",
+  "theme_color": "#0B1220",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["productivity", "utilities"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Merge PDF",
+      "short_name": "Merge",
+      "description": "Combine PDFs into one file",
+      "url": "/#/tool/merge-pdf",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "JPG to PDF",
+      "short_name": "JPG→PDF",
+      "description": "Photos to a single PDF",
+      "url": "/#/tool/jpg-to-pdf",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Edit PDF",
+      "short_name": "Edit",
+      "description": "Word-style PDF editor",
+      "url": "/#/tool/edit-pdf",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Sign PDF",
+      "short_name": "Sign",
+      "description": "Draw, type or upload a signature",
+      "url": "/#/tool/sign-pdf",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

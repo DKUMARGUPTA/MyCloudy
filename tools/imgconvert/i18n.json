@@ -1,0 +1,14 @@
+{
+  "en": {
+    "imgconv": {
+      "errCorrupt": "This image couldn't be read — it may be damaged or not an image file.",
+      "errHeic": "This HEIC photo couldn't be decoded — the file may be damaged."
+    }
+  },
+  "hi": {
+    "imgconv": {
+      "errCorrupt": "यह तस्वीर पढ़ी नहीं जा सकी — शायद फ़ाइल ख़राब है या तस्वीर ही नहीं है।",
+      "errHeic": "यह HEIC फ़ोटो खोली नहीं जा सकी — शायद फ़ाइल ख़राब है।"
+    }
+  }
+}

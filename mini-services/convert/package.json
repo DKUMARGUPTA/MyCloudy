@@ -1,0 +1,7 @@
+{
+  "name": "sidocs-convert-service",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  }
+}

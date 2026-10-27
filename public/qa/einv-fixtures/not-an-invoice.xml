@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<catalog xmlns="urn:example:catalog">
+  <product id="P1">
+    <name>Steel Widget W-100</name>
+    <price currency="INR">1000.00</price>
+  </product>
+</catalog>

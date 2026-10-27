@@ -1,0 +1,18 @@
+{
+  "en": {
+    "tiffOut": {
+      "surfaceLabel": "PDF to TIFF",
+      "hint": "Pick the pages and DPI — every page becomes a lossless TIFF archive image, right on this device.",
+      "successTitle": "TIFF images ready",
+      "successNote": "{count, plural, =1 {1 TIFF image} other {# TIFF images}} — lossless and uncompressed; use JPG, PNG or WEBP for smaller files."
+    }
+  },
+  "hi": {
+    "tiffOut": {
+      "surfaceLabel": "पीडीएफ़ से TIFF",
+      "hint": "पेज और DPI चुनें — हर पेज इसी डिवाइस पर एक लॉसलेस TIFF आर्काइव तस्वीर बन जाता है।",
+      "successTitle": "TIFF तस्वीरें तैयार",
+      "successNote": "{count, plural, =1 {1 TIFF तस्वीर} other {# TIFF तस्वीरें}} — लॉसलेस और बिना कंप्रेशन; छोटी फ़ाइलों के लिए JPG, PNG या WEBP चुनें।"
+    }
+  }
+}

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#FFFFFF" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0B1220" />
+    <title>You’re offline · Sidocs</title>
+    <style>
+      /* Self-contained — zero external requests. Matches the app shell. */
+      :root {
+        --bg: #ffffff;
+        --fg: #0b1220;
+        --muted: #5b6b83;
+        --card: #f5f7fa;
+        --border: #e3e8ef;
+        --btn: #2563eb;
+        --btn-fg: #ffffff;
+        --amber: #b45309;
+        --amber-bg: #fef3c7;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b1220;
+          --fg: #f2f6fb;
+          --muted: #8fa1b8;
+          --card: #131c2e;
+          --border: #25324a;
+          --btn: #3b74e8;
+          --amber: #fbbf24;
+          --amber-bg: #2b2313;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          "Noto Sans Devanagari",
+          sans-serif;
+        text-align: center;
+      }
+      .card {
+        max-width: 440px;
+        width: 100%;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 40px 28px;
+      }
+      .mark {
+        width: 64px;
+        height: 64px;
+        margin: 0 auto 20px;
+        display: block;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 10px;
+        font-weight: 700;
+      }
+      p {
+        font-size: 14.5px;
+        line-height: 1.6;
+        color: var(--muted);
+        margin: 0 0 6px;
+      }
+      .hi {
+        font-size: 13.5px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin: 18px 0 4px;
+        padding: 7px 14px;
+        border-radius: 999px;
+        background: var(--amber-bg);
+        color: var(--amber);
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+      button {
+        margin-top: 22px;
+        min-height: 44px;
+        padding: 0 26px;
+        border: 0;
+        border-radius: 10px;
+        background: var(--btn);
+        color: var(--btn-fg);
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover {
+        filter: brightness(1.08);
+      }
+      button:focus-visible {
+        outline: 3px solid var(--btn);
+        outline-offset: 2px;
+      }
+      .tiny {
+        margin-top: 18px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <svg class="mark" viewBox="0 0 32 32" role="img" aria-label="Sidocs">
+        <defs>
+          <linearGradient id="g" x1="2" y1="2" x2="30" y2="30" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#2563EB" />
+            <stop offset="1" stop-color="#F97316" />
+          </linearGradient>
+        </defs>
+        <rect x="2" y="2" width="28" height="28" rx="8" fill="url(#g)" />
+        <path
+          d="M11.5 7.5h6.3l4.7 4.7V23a1.8 1.8 0 0 1-1.8 1.8H11.5A1.8 1.8 0 0 1 9.7 23V9.3a1.8 1.8 0 0 1 1.8-1.8Z"
+          fill="#FFFFFF"
+        />
+        <path d="M17.8 7.5l4.7 4.7h-4.7Z" fill="#BFDBFE" />
+        <text
+          x="16.1"
+          y="20.6"
+          text-anchor="middle"
+          font-size="6.6"
+          font-weight="700"
+          fill="#1D4ED8"
+          font-family="system-ui, sans-serif"
+        >
+          PDF
+        </text>
+      </svg>
+
+      <h1>You’re offline</h1>
+      <p>Reconnect to load Sidocs. If you’ve opened the app before, your tools keep working offline.</p>
+      <p class="hi" lang="hi">आप ऑफ़लाइन हैं — ऐप पहले खोला हो तो ऑन-डिवाइस टूल ऑफ़लाइन भी चलते रहेंगे।</p>
+
+      <span class="pill"><span class="dot"></span>No internet connection</span>
+
+      <br />
+      <button type="button" onclick="location.reload()">Retry</button>
+
+      <p class="tiny">This page retries automatically as soon as you’re back online.</p>
+    </main>
+
+    <script>
+      // Auto-reload the moment connectivity returns.
+      window.addEventListener("online", function () {
+        window.location.reload();
+      });
+    </script>
+  </body>
+</html>

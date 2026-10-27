@@ -1,0 +1,36 @@
+MyCloudy — Validate e-invoice
+File: smoke-validate-e-invoice-fixture.pdf
+
+ 1. [PASS] XML parses — invoice dialect detected
+    Dialect: CII — UN/CEFACT Cross Industry Invoice (Factur-X / ZUGFeRD / XRechnung CII)
+ 2. [PASS] Profile / guideline ID present and recognized (CII)
+    Profile: Factur-X BASIC (urn:factur-x.eu:1p0:basic)
+ 3. [PASS] Document number present
+    Document number: RE-2024-0517
+ 4. [PASS] Type code in the invoice family (CII)
+    TypeCode 380 — commercial invoice
+ 5. [PASS] Issue date is a real calendar date
+    Issue date 2024-05-17 is a real calendar date (month 1-12, day checked against the month)
+ 6. [PASS] Currency is a 3-letter uppercase code
+    Currency: EUR
+ 7. [PASS] Seller and buyer are named
+    Seller: Acme & Sons GmbH / Buyer: Globus Handels GmbH
+ 8. [PASS] Totals arithmetic — tax basis + tax = grand total, due payable within grand total
+    EUR 1,234.56 + EUR 234.56 = EUR 1,469.12; due payable EUR 1,469.12 stays within the grand total
+ 9. [PASS] Line items sum to the tax basis
+    3 line items sum to EUR 1,234.56 = the tax basis
+10. [PASS] VAT ID format (loose EN 16931 check)
+    seller DE123456789, buyer ATU12345675 pass the loose EN 16931 shape check (2 country letters + 2-13 letters/digits)
+11. [PASS] Embedded file stream present in the PDF
+    an /EmbeddedFile stream is present in the raw PDF structure
+12. [PASS] File associated with the document (/AF + /AFRelationship)
+    the embedded file is associated via /AF and carries /AFRelationship /Data
+13. [PASS] Factur-X XMP extension in the metadata
+    fx:DocumentType INVOICE, fx:DocumentFileName factur-x.xml
+14. [PASS] PDF/A identification claim
+    PDF/A-3B identification claimed (pdfaid:part 3, conformance B) — reported as claimed, not verified here
+
+Summary: 14 passed, 0 failed, 0 skipped
+Verdict: VALID — ready to send
+
+Scope note: structural, arithmetic and attachment checks — not a full EN 16931 XSD schema validation. For deep schema checks use an IRP or verapDF-class tool.

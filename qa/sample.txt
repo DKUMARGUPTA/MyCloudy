@@ -1,0 +1,7 @@
+Sidocs Text to PDF Test
+
+This is the first paragraph. It has enough words to force a line wrap when rendered at the default font size, because the layout engine wraps by measured width and this sentence keeps going well past a typical column width in an A4 page with twenty millimetre margins.
+
+Second paragraph with Devanagari: नमस्ते दुनिया। यह एक परीक्षण वाक्य है जो देवनागरी फ़ॉन्ट से रेंडर होना चाहिए।
+
+Third paragraph.

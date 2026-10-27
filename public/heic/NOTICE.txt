@@ -1,0 +1,5 @@
+DocoPDF self-hosts libheif (LGPL-3.0-or-later) as an UNMODIFIED, separate asset
+(public/heic/libheif-bundle.js, wasm embedded) loaded lazily only inside the
+HEIC tool Web Workers. Source: https://github.com/strukturag/libheif
+(npm: libheif-js@1.23.5). LGPL §4 combined-work pattern: the library stays a
+standalone, replaceable file; app code links it at runtime only.
