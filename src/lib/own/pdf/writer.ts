@@ -128,6 +128,29 @@ function serialize(
     case "str":
       sink.text(pdfStringToHex(obj.b));
       return;
+    case "lstr": {
+      // Literal (parenthesized) string — Info dates (P6-l). The bytes we
+      // put here are ASCII-safe (digits, ':', 'Z', '+', '-', `'`), so the
+      // escape arm only fires for hostile input.
+      sink.text("(");
+      for (let i = 0; i < obj.b.length; i++) {
+        const c = obj.b[i]!;
+        if (c === 0x28 || c === 0x29 || c === 0x5c) sink.text("\\");
+        if (c >= 0x20 && c <= 0x7e) sink.text(String.fromCharCode(c));
+        else sink.text(`\\${c.toString(8).padStart(3, "0")}`);
+      }
+      sink.text(")");
+      return;
+    }
+    case "hstr": {
+      // UPPERCASE hex — pdf-lib's PDFHexString.fromText (P6-l Info text).
+      let hx = "<";
+      for (let i = 0; i < obj.b.length; i++) {
+        hx += obj.b[i]!.toString(16).toUpperCase().padStart(2, "0");
+      }
+      sink.text(hx + ">");
+      return;
+    }
     case "newref":
       // Synthetic-authored output-space reference — emitted verbatim.
       sink.text(`${obj.num} 0 R`);
@@ -188,6 +211,7 @@ export function writeDocument(
   version?: string,
   onPage?: WriteProgress,
   synthetics?: WriteSynthetic[],
+  info?: PdfObj,
 ): Uint8Array {
   const map = new Map<string, number>(); // `${docIdx}:${srcNum}` → new num
   const emit: EmitEntry[] = [];
@@ -391,13 +415,33 @@ export function writeDocument(
   }
 
   const count = all.length + 1; // + free entry 0
+  let infoNum = 0;
+  if (info !== undefined && info.k === "dict" && info.m.size > 0) {
+    // The Info dict rides as the LAST object (pdf-lib allocates it early,
+    // next to the catalog — object NUMBER is not a parity surface, only
+    // the field encoding + the trailer structure are).
+    infoNum = all.length + 1;
+    offsets[all.length] = sink.length;
+    sink.text(`${infoNum} 0 obj\n`);
+    serialize(sink, info, mapRef, undefined);
+    sink.text("\nendobj\n");
+  }
+  // xref must start AFTER the Info object — startxref points HERE.
   const xrefPos = sink.length;
-  sink.text(`xref\n0 ${count}\n`);
+  const size = Math.max(count, infoNum + 1);
+  sink.text(`xref\n0 ${size}\n`);
   sink.text("0000000000 65535 f \n");
   for (let i = 0; i < all.length; i++) {
     sink.text(`${String(offsets[i]!).padStart(10, "0")} 00000 n \n`);
   }
-  sink.text("trailer\n<< /Size " + count + " /Root " + catalogNum + " 0 R >>\n");
+  if (infoNum > 0) {
+    sink.text(`${String(offsets[all.length]!).padStart(10, "0")} 00000 n \n`);
+  }
+  sink.text(
+    "trailer\n<< /Size " + size + " /Root " + catalogNum + " 0 R" +
+      (infoNum > 0 ? " /Info " + infoNum + " 0 R" : "") +
+      " >>\n",
+  );
   sink.text(`startxref\n${xrefPos}\n%%EOF\n`);
 
   return sink.toUint8Array();

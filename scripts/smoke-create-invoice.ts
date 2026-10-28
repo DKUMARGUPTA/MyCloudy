@@ -28,7 +28,8 @@ import "regenerator-runtime/runtime";
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 import { PDFArray, PDFDocument } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+
+import { CreateContext, type StampTtfFont } from "../src/lib/own/pdf";
 
 import {
   calc,
@@ -517,11 +518,10 @@ async function renderAndCheck(
   run: Parameters<typeof drawInvoice>[2],
   checks: (bytes: Uint8Array, doc: PDFDocument, pages: number) => void
 ): Promise<void> {
-  const doc = await PDFDocument.create();
-  doc.registerFontkit(fontkit);
-  const font = await doc.embedFont(fontBytes, { subset: true });
+  const doc = CreateContext.create();
+  const font: StampTtfFont = doc.embedTtf(fontBytes);
   await drawInvoice(doc, font, run);
-  const bytes = await doc.save();
+  const bytes = doc.write();
   const reloaded = await PDFDocument.load(bytes);
   const pages = reloaded.getPageCount();
   eq(
@@ -696,16 +696,15 @@ await renderAndCheck(
   }
 );
 
-/* Logo + signature REALLY draw (the embedPng await regression guard):
-   the un-awaited version embedded the XObjects but wrote a NaN cm
-   matrix — this vector inflates the page content stream and asserts a
-   real `Do` invocation with NO NaN anywhere in the operators. */
+/* Logo + signature REALLY draw (the geometry regression guard): the old
+   pdf-lib un-awaited embed wrote a NaN cm matrix — the guard inflates
+   (or raw-reads) the page content stream and asserts a real `Do`
+   invocation with NO NaN anywhere in the operators. */
 {
   const PX =
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
-  const doc = await PDFDocument.create();
-  doc.registerFontkit(fontkit);
-  const font = await doc.embedFont(fontBytes, { subset: true });
+  const doc = CreateContext.create();
+  const font: StampTtfFont = doc.embedTtf(fontBytes);
   const run = {
     s: baseState({
       biz: { ...baseState().biz, logo: PX, sig: PX },
@@ -717,30 +716,41 @@ await renderAndCheck(
     labels: { ...LABELS },
   };
   await drawInvoice(doc, font, run);
-  const bytes = await doc.save();
+  const bytes = doc.write();
   const raw = Buffer.from(bytes).toString("latin1");
   const imageCount = (raw.match(/\/Subtype\s*\/Image/g) ?? []).length;
   eq(imageCount >= 2, true, "logo + sig: image XObjects embedded (2)");
-  const page = doc.getPage(0);
-  const contents = page.node.Contents();
-  const streams: Uint8Array[] = [];
-  const push = (x: unknown): void => {
-    if (x && typeof x === "object" && "getContents" in (x as object)) {
-      streams.push((x as { getContents: () => Uint8Array }).getContents());
+  const ops = (() => {
+    // OUR engine: page contents are RAW (no /Filter) — direct slice.
+    const out: string[] = [];
+    let idx = 0;
+    for (;;) {
+      const s = raw.indexOf("stream\n", idx);
+      if (s < 0) break;
+      const e = raw.indexOf("endstream", s);
+      if (e < 0) break;
+      const body = raw.slice(s + 7, e);
+      try {
+        out.push(inflateSync(Buffer.from(body, "latin1")).toString("latin1"));
+      } catch {
+        out.push(body);
+      }
+      idx = e + 9;
     }
-  };
-  if (contents instanceof PDFArray) {
-    for (let i = 0; i < contents.size(); i += 1) push(contents.lookup(i));
-  } else {
-    push(contents);
-  }
-  const ops = streams.map((s) => inflateSync(s).toString("latin1")).join("\n");
+    return out.join("\n");
+  })();
   eq(ops.includes(" Do") || ops.includes("Do\n") || ops.includes(" Q"), true, "logo + sig: XObject draw operators present");
   eq(ops.includes("NaN"), false, "logo + sig: cm matrix is FINITE (no NaN — the await regression)");
   eq(
     (ops.match(/\/[\w-]+\s+Do\b/g) ?? []).length >= 2,
     true,
-    "logo + sig: BOTH images invoked with Do (pdf-lib names carry a hyphen)"
+    "logo + sig: BOTH images invoked with Do (our engine names are /Im1-style)"
+  );
+  // The metadata set inside drawInvoice (P6-l): /Info in the trailer.
+  eq(
+    /trailer\s*<<[^>]*\/Info \d+ 0 R/.test(raw),
+    true,
+    "logo + sig: /Info referenced from the trailer (Title/Author/Creator)"
   );
 }
 

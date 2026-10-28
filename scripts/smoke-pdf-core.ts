@@ -875,6 +875,9 @@ async function main(): Promise<void> {
   console.log("== 19. Overlay route (P6-j): embedForm + stampForm ==");
   await section19();
 
+  console.log("== 20. Renderer-family surfaces (P6-l): Tc + rotated rect + Info ==");
+  await section20();
+
   // Artifacts for manual inspection (VLM/pdfjs follow-ups).
   const outAll = organizePdf(fixB, [
     { kind: "page", src: 0 },
@@ -2412,6 +2415,266 @@ function buildInheritedResourcesFixture(): Uint8Array {
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
   return enc.encode(pdf);
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+ * SECTION 20 — the P6-l renderer-family surfaces: the Tc letter-spacing
+ * route, the rotated stroke-only rect (the invoice PAID stamp), the
+ * ca+CA paired ExtGState, and the Info dict / trailer metadata.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+async function section20(): Promise<void> {
+  const W = 595.28;
+  const H = 841.89;
+
+  /* ── 20.1 characterSpacing: the raw-operator shape pdf-lib's
+   * pushOperators produced for the resume's tracked headings (the probe
+   * pinned: q BT rg Tf <Tc> Td <HEX> Tj ET Q — no TL/T*, Td not Tm). */
+  {
+    const ctx = CreateContext.create();
+    const p = ctx.addPage(W, H);
+    p.drawText({
+      x: 72,
+      y: 700,
+      text: "EXPERIENCE",
+      size: 11,
+      color: { r: 0.08, g: 0.08, b: 0.08 },
+      characterSpacing: 1.98,
+    });
+    const ours = ctx.write();
+    const ourDoc = parsePdf(ours);
+    const ourPages = listPages(ourDoc);
+    const ops = latin1(
+      contentBytesOf(ourDoc, ourPages, 0),
+      0,
+      contentBytesOf(ourDoc, ourPages, 0).length,
+    );
+    ok(
+      /^q\nBT\n0\.08 0\.08 0\.08 rg\n\/F1 11 Tf\n1\.98 Tc\n72 700 Td\n<455850455249454E4345> Tj\nET\nQ\n?$/.test(
+        ops.replace(/\n+$/, "\n").replace(/\n$/, ""),
+      ),
+      `p6l Tc: exact raw-operator shape (got ${JSON.stringify(ops)})`,
+    );
+    ok(ops.includes("1.98 Tc"), "p6l Tc: the tracking value rides the Tc op");
+    ok(
+      ops.includes("<455850455249454E4345> Tj"),
+      "p6l Tc: hex is UPPERCASE like pdf-lib's encodeText",
+    );
+    ok(!ops.includes("TL"), "p6l Tc: no drawLinesOfText TL/T* in the raw shape");
+    ok(!ops.includes(" Tm"), "p6l Tc: Td, not Tm (the raw-path shape)");
+    // The same call with a TTF face composes (resume's Noto headings).
+    const noto = new Uint8Array(
+      readFileSync("public/fonts/NotoSansDevanagari-Regular.ttf"),
+    );
+    const ctx2 = CreateContext.create();
+    const ttf = ctx2.embedTtf(noto);
+    const p2 = ctx2.addPage(W, H);
+    p2.drawText({
+      x: 72,
+      y: 700,
+      text: "गोपाल",
+      size: 11,
+      characterSpacing: 1.2,
+      ttf,
+    });
+    const back2 = parsePdf(ctx2.write());
+    const pages2 = listPages(back2);
+    const ops2 = latin1(
+      contentBytesOf(back2, pages2, 0),
+      0,
+      contentBytesOf(back2, pages2, 0).length,
+    );
+    ok(ops2.includes("1.2 Tc"), "p6l Tc: composes with the TTF route");
+    ok(
+      /\/F1 11 Tf\n1\.2 Tc\n72 700 Td\n<[0-9A-F]+> Tj/.test(ops2),
+      "p6l Tc: TTF glyph-id hex rides the same Tj literal",
+    );
+  }
+
+  /* ── 20.2 the rotated stroke-only rect (invoice PAID stamp): op-parity
+   * vs pdf-lib (normalized) + ONE paired ExtGState {ca, CA} in resources. */
+  {
+    const ctx = CreateContext.create();
+    const p = ctx.addPage(W, H);
+    p.drawRectangle({
+      x: 300.5,
+      y: 400.25,
+      width: 120,
+      height: 30,
+      borderColor: { r: 0.1, g: 0.5, b: 0.3 },
+      borderWidth: 2.25,
+      rotate: -12,
+      opacity: 0,
+      borderOpacity: 0.55,
+    });
+    p.drawText({
+      x: 309.5,
+      y: 404.75,
+      text: "PAID",
+      size: 16.5,
+      color: { r: 0.1, g: 0.5, b: 0.3 },
+      rotate: -12,
+      opacity: 0.55,
+    });
+    const ours = ctx.write();
+
+    const libDoc = await PDFDocument.create();
+    const helv = await libDoc.embedFont(StandardFonts.Helvetica);
+    const lp = libDoc.addPage([W, H]);
+    lp.drawRectangle({
+      x: 300.5,
+      y: 400.25,
+      width: 120,
+      height: 30,
+      borderColor: rgb(0.1, 0.5, 0.3),
+      borderWidth: 2.25,
+      rotate: degrees(-12),
+      opacity: 0,
+      borderOpacity: 0.55,
+    });
+    lp.drawText("PAID", {
+      x: 309.5,
+      y: 404.75,
+      size: 16.5,
+      font: helv,
+      color: rgb(0.1, 0.5, 0.3),
+      rotate: degrees(-12),
+      opacity: 0.55,
+    });
+    const libBytes = await libDoc.save({ useObjectStreams: false });
+
+    const ourDoc = parsePdf(ours);
+    const ourPages = listPages(ourDoc);
+    const cBytes = contentBytesOf(ourDoc, ourPages, 0);
+    const ourText = latin1(cBytes, 0, cBytes.length);
+    const libText = await libContentText(libBytes, 0);
+    eq(
+      normalizeOps(ourText),
+      normalizeOps(libText),
+      "p6l stamp: rotated rect + rotated text operator parity vs pdf-lib",
+    );
+    ok(/\nS\n|^S\n/.test(ourText), "p6l stamp: stroke-only paint (no fill rg before the S)");
+    // The gs pair {ca: 0, CA: 0.55} — ONE dict, both keys (probe-pinned).
+    const resEntry = ourPages[0]!.resources;
+    const res = resEntry ? resolve(ourDoc, resEntry) : undefined;
+    const resMap = res?.k === "dict" || res?.k === "stream" ? res.m : undefined;
+    const gsBucket = resMap?.get("ExtGState");
+    const gsDict =
+      gsBucket?.k === "dict" || gsBucket?.k === "stream" ? gsBucket.m : undefined;
+    ok(gsDict !== undefined, "p6l stamp: ExtGState bucket present");
+    let pairCount = 0;
+    if (gsDict) {
+      for (const [, v] of gsDict) {
+        const g = resolve(ourDoc, v);
+        if (g?.k === "dict" || g?.k === "stream") {
+          const ca = g.m.get("ca");
+          const cA = g.m.get("CA");
+          if (ca?.k === "num" && cA?.k === "num") {
+            pairCount++;
+            eq(ca.n, 0, "p6l stamp: paired gs ca = 0 (fill)");
+            eq(cA.n, 0.55, "p6l stamp: paired gs CA = 0.55 (stroke)");
+          } else if (ca?.k === "num") {
+            eq(ca.n, 0.55, "p6l stamp: text gs ca = 0.55 (single key)");
+          }
+        }
+      }
+    }
+    eq(pairCount, 1, "p6l stamp: exactly ONE {ca, CA} paired dict (pdf-lib's merged gs)");
+  }
+
+  /* ── 20.3 the Info dict: hex-UTF16 fields + PDFDate + trailer /Info,
+   * field-for-field vs a pdf-lib doc with the SAME setters. */
+  {
+    const pinned = new Date(Date.UTC(2026, 9, 28, 22, 30, 5));
+    const ctx = CreateContext.create();
+    ctx.addPage(W, H);
+    ctx.setProducer("DocoPDF");
+    ctx.setCreator("DocoPDF");
+    ctx.setTitle("Ravi Kumar — Resume");
+    ctx.setAuthor("Ravi Kumar");
+    ctx.setCreationDate(pinned);
+    const ours = ctx.write();
+    const raw = Buffer.from(ours).toString("latin1");
+    ok(
+      /\/Producer <FEFF0044006F0063006F005000440046>/.test(raw),
+      "p6l info: Producer is UTF-16BE hex with BOM (pdf-lib's fromText)",
+    );
+    ok(
+      raw.includes("/CreationDate (D:20261028223005Z)"),
+      "p6l info: PDFDate format D:YYYYMMDDHHmmssZ (UTC fields)",
+    );
+    ok(
+      /\/ModDate \(D:\d{14}Z\)/.test(raw),
+      "p6l info: ModDate auto-stamped at write() (pdf-lib save behavior)",
+    );
+    ok(
+      /trailer\n<< \/Size \d+ \/Root 1 0 R \/Info \d+ 0 R >>/.test(raw),
+      "p6l info: /Info referenced from the trailer",
+    );
+    // Our own parser round-trips the Info dict (trailer /Info → ref → dict).
+    const back = parsePdf(ours);
+    ok(
+      !back.recovered,
+      "p6l info: xref chain CLEAN (startxref AFTER the Info object)",
+    );
+    const infoRef = back.trailer.get("Info");
+    const infoDict =
+      infoRef?.k === "ref" ? back.getObject(infoRef.num) : undefined;
+    ok(
+      infoDict !== undefined && (infoDict.k === "dict" || infoDict.k === "stream"),
+      "p6l info: our parser resolves the trailer /Info object",
+    );
+    if (infoDict && (infoDict.k === "dict" || infoDict.k === "stream")) {
+      const title = infoDict.m.get("Title");
+      ok(
+        title?.k === "str" && title.b[0] === 0xfe && title.b[1] === 0xff,
+        "p6l info: Title parses back as a UTF-16BE string",
+      );
+      const modDate = infoDict.m.get("ModDate");
+      ok(
+        modDate?.k === "str" &&
+          Buffer.from(modDate.b).toString("latin1").startsWith("D:"),
+        "p6l info: ModDate parses back as a PDFDate literal string",
+      );
+    }
+    // No metadata set → NO Info object at all (the honest branding rule).
+    const bare = CreateContext.create();
+    bare.addPage(W, H);
+    const bareBytes = Buffer.from(bare.write()).toString("latin1");
+    ok(
+      !/\/Info \d+ 0 R/.test(bareBytes),
+      "p6l info: no setters → no /Info (we brand nothing, unlike pdf-lib)",
+    );
+    // pdf-lib with the same setters: same field ENCODING (object number
+    // placement differs — pdf-lib allocates Info early; ours appends it
+    // last; both are valid, only the encoding is the parity surface).
+    const libDoc = await PDFDocument.create();
+    libDoc.addPage([W, H]);
+    libDoc.setProducer("DocoPDF");
+    libDoc.setCreator("DocoPDF");
+    libDoc.setTitle("Ravi Kumar — Resume");
+    libDoc.setAuthor("Ravi Kumar");
+    libDoc.setCreationDate(pinned);
+    const libRaw = Buffer.from(
+      await libDoc.save({ useObjectStreams: false }),
+    ).toString("latin1");
+    for (const needle of [
+      "/Producer <FEFF0044006F0063006F005000440046>",
+      "/Creator <FEFF0044006F0063006F005000440046>",
+      "/Author <FEFF00520061007600690020004B0075006D00610072>",
+      "/CreationDate (D:20261028223005Z)",
+    ]) {
+      ok(
+        libRaw.includes(needle),
+        `p6l info: pdf-lib oracle emits the same encoding (${needle.slice(0, 24)}…)`,
+      );
+      ok(
+        raw.includes(needle),
+        `p6l info: ours matches (${needle.slice(0, 24)}…)`,
+      );
+    }
+  }
+}
+
 function firstValue(lex: Lexer): import("../src/lib/own/pdf/objects").PdfObj {
   // Re-use the engine by wrapping the remaining tokens in a minimal
   // document with EXACT offsets (no brute recovery noise).

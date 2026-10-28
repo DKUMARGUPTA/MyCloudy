@@ -194,7 +194,10 @@ function inflatedText(bytes: Uint8Array): string {
         "latin1"
       );
     } catch {
-      /* not a flate stream (e.g. embedded font) — skip */
+      // Not deflated — OUR engine's page contents ride raw (classic xref,
+      // no /Filter): append them literally so operator assertions still
+      // see the /Im Do calls (the P6-i readContent recipe).
+      out += raw.slice(start, e);
     }
     idx = e + 9;
   }

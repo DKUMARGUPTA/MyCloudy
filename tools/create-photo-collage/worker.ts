@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { CreateContext } from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
@@ -316,7 +316,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   /* ---------------- PDF: one page per collage page ---------------- */
-  const pdf = await PDFDocument.create();
+  const pdf = CreateContext.create();
   for (let p = 0; p < pages.length; p += 1) {
     const jpeg = await renderPageBlob(
       images,
@@ -327,8 +327,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
       style,
       jpegQuality
     );
-    const embedded = await pdf.embedJpg(new Uint8Array(await jpeg.arrayBuffer()));
-    const page = pdf.addPage([pt.w, pt.h]);
+    const embedded = pdf.embedJpeg(new Uint8Array(await jpeg.arrayBuffer()));
+    const page = pdf.addPage(pt.w, pt.h);
     // Explicit width/height — pdf-lib ignores w/h spreads (P4.4 lesson).
     page.drawImage(embedded, {
       x: 0,
@@ -346,7 +346,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   post({ type: "progress", runId, pct: 96, stage: "saving" });
-  const saved = await pdf.save({ useObjectStreams: true });
+  const saved = pdf.write();
   post({
     type: "result",
     runId,

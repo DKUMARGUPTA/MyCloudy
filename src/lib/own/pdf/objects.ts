@@ -36,11 +36,29 @@ export type PdfObj =
   | { k: "null" }
   | { k: "name"; v: string }
   | { k: "str"; b: Uint8Array }
+  | { k: "lstr"; b: Uint8Array }
+  | { k: "hstr"; b: Uint8Array }
   | { k: "arr"; items: PdfObj[] }
   | { k: "dict"; m: Map<string, PdfObj> }
   | { k: "stream"; m: Map<string, PdfObj>; raw: Uint8Array }
   | PdfRef
   | PdfNewRef;
+
+/**
+ * A LITERAL (parenthesized) PDF string — `(D:20261028223005Z)` — the form
+ * pdf-lib uses for Info dates (P6-l). Text values use hex `str` instead
+ * (pdf-lib's Info strings are UTF-16BE hex with BOM); only the date fields
+ * need the literal form for byte-parity.
+ */
+export const lstr = (b: Uint8Array): PdfObj => ({ k: "lstr", b });
+
+/**
+ * An UPPERCASE hex string — `<FEFF0044…>` — pdf-lib's PDFHexString.fromText
+ * form (P6-l): authored Info text values serialize exactly like pdf-lib's
+ * setProducer/setCreator/setTitle/setAuthor output. The plain `str` kind
+ * stays lowercase (the parser→writer copy path's historical form).
+ */
+export const hstr = (b: Uint8Array): PdfObj => ({ k: "hstr", b });
 
 export const ref = (num: number, gen = 0): PdfRef => ({ k: "ref", num, gen });
 export const newref = (num: number): PdfNewRef => ({ k: "newref", num });

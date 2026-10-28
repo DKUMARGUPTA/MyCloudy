@@ -13,8 +13,9 @@ import "regenerator-runtime/runtime";
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+import { PDFDocument } from "pdf-lib";
+
+import { CreateContext, type StampFontKey } from "../src/lib/own/pdf";
 
 import {
   approxMeasure,
@@ -36,7 +37,7 @@ import {
   sampleResume,
   splitTwoColumns,
 } from "../tools/create-resume/model";
-import { drawResumePdf } from "../tools/create-resume/render";
+import { drawResumePdf, type ResumeFace } from "../tools/create-resume/render";
 import type { ResumeDoc, ResumeRun } from "../tools/create-resume/types";
 
 let pass = 0;
@@ -76,7 +77,10 @@ function inflatedStreams(bytes: Uint8Array): string {
         "latin1"
       );
     } catch {
-      /* not a flate stream (e.g. embedded font) — skip */
+      // Not deflated — OUR engine's page contents ride raw (classic xref,
+      // no /Filter): append them literally so text assertions still see
+      // the <HEX> Tj operators (the P6-i readContent recipe).
+      out += raw.slice(start, e);
     }
     idx = e + 9;
   }
@@ -120,19 +124,18 @@ async function render(
   doc: ResumeDoc,
   noto: boolean
 ): Promise<RenderOutcome> {
-  const pdfDoc = await PDFDocument.create();
-  let font: PDFFont;
-  let boldFont: PDFFont | null = null;
+  const pdfDoc = CreateContext.create();
+  let font: ResumeFace;
+  let boldFont: StampFontKey | null = null;
   if (noto) {
-    pdfDoc.registerFontkit(fontkit);
-    font = await pdfDoc.embedFont(notoBytes, { subset: true });
+    font = { ttf: pdfDoc.embedTtf(notoBytes) };
   } else {
-    font = pdfDoc.embedStandardFont(StandardFonts.Helvetica);
-    boldFont = pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+    font = { std: "helvetica" };
+    boldFont = "helveticaBold";
   }
   const run: ResumeRun = { d: doc, labels: LABELS, locale: doc.locale };
   const report = await drawResumePdf(pdfDoc, font, run, { boldFont });
-  const bytes = await pdfDoc.save();
+  const bytes = pdfDoc.write();
   const reloaded = await PDFDocument.load(bytes);
   return {
     bytes,

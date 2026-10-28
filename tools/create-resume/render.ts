@@ -31,25 +31,18 @@
  * size and rules instead of synthetic bold, which keeps text extraction
  * single-copy for ATS).
  *
- * pdf-lib embeds are ASYNC — every embedJpg/embedPng is awaited (the
- * pinned INVOICE-LOGO-FIX lesson).
+ * Runs on OUR engine (P6-l): embedJpeg/embedPng are SYNC — the old
+ * pdf-lib await trap (the pinned INVOICE-LOGO-FIX lesson) is gone by
+ * construction.
  */
 
-import type { PDFDocument, PDFFont, PDFImage, PDFPage } from "pdf-lib";
-import {
-  beginText,
-  endText,
-  moveText,
-  PDFName,
-  popGraphicsState,
-  pushGraphicsState,
-  rgb,
-  setCharacterSpacing,
-  setFillingColor,
-  setFontAndSize,
-  showText,
-  type RGB,
-} from "pdf-lib";
+import type {
+  CreateContext,
+  CreateImage,
+  CreatePage,
+  StampFontKey,
+  StampTtfFont,
+} from "@/lib/own/pdf";
 
 import {
   atsBulletLine,
@@ -68,6 +61,12 @@ import type { ResumeRun, ResumeSection } from "./types";
 /* Palette                                                              */
 /* ------------------------------------------------------------------ */
 
+type RGB = { r: number; g: number; b: number };
+
+function rgb(r: number, g: number, b: number): RGB {
+  return { r, g, b };
+}
+
 const COL_TEXT: RGB = rgb(0.08, 0.08, 0.08);
 const COL_MUTED: RGB = rgb(0.33, 0.33, 0.33);
 const COL_RULE: RGB = rgb(0.72, 0.72, 0.72);
@@ -81,8 +80,23 @@ function hexColor(s: string): RGB {
 
 /** Perceived luminance of the accent → readable sidebar ink. */
 function inkOn(bg: RGB): RGB {
-  const l = 0.299 * bg.red + 0.587 * bg.green + 0.114 * bg.blue;
+  const l = 0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b;
   return l > 0.6 ? COL_TEXT : COL_WHITE;
+}
+
+/** One usable text face: a standard-14 key OR the embedded Devanagari. */
+export interface ResumeFace {
+  std?: StampFontKey;
+  ttf?: StampTtfFont;
+}
+
+/** Spread a face into CreatePage.drawText options. */
+function faceOpts(
+  f: ResumeFace,
+):
+  | { ttf: StampTtfFont; font?: undefined }
+  | { font: StampFontKey; ttf?: undefined } {
+  return f.ttf ? { ttf: f.ttf } : { font: f.std ?? "helvetica" };
 }
 
 function dataUrlBytes(dataUrl: string): Uint8Array | null {
@@ -98,18 +112,15 @@ function dataUrlBytes(dataUrl: string): Uint8Array | null {
   }
 }
 
-/** Awaited photo embed — never throws (a broken photo skips, export lives). */
-async function embedPhoto(
-  pdfDoc: PDFDocument,
-  dataUrl: string
-): Promise<PDFImage | null> {
+/** Photo embed — SYNC on our engine; never throws (a broken photo skips). */
+function embedPhoto(pdfDoc: CreateContext, dataUrl: string): CreateImage | null {
   const bytes = dataUrlBytes(dataUrl);
   if (!bytes) return null;
   try {
     if (/^data:image\/png/i.test(dataUrl)) {
-      return await pdfDoc.embedPng(bytes);
+      return pdfDoc.embedPng(bytes);
     }
-    return await pdfDoc.embedJpg(bytes);
+    return pdfDoc.embedJpeg(bytes);
   } catch {
     return null;
   }
@@ -127,24 +138,24 @@ interface TextOpts {
 }
 
 class Painter {
-  readonly pdfDoc: PDFDocument;
-  readonly font: PDFFont;
-  readonly bold: PDFFont | null;
+  readonly pdfDoc: CreateContext;
+  readonly font: ResumeFace;
+  readonly bold: StampFontKey | null;
   readonly geo: ResumeGeometry;
   readonly run: ResumeRun;
   readonly accent: RGB;
   /** modern only — section headings draw with real Tc letter-spacing. */
   readonly tracked: boolean;
-  pages: PDFPage[] = [];
-  page!: PDFPage;
+  pages: CreatePage[] = [];
+  page!: CreatePage;
   y = 0;
   /** modern only — drawn on every new page (full-bleed rail). */
-  chrome: ((page: PDFPage) => void) | null = null;
+  chrome: ((page: CreatePage) => void) | null = null;
 
   constructor(
-    pdfDoc: PDFDocument,
-    font: PDFFont,
-    bold: PDFFont | null,
+    pdfDoc: CreateContext,
+    font: ResumeFace,
+    bold: StampFontKey | null,
     run: ResumeRun,
     accentHex: string
   ) {
@@ -162,12 +173,18 @@ class Painter {
     return this.run.labels[key] ?? fallback;
   }
 
-  fontFor(bold: boolean): PDFFont {
-    return bold && this.bold ? this.bold : this.font;
+  fontFor(bold: boolean): ResumeFace {
+    // Devanagari mode has no bold variant — hierarchy from size + rules.
+    return bold && !this.font.ttf && this.bold
+      ? { std: this.bold }
+      : this.font;
   }
 
   w(s: string, size: number, bold = false): number {
-    return this.fontFor(bold).widthOfTextAtSize(s, size);
+    const f = this.fontFor(bold);
+    return f.ttf
+      ? f.ttf.measure(s, size)
+      : this.pdfDoc.measure(s, f.std ?? "helvetica", size);
   }
 
   wrap(text: string, width: number, size: number, bold = false): string[] {
@@ -180,8 +197,8 @@ class Painter {
     return out.length ? out : [""];
   }
 
-  newPage(): PDFPage {
-    this.page = this.pdfDoc.addPage([this.geo.pageW, this.geo.pageH]);
+  newPage(): CreatePage {
+    this.page = this.pdfDoc.addPage(this.geo.pageW, this.geo.pageH);
     this.pages.push(this.page);
     this.y = this.geo.pageH - this.geo.margin;
     if (this.chrome) this.chrome(this.page);
@@ -203,12 +220,13 @@ class Painter {
       const [l, r] = opts.center;
       tx = (l + r - this.w(s, size, opts.bold === true)) / 2;
     }
-    this.page.drawText(s, {
+    this.page.drawText({
       x: tx,
       y: yTop - size,
+      text: s,
       size,
-      font: this.fontFor(opts.bold === true),
       color,
+      ...faceOpts(this.fontFor(opts.bold === true)),
     });
   }
 
@@ -224,7 +242,8 @@ class Painter {
   /**
    * Letter-spaced text via the PDF text-state Tc operator (modern's
    * headings): one contiguous Tj literal — extractors read the whole
-   * word, the renderer adds `tracking` pt after every glyph.
+   * word, the renderer adds `tracking` pt after every glyph. Same
+   * operator sequence pdf-lib's raw pushOperators produced.
    */
   trackText(
     s: string,
@@ -238,7 +257,7 @@ class Painter {
   }
 
   trackTextOn(
-    page: PDFPage,
+    page: CreatePage,
     s: string,
     x: number,
     yTop: number,
@@ -247,40 +266,15 @@ class Painter {
     bold = false
   ): void {
     if (!s) return;
-    const f = this.fontFor(bold);
-    page.pushOperators(
-      pushGraphicsState(),
-      beginText(),
-      setFillingColor(color),
-      setFontAndSize(this.fontKeyFor(page, f), size),
-      setCharacterSpacing(size * HEADING_TRACK_RATIO),
-      moveText(x, yTop - size),
-      showText(f.encodeText(s)),
-      endText(),
-      popGraphicsState()
-    );
-  }
-
-  /**
-   * Raw Tj text needs the font's RESOURCE key, not the PDFFont — pdf-lib
-   * only wires that up inside drawText, so we register our own "Zt#
-   * dictionary entry once per (page, font) and reuse it.
-   */
-  private fontKeys = new Map<PDFPage, Map<PDFFont, PDFName>>();
-  private fontKeySeq = 0;
-
-  private fontKeyFor(page: PDFPage, font: PDFFont): PDFName {
-    let perPage = this.fontKeys.get(page);
-    if (!perPage) {
-      perPage = new Map();
-      this.fontKeys.set(page, perPage);
-    }
-    const hit = perPage.get(font);
-    if (hit) return hit;
-    const key = PDFName.of(`Zt${this.fontKeySeq++}`);
-    page.node.setFontDictionary(key, font.ref);
-    perPage.set(font, key);
-    return key;
+    page.drawText({
+      x,
+      y: yTop - size,
+      text: s,
+      size,
+      color,
+      characterSpacing: size * HEADING_TRACK_RATIO,
+      ...faceOpts(this.fontFor(bold)),
+    });
   }
 }
 
@@ -566,7 +560,7 @@ function drawSection(
 
 function drawPhoto(
   p: Painter,
-  img: PDFImage,
+  img: CreateImage,
   x: number,
   yTop: number,
   size: number,
@@ -593,7 +587,7 @@ function drawPhoto(
 
 function drawColumnHeader(
   p: Painter,
-  photo: PDFImage | null,
+  photo: CreateImage | null,
   centered: boolean,
   ruleColor: RGB
 ): void {
@@ -653,12 +647,13 @@ function drawFooters(p: Painter, x0: number, x1: number): void {
   p.pages.forEach((page, i) => {
     const s = `${i + 1} / ${total}`;
     const w = p.w(s, 8);
-    page.drawText(s, {
+    page.drawText({
       x: (x0 + x1 - w) / 2,
       y: 22,
+      text: s,
       size: 8,
-      font: p.font,
       color: COL_FOOTER,
+      ...faceOpts(p.font),
     });
   });
 }
@@ -691,7 +686,7 @@ interface SideSlices {
  */
 function layoutSidebar(
   p: Painter,
-  photo: PDFImage | null
+  photo: CreateImage | null
 ): SideSlices {
   const g = p.geo;
   const d = p.run.d;
@@ -796,12 +791,13 @@ function paintSidebarSlice(p: Painter, slice: SideSpec[], pageIndex: number): vo
     if (spec.track) {
       p.trackTextOn(page, spec.text, spec.x, spec.yTop, spec.size, spec.color, spec.bold);
     } else {
-      page.drawText(spec.text, {
+      page.drawText({
         x: spec.x,
         y: spec.yTop - spec.size,
+        text: spec.text,
         size: spec.size,
-        font: p.fontFor(spec.bold),
         color: spec.color,
+        ...faceOpts(p.fontFor(spec.bold)),
       });
     }
   }
@@ -811,15 +807,15 @@ function paintSidebarSlice(p: Painter, slice: SideSpec[], pageIndex: number): vo
 /* Templates                                                            */
 /* ------------------------------------------------------------------ */
 
-async function drawClassicLike(
+function drawClassicLike(
   p: Painter,
   centered: boolean,
   ruleColor: RGB,
   linkColor: RGB
-): Promise<void> {
+): void {
   const g = p.geo;
   const d = p.run.d;
-  const photo = d.header.photo ? await embedPhoto(p.pdfDoc, d.header.photo) : null;
+  const photo = d.header.photo ? embedPhoto(p.pdfDoc, d.header.photo) : null;
   drawColumnHeader(p, photo, centered, ruleColor);
   for (const s of d.sections) {
     drawSection(p, s, ruleColor, linkColor, false);
@@ -827,17 +823,17 @@ async function drawClassicLike(
   drawFooters(p, g.x, g.x + g.w);
 }
 
-async function drawModern(p: Painter): Promise<void> {
+function drawModern(p: Painter): void {
   const g = p.geo;
   const d = p.run.d;
   const ink = inkOn(p.accent);
-  const photo = d.header.photo ? await embedPhoto(p.pdfDoc, d.header.photo) : null;
+  const photo = d.header.photo ? embedPhoto(p.pdfDoc, d.header.photo) : null;
 
   // Phase A: deterministic rail slices (drawn onto the shared pages).
   const slices = layoutSidebar(p, photo);
 
   // Chrome on every page: the full-bleed accent rail (+ the photo on p1).
-  const chrome = (page: PDFPage): void => {
+  const chrome = (page: CreatePage): void => {
     page.drawRectangle({
       x: 0,
       y: 0,
@@ -891,15 +887,15 @@ export interface ResumeRenderReport {
 
 /**
  * Paint the whole resume into `pdfDoc` (pages added as needed).
- * `font` must already be embedded (Helvetica standard OR the Noto
- * subset); `boldFont` may be null — then bold text falls back to the
- * regular face (Noto ships Regular only).
+ * `font` carries the embedded face (Helvetica standard-14 metrics OR
+ * the Noto subset handle); `opts.boldFont` may be null — then bold text
+ * falls back to the regular face (Noto ships Regular only).
  */
 export async function drawResumePdf(
-  pdfDoc: PDFDocument,
-  font: PDFFont,
+  pdfDoc: CreateContext,
+  font: ResumeFace,
   run: ResumeRun,
-  opts: { boldFont?: PDFFont | null } = {}
+  opts: { boldFont?: StampFontKey | null } = {}
 ): Promise<ResumeRenderReport> {
   const d = run.d;
   const p = new Painter(
@@ -910,13 +906,13 @@ export async function drawResumePdf(
     d.accentColor
   );
   if (d.template === "modern") {
-    await drawModern(p);
+    drawModern(p);
   } else if (d.template === "compact") {
     // dense: left-aligned header, accent rules
-    await drawClassicLike(p, false, p.accent, p.accent);
+    drawClassicLike(p, false, p.accent, p.accent);
   } else {
     // classic: pure ATS — near-black only, the accent is ignored
-    await drawClassicLike(p, true, rgb(0.2, 0.2, 0.2), COL_TEXT);
+    drawClassicLike(p, true, rgb(0.2, 0.2, 0.2), COL_TEXT);
   }
   return { pages: p.pages.length, photo: d.header.photo !== "" };
 }

@@ -41,6 +41,8 @@
 
 import {
   type PdfObj,
+  hstr,
+  lstr,
   newDict,
   newref,
   num,
@@ -79,6 +81,14 @@ export interface CreateTextOptions {
   rotate?: number;
   /** Text leading (the TL op — pdf-lib page default 24). */
   lineHeight?: number;
+  /**
+   * Letter spacing in pt (the Tc operator — P6-l, the resume's tracked
+   * headings). When set, the operator group mirrors pdf-lib's raw
+   * pushOperators shape (q / BT / rg / Tf / Tc / Td / Tj / ET / Q — no
+   * TL/T*, Td instead of Tm) so the tracked text stays ONE contiguous
+   * literal and extractors read the whole word.
+   */
+  characterSpacing?: number;
 }
 
 export interface CreateRectOptions {
@@ -92,6 +102,10 @@ export interface CreateRectOptions {
   /** Default 0 (pdf-lib's drawRectangle default). */
   borderWidth?: number;
   opacity?: number;
+  /** Stroke opacity (the /CA gs key — P6-l, the invoice's PAID stamp). */
+  borderOpacity?: number;
+  /** Degrees counter-clockwise about (x,y) — pdf-lib's rotate (P6-l). */
+  rotate?: number;
 }
 
 export interface CreateLineOptions {
@@ -186,6 +200,55 @@ const LATIN1 = (text: string): Uint8Array => {
   return out;
 };
 
+/**
+ * pdf-lib's Info-string encoding: UTF-16BE bytes with the FEFF BOM (its
+ * PDFHexString.fromText, UPPERCASE hex) — the `hstr` kind serializes those
+ * bytes exactly like pdf-lib's setProducer/setCreator/setTitle/setAuthor
+ * output (probed: even pure-ASCII "DocoPDF" rides as <FEFF0044…>).
+ */
+function utf16beHexStr(text: string): PdfObj {
+  const units: number[] = [0xfeff]; // BOM first — pdf-lib always prepends it
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.codePointAt(i) ?? 0;
+    if (c > 0xffff) {
+      units.push(
+        Math.floor((c - 0x10000) / 0x400) + 0xd800,
+        ((c - 0x10000) % 0x400) + 0xdc00,
+      );
+      i += 1; // the low surrogate consumed a second UTF-16 code unit
+    } else {
+      units.push(c);
+    }
+  }
+  const bytes = new Uint8Array(units.length * 2);
+  for (let i = 0; i < units.length; i += 1) {
+    bytes[i * 2] = (units[i]! >> 8) & 0xff;
+    bytes[i * 2 + 1] = units[i]! & 0xff;
+  }
+  return hstr(bytes);
+}
+
+/**
+ * pdf-lib's PDFDate: UTC calendar fields + timezone suffix (`Z` when the
+ * offset is zero, else ±HH'mm'). Probed: setCreationDate(2026-10-28
+ * 22:30:05) → `D:20261028223005Z`.
+ */
+function pdfDate(d: Date): string {
+  const p2 = (n: number): string => String(n).padStart(2, "0");
+  let tz = "Z";
+  const offset = d.getTimezoneOffset();
+  if (offset !== 0) {
+    const sign = offset < 0 ? "+" : "-";
+    const hours = Math.trunc(Math.abs(offset) / 60);
+    const minutes = Math.abs(offset) % 60;
+    tz = `${sign}${p2(hours)}'${p2(minutes)}'`;
+  }
+  return (
+    `D:${d.getUTCFullYear()}${p2(d.getUTCMonth() + 1)}${p2(d.getUTCDate())}` +
+    `${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}${p2(d.getUTCSeconds())}${tz}`
+  );
+}
+
 /** pdf-lib's KAPPA (drawEllipsePath). */
 const KAPPA = (4.0 * (Math.sqrt(2.0) - 1.0)) / 3.0;
 
@@ -215,6 +278,8 @@ export class CreateContext {
   /** token → bucket + synthetic index. */
   private readonly tokens = new Map<string, TokenInfo>();
   private ttf: TtfEntry | null = null;
+  /** Info-dict fields in CALL order (pdf-lib's insertion order parity). */
+  private readonly infoFields = new Map<string, PdfObj>();
 
   private constructor() {}
 
@@ -233,6 +298,37 @@ export class CreateContext {
     const rec = this.pages[index];
     if (!rec) throw new PdfError("corrupt", `page index ${index} out of range`);
     return { width: rec.width, height: rec.height };
+  }
+
+  /* ─── metadata (the Info dict — P6-l) ─────────────────────────────── */
+
+  /**
+   * Text values serialize as UPPERCASE UTF-16BE hex strings with a BOM —
+   * exactly pdf-lib's setProducer/setCreator/setTitle/setAuthor encoding
+   * (probed: even pure-ASCII "DocoPDF" rides as <FEFF0044…>). ModDate is
+   * stamped at write() time (pdf-lib's save() updateMetadata behavior);
+   * unlike pdf-lib we do NOT fabricate default Producer/Creator fields for
+   * documents that never asked — the own engine brands nothing.
+   */
+  setProducer(v: string): void {
+    this.infoFields.set("Producer", utf16beHexStr(v));
+  }
+
+  setCreator(v: string): void {
+    this.infoFields.set("Creator", utf16beHexStr(v));
+  }
+
+  setTitle(v: string): void {
+    this.infoFields.set("Title", utf16beHexStr(v));
+  }
+
+  setAuthor(v: string): void {
+    this.infoFields.set("Author", utf16beHexStr(v));
+  }
+
+  /** CreationDate — pdf-lib's PDFDate: UTC fields + `Z` (or ±HH'mm'). */
+  setCreationDate(d: Date): void {
+    this.infoFields.set("CreationDate", lstr(LATIN1(pdfDate(d))));
   }
 
   /** pdf-lib-identical width of `text` in a standard font (kerning included). */
@@ -472,8 +568,10 @@ export class CreateContext {
   }
 
   /**
-   * Serialize. Objects: 1=catalog, 2=/Pages, then dict+stream per page, then
-   * the synthetics in creation order. Non-destructive.
+   * Serialize. Objects: 1=catalog, 2=/Pages, then dict+stream per page,
+   * then the synthetics in creation order, then the Info dict (when any
+   * metadata was set) referenced from the trailer. Non-destructive.
+   * ModDate is stamped here — pdf-lib's save(updateMetadata: true).
    */
   write(onPage?: WriteProgress): Uint8Array {
     this.finalizeTtfs();
@@ -495,7 +593,13 @@ export class CreateContext {
       content: ENC.encode(rec.ops.join("\n")),
       resources: this.pageResources(rec, base),
     }));
-    return writeDocument(pages, "1.7", onPage, this.synthetics);
+    let info: PdfObj | undefined;
+    if (this.infoFields.size > 0) {
+      const m = new Map<string, PdfObj>(this.infoFields);
+      m.set("ModDate", lstr(LATIN1(pdfDate(new Date()))));
+      info = { k: "dict", m };
+    }
+    return writeDocument(pages, "1.7", onPage, this.synthetics, info);
   }
 
   /* ─── internals (used by CreatePage; @internal surface) ──────────────── */
@@ -559,6 +663,33 @@ export class CreateContext {
           ["ca", num(value)],
         ]),
       );
+    }
+    return token;
+  }
+
+  /**
+   * @internal — ensure a FILL+STROKE ExtGState exists (P6-l, the rotated
+   * stamp rect): pdf-lib's maybeEmbedGraphicsState({opacity,
+   * borderOpacity}) emits ONE dict carrying both keys (probed: {ca: 0,
+   * CA: 0.55}). Only the defined values ride — a ca-only rect keeps the
+   * single-key dict, so the existing ensureGsToken outputs stay stable.
+   */
+  ensureGsPairToken(ca: number | undefined, cA: number | undefined): string {
+    const clamp = (v: number): number => Math.min(1, Math.max(0, v));
+    const caS = ca !== undefined ? clamp(ca).toFixed(4) : "-";
+    const cAS = cA !== undefined ? clamp(cA).toFixed(4) : "-";
+    const token = `gsp:${caS}:${cAS}`;
+    if (!this.tokens.has(token)) {
+      const pairs: Array<[string, PdfObj]> = [
+        ["Type", { k: "name", v: "ExtGState" }],
+      ];
+      if (ca !== undefined) pairs.push(["ca", num(clamp(ca))]);
+      if (cA !== undefined) pairs.push(["CA", num(clamp(cA))]);
+      this.tokens.set(token, {
+        category: "ExtGState",
+        synIndex: this.synthetics.length,
+      });
+      this.synthetics.push(newDict(pairs));
     }
     return token;
   }
@@ -730,6 +861,30 @@ class CreatePageImpl implements CreatePage {
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
 
+    if (opts.characterSpacing !== undefined) {
+      // The Tc route (P6-l): pdf-lib's raw pushOperators shape — the old
+      // create-resume Painter authored exactly this sequence through
+      // setCharacterSpacing/moveText/showText, so tracked headings keep
+      // their one-contiguous-literal contract (extractors read the whole
+      // word). No TL/T*, Td instead of Tm.
+      this.ctx.push(
+        this.rec,
+        [
+          "q",
+          ...(gsKey ? [`/${gsKey} gs`] : []),
+          "BT",
+          `${pdfNumToString(color.r)} ${pdfNumToString(color.g)} ${pdfNumToString(color.b)} rg`,
+          `/${key} ${pdfNumToString(opts.size)} Tf`,
+          `${pdfNumToString(opts.characterSpacing)} Tc`,
+          `${pdfNumToString(opts.x)} ${pdfNumToString(opts.y)} Td`,
+          `<${hex.toUpperCase()}> Tj`,
+          "ET",
+          "Q",
+        ].join("\n"),
+      );
+      return;
+    }
+
     this.ctx.push(
       this.rec,
       [
@@ -758,12 +913,18 @@ class CreatePageImpl implements CreatePage {
       // pdf-lib defaults the fill to black when neither color is given.
       return this.drawRectangle({ ...opts, color: { r: 0, g: 0, b: 0 } });
     }
-    const gs =
-      opts.opacity !== undefined ? this.ctx.ensureGsToken(opts.opacity) : undefined;
+    const hasBothOpacity =
+      opts.opacity !== undefined || opts.borderOpacity !== undefined;
+    const gs = hasBothOpacity
+      ? this.ctx.ensureGsPairToken(opts.opacity, opts.borderOpacity)
+      : undefined;
     const gsKey = gs ? this.ctx.localKey(this.rec, gs, "GS") : undefined;
     const borderWidth = opts.borderWidth ?? 0;
     const w = pdfNumToString(opts.width);
     const h = pdfNumToString(opts.height);
+    const angle = ((opts.rotate ?? 0) * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
     this.ctx.push(
       this.rec,
       [
@@ -780,8 +941,8 @@ class CreatePageImpl implements CreatePage {
         `${pdfNumToString(borderWidth)} w`,
         "[] 0 d",
         `1 0 0 1 ${pdfNumToString(opts.x)} ${pdfNumToString(opts.y)} cm`,
-        "1 0 0 1 0 0 cm", // rotate(0) — pdf-lib always emits the identity
-        "1 0 0 1 0 0 cm", // skew(0,0) — same
+        `${pdfNumToString(cos)} ${pdfNumToString(sin)} ${pdfNumToString(-sin)} ${pdfNumToString(cos)} 0 0 cm`,
+        "1 0 0 1 0 0 cm", // skew(0,0) — pdf-lib always emits the identity
         "0 0 m",
         `0 ${h} l`,
         `${w} ${h} l`,

@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { CreateContext } from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
@@ -302,7 +302,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   /* ---------------- PDF: one page per sheet ---------------- */
-  const pdf = await PDFDocument.create();
+  const pdf = CreateContext.create();
   for (let i = 0; i < sheets.length; i += 1) {
     const sheet = sheets[i];
     const texts = mergedTextsFor(option.texts, rows?.[sheet.rowIndex] ?? null, columns);
@@ -315,8 +315,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
       px.w,
       px.h
     );
-    const embedded = await pdf.embedJpg(new Uint8Array(await jpeg.arrayBuffer()));
-    const page = pdf.addPage([pt.w, pt.h]);
+    const embedded = pdf.embedJpeg(new Uint8Array(await jpeg.arrayBuffer()));
+    const page = pdf.addPage(pt.w, pt.h);
     // Explicit width/height — pdf-lib ignores w/h spreads (P4.4 lesson).
     page.drawImage(embedded, {
       x: 0,
@@ -334,7 +334,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   post({ type: "progress", runId, pct: 96, stage: "saving" });
-  const saved = await pdf.save({ useObjectStreams: true });
+  const saved = pdf.write();
   post({
     type: "result",
     runId,

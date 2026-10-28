@@ -1,23 +1,23 @@
-import { PDFDocument } from "pdf-lib";
+import { CreateContext, type StampTtfFont } from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { loadDevanagariBytes } from "../stamp-common/deva";
 import { calc, outputBaseName, parseInvoiceRun } from "./model";
 import { drawInvoice } from "./render";
 
 /**
- * Create invoice worker (P3-INVOICE) — device-only, zero network beyond
- * the same-origin font. The standalone app exported the sheet through
+ * Create invoice worker (P3-INVOICE) — device-only, zero network beyond the
+ * same-origin font. The standalone app exported the sheet through
  * html2pdf.js FROM A CDN (a raster JPEG screenshot of the DOM, ~300 KB,
- * text not selectable, and a privacy break). This worker instead draws
- * the SAME sheet as a true vector PDF with pdf-lib (render.ts):
+ * text not selectable, and a privacy break). This worker instead draws the
+ * SAME sheet as a true vector PDF on OUR engine (render.ts, P6-l):
  *
- *  - one embedded font — the self-hosted Noto Sans Devanagari — covers
- *    ₹ $ € £ + Latin + हिंदी in every label, so EN and HI invoices both
- *    print perfectly (verified: U+20B9 is glyph 790);
+ *  - one embedded font — the self-hosted Noto Sans Devanagari (OUR
+ *    Type0/CIDFontType2 subsetter) — covers ₹ $ € £ + Latin + हिंदी in
+ *    every label, so EN and HI invoices both print perfectly;
  *  - the UPI QR is drawn as VECTOR rectangles from the qrcode matrix
  *    (same npm engine as the Generate QR code tool) — crisp at any zoom;
  *  - totals are RE-COMPUTED here from the state with the same pure model
@@ -38,17 +38,17 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const inv = parseInvoiceRun(String(request.options.inv ?? ""));
     post({ type: "progress", runId, pct: 20, stage: "processing" });
 
-    const doc = await PDFDocument.create();
+    const doc = CreateContext.create();
     // needDevanagari = always: ₹ and Hindi can appear in any label,
     // and the body font IS the Devanagari face by design.
-    const fonts = await loadStampFonts(doc, true);
-    const font = fonts.fontFor("devanagari");
+    const bytes = await loadDevanagariBytes();
+    const font: StampTtfFont = doc.embedTtf(bytes);
     post({ type: "progress", runId, pct: 45, stage: "processing" });
 
     await drawInvoice(doc, font, inv);
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
-    const bytes = await doc.save();
+    const outputBytes = doc.write();
     post({
       type: "result",
       runId,
@@ -56,12 +56,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
         {
           name: outputBaseName(inv.s) + ".pdf",
           mime: "application/pdf",
-          blob: new Blob([bytes as unknown as BlobPart], {
+          blob: new Blob([outputBytes as unknown as BlobPart], {
             type: "application/pdf",
           }),
         },
       ],
-      detail: { pages: doc.getPageCount() },
+      detail: { pages: doc.pageCount },
     });
   } catch (error) {
     post({

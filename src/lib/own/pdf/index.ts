@@ -69,6 +69,8 @@ export {
   dget,
   dict,
   arr,
+  hstr,
+  lstr,
   name,
   newDict,
   newref,

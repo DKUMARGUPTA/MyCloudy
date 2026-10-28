@@ -13,8 +13,12 @@
  * prints.
  */
 
-import { PDFDocument, degrees, rgb } from "pdf-lib";
-import type { PDFFont, PDFPage } from "pdf-lib";
+import type {
+  CreateContext,
+  CreateImage,
+  CreatePage,
+  StampTtfFont,
+} from "@/lib/own/pdf";
 import { create as ownQrCreate } from "@/lib/own/qr";
 
 import {
@@ -63,6 +67,11 @@ const COL_ROW_LINE = rgb(0.89, 0.902, 0.878); // #e3e6e0
 const COL_MUTED = rgb(0.333, 0.333, 0.333); // #555
 const COL_TEXT = rgb(0.067, 0.067, 0.067); // #111
 
+/** 0..1 RGB — the pdf-lib color shape, kept so every annotation stands. */
+function rgb(r: number, g: number, b: number): { r: number; g: number; b: number } {
+  return { r, g, b };
+}
+
 function hexColor(s: string) {
   const n = Number.parseInt(s.slice(1), 16);
   return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
@@ -86,17 +95,19 @@ function dataUrlBytes(dataUrl: string): Uint8Array | null {
 /* ------------------------------------------------------------------ */
 
 class Sheet {
-  readonly doc: PDFDocument;
-  readonly font: PDFFont;
+  readonly doc: CreateContext;
+  readonly font: StampTtfFont;
   readonly ac: ReturnType<typeof hexColor>;
   readonly labels: Record<string, string>;
-  page: PDFPage;
+  /** Page handles in creation order (the stamp draws on the FIRST). */
+  readonly pages: CreatePage[] = [];
+  page: CreatePage;
   /** y cursor — NEXT baseline top (PDF y grows up, we walk down). */
   y = PAGE_H - M;
 
   constructor(
-    doc: PDFDocument,
-    font: PDFFont,
+    doc: CreateContext,
+    font: StampTtfFont,
     accentHex: string,
     labels: Record<string, string>
   ) {
@@ -104,7 +115,13 @@ class Sheet {
     this.font = font;
     this.ac = hexColor(accentHex);
     this.labels = labels;
-    this.page = doc.addPage([PAGE_W, PAGE_H]);
+    this.page = doc.addPage(PAGE_W, PAGE_H);
+    this.pages.push(this.page);
+  }
+
+  /** The page the rotated stamp lands on (pdf-lib's doc.getPage(0)). */
+  get firstPage(): CreatePage {
+    return this.pages[0]!;
   }
 
   l(key: string): string {
@@ -112,7 +129,8 @@ class Sheet {
   }
 
   newPage(): void {
-    this.page = this.doc.addPage([PAGE_W, PAGE_H]);
+    this.page = this.doc.addPage(PAGE_W, PAGE_H);
+    this.pages.push(this.page);
     this.y = PAGE_H - M;
   }
 
@@ -122,7 +140,7 @@ class Sheet {
   }
 
   w(text: string, size: number): number {
-    return this.font.widthOfTextAtSize(text, size);
+    return this.font.measure(text, size);
   }
 
   /** Word-wrap honouring explicit \n lines; never returns []. */
@@ -168,14 +186,22 @@ class Sheet {
       tx = (l + r - this.w(s, size)) / 2;
     }
     const baseline = yTop - size; // top-aligned like the DOM
-    this.page.drawText(s, { x: tx, y: baseline, size, font: this.font, color });
+    this.page.drawText({
+      x: tx,
+      y: baseline,
+      text: s,
+      size,
+      color,
+      ttf: this.font,
+    });
     if (opts.bold) {
-      this.page.drawText(s, {
+      this.page.drawText({
         x: tx + 0.3,
         y: baseline - 0.3,
+        text: s,
         size,
-        font: this.font,
         color,
+        ttf: this.font,
       });
     }
   }
@@ -222,10 +248,10 @@ async function renderHeader(d: RenderDeps): Promise<void> {
     const bytes = dataUrlBytes(b.logo);
     if (bytes) {
       try {
-        // ⚠️ embedPng is ASYNC (pdf-lib) — the un-awaited version left
-        // `img.width` undefined → NaN geometry → logos silently skipped
-        // (caught below) in every PDF. Awaited here, the logo really draws.
-        const img = await sheet.doc.embedPng(bytes);
+        // SYNC on our engine — the old pdf-lib await trap (un-awaited
+        // embed → NaN geometry → logos silently skipped) is gone by
+        // construction.
+        const img: CreateImage = sheet.doc.embedPng(bytes);
         const k = Math.min(
           LOGO_MAX_W / img.width,
           LOGO_MAX_H / img.height,
@@ -683,8 +709,8 @@ async function renderSignature(d: RenderDeps): Promise<void> {
     const bytes = dataUrlBytes(s.biz.sig);
     if (bytes) {
       try {
-        // Awaited — see the logo note in renderHeader (same pdf-lib trap).
-        const img = await sheet.doc.embedPng(bytes);
+        // SYNC — see the logo note in renderHeader.
+        const img: CreateImage = sheet.doc.embedPng(bytes);
         const k = Math.min(
           SIG_MAX_W / img.width,
           SIG_MAX_H / img.height,
@@ -732,7 +758,7 @@ function renderStamp(d: RenderDeps): void {
   const sin = Math.sin(theta);
   const ax = cx - (cos * w) / 2 + (sin * h) / 2;
   const ay = cy - (sin * w) / 2 - (cos * h) / 2;
-  const page = sheet.doc.getPage(0);
+  const page = sheet.firstPage;
   page.drawRectangle({
     x: ax,
     y: ay,
@@ -740,18 +766,19 @@ function renderStamp(d: RenderDeps): void {
     height: h,
     borderColor: sheet.ac,
     borderWidth: 2.25,
-    rotate: degrees(-12),
+    rotate: -12,
     opacity: 0,
     borderOpacity: 0.55,
   });
-  page.drawText(text, {
+  page.drawText({
     x: ax + padX,
     y: ay + padY,
+    text,
     size,
-    font: sheet.font,
     color: sheet.ac,
-    rotate: degrees(-12),
+    rotate: -12,
     opacity: 0.55,
+    ttf: sheet.font,
   });
 }
 
@@ -786,8 +813,8 @@ const SECTION_RENDERERS: Record<
  * it from disk).
  */
 export async function drawInvoice(
-  doc: PDFDocument,
-  font: PDFFont,
+  doc: CreateContext,
+  font: StampTtfFont,
   run: InvoiceRun
 ): Promise<InvoiceCalc> {
   const c = calc(run.s);
