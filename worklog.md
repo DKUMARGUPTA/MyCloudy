@@ -5323,3 +5323,15 @@ Stage Summary:
 - pdf-lib is now GONE from the entire organize family: merge, split, rotate, rearrange, remove, extract, organize workspace (pagegrid), assemble, halve, nup — 10 of the 15 pdf-lib-shipped tool families + the whole finishing chain run OUR engine for their primary paths.
 - Honest scope: form content decoding supports Flate+ASCIIHex (pdf-lib also decodes LZW/RunLength — an exotic-content-stream file would refuse with the honest corrupt refusal instead of embedding); inherited Bleed/Trim/Art materialization EXCEEDS pdf-lib (which drops those on copies).
 - NEXT (P6-i candidates): the create/convert/write side (create-pdf, write-pdf, txt-to-pdf, images-to-pdf on a StampContext/ComposeContext blank-page writer); overlay-pdf (form-embedding machinery is now in place); lock/unlock once our RC4/AES wiring exists; push still blocked on the missing /home/z/.tokens/docopdf.env.
+
+---
+Task ID: P6-h-addendum
+Agent: main (Z.ai Code session)
+Task: Post-commit housekeeping.
+
+Work Log:
+- Cron job 480039 auto-disabled AGAIN ("exec limits exceeded", run_count 1) → deleted, recreated fresh as job 480140 (webDevReview, fixed_rate 900s, priority 1, Asia/Calcutta, standard payload).
+- Push still blocked (token file /home/z/.tokens/docopdf.env absent).
+
+Stage Summary:
+- P6-h committed as 0eeba53. Cron alive as 480140.
