@@ -5276,3 +5276,15 @@ Stage Summary:
 - HONEST SCOPE: syllable machine has 2419/537560 residual category-fuzz mismatches, all in Khmer-only symbol chains unreachable from Devanagari text (all Devanagari-reachable classes pass; 827/827 real-text corpus + all browser E2E green); the shaper covers deva/latn/grek/cyrl + DFLT fallback — other Brahmic scripts would take the DefaultShaper path (fontkit does the same for most); glyph-object session semantics match pdf-lib per-embedFont lifetimes exactly.
 - NEXT (P6-h candidates): assemble/halve/nup onto organizeMerge; or the create/write side (create-pdf + write-pdf on a StampContext-based blank-page writer); lock/unlock via our RC4/AES once wiring exists; push still blocked pending the GitHub token restore.
 - RISK REGISTER: (1) PUSH STILL BLOCKED — /home/z/.tokens/docopdf.env missing (env reset); restore = GITHUB_TOKEN=<fine-grained PAT, Contents read+write on DKUMARGA/MyCloudy>, chmod 600, then MYCLOUDY_GH_TOKEN=$(grep -E "^GITHUB_TOKEN=" /home/z/.tokens/docopdf.env | cut -d= -f2 | tr -d '"' | tr -d "'") bash scripts/push-github.sh — pushes this P6-g commit + the earlier unpushed ones; (2) cron job auto-disabled on exec limits again (job 477820 status "Disabled due to exec limits exceeded") — delete + recreate pattern per the worklog; (3) the 17 broken smokes remain the cron agent's in-flight work.
+
+---
+Task ID: P6-g-addendum
+Agent: main (Z.ai Code session)
+Task: Post-commit housekeeping.
+
+Work Log:
+- Dev server restarted after a silent death (known pattern); GET / 200, /fonts/NotoSansDevanagari-Regular.ttf 200 (641944 bytes).
+- Cron: old job vanished entirely (the list showed 0 jobs); recreation hit transient 500s ("TimeType value is invalid") then succeeded as job 479877 (webDevReview, fixed_rate 900s, priority 1, Asia/Calcutta) with the standard payload.
+
+Stage Summary:
+- P6-g committed as 4a808b6 (plus this addendum note). PUSH STILL BLOCKED on the missing /home/z/.tokens/docopdf.env — restore procedure in the P6-g section above.
