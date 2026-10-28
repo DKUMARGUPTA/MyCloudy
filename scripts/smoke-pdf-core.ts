@@ -28,6 +28,13 @@
  *       behind/front order, dedup, ExtGState, rotation Tm), JPEG DCT
  *       passthrough, PNG→RGB+SMask pixel round-trip, inherited Resources,
  *       typed error vectors.
+ *  17.  Devanagari (P6-g): TTF subset + shaping + Type0 embed (see §17).
+ *  18.  CreateContext (P6-i): blank-document authoring — operator-sequence
+ *       parity with pdf-lib's PDFPage draws (normalized names/numbers),
+ *       writer numbering (page dicts/streams then synthetics), PNG+SMask
+ *       & JPEG routes, the Devanagari create route (ToUnicode round-trip,
+ *       fontkit-loadable subset), the 12-font metrics set vs the oracle,
+ *       typed API refusals.
  *
  * Run: bun scripts/smoke-pdf-core.ts
  */
@@ -51,6 +58,7 @@ import {
   asNum,
   writeDocument,
   StampContext,
+  CreateContext,
   measureStdText,
   encodeWinAnsiHex,
   winAnsiEncodable,
@@ -852,6 +860,9 @@ async function main(): Promise<void> {
   console.log("== 17. Devanagari: TTF subset + shaping + Type0 embed (P6-g) ==");
   await section17();
 
+  console.log("== 18. CreateContext (P6-i): blank-document authoring ==");
+  await section18();
+
   // Artifacts for manual inspection (VLM/pdfjs follow-ups).
   const outAll = organizePdf(fixB, [
     { kind: "page", src: 0 },
@@ -1060,6 +1071,399 @@ async function section17(): Promise<void> {
 /** Minimal harness: parse one top-level array using the parser's grammar. */
 function parseValueForSmoke(lex: Lexer): ReturnType<typeof firstValue> {
   return firstValue(lex);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * SECTION 18 — the P6-i create/write side: CreateContext (blank-document
+ * authoring) — pdf-lib operator-sequence parity, writer numbering, image
+ * + Devanagari routes, and the 12-font metrics set.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/** The full standard-14 set our engine now measures (P6-i: 6 → 12). */
+const STD14: Array<[string, StandardFonts]> = [
+  ["helvetica", StandardFonts.Helvetica],
+  ["helveticaBold", StandardFonts.HelveticaBold],
+  ["helveticaOblique", StandardFonts.HelveticaOblique],
+  ["helveticaBoldOblique", StandardFonts.HelveticaBoldOblique],
+  ["times", StandardFonts.TimesRoman],
+  ["timesBold", StandardFonts.TimesRomanBold],
+  ["timesItalic", StandardFonts.TimesRomanItalic],
+  ["timesBoldItalic", StandardFonts.TimesRomanBoldItalic],
+  ["courier", StandardFonts.Courier],
+  ["courierBold", StandardFonts.CourierBold],
+  ["courierOblique", StandardFonts.CourierOblique],
+  ["courierBoldOblique", StandardFonts.CourierBoldOblique],
+];
+
+/**
+ * pdf-lib page content as text (page streams are Flate-compressed in its
+ * own saves — inflated with the oracle-side pako; arrays concatenated).
+ */
+async function libContentText(bytes: Uint8Array, pageIdx: number): Promise<string> {
+  const doc = await PDFDocument.load(bytes);
+  const pg = doc.getPage(pageIdx);
+  const c = pg.node.Contents() as unknown as { constructor: { name: string } };
+  const readSt = (st: { contents: Uint8Array }): string => {
+    const b = st.contents;
+    try {
+      const inf = pako.inflate(b) as Uint8Array;
+      return latin1(inf, 0, inf.length);
+    } catch {
+      return latin1(b, 0, b.length);
+    }
+  };
+  if (c.constructor.name === "PDFArray") {
+    const arr = c as unknown as { size(): number; lookup(i: number): { contents: Uint8Array } };
+    let s = "";
+    for (let i = 0; i < arr.size(); i++) s += readSt(arr.lookup(i));
+    return s;
+  }
+  return readSt(c as unknown as { contents: Uint8Array });
+}
+
+/**
+ * Operator-stream normalization for cross-engine comparison: resource NAME
+ * tokens → /R<n> in first-appearance order (pdf-lib's keys are randomly
+ * suffixed — ours are F1/Im1/GS1); numeric tokens rounded to 6 decimals
+ * (KAPPA-bézier control points diverge in the 11th digit between full
+ * String() precision and our 10-digit trim).
+ */
+function normalizeOps(text: string): string {
+  const seen = new Map<string, string>();
+  return text
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((tok) => {
+      if (tok.startsWith("/")) {
+        let canon = seen.get(tok);
+        if (!canon) {
+          canon = `/R${seen.size + 1}`;
+          seen.set(tok, canon);
+        }
+        return canon;
+      }
+      if (/^[-+]?[0-9]/.test(tok)) {
+        const n = Number(tok);
+        if (Number.isFinite(n)) return String(Math.round(n * 1e6) / 1e6);
+      }
+      return tok;
+    })
+    .join(" ");
+}
+
+async function section18(): Promise<void> {
+  /** pdf-lib dict read-shim (same pattern as §17.4's local). */
+  interface LibDict {
+    get(key: unknown): unknown;
+  }
+  const W = 595.28;
+  const H = 841.89;
+
+  /* — 18.1 operator-sequence parity vs the pdf-lib oracle (normalized
+   * names + 6dp numbers): every primitive — rect (fill + border), line,
+   * text (helv + timesBold with opacity), image, ellipse. */
+  const png = buildPngFixture([
+    [255, 0, 0, 255], [0, 255, 0, 255],
+    [0, 0, 255, 128], [255, 255, 0, 128],
+  ]);
+  const ctx = CreateContext.create();
+  const p1 = ctx.addPage(W, H);
+  p1.drawRectangle({ x: 40, y: 700, width: 200, height: 100, color: { r: 0.86, g: 0.15, b: 0.15 } });
+  p1.drawRectangle({
+    x: 40, y: 640, width: 120, height: 40,
+    color: { r: 0.2, g: 0.5, b: 0.9 },
+    borderColor: { r: 0.1, g: 0.1, b: 0.1 }, borderWidth: 2,
+  });
+  p1.drawLine({ start: { x: 40, y: 620 }, end: { x: 300, y: 620 }, thickness: 0.7, color: { r: 0.2, g: 0.2, b: 0.2 } });
+  p1.drawText({ x: 40, y: 600, text: "AVATAR To: whoever", size: 14, color: { r: 0, g: 0, b: 0 } });
+  p1.drawText({ x: 40, y: 580, text: "serif line", size: 12, font: "timesBold", color: { r: 0.1, g: 0.1, b: 0.1 }, opacity: 0.5 });
+  const img = ctx.embedPng(png);
+  p1.drawImage(img, { x: 40, y: 400, width: 60, height: 60 });
+  const p2 = ctx.addPage(W, H);
+  p2.drawEllipse({ x: 150, y: 500, xScale: 40, yScale: 25, color: { r: 0.1, g: 0.5, b: 0.9 } });
+  const ours = ctx.write();
+
+  const libDoc = await PDFDocument.create();
+  const helv = await libDoc.embedFont(StandardFonts.Helvetica);
+  const times = await libDoc.embedFont(StandardFonts.TimesRomanBold);
+  const l1 = libDoc.addPage([W, H]);
+  l1.drawRectangle({ x: 40, y: 700, width: 200, height: 100, color: rgb(0.86, 0.15, 0.15) });
+  l1.drawRectangle({
+    x: 40, y: 640, width: 120, height: 40,
+    color: rgb(0.2, 0.5, 0.9), borderColor: rgb(0.1, 0.1, 0.1), borderWidth: 2,
+  });
+  l1.drawLine({ start: { x: 40, y: 620 }, end: { x: 300, y: 620 }, thickness: 0.7, color: rgb(0.2, 0.2, 0.2) });
+  l1.drawText("AVATAR To: whoever", { x: 40, y: 600, size: 14, font: helv, color: rgb(0, 0, 0) });
+  l1.drawText("serif line", { x: 40, y: 580, size: 12, font: times, color: rgb(0.1, 0.1, 0.1), opacity: 0.5 });
+  const libImg = await libDoc.embedPng(png);
+  l1.drawImage(libImg, { x: 40, y: 400, width: 60, height: 60 });
+  const l2 = libDoc.addPage([W, H]);
+  l2.drawEllipse({ x: 150, y: 500, xScale: 40, yScale: 25, color: rgb(0.1, 0.5, 0.9) });
+  const libBytes = await libDoc.save({ useObjectStreams: false });
+
+  const ourDoc = parsePdf(ours);
+  const ourPages = listPages(ourDoc);
+  for (let i = 0; i < 2; i++) {
+    const cBytes = contentBytesOf(ourDoc, ourPages, i);
+    const ourText = latin1(cBytes, 0, cBytes.length);
+    const libText = await libContentText(libBytes, i);
+    const a = normalizeOps(ourText);
+    const b = normalizeOps(libText);
+    ok(
+      a === b && b.length > 0,
+      `create parity: page ${i + 1} operator sequence (${b.split(" ").length} normalized tokens)`,
+    );
+    if (a !== b) {
+      const al = a.split(" ");
+      const bl = b.split(" ");
+      for (let k = 0; k < Math.max(al.length, bl.length); k++) {
+        if (al[k] !== bl[k]) {
+          console.log(
+            `    first diff @${k}:\n      own="${al.slice(Math.max(0, k - 2), k + 6).join(" ")}"\n      lib="${bl.slice(Math.max(0, k - 2), k + 6).join(" ")}"`,
+          );
+          break;
+        }
+      }
+    }
+  }
+
+  /* — 18.2 writer numbering + resources structure (the all-"new" plan:
+   * objects 1=catalog, 2=/Pages, page dicts/streams at 3..6, synthetics
+   * in creation order from 7: helv, timesBold, gs, image, smask). */
+  eq(ourPages.length, 2, "create: page count");
+  const boxOf = (i: number): string => {
+    const box = ourPages[i]!.dict.get("MediaBox");
+    return box?.k === "arr"
+      ? box.items.map((it) => (it.k === "num" ? it.n : "?")).join(",")
+      : "none";
+  };
+  eq(boxOf(0), `0,0,${W},${H}`, "create: page 1 MediaBox");
+  eq(boxOf(1), `0,0,${W},${H}`, "create: page 2 MediaBox");
+
+  const obj7 = ourDoc.getObject(7);
+  eq(
+    obj7?.k === "dict" ? (obj7.m.get("BaseFont") as { v?: string } | undefined)?.v : "?",
+    "Helvetica",
+    "create: synthetic #1 = Helvetica (first-use order)",
+  );
+  const obj8 = ourDoc.getObject(8);
+  eq(
+    obj8?.k === "dict" ? (obj8.m.get("BaseFont") as { v?: string } | undefined)?.v : "?",
+    "Times-Bold",
+    "create: synthetic #2 = Times-Bold",
+  );
+  const obj9 = ourDoc.getObject(9);
+  eq(
+    obj9?.k === "dict" ? (obj9.m.get("Type") as { v?: string } | undefined)?.v : "?",
+    "ExtGState",
+    "create: synthetic #3 = ExtGState (opacity 0.5)",
+  );
+  const obj10 = ourDoc.getObject(10);
+  ok(obj10?.k === "stream", "create: synthetic #4 = image stream");
+  if (obj10?.k === "stream") {
+    eq(
+      (obj10.m.get("ColorSpace") as { v?: string } | undefined)?.v,
+      "DeviceRGB",
+      "create: image DeviceRGB",
+    );
+    const smaskRef = obj10.m.get("SMask");
+    const smaskObj = smaskRef?.k === "ref" ? ourDoc.getObject(smaskRef.num) : undefined;
+    ok(smaskObj?.k === "stream", "create: SMask stream (write-time patched number)");
+    if (smaskObj?.k === "stream") {
+      eq(
+        (smaskObj.m.get("ColorSpace") as { v?: string } | undefined)?.v,
+        "DeviceGray",
+        "create: SMask DeviceGray",
+      );
+      eq(smaskRef?.num, 11, "create: SMask is the synthetic right after the image");
+    }
+  }
+  const res1 = ourPages[0]!.dict.get("Resources");
+  const fontBucket = res1?.k === "dict" ? res1.m.get("Font") : undefined;
+  const fNames = fontBucket?.k === "dict" ? [...fontBucket.m.keys()].sort() : [];
+  eq(fNames.join(","), "F1,F2", "create: page 1 fonts F1,F2");
+  const gsBucket = res1?.k === "dict" ? res1.m.get("ExtGState") : undefined;
+  eq(gsBucket?.k === "dict" ? [...gsBucket.m.keys()].join(",") : "?", "GS1", "create: page 1 ExtGState GS1");
+  const xBucket = res1?.k === "dict" ? res1.m.get("XObject") : undefined;
+  eq(xBucket?.k === "dict" ? [...xBucket.m.keys()].join(",") : "?", "Im1", "create: page 1 XObject Im1");
+  const res2 = ourPages[1]!.dict.get("Resources");
+  ok(res2?.k === "dict" && !res2.m.has("Font"), "create: page 2 has NO font resources (clean empty)");
+
+  /* write() is non-destructive + deterministic */
+  const again = ctx.write();
+  eq(bytesEqual(ours, again), true, "create: write() repeat = byte-identical");
+
+  /* — 18.3 JPEG passthrough through the create route (DCT bytes EXACT). */
+  {
+    const jpg = readFileSync("qa/test-photo.jpg");
+    const c2 = CreateContext.create();
+    const jp = c2.embedJpeg(new Uint8Array(jpg));
+    const pj = c2.addPage(400, 300);
+    pj.drawImage(jp, { x: 20, y: 100, width: 360, height: 120 });
+    const out = c2.write();
+    const back = parsePdf(out);
+    const imgAt5 = back.getObject(5); // 3,4 = page dict+stream → 5 = image
+    ok(imgAt5?.k === "stream", "create: jpeg image at object 5");
+    const stream = imgAt5?.k === "stream" ? imgAt5 : undefined;
+    if (stream) {
+      eq(
+        (stream.m.get("Filter") as { v?: string } | undefined)?.v,
+        "DCTDecode",
+        "create: jpeg DCTDecode",
+      );
+      eq(bytesEqual(stream.raw, new Uint8Array(jpg)), true, "create: jpeg bytes passthrough EXACT");
+    }
+    const libReload = await PDFDocument.load(out);
+    eq(libReload.getPageCount(), 1, "create: jpeg pdf-lib reload");
+    const libJpg = await PDFDocument.create();
+    const libRef = await libJpg.embedJpg(new Uint8Array(jpg));
+    eq(jp.width, libRef.width, "create: jpeg width parity");
+    eq(jp.height, libRef.height, "create: jpeg height parity");
+  }
+
+  /* — 18.4 Devanagari through the create route (P6-g machinery reuse):
+   * Type0/Identity-H, ToUnicode round-trip, W sections. */
+  {
+    const devaBytes = readFileSync(DEVA_FONT_PATH);
+    const c3 = CreateContext.create();
+    const noto = c3.embedTtf(new Uint8Array(devaBytes));
+    const pd = c3.addPage(W, H);
+    const text = "गोपाल कृष्णा";
+    const measured = noto.measure(text, 24);
+    ok(Math.abs(measured - 113.112) < 0.01, `create deva: measure parity (${measured.toFixed(4)})`);
+    pd.drawText({ x: 72, y: 700, text, size: 24, ttf: noto, color: { r: 0.1, g: 0.1, b: 0.1 } });
+    pd.drawText({ x: 72, y: 650, text: "हिंदी", size: 18, ttf: noto });
+    const out = c3.write();
+    writeFileSync("/tmp/p6i-deva-create.pdf", out);
+
+    const back = parsePdf(out);
+    eq(listPages(back).length, 1, "create deva: own parser page count");
+    const oracleDoc = await PDFDocument.load(out);
+    eq(oracleDoc.getPageCount(), 1, "create deva: oracle page count");
+
+    // content hex: the Tj under the /F key
+    const cBytes = contentBytesOf(back, listPages(back), 0);
+    const body = latin1(cBytes, 0, cBytes.length);
+    const hexMatch = /<([0-9A-Fa-f]+)> Tj/.exec(body);
+    ok(!!hexMatch, "create deva: Tj found");
+    const hex = (hexMatch?.[1] ?? "").toUpperCase();
+    ok(hex.length >= 8, `create deva: hex non-trivial (${hex.length / 4} glyphs)`);
+
+    try {
+      const objs = [...oracleDoc.context.enumerateIndirectObjects()];
+      const type0 = objs.find(
+        ([, o]) => o instanceof PDFDict && String((o as unknown as LibDict).get(PDFName.of("Subtype"))) === "/Type0",
+      )?.[1] as unknown as LibDict | undefined;
+      ok(!!type0, "create deva: Type0 font in output");
+      if (type0) {
+        eq(String(type0.get(PDFName.of("Encoding"))), "/Identity-H", "create deva: Identity-H");
+        const lookup = (key: unknown): unknown => oracleDoc.context.lookup(key as never);
+        const cidList = lookup(type0.get(PDFName.of("DescendantFonts"))) as unknown as { get(i: number): unknown };
+        const cid = lookup(cidList.get(0)) as unknown as LibDict;
+        eq(String(cid.get(PDFName.of("Subtype"))), "/CIDFontType2", "create deva: CIDFontType2");
+        /* ToUnicode round-trip */
+        const toUni = lookup(type0.get(PDFName.of("ToUnicode"))) as unknown as { contents: Uint8Array };
+        const cmapText = Buffer.from(pako.inflate(toUni.contents)).toString("latin1");
+        const bfChars = [...cmapText.matchAll(/<([0-9a-fA-F]{4})> <([0-9a-fA-F]*)>/g)];
+        ok(bfChars.length > 0, `create deva: ToUnicode ${bfChars.length} bfchars`);
+        let reconstructed = "";
+        for (let i = 0; i + 4 <= hex.length; i += 4) {
+          const sidHex = hex.slice(i, i + 4).toLowerCase();
+          const entry = bfChars.find(([, sid]) => sid.toLowerCase() === sidHex);
+          const cpsHex = entry?.[2] ?? "";
+          for (let j = 0; j + 4 <= cpsHex.length; j += 4) {
+            reconstructed += String.fromCharCode(parseInt(cpsHex.slice(j, j + 4), 16));
+          }
+        }
+        // pdf-lib ToUnicode reads back the VISUAL glyph order — compare as multisets
+        const sort = (s: string): string[] => [...s].map((c) => c.codePointAt(0)!).sort((a, b) => a - b).map(String);
+        eq(
+          JSON.stringify(sort(reconstructed)),
+          JSON.stringify(sort(text)),
+          `create deva: ToUnicode round-trip multiset`,
+        );
+        /* W starts at subset id 1 */
+        const wArr = cid.get(PDFName.of("W")) as unknown as { toString(): string };
+        ok(String(wArr.toString()).startsWith("[ 1 "), "create deva: W starts at 1");
+        /* embedded subset loads in fontkit */
+        const fd = lookup(cid.get(PDFName.of("FontDescriptor"))) as unknown as LibDict;
+        const ff2 = lookup(fd.get(PDFName.of("FontFile2"))) as unknown as { contents: Uint8Array };
+        const ttfSubset = pako.inflate(ff2.contents) as Uint8Array;
+        const subFont = await (require("@pdf-lib/fontkit") as { create: (b: Uint8Array) => Promise<unknown> }).create(
+          ttfSubset,
+        ) as { numGlyphs: number };
+        ok(subFont.numGlyphs >= hex.length / 4, `create deva: subset loads (${subFont.numGlyphs} glyphs)`);
+      }
+    } catch (error) {
+      eq("oracle-failed", "oracle-ok", `create deva oracle checks: ${String(error)}`);
+    }
+  }
+
+  /* — 18.5 the 12-font metrics set vs the pdf-lib oracle (float-exact —
+   * same AFM data, same arithmetic order). */
+  {
+    const probe = "AVATAR To: whoever — takes 24";
+    const libDoc2 = await PDFDocument.create();
+    for (const [key, std] of STD14) {
+      const libFont = await libDoc2.embedStandardFont(std);
+      const want = libFont.widthOfTextAtSize(probe, 24);
+      const got = ctx.measure(probe, key as never, 24);
+      ok(
+        Math.abs(got - want) < 1e-9,
+        `create metrics: ${key} (${got.toFixed(4)} vs ${want.toFixed(4)})`,
+      );
+    }
+  }
+
+  /* — 18.6 API refusal vectors (typed, honest). */
+  {
+    const cases: Array<[string, () => void]> = [
+      [
+        "addPage(0, 100) refused",
+        () => CreateContext.create().addPage(0, 100),
+      ],
+      [
+        "drawImage unknown handle refused",
+        () => {
+          const c = CreateContext.create();
+          const p = c.addPage(100, 100);
+          p.drawImage({ width: 1, height: 1, token: "img:999" }, { x: 0, y: 0, width: 1, height: 1 });
+        },
+      ],
+      [
+        "drawText size 0 refused",
+        () => {
+          const c = CreateContext.create();
+          c.addPage(100, 100).drawText({ x: 0, y: 0, text: "x", size: 0, font: "helvetica" });
+        },
+      ],
+    ];
+    for (const [label, fn] of cases) {
+      let code = "none";
+      try {
+        fn();
+      } catch (err) {
+        code = err instanceof PdfError ? err.code : "wrong-error";
+      }
+      eq(code, "corrupt", `create API: ${label}`);
+    }
+    /* non-WinAnsi measure → typed "chars" (the tools' error-code source) */
+    let charsCode = "none";
+    try {
+      ctx.measure("प", "helvetica", 12);
+    } catch (err) {
+      charsCode = err instanceof PdfError ? err.code : "wrong-error";
+    }
+    eq(charsCode, "chars", "create API: non-WinAnsi measure → chars");
+    /* empty text is a NO-OP (pdf-lib parity — no stream, no font) */
+    const c4 = CreateContext.create();
+    const pe = c4.addPage(100, 100);
+    pe.drawText({ x: 0, y: 0, text: "", size: 12, font: "helvetica" });
+    const outEmpty = c4.write();
+    eq(listPages(parsePdf(outEmpty)).length, 1, "create API: empty text → clean 1-page doc");
+    const emptyRes = listPages(parsePdf(outEmpty))[0]!.dict.get("Resources");
+    ok(emptyRes?.k === "dict" && !emptyRes.m.has("Font"), "create API: no font embedded for empty text");
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════════════

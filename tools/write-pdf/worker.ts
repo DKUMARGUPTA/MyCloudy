@@ -1,10 +1,15 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage } from "pdf-lib";
+import {
+  CreateContext,
+  type CreateImage,
+  type StampFontKey,
+  type StampTtfFont,
+} from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { loadDevanagariBytes } from "../stamp-common/deva";
 import {
   type FontSpec,
   type MeasureRun,
@@ -28,13 +33,16 @@ import {
  * assets ride `files` in assetOrderOf(doc) order.
  *
  * Layout runs through the shared pure engine (./model.ts layoutDoc) with
- * REAL pdf-lib font metrics, so the surface's live preview (canvas
- * metrics, metric-compatible browser faces) shows the same pages. Paint:
- * text pieces via fontFor (standard-14 ×3 families + embedded Noto for
- * Devanagari blocks), underline/hr/table-border strokes, quote bars,
- * table header backgrounds, images embedded once and drawn with explicit
+ * REAL font metrics, so the surface's live preview (canvas metrics,
+ * metric-compatible browser faces) shows the same pages. Paint goes
+ * through OUR engine (CreateContext, P6-i): text pieces via the full
+ * standard-14 ×3-family set (WinAnsi through our metrics — kerning
+ * included) + the embedded Noto Devanagari subset (embedTtf — OUR
+ * shaper/subsetter) for Devanagari blocks, underline/hr/table-border
+ * strokes, quote bars, table header backgrounds, images embedded once
+ * (JPEG DCT passthrough / PNG RGB+SMask) and drawn with explicit
  * width/height (the P4.4 pdf-lib rule). Device-only, zero network with
- * file data.
+ * file data, zero pdf-lib.
  */
 
 function post(response: WorkerResponse): void {
@@ -42,69 +50,67 @@ function post(response: WorkerResponse): void {
 }
 
 interface FontSet {
-  fontFor: (spec: FontSpec, script: ScriptFont) => PDFFont;
+  /** The standard font for a spec (null when the block routes to Noto). */
+  stdFor: (spec: FontSpec, script: ScriptFont) => StampFontKey | null;
   measure: MeasureRun;
+  /** The embedded Devanagari TTF (non-null exactly when stdFor can return null). */
+  noto: StampTtfFont | null;
 }
 
-async function loadFonts(doc: PDFDocument, needNoto: boolean): Promise<FontSet> {
-  // stamp-common pipeline: standard fonts + the embedded Devanagari TTF
-  const stampFonts = await loadStampFonts(doc, needNoto);
-  const helv = stampFonts.fontFor("helvetica");
-  const helvBold = stampFonts.fontFor("helveticaBold");
-  const courier = stampFonts.fontFor("courier");
-  const courierBold = stampFonts.fontFor("courierBold");
-  const helvOblique = doc.embedStandardFont(StandardFonts.HelveticaOblique);
-  const helvBoldOblique = doc.embedStandardFont(
-    StandardFonts.HelveticaBoldOblique
-  );
-  const times = doc.embedStandardFont(StandardFonts.TimesRoman);
-  const timesBold = doc.embedStandardFont(StandardFonts.TimesRomanBold);
-  const timesItalic = doc.embedStandardFont(StandardFonts.TimesRomanItalic);
-  const timesBoldItalic = doc.embedStandardFont(
-    StandardFonts.TimesRomanBoldItalic
-  );
-  const courierOblique = doc.embedStandardFont(StandardFonts.CourierOblique);
-  const courierBoldOblique = doc.embedStandardFont(
-    StandardFonts.CourierBoldOblique
-  );
-  const noto = needNoto ? stampFonts.fontFor("devanagari") : null;
+/** FontSpec → one of the 12 WinAnsi standard-14s. */
+function stdKey(spec: FontSpec): StampFontKey {
+  if (spec.family === "mono") {
+    if (spec.bold && spec.italic) return "courierBoldOblique";
+    if (spec.bold) return "courierBold";
+    if (spec.italic) return "courierOblique";
+    return "courier";
+  }
+  if (spec.family === "serif") {
+    if (spec.bold && spec.italic) return "timesBoldItalic";
+    if (spec.bold) return "timesBold";
+    if (spec.italic) return "timesItalic";
+    return "times";
+  }
+  if (spec.bold && spec.italic) return "helveticaBoldOblique";
+  if (spec.bold) return "helveticaBold";
+  if (spec.italic) return "helveticaOblique";
+  return "helvetica";
+}
 
-  const fontFor = (spec: FontSpec, script: ScriptFont): PDFFont => {
-    if (script === "noto" && noto) return noto; // v1 rule: whole block Noto
-    if (spec.family === "mono") {
-      if (spec.bold && spec.italic) return courierBoldOblique;
-      if (spec.bold) return courierBold;
-      if (spec.italic) return courierOblique;
-      return courier;
-    }
-    if (spec.family === "serif") {
-      if (spec.bold && spec.italic) return timesBoldItalic;
-      if (spec.bold) return timesBold;
-      if (spec.italic) return timesItalic;
-      return times;
-    }
-    if (spec.bold && spec.italic) return helvBoldOblique;
-    if (spec.bold) return helvBold;
-    if (spec.italic) return helvOblique;
-    return helv;
-  };
+async function loadFonts(
+  ctx: CreateContext,
+  needNoto: boolean,
+): Promise<FontSet> {
+  let noto: StampTtfFont | null = null;
+  if (needNoto) {
+    const bytes = await loadDevanagariBytes(); // throws "devanagari-font-fetch"
+    noto = ctx.embedTtf(bytes);
+  }
   return {
-    fontFor,
+    // v1 rule: a "noto" block paints WHOLLY through the embedded TTF.
+    stdFor: (spec, script) => (script === "noto" && noto ? null : stdKey(spec)),
     measure: (text, spec, size, script) =>
-      fontFor(spec, script).widthOfTextAtSize(text, size),
+      script === "noto" && noto
+        ? noto.measure(text, size)
+        : ctx.measure(text, stdKey(spec), size),
+    noto,
   };
 }
 
 /** Embeds one image asset (magic-byte sniff; the store normalised JPG/PNG). */
-async function embedImage(doc: PDFDocument, file: File): Promise<PDFImage> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
-  try {
-    return isJpeg ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
-  } catch {
-    // wrong sniff or exotic bytes — try the other codec
-    return isJpeg ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
-  }
+function embedAsset(ctx: CreateContext, file: File): Promise<CreateImage> {
+  return file
+    .arrayBuffer()
+    .then((buf) => {
+      const bytes = new Uint8Array(buf);
+      const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
+      try {
+        return isJpeg ? ctx.embedJpeg(bytes) : ctx.embedPng(bytes);
+      } catch {
+        // wrong sniff or exotic bytes — try the other codec
+        return isJpeg ? ctx.embedPng(bytes) : ctx.embedJpeg(bytes);
+      }
+    });
 }
 
 async function run(request: WorkerRunRequest): Promise<void> {
@@ -142,9 +148,9 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const pageW = doc.setup.landscape ? base.height : base.width;
   const pageH = doc.setup.landscape ? base.width : base.height;
 
-  const pdf = await PDFDocument.create();
+  const ctx = CreateContext.create();
   const needNoto = docNeedNoto(doc);
-  const fonts = await loadFonts(pdf, needNoto);
+  const fonts = await loadFonts(ctx, needNoto);
 
   // images ride `files` in assetOrderOf order (surface pairing contract)
   const order = assetOrderOf(doc);
@@ -153,10 +159,10 @@ async function run(request: WorkerRunRequest): Promise<void> {
     return;
   }
   const imageSizes: Record<string, { w: number; h: number }> = {};
-  const embedded: PDFImage[] = [];
+  const embedded: CreateImage[] = [];
   for (let i = 0; i < order.length; i += 1) {
-    const image = await embedImage(pdf, files[i]);
-    imageSizes[order[i]] = { w: image.width, h: image.height };
+    const image = await embedAsset(ctx, files[i]!);
+    imageSizes[order[i]!] = { w: image.width, h: image.height };
     embedded.push(image);
   }
 
@@ -165,7 +171,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const laid = layoutDoc({ doc, imageSizes, measure: fonts.measure });
 
   for (let p = 0; p < laid.pages.length; p += 1) {
-    const page = pdf.addPage([pageW, pageH]);
+    const page = ctx.addPage(pageW, pageH);
     const laidPage = laid.pages[p];
 
     for (const rect of laidPage.rects) {
@@ -174,7 +180,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
         y: rect.y,
         width: rect.w,
         height: rect.h,
-        color: rgbFromHex(rect.color),
+        color: parseHexColor(rect.color),
       });
     }
     for (const image of laidPage.images) {
@@ -193,17 +199,20 @@ async function run(request: WorkerRunRequest): Promise<void> {
         start: { x: line.x1, y: line.y1 },
         end: { x: line.x2, y: line.y2 },
         thickness: line.w,
-        color: rgbFromHex(line.color),
+        color: parseHexColor(line.color),
       });
     }
     for (const piece of laidPage.pieces) {
       if (piece.text.length === 0) continue;
-      page.drawText(piece.text, {
+      const std = fonts.stdFor(piece.spec, piece.script);
+      // std === null ⟺ script === "noto" ⟺ fonts.noto !== null
+      page.drawText({
         x: piece.x,
         y: piece.baseline,
+        text: piece.text,
         size: piece.size,
-        font: fonts.fontFor(piece.spec, piece.script),
-        color: rgbFromHex(piece.color),
+        color: parseHexColor(piece.color),
+        ...(std ? { font: std } : { ttf: fonts.noto! }),
       });
     }
 
@@ -218,7 +227,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 92, stage: "saving" });
 
-  const saved = await pdf.save({ useObjectStreams: true });
+  const saved = ctx.write();
   post({
     type: "result",
     runId,
@@ -238,11 +247,6 @@ async function run(request: WorkerRunRequest): Promise<void> {
       images: laid.images,
     },
   });
-}
-
-function rgbFromHex(hex: string | undefined): ReturnType<typeof rgb> {
-  const { r, g, b } = parseHexColor(hex);
-  return rgb(r, g, b);
 }
 
 self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {

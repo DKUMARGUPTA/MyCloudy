@@ -809,10 +809,16 @@ export class StampContext {
 const BASE_FONT_NAME: Record<StampFontKey, string> = {
   helvetica: "Helvetica",
   helveticaBold: "Helvetica-Bold",
+  helveticaOblique: "Helvetica-Oblique",
+  helveticaBoldOblique: "Helvetica-BoldOblique",
   times: "Times-Roman",
   timesBold: "Times-Bold",
+  timesItalic: "Times-Italic",
+  timesBoldItalic: "Times-BoldItalic",
   courier: "Courier",
   courierBold: "Courier-Bold",
+  courierOblique: "Courier-Oblique",
+  courierBoldOblique: "Courier-BoldOblique",
 };
 
 /** /Contents value → array of its stream entries (missing → []). */

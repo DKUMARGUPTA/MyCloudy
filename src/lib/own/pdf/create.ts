@@ -1,0 +1,905 @@
+/**
+ * DocoPDF own PDF micro-engine — blank-document authoring (P6-i).
+ *
+ * CreateContext is the create/write side's counterpart of StampContext:
+ * where the stamp kernel annotates a PARSED document, this one authors a
+ * FRESH one from nothing — the pdf-lib `PDFDocument.create() + addPage +
+ * draw*` surface, 100% our code through the shared writer.
+ *
+ * Content-stream operator sequences mirror pdf-lib's PDFPage draw calls
+ * exactly, so authored pages can be pixel-diffed against pdf-lib's oracle:
+ *
+ *   drawText:      q [gs] BT r g b rg /F size Tf 24 TL cos sin -sin cos x y Tm
+ *                  <HEX> Tj T* ET Q   (drawLinesOfText shape: TL + trailing
+ *                  T* are pdf-lib's; hex is UPPERcase like its toHexString)
+ *   drawLine:      q r g b RG th w [] 0 d x1 y1 m x1 y1 m x2 y2 l S Q
+ *                  (pdf-lib emits moveTo TWICE — the duplicate is kept for parity)
+ *   drawRectangle: q r g b rg bw w [] 0 d x y cm 1 0 0 1 0 0 cm 1 0 0 1 0 0 cm
+ *                  0 0 m 0 h l w h l w 0 l h f|S|B Q
+ *                  (translate + rotate-0 + skew-0 cm triplet; the identity
+ *                  matrices are emitted exactly like pdf-lib's always-emit
+ *                  operators)
+ *   drawEllipse:   q r g b rg bw w [] 0 d q m c c c c Q f|S|B Q
+ *                  (KAPPA-bézier ellipse — the inner q/Q pair around the
+ *                  path is pdf-lib's drawEllipsePath quirk, preserved)
+ *   drawImage:     q [gs] x y cm cos sin -sin cos 0 0 cm w 0 0 h 0 0 cm
+ *                  1 0 0 1 0 0 cm /Im Do Q
+ *                  (translate, rotate, scale, skew-0 — pdf-lib's order)
+ *
+ * Numbering contract (mirrors the writer): objects 1=catalog, 2=/Pages, then
+ * each page takes TWO objects (dict + stream), then the synthetics in
+ * creation order. The page count isn't known while fonts/images embed, so
+ * every cross-synthetic reference is a MUTABLE newref patched to its final
+ * number at write() time — the same lazy-materialization discipline the
+ * stamp kernel uses for its TTF objects.
+ *
+ * Standard fonts: the full set of 12 WinAnsi standard-14s (Helvetica ×4,
+ * Times ×4, Courier ×4) from the generated metrics; Unicode routes through
+ * embedTtf (the P6-g Devanagari machinery: OUR shaper → OUR subsetter →
+ * Type0/CIDFontType2 + ToUnicode, materialized at write time).
+ */
+
+import {
+  type PdfObj,
+  newDict,
+  newref,
+  num,
+  pdfNumToString,
+} from "./objects";
+import { PdfError } from "./parser";
+import { decodePng, flateImageBytes, parseJpeg } from "./images";
+import {
+  encodeWinAnsiHex,
+  measureStdText,
+  type StampFontKey,
+} from "./stamp-fonts";
+import { ParsedTtfFont, TtfSubsetter } from "./font-ttf";
+import { shapeText } from "./shape-deva";
+import type { StampTtfFont } from "./stamp";
+import { writeDocument, type WriteProgress } from "./writer";
+
+/* ─── public option types (the pdf-lib subset the tools use) ─────────────── */
+
+export interface CreateTextOptions {
+  /** Baseline-left x in PDF user space (pdf-lib semantics). */
+  x: number;
+  /** Baseline y. */
+  y: number;
+  text: string;
+  size: number;
+  /** Standard-font key (required unless `ttf` is provided). */
+  font?: StampFontKey;
+  /** Embedded TrueType route (Devanagari). */
+  ttf?: StampTtfFont;
+  /** 0..1 RGB. Default black (pdf-lib's default fontColor). */
+  color?: { r: number; g: number; b: number };
+  /** 0..1; omit for fully opaque (no ExtGState — pdf-lib parity). */
+  opacity?: number;
+  /** Degrees counter-clockwise. Default 0. */
+  rotate?: number;
+  /** Text leading (the TL op — pdf-lib page default 24). */
+  lineHeight?: number;
+}
+
+export interface CreateRectOptions {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Fill color; give borderColor instead for a stroke-only rect. */
+  color?: { r: number; g: number; b: number };
+  borderColor?: { r: number; g: number; b: number };
+  /** Default 0 (pdf-lib's drawRectangle default). */
+  borderWidth?: number;
+  opacity?: number;
+}
+
+export interface CreateLineOptions {
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+  /** Default 1 (pdf-lib's drawLine default). */
+  thickness?: number;
+  /** Default black (pdf-lib adds rgb(0,0,0) when color is absent). */
+  color?: { r: number; g: number; b: number };
+  opacity?: number;
+}
+
+export interface CreateEllipseOptions {
+  /** Center x. */
+  x: number;
+  /** Center y. */
+  y: number;
+  xScale: number;
+  yScale: number;
+  color?: { r: number; g: number; b: number };
+  borderColor?: { r: number; g: number; b: number };
+  borderWidth?: number;
+  opacity?: number;
+}
+
+export interface CreateImageOptions {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity?: number;
+  rotate?: number;
+}
+
+/**
+ * An embedded image handle — pass to CreatePage.drawImage().
+ * `token` is internal (identifies the XObject across write()s).
+ */
+export interface CreateImage {
+  readonly width: number;
+  readonly height: number;
+  /** @internal — `img:<synthetic index>`. */
+  readonly token: string;
+}
+
+/* ─── internal records ──────────────────────────────────────────────────── */
+
+interface CreatedPageRec {
+  width: number;
+  height: number;
+  /** Operator lines (joined "\n" at write time). */
+  ops: string[];
+  /** Global token → local resource name (per-page, per-prefix sequential). */
+  local: Map<string, string>;
+}
+
+/** A token's bucket + synthetic slot (numbers assigned at write()). */
+interface TokenInfo {
+  category: "Font" | "XObject" | "ExtGState";
+  synIndex: number;
+}
+
+/** The embedded TTF's reserved synthetics + mutable late-bound state. */
+interface TtfEntry {
+  font: ParsedTtfFont;
+  subsetter: TtfSubsetter;
+  /** Shared glyph-object memory across shapeText calls (fontkit semantics). */
+  session: Map<number, number[]>;
+  /** subset id → codePoints (first ask — the shared-glyph value). */
+  cpsBySid: Map<number, number[]>;
+  scale: number;
+  cidIndex: number;
+  fdIndex: number;
+  fileIndex: number;
+  cmapIndex: number;
+  /** Mutable refs patched at write() (numbers = 3 + 2*pages + synIndex). */
+  cidRef: PdfObj & { k: "newref" };
+  fdRef: PdfObj & { k: "newref" };
+  fileRef: PdfObj & { k: "newref" };
+  cmapRef: PdfObj & { k: "newref" };
+  cidDict: Map<string, PdfObj>;
+  fileStream: PdfObj & { k: "stream"; raw: Uint8Array };
+  cmapStream: PdfObj & { k: "stream"; raw: Uint8Array };
+}
+
+const ENC = new TextEncoder();
+
+/** latin1 encode (CIDSystemInfo strings / CMap text). */
+const LATIN1 = (text: string): Uint8Array => {
+  const out = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i) & 0xff;
+  return out;
+};
+
+/** pdf-lib's KAPPA (drawEllipsePath). */
+const KAPPA = (4.0 * (Math.sqrt(2.0) - 1.0)) / 3.0;
+
+const BASE_FONT_NAME: Record<StampFontKey, string> = {
+  helvetica: "Helvetica",
+  helveticaBold: "Helvetica-Bold",
+  helveticaOblique: "Helvetica-Oblique",
+  helveticaBoldOblique: "Helvetica-BoldOblique",
+  times: "Times-Roman",
+  timesBold: "Times-Bold",
+  timesItalic: "Times-Italic",
+  timesBoldItalic: "Times-BoldItalic",
+  courier: "Courier",
+  courierBold: "Courier-Bold",
+  courierOblique: "Courier-Oblique",
+  courierBoldOblique: "Courier-BoldOblique",
+};
+
+/**
+ * A fresh document under construction. Create → embed assets → addPage →
+ * draw → write. Non-destructive: write() may be called repeatedly; drawing
+ * more in between is picked up (mirrors StampContext's contract).
+ */
+export class CreateContext {
+  private readonly pages: CreatedPageRec[] = [];
+  private readonly synthetics: PdfObj[] = [];
+  /** token → bucket + synthetic index. */
+  private readonly tokens = new Map<string, TokenInfo>();
+  private ttf: TtfEntry | null = null;
+
+  private constructor() {}
+
+  /** A new empty document (pdf-lib's PDFDocument.create()). */
+  static create(): CreateContext {
+    return new CreateContext();
+  }
+
+  /** Page count so far. */
+  get pageCount(): number {
+    return this.pages.length;
+  }
+
+  /** Page facts for placement math. */
+  pageAt(index: number): { width: number; height: number } {
+    const rec = this.pages[index];
+    if (!rec) throw new PdfError("corrupt", `page index ${index} out of range`);
+    return { width: rec.width, height: rec.height };
+  }
+
+  /** pdf-lib-identical width of `text` in a standard font (kerning included). */
+  measure(text: string, font: StampFontKey, size: number): number {
+    return measureStdText(text, font, size);
+  }
+
+  /** Append a page. Returns the drawing handle. */
+  addPage(width: number, height: number): CreatePage {
+    if (
+      !Number.isFinite(width) || !Number.isFinite(height) ||
+      width <= 0 || height <= 0
+    ) {
+      throw new PdfError("corrupt", "page size must be positive");
+    }
+    const rec: CreatedPageRec = { width, height, ops: [], local: new Map() };
+    this.pages.push(rec);
+    return new CreatePageImpl(this, rec, this.pages.length - 1);
+  }
+
+  /** Embed a JPEG (DCT passthrough). Returns the reusable draw handle. */
+  embedJpeg(bytes: Uint8Array): CreateImage {
+    const info = parseJpeg(bytes); // throws typed "logo"
+    const dict = newDict([
+      ["Type", { k: "name", v: "XObject" }],
+      ["Subtype", { k: "name", v: "Image" }],
+      ["Width", num(info.width)],
+      ["Height", num(info.height)],
+      ["ColorSpace", { k: "name", v: info.colorSpace }],
+      ["BitsPerComponent", num(info.bitsPerComponent)],
+      ["Filter", { k: "name", v: "DCTDecode" }],
+    ]);
+    if (info.colorSpace === "DeviceCMYK") {
+      // pdf-lib's hedge: standalone CMYK JPEGs are usually stored inverted.
+      dict.m.set(
+        "Decode",
+        { k: "arr", items: [num(1), num(0), num(1), num(0), num(1), num(0), num(1), num(0)] },
+      );
+    }
+    return this.registerImage(info.width, info.height, dict.m, info.bytes);
+  }
+
+  /** Embed a PNG (decoded to DeviceRGB 8bpc + optional alpha SMask). */
+  embedPng(bytes: Uint8Array): CreateImage {
+    const png = decodePng(bytes); // throws typed "logo"
+    /** SMask ref — numbered once the page count is known (write()). */
+    const smaskRef: PdfObj & { k: "newref" } = { k: "newref", num: -1 };
+    const dict = newDict([
+      ["Type", { k: "name", v: "XObject" }],
+      ["Subtype", { k: "name", v: "Image" }],
+      ["Width", num(png.width)],
+      ["Height", num(png.height)],
+      ["ColorSpace", { k: "name", v: "DeviceRGB" }],
+      ["BitsPerComponent", num(8)],
+      ["Filter", { k: "name", v: "FlateDecode" }],
+      ...(png.alpha !== undefined
+        ? [["SMask" as const, smaskRef] as [string, PdfObj]]
+        : []),
+    ]);
+    const handle = this.registerImage(
+      png.width,
+      png.height,
+      dict.m,
+      flateImageBytes(png.rgb),
+    );
+    if (png.alpha !== undefined) {
+      // The SMask is the synthetic RIGHT AFTER the image XObject. Its final
+      // number needs the page count, so we remember the RAW index here
+      // (negative marker = unresolved) and patch at write() — see
+      // patchSmasks(). The image sits at -(synIndex+1).
+      const smaskIndex = this.synthetics.length;
+      const smask = newDict([
+        ["Type", { k: "name", v: "XObject" }],
+        ["Subtype", { k: "name", v: "Image" }],
+        ["Height", num(png.height)],
+        ["Width", num(png.width)],
+        ["BitsPerComponent", num(8)],
+        ["ColorSpace", { k: "name", v: "DeviceGray" }],
+        ["Filter", { k: "name", v: "FlateDecode" }],
+        ["Decode", { k: "arr", items: [num(0), num(1)] }],
+      ]);
+      this.synthetics.push({
+        k: "stream",
+        m: smask.m,
+        raw: flateImageBytes(png.alpha),
+      });
+      smaskRef.num = -(smaskIndex + 1); // unresolved marker
+    }
+    return handle;
+  }
+
+  /**
+   * Embed a TrueType font for Unicode text (the Devanagari route — P6-g
+   * machinery, materialized at write() exactly like pdf-lib's lazy
+   * save-time embedding).
+   */
+  embedTtf(bytes: Uint8Array): StampTtfFont {
+    if (this.ttf) throw new PdfError("corrupt", "only one embedded TTF per CreateContext");
+    const font = ParsedTtfFont.parse(bytes); // throws typed "chars"
+    const subsetter = new TtfSubsetter(font);
+    const type0Index = this.synthetics.length;
+    const cidIndex = type0Index + 1;
+    const fdIndex = type0Index + 2;
+    const fileIndex = type0Index + 3;
+    const cmapIndex = type0Index + 4;
+
+    const baseName = font.postscriptName || "Font";
+    const scale = 1000 / font.unitsPerEm;
+
+    const cidRef: PdfObj & { k: "newref" } = { k: "newref", num: 0 };
+    const fdRef: PdfObj & { k: "newref" } = { k: "newref", num: 0 };
+    const fileRef: PdfObj & { k: "newref" } = { k: "newref", num: 0 };
+    const cmapRef: PdfObj & { k: "newref" } = { k: "newref", num: 0 };
+
+    this.synthetics.push(
+      newDict([
+        ["Type", { k: "name", v: "Font" }],
+        ["Subtype", { k: "name", v: "Type0" }],
+        ["BaseFont", { k: "name", v: baseName }],
+        ["Encoding", { k: "name", v: "Identity-H" }],
+        ["DescendantFonts", { k: "arr", items: [cidRef] }],
+        ["ToUnicode", cmapRef],
+      ]),
+    );
+
+    const cidDict = newDict([
+      ["Type", { k: "name", v: "Font" }],
+      ["Subtype", { k: "name", v: "CIDFontType2" }],
+      ["CIDToGIDMap", { k: "name", v: "Identity" }],
+      ["BaseFont", { k: "name", v: baseName }],
+      [
+        "CIDSystemInfo",
+        newDict([
+          ["Registry", { k: "str", b: LATIN1("Adobe") }],
+          ["Ordering", { k: "str", b: LATIN1("Identity") }],
+          ["Supplement", num(0)],
+        ]),
+      ],
+      ["FontDescriptor", fdRef],
+      ["W", { k: "arr", items: [] }], // materialized at write()
+    ]);
+    this.synthetics.push(cidDict);
+
+    // pdf-lib deriveFontFlags (symbolic + fixed-pitch + serif/script class + italic).
+    let flags = 4;
+    if (font.postIsFixedPitch) flags |= 1;
+    if (font.os2FamilyClass >= 1 && font.os2FamilyClass <= 7) flags |= 2;
+    if (font.os2FamilyClass === 10) flags |= 8;
+    if (font.headMacStyleItalic) flags |= 64;
+
+    this.synthetics.push(
+      newDict([
+        ["Type", { k: "name", v: "FontDescriptor" }],
+        ["FontName", { k: "name", v: baseName }],
+        ["Flags", num(flags)],
+        [
+          "FontBBox",
+          {
+            k: "arr",
+            items: [
+              num(font.bbox[0] * scale),
+              num(font.bbox[1] * scale),
+              num(font.bbox[2] * scale),
+              num(font.bbox[3] * scale),
+            ],
+          },
+        ],
+        ["ItalicAngle", num(font.italicAngle)],
+        ["Ascent", num(font.ascent * scale)],
+        ["Descent", num(font.descent * scale)],
+        ["CapHeight", num(font.capHeight * scale)],
+        ["XHeight", num((font.xHeight || 0) * scale)],
+        ["StemV", num(0)],
+        ["FontFile2", fileRef],
+      ]),
+    );
+
+    const fileStream: PdfObj & { k: "stream"; raw: Uint8Array } = {
+      k: "stream",
+      m: new Map<string, PdfObj>([
+        ["Length", num(0)],
+        ["Filter", { k: "name", v: "FlateDecode" }],
+      ]),
+      raw: new Uint8Array(0),
+    };
+    const cmapStream: PdfObj & { k: "stream"; raw: Uint8Array } = {
+      k: "stream",
+      m: new Map<string, PdfObj>([
+        ["Length", num(0)],
+        ["Filter", { k: "name", v: "FlateDecode" }],
+      ]),
+      raw: new Uint8Array(0),
+    };
+    this.synthetics.push(fileStream, cmapStream);
+
+    const entry: TtfEntry = {
+      font,
+      subsetter,
+      session: new Map<number, number[]>(),
+      cpsBySid: new Map<number, number[]>(),
+      scale,
+      cidIndex,
+      fdIndex,
+      fileIndex,
+      cmapIndex,
+      cidRef,
+      fdRef,
+      fileRef,
+      cmapRef,
+      cidDict: cidDict.m,
+      fileStream,
+      cmapStream,
+    };
+    this.ttf = entry;
+    this.tokens.set("ttf:1", { category: "Font", synIndex: type0Index });
+
+    return {
+      measure: (text, size) => {
+        // pdf-lib CustomFontEmbedder.widthOfTextAtSize: Σ(advanceWidth ×
+        // scale) × (size/1000) — float-exact arithmetic order.
+        const glyphs = shapeText(font, text, entry.session);
+        let totalWidth = 0;
+        for (const g of glyphs) totalWidth += g.advanceWidth * entry.scale;
+        return totalWidth * (size / 1000);
+      },
+      encodeHex: (text) => {
+        const glyphs = shapeText(font, text, entry.session);
+        let hex = "";
+        for (const g of glyphs) {
+          const sid = subsetter.includeGlyph(g.id);
+          if (!entry.cpsBySid.has(sid)) entry.cpsBySid.set(sid, g.codePoints);
+          hex += sid.toString(16).padStart(4, "0");
+        }
+        return hex;
+      },
+    };
+  }
+
+  /**
+   * Serialize. Objects: 1=catalog, 2=/Pages, then dict+stream per page, then
+   * the synthetics in creation order. Non-destructive.
+   */
+  write(onPage?: WriteProgress): Uint8Array {
+    this.finalizeTtfs();
+    const base = 3 + 2 * this.pages.length;
+    // Patch every synthetic-internal newref to its final number.
+    const t = this.ttf;
+    if (t) {
+      t.cidRef.num = base + t.cidIndex;
+      t.fdRef.num = base + t.fdIndex;
+      t.fileRef.num = base + t.fileIndex;
+      t.cmapRef.num = base + t.cmapIndex;
+    }
+    this.patchSmasks(base);
+
+    const pages = this.pages.map((rec) => ({
+      type: "new" as const,
+      width: rec.width,
+      height: rec.height,
+      content: ENC.encode(rec.ops.join("\n")),
+      resources: this.pageResources(rec, base),
+    }));
+    return writeDocument(pages, "1.7", onPage, this.synthetics);
+  }
+
+  /* ─── internals (used by CreatePage; @internal surface) ──────────────── */
+
+  /** @internal — append one operator group to a page's stream. */
+  push(rec: CreatedPageRec, ops: string): void {
+    rec.ops.push(ops);
+  }
+
+  /**
+   * @internal — local resource name for a global token on one page:
+   * sequential per prefix (our authored pages start empty, so F1/Im1/GS1
+   * are always free).
+   */
+  localKey(rec: CreatedPageRec, token: string, prefix: string): string {
+    const cached = rec.local.get(token);
+    if (cached) return cached;
+    let n = 1;
+    for (const name of rec.local.values()) {
+      if (name.startsWith(prefix)) n += 1;
+    }
+    const key = `${prefix}${n}`;
+    rec.local.set(token, key);
+    return key;
+  }
+
+  /** @internal — ensure a standard-font token exists; returns it. */
+  ensureFontToken(font: StampFontKey): string {
+    const token = `std:${font}`;
+    if (!this.tokens.has(token)) {
+      const base = BASE_FONT_NAME[font];
+      if (!base) throw new PdfError("corrupt", `unknown standard font ${font}`);
+      this.tokens.set(token, {
+        category: "Font",
+        synIndex: this.synthetics.length,
+      });
+      this.synthetics.push(
+        newDict([
+          ["Type", { k: "name", v: "Font" }],
+          ["Subtype", { k: "name", v: "Type1" }],
+          ["BaseFont", { k: "name", v: base }],
+          ["Encoding", { k: "name", v: "WinAnsiEncoding" }],
+        ]),
+      );
+    }
+    return token;
+  }
+
+  /** @internal — ensure an ExtGState token exists; returns it. */
+  ensureGsToken(opacity: number): string {
+    const value = Math.min(1, Math.max(0, opacity));
+    const token = `gs:${value.toFixed(4)}`;
+    if (!this.tokens.has(token)) {
+      this.tokens.set(token, {
+        category: "ExtGState",
+        synIndex: this.synthetics.length,
+      });
+      this.synthetics.push(
+        newDict([
+          ["Type", { k: "name", v: "ExtGState" }],
+          ["ca", num(value)],
+        ]),
+      );
+    }
+    return token;
+  }
+
+  /** @internal — does this token exist (drawImage handle validation)? */
+  hasToken(token: string): boolean {
+    return this.tokens.has(token);
+  }
+
+  /* ─── private helpers ─────────────────────────────────────────────────── */
+
+  private registerImage(
+    width: number,
+    height: number,
+    dict: Map<string, PdfObj>,
+    raw: Uint8Array,
+  ): CreateImage {
+    const synIndex = this.synthetics.length;
+    this.synthetics.push({ k: "stream", m: dict, raw });
+    const token = `img:${synIndex}`;
+    this.tokens.set(token, { category: "XObject", synIndex });
+    return { width, height, token };
+  }
+
+  /** Resources dict for one authored page: local name → synthetic newref. */
+  private pageResources(rec: CreatedPageRec, base: number): PdfObj {
+    const buckets = new Map<string, Map<string, PdfObj>>();
+    for (const [token, name] of rec.local) {
+      const info = this.tokens.get(token);
+      if (!info) continue;
+      let bucket = buckets.get(info.category);
+      if (!bucket) {
+        bucket = new Map<string, PdfObj>();
+        buckets.set(info.category, bucket);
+      }
+      bucket.set(name, newref(base + info.synIndex));
+    }
+    const m = new Map<string, PdfObj>();
+    for (const [category, bucket] of buckets) {
+      m.set(category, { k: "dict", m: bucket });
+    }
+    return { k: "dict", m };
+  }
+
+  /**
+   * PNG SMask refs were recorded as NEGATIVE raw synthetic indices at embed
+   * time (the page count wasn't known yet) — rewrite them as absolute
+   * numbers now that base is fixed.
+   */
+  private patchSmasks(base: number): void {
+    for (const obj of this.synthetics) {
+      if (obj.k !== "stream") continue;
+      const smask = obj.m.get("SMask");
+      if (smask && smask.k === "newref" && smask.num < 0) {
+        smask.num = base + (-smask.num - 1);
+      }
+    }
+  }
+
+  /** Materialize the embedded TTF's late-bound objects (idempotent). */
+  private finalizeTtfs(): void {
+    const entry = this.ttf;
+    if (!entry) return;
+
+    /* W — pdf-lib CustomFontEmbedder.computeWidths: sections of consecutive
+     * subset ids [firstId, [w…]], breaking at gaps. */
+    const sidCount = entry.subsetter.size - 1; // .notdef is subset id 0
+    const wItems: PdfObj[] = [];
+    if (sidCount > 0) {
+      let section: PdfObj[] = [];
+      let prevSid = 0;
+      for (let sid = 1; sid <= sidCount; sid++) {
+        const gid = entry.subsetter.sourceId(sid);
+        const width = entry.font.advanceWidth(gid) * entry.scale;
+        if (sid === 1) {
+          wItems.push(num(1));
+        } else if (sid !== prevSid + 1) {
+          wItems.push({ k: "arr", items: section });
+          wItems.push(num(sid));
+          section = [];
+        }
+        section.push(num(width));
+        prevSid = sid;
+      }
+      wItems.push({ k: "arr", items: section });
+    }
+    entry.cidDict.set("W", { k: "arr", items: wItems });
+
+    /* FontFile2 — the subset bytes, FlateDecode (our own zlib). */
+    const subsetBytes = entry.subsetter.encode();
+    const flated = flateImageBytes(subsetBytes);
+    entry.fileStream.raw = flated;
+    entry.fileStream.m.set("Length", num(flated.length));
+
+    /* ToUnicode — pdf-lib createCmap (first-ask codePoints, <> for
+     * multi-sub products — byte-parity with the oracle). */
+    let cmapBody = "";
+    for (let sid = 1; sid <= sidCount; sid++) {
+      const cps = entry.cpsBySid.get(sid) ?? [];
+      let hex = "";
+      for (const cp of cps) {
+        if (cp <= 0xffff) {
+          hex += cp.toString(16).padStart(4, "0");
+        } else {
+          const hs = Math.floor((cp - 0x10000) / 0x400) + 0xd800;
+          const ls = ((cp - 0x10000) % 0x400) + 0xdc00;
+          hex += hs.toString(16).padStart(4, "0") + ls.toString(16).padStart(4, "0");
+        }
+      }
+      cmapBody += `<${sid.toString(16).padStart(4, "0")}> <${hex}>\n`;
+    }
+    const cmapText =
+      "/CIDInit /ProcSet findresource begin\n" +
+      "12 dict begin\nbegincmap\n/CIDSystemInfo <<\n  /Registry (Adobe)\n  /Ordering (UCS)\n  /Supplement 0\n>> def\n" +
+      "/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000><ffff>\nendcodespacerange\n" +
+      `${sidCount} beginbfchar\n${cmapBody}endbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend`;
+    const cmapBytes = LATIN1(cmapText);
+    const cmapFlated = flateImageBytes(cmapBytes);
+    entry.cmapStream.raw = cmapFlated;
+    entry.cmapStream.m.set("Length", num(cmapFlated.length));
+  }
+}
+
+/* ─── the page handle (pdf-lib PDFPage-shaped) ────────────────────────────── */
+
+export interface CreatePage {
+  readonly index: number;
+  readonly width: number;
+  readonly height: number;
+  drawText(opts: CreateTextOptions): void;
+  drawRectangle(opts: CreateRectOptions): void;
+  drawLine(opts: CreateLineOptions): void;
+  drawEllipse(opts: CreateEllipseOptions): void;
+  drawImage(image: CreateImage, opts: CreateImageOptions): void;
+}
+
+class CreatePageImpl implements CreatePage {
+  constructor(
+    private readonly ctx: CreateContext,
+    private readonly rec: CreatedPageRec,
+    readonly index: number,
+  ) {}
+
+  get width(): number {
+    return this.rec.width;
+  }
+
+  get height(): number {
+    return this.rec.height;
+  }
+
+  drawText(opts: CreateTextOptions): void {
+    if (opts.text.length === 0) return;
+    if (typeof opts.size !== "number" || !Number.isFinite(opts.size) || opts.size <= 0) {
+      throw new PdfError("corrupt", "drawText size must be positive");
+    }
+    const fontKey = opts.font ?? "helvetica";
+    const token = opts.ttf ? "ttf:1" : this.ctx.ensureFontToken(fontKey);
+    const hex = opts.ttf
+      ? opts.ttf.encodeHex(opts.text)
+      : encodeWinAnsiHex(opts.text, fontKey); // throws "chars" parity
+    const key = this.ctx.localKey(this.rec, token, "F");
+    const gs =
+      opts.opacity !== undefined ? this.ctx.ensureGsToken(opts.opacity) : undefined;
+    const gsKey = gs ? this.ctx.localKey(this.rec, gs, "GS") : undefined;
+
+    const color = opts.color ?? { r: 0, g: 0, b: 0 };
+    const angle = ((opts.rotate ?? 0) * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    this.ctx.push(
+      this.rec,
+      [
+        "q",
+        ...(gsKey ? [`/${gsKey} gs`] : []),
+        "BT",
+        `${pdfNumToString(color.r)} ${pdfNumToString(color.g)} ${pdfNumToString(color.b)} rg`,
+        `/${key} ${pdfNumToString(opts.size)} Tf`,
+        // pdf-lib's PDFPage.drawText goes through drawLinesOfText: a line-height
+        // TL (page default 24) and a trailing T* even for one line. Emitted
+        // here for exact operator parity with the oracle.
+        `${pdfNumToString(opts.lineHeight ?? 24)} TL`,
+        `${pdfNumToString(cos)} ${pdfNumToString(sin)} ${pdfNumToString(-sin)} ${pdfNumToString(cos)} ${pdfNumToString(opts.x)} ${pdfNumToString(opts.y)} Tm`,
+        `<${hex.toUpperCase()}> Tj`,
+        "T*",
+        "ET",
+        "Q",
+      ].join("\n"),
+    );
+  }
+
+  drawRectangle(opts: CreateRectOptions): void {
+    const color = opts.color;
+    const borderColor = opts.borderColor;
+    if (!color && !borderColor) {
+      // pdf-lib defaults the fill to black when neither color is given.
+      return this.drawRectangle({ ...opts, color: { r: 0, g: 0, b: 0 } });
+    }
+    const gs =
+      opts.opacity !== undefined ? this.ctx.ensureGsToken(opts.opacity) : undefined;
+    const gsKey = gs ? this.ctx.localKey(this.rec, gs, "GS") : undefined;
+    const borderWidth = opts.borderWidth ?? 0;
+    const w = pdfNumToString(opts.width);
+    const h = pdfNumToString(opts.height);
+    this.ctx.push(
+      this.rec,
+      [
+        "q",
+        ...(gsKey ? [`/${gsKey} gs`] : []),
+        ...(color
+          ? [`${pdfNumToString(color.r)} ${pdfNumToString(color.g)} ${pdfNumToString(color.b)} rg`]
+          : []),
+        ...(borderColor
+          ? [
+              `${pdfNumToString(borderColor.r)} ${pdfNumToString(borderColor.g)} ${pdfNumToString(borderColor.b)} RG`,
+            ]
+          : []),
+        `${pdfNumToString(borderWidth)} w`,
+        "[] 0 d",
+        `1 0 0 1 ${pdfNumToString(opts.x)} ${pdfNumToString(opts.y)} cm`,
+        "1 0 0 1 0 0 cm", // rotate(0) — pdf-lib always emits the identity
+        "1 0 0 1 0 0 cm", // skew(0,0) — same
+        "0 0 m",
+        `0 ${h} l`,
+        `${w} ${h} l`,
+        `${w} 0 l`,
+        "h",
+        color && borderWidth ? "B"
+          : color ? "f"
+            : borderColor ? "S"
+              : "h",
+        "Q",
+      ].join("\n"),
+    );
+  }
+
+  drawLine(opts: CreateLineOptions): void {
+    const color = opts.color ?? { r: 0, g: 0, b: 0 };
+    const thickness = opts.thickness ?? 1;
+    this.ctx.push(
+      this.rec,
+      [
+        "q",
+        `${pdfNumToString(color.r)} ${pdfNumToString(color.g)} ${pdfNumToString(color.b)} RG`,
+        `${pdfNumToString(thickness)} w`,
+        "[] 0 d",
+        `${pdfNumToString(opts.start.x)} ${pdfNumToString(opts.start.y)} m`,
+        // pdf-lib's drawLine emits moveTo TWICE (api/operations.js) — the
+        // duplicate is preserved for parity with the oracle's streams.
+        `${pdfNumToString(opts.start.x)} ${pdfNumToString(opts.start.y)} m`,
+        `${pdfNumToString(opts.end.x)} ${pdfNumToString(opts.end.y)} l`,
+        "S",
+        "Q",
+      ].join("\n"),
+    );
+  }
+
+  drawEllipse(opts: CreateEllipseOptions): void {
+    const color = opts.color;
+    const borderColor = opts.borderColor;
+    if (!color && !borderColor) {
+      return this.drawEllipse({ ...opts, color: { r: 0, g: 0, b: 0 } });
+    }
+    const borderWidth = opts.borderWidth ?? 0;
+    const gs =
+      opts.opacity !== undefined ? this.ctx.ensureGsToken(opts.opacity) : undefined;
+    const gsKey = gs ? this.ctx.localKey(this.rec, gs, "GS") : undefined;
+    // drawEllipsePath's translated coordinate frame (pdf-lib operations.js):
+    // the box origin is one radius left/below the center.
+    const x = opts.x - opts.xScale;
+    const y = opts.y - opts.yScale;
+    const ox = opts.xScale * KAPPA;
+    const oy = opts.yScale * KAPPA;
+    const xe = x + opts.xScale * 2;
+    const ye = y + opts.yScale * 2;
+    const xm = x + opts.xScale;
+    const ym = y + opts.yScale;
+    this.ctx.push(
+      this.rec,
+      [
+        "q",
+        ...(gsKey ? [`/${gsKey} gs`] : []),
+        ...(color
+          ? [`${pdfNumToString(color.r)} ${pdfNumToString(color.g)} ${pdfNumToString(color.b)} rg`]
+          : []),
+        ...(borderColor
+          ? [
+              `${pdfNumToString(borderColor.r)} ${pdfNumToString(borderColor.g)} ${pdfNumToString(borderColor.b)} RG`,
+            ]
+          : []),
+        `${pdfNumToString(borderWidth)} w`,
+        "[] 0 d",
+        "q", // pdf-lib's drawEllipsePath wraps the path in its own q/Q
+        `${pdfNumToString(x)} ${pdfNumToString(ym)} m`,
+        `${pdfNumToString(x)} ${pdfNumToString(ym - oy)} ${pdfNumToString(xm - ox)} ${pdfNumToString(y)} ${pdfNumToString(xm)} ${pdfNumToString(y)} c`,
+        `${pdfNumToString(xm + ox)} ${pdfNumToString(y)} ${pdfNumToString(xe)} ${pdfNumToString(ym - oy)} ${pdfNumToString(xe)} ${pdfNumToString(ym)} c`,
+        `${pdfNumToString(xe)} ${pdfNumToString(ym + oy)} ${pdfNumToString(xm + ox)} ${pdfNumToString(ye)} ${pdfNumToString(xm)} ${pdfNumToString(ye)} c`,
+        `${pdfNumToString(xm - ox)} ${pdfNumToString(ye)} ${pdfNumToString(x)} ${pdfNumToString(ym + oy)} ${pdfNumToString(x)} ${pdfNumToString(ym)} c`,
+        "Q",
+        color && borderWidth ? "B"
+          : color ? "f"
+            : borderColor ? "S"
+              : "h",
+        "Q",
+      ].join("\n"),
+    );
+  }
+
+  drawImage(image: CreateImage, opts: CreateImageOptions): void {
+    if (
+      typeof opts.width !== "number" || typeof opts.height !== "number" ||
+      !Number.isFinite(opts.width) || !Number.isFinite(opts.height) ||
+      opts.width <= 0 || opts.height <= 0
+    ) {
+      throw new PdfError("corrupt", "drawImage box must be positive");
+    }
+    if (!image || !this.ctx.hasToken(image.token)) {
+      throw new PdfError("corrupt", "drawImage: unknown image handle");
+    }
+    const key = this.ctx.localKey(this.rec, image.token, "Im");
+    const gs =
+      opts.opacity !== undefined ? this.ctx.ensureGsToken(opts.opacity) : undefined;
+    const gsKey = gs ? this.ctx.localKey(this.rec, gs, "GS") : undefined;
+
+    const angle = ((opts.rotate ?? 0) * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    this.ctx.push(
+      this.rec,
+      [
+        "q",
+        ...(gsKey ? [`/${gsKey} gs`] : []),
+        `1 0 0 1 ${pdfNumToString(opts.x)} ${pdfNumToString(opts.y)} cm`,
+        `${pdfNumToString(cos)} ${pdfNumToString(sin)} ${pdfNumToString(-sin)} ${pdfNumToString(cos)} 0 0 cm`,
+        `${pdfNumToString(opts.width)} 0 0 ${pdfNumToString(opts.height)} 0 0 cm`,
+        "1 0 0 1 0 0 cm", // skew(0,0) — pdf-lib always emits the identity
+        `/${key} Do`,
+        "Q",
+      ].join("\n"),
+    );
+  }
+}

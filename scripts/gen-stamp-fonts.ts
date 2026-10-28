@@ -15,10 +15,16 @@ import { Font, FontNames, Encodings } from "@pdf-lib/standard-fonts";
 const TARGETS: Array<{ id: string; fontName: FontNames }> = [
   { id: "helvetica", fontName: FontNames.Helvetica },
   { id: "helveticaBold", fontName: FontNames.HelveticaBold },
+  { id: "helveticaOblique", fontName: FontNames.HelveticaOblique },
+  { id: "helveticaBoldOblique", fontName: FontNames.HelveticaBoldOblique },
   { id: "times", fontName: FontNames.TimesRoman },
   { id: "timesBold", fontName: FontNames.TimesRomanBold },
+  { id: "timesItalic", fontName: FontNames.TimesRomanItalic },
+  { id: "timesBoldItalic", fontName: FontNames.TimesRomanBoldItalic },
   { id: "courier", fontName: FontNames.Courier },
   { id: "courierBold", fontName: FontNames.CourierBold },
+  { id: "courierOblique", fontName: FontNames.CourierOblique },
+  { id: "courierBoldOblique", fontName: FontNames.CourierBoldOblique },
 ];
 
 interface GenFont {
@@ -147,7 +153,7 @@ lines.push("");
 
 writeFileSync("src/lib/own/pdf/stamp-fonts-data.ts", lines.join("\n"));
 console.log(
-  `Wrote src/lib/own/pdf/stamp-fonts-data.ts — 6 fonts, ` +
+  `Wrote src/lib/own/pdf/stamp-fonts-data.ts — ${TARGETS.length} fonts, ` +
     `winAnsi codes: ${winAnsiMap.length}, ` +
     `kern pairs: ${Object.values(fonts).reduce((n, f) => n + Object.keys(f.kern).length, 0)}`,
 );

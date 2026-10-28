@@ -34,6 +34,7 @@ export {
   type PlanEntry,
 } from "./ops";
 export { writeDocument, type WritePage, type WriteProgress, type WriteSynthetic } from "./writer";
+export { CreateContext, type CreateImage, type CreateImageOptions, type CreateLineOptions, type CreatePage, type CreateRectOptions, type CreateTextOptions, type CreateEllipseOptions } from "./create";
 export { ComposeContext, type ComposedForm } from "./compose";
 export {
   StampContext,

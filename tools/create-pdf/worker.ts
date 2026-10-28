@@ -1,10 +1,14 @@
-import { PDFDocument, rgb } from "pdf-lib";
+import {
+  CreateContext,
+  type CreatePage,
+  type StampTtfFont,
+} from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { loadDevanagariBytes } from "../stamp-common/deva";
 import {
   cHexColor,
   cOutputName,
@@ -20,43 +24,43 @@ import {
  * run carries no files at all.
  *
  * The pure model (./model.ts planPages) produces the whole drawing plan;
- * this worker just paints it with pdf-lib: drawLine for rules, a tiny
- * filled drawEllipse for dots, and drawText for the labels — Helvetica
- * standard-14 for Latin, the embedded Noto Devanagari subset (stamp-common
- * recipe) only when the Hindi planner needs it. Device-only, zero network.
+ * this worker just paints it through OUR engine (CreateContext, P6-i):
+ * drawRectangle/drawLine/drawEllipse for rules + dots, drawText for the
+ * labels — Helvetica standard-14 for Latin (WinAnsi through our metrics),
+ * the embedded Noto Devanagari subset (embedTtf — OUR shaper/subsetter)
+ * only when the Hindi planner needs it. Device-only, zero network with
+ * file data, zero pdf-lib.
  */
 
 function post(response: WorkerResponse): void {
   self.postMessage(response);
 }
 
-function colorOf(hex: string | undefined): ReturnType<typeof rgb> {
-  const { r, g, b } = cHexColor(hex);
-  return rgb(r, g, b);
-}
-
 /** Align-aware drawText (the anchor rules the model's CLabel documents). */
 function drawLabel(
-  page: import("pdf-lib").PDFPage,
+  page: CreatePage,
   label: CLabel,
-  fonts: { helv: import("pdf-lib").PDFFont; noto: import("pdf-lib").PDFFont | null }
+  helvWidth: (t: string, s: number) => number,
+  noto: StampTtfFont | null,
 ): void {
   if (label.text.length === 0) return;
-  const font =
-    label.font === "noto" && fonts.noto ? fonts.noto : fonts.helv;
-  const width = font.widthOfTextAtSize(label.text, label.size);
+  const useNoto = label.font === "noto" && noto !== null;
+  const width = useNoto
+    ? noto.measure(label.text, label.size)
+    : helvWidth(label.text, label.size);
   const x =
     label.align === "center"
       ? label.x - width / 2
       : label.align === "right"
         ? label.x - width
         : label.x;
-  page.drawText(label.text, {
+  page.drawText({
     x,
     y: label.y,
+    text: label.text,
     size: label.size,
-    font,
-    color: colorOf(label.color),
+    color: cHexColor(label.color),
+    ...(useNoto ? { ttf: noto } : { font: "helvetica" as const }),
   });
 }
 
@@ -83,15 +87,17 @@ async function run(request: WorkerRunRequest): Promise<void> {
   post({ type: "progress", runId, pct: 10, stage: "processing" });
 
   const plan = planPages(spec);
-  const pdf = await PDFDocument.create();
-  const stampFonts = await loadStampFonts(pdf, plan.needNoto);
-  const fonts = {
-    helv: stampFonts.fontFor("helvetica"),
-    noto: plan.needNoto ? stampFonts.fontFor("devanagari") : null,
-  };
+  const ctx = CreateContext.create();
+  let noto: StampTtfFont | null = null;
+  if (plan.needNoto) {
+    const bytes = await loadDevanagariBytes(); // throws "devanagari-font-fetch"
+    noto = ctx.embedTtf(bytes);
+  }
+  const helvWidth = (text: string, size: number): number =>
+    ctx.measure(text, "helvetica", size);
 
   for (let p = 0; p < plan.pages.length; p += 1) {
-    const page = pdf.addPage([plan.width, plan.height]);
+    const page = ctx.addPage(plan.width, plan.height);
     const laid = plan.pages[p];
 
     for (const rect of laid.rects) {
@@ -100,7 +106,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
         y: rect.y,
         width: rect.w, // explicit width/height (the P4.4 pdf-lib rule)
         height: rect.h,
-        color: colorOf(rect.color),
+        color: cHexColor(rect.color),
       });
     }
     for (const line of laid.lines) {
@@ -108,21 +114,21 @@ async function run(request: WorkerRunRequest): Promise<void> {
         start: { x: line.x1, y: line.y1 },
         end: { x: line.x2, y: line.y2 },
         thickness: line.width ?? 0.7,
-        color: colorOf(line.color),
+        color: cHexColor(line.color),
       });
     }
     for (const dot of laid.dots) {
-      // pdf-lib has no drawCircle — a filled ellipse with equal radii is one
+      // A filled ellipse with equal radii (pdf-lib has no drawCircle).
       page.drawEllipse({
         x: dot.x,
         y: dot.y,
         xScale: dot.r,
         yScale: dot.r,
-        color: colorOf(dot.color),
+        color: cHexColor(dot.color),
       });
     }
     for (const label of laid.labels) {
-      drawLabel(page, label, fonts);
+      drawLabel(page, label, helvWidth, noto);
     }
 
     post({
@@ -139,7 +145,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 92, stage: "saving" });
 
-  const saved = await pdf.save({ useObjectStreams: true });
+  const saved = ctx.write();
   post({
     type: "result",
     runId,
