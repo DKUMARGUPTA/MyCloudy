@@ -40,7 +40,8 @@ import {
   stampedCount,
   stampTargets,
 } from "../tools/overlay-pdf/engine";
-import { overlayPdfs } from "../tools/overlay-pdf/worker-lib";
+import { StampContext } from "../src/lib/own/pdf";
+import { loadOverlaySource, overlayPdfs } from "../tools/overlay-pdf/worker-lib";
 
 let pass = 0;
 let fail = 0;
@@ -274,23 +275,17 @@ function check(name: string, condition: boolean, extra = ""): void {
 /* 7. REAL E2E — the exact worker pipeline, rendered + pixel-sampled     */
 /* ------------------------------------------------------------------ */
 
-/** The shipped pipeline (worker-lib.overlayPdfs), driven with fixtures. */
+/** The shipped pipeline (worker-lib.overlayPdfs on OUR engine), with fixtures. */
 async function runOverlay(
   baseBytes: Uint8Array,
   topBytes: Uint8Array,
   opts: ReturnType<typeof resolveOverlayOptions>
 ): Promise<Uint8Array> {
-  const baseDoc = await PDFDocument.load(baseBytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
-  const topDoc = await PDFDocument.load(topBytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
-  const stamped = await overlayPdfs(baseDoc, topDoc, opts, () => undefined);
+  const base = StampContext.load(baseBytes);
+  const top = loadOverlaySource(topBytes);
+  const { bytes, stamped } = overlayPdfs(base, top, opts, () => undefined);
   if (stamped === 0) throw new Error("overlay: no page match");
-  return baseDoc.save({ useObjectStreams: true });
+  return bytes;
 }
 
 /** Renders one PDF page at ~1.2 scale via pdf.js onto an @napi-rs canvas. */

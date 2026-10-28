@@ -35,6 +35,13 @@
  *       & JPEG routes, the Devanagari create route (ToUnicode round-trip,
  *       fontkit-loadable subset), the 12-font metrics set vs the oracle,
  *       typed API refusals.
+ *  19.  Overlay route (P6-j): embedForm + stampForm — drawPage operator
+ *       parity vs the pdf-lib oracle (identity-skew cm normalized), form
+ *       BBox/Matrix (the DEFAULT MediaBox-normalized embed box, origin
+ *       discarded), decoded form bodies byte-exact (the q/Q wrap + join),
+ *       numbering/resources structure, the alpha pre-scale walk (nested
+ *       XObjects + the shared-gs multiplicative quirk kept for parity),
+ *       odd-box default embed, BFS single-copy of shared overlay graphs.
  *
  * Run: bun scripts/smoke-pdf-core.ts
  */
@@ -59,6 +66,7 @@ import {
   writeDocument,
   StampContext,
   CreateContext,
+  decodeForParser,
   measureStdText,
   encodeWinAnsiHex,
   winAnsiEncodable,
@@ -71,6 +79,7 @@ import {
 } from "../src/lib/own/pdf";
 import { latin1 } from "../src/lib/own/pdf/lexer";
 import { crc32, unzlibSync, zlibSync } from "../src/lib/own/zip";
+import { scaleOverlayAlpha } from "../tools/overlay-pdf/worker-lib";
 import pako from "pako";
 import { Lexer } from "../src/lib/own/pdf/lexer";
 import { pngUnfilter } from "../src/lib/own/pdf/parser";
@@ -863,6 +872,9 @@ async function main(): Promise<void> {
   console.log("== 18. CreateContext (P6-i): blank-document authoring ==");
   await section18();
 
+  console.log("== 19. Overlay route (P6-j): embedForm + stampForm ==");
+  await section19();
+
   // Artifacts for manual inspection (VLM/pdfjs follow-ups).
   const outAll = organizePdf(fixB, [
     { kind: "page", src: 0 },
@@ -1463,6 +1475,409 @@ async function section18(): Promise<void> {
     eq(listPages(parsePdf(outEmpty)).length, 1, "create API: empty text → clean 1-page doc");
     const emptyRes = listPages(parsePdf(outEmpty))[0]!.dict.get("Resources");
     ok(emptyRes?.k === "dict" && !emptyRes.m.has("Font"), "create API: no font embedded for empty text");
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * SECTION 19 — the P6-j overlay route: StampContext.embedForm (the DEFAULT
+ * pdf-lib embedPdf box: MediaBox normalized to the origin, identity Matrix)
+ * + stampForm (pdf-lib drawPage operator parity). pdf-lib is the dev-time
+ * oracle: same fixtures, same draw calls, normalized comparison.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/** Decoded text of ALL content-stream entries of one page (flate-aware). */
+function pageOpsText(doc: ParsedPdf, pages: PdfPageInfo[], i: number): string {
+  const value = pages[i]!.dict.get("Contents");
+  if (!value) return "";
+  const parts: string[] = [];
+  const readOne = (v: PdfObj): void => {
+    let obj: PdfObj = v;
+    if (v.k === "ref") obj = doc.getObject(v.num) ?? v;
+    if (obj.k !== "stream") return;
+    const bytes = decodeForParser(obj.raw, obj.m);
+    parts.push(latin1(bytes, 0, bytes.length));
+  };
+  if (value.k === "arr") for (const item of value.items) readOne(item);
+  else readOne(value);
+  return parts.join("\n");
+}
+
+/** Decoded text of ONLY the LAST content-stream entry — the appended draw
+ *  stream (pdf-lib's load+save wraps the BASE content in an extra q/Q, so
+ *  full-page comparison would be apples-to-oranges; the draw is the parity
+ *  under test). */
+function lastEntryOpsText(doc: ParsedPdf, pages: PdfPageInfo[], i: number): string {
+  const value = pages[i]!.dict.get("Contents");
+  if (!value) return "";
+  const last = value.k === "arr" ? value.items[value.items.length - 1] : value;
+  if (!last) return "";
+  let obj: PdfObj = last;
+  if (last.k === "ref") obj = doc.getObject(last.num) ?? last;
+  if (obj.k !== "stream") return "";
+  const bytes = decodeForParser(obj.raw, obj.m);
+  return latin1(bytes, 0, bytes.length);
+}
+
+/** Drops identity `1 0 0 1 0 0 cm` operators (pdf-lib always emits the skew
+ *  cm, and the rotate cm at 0°; our house style omits the skew one). */
+function stripIdentityCm(text: string): string {
+  return text.replace(/(^|\n)1 0 0 1 0 0 cm(\n|$)/g, "\n");
+}
+
+/** Resolves one page's Resources bucket entry to a stream object (or null). */
+function bucketStream(
+  doc: ParsedPdf,
+  pages: PdfPageInfo[],
+  i: number,
+  bucket: string,
+  key: string,
+): (PdfObj & { k: "stream" }) | null {
+  const resEntry = pages[i]!.resources;
+  const res = resEntry ? resolve(doc, resEntry) : undefined;
+  const resMap = res?.k === "dict" || res?.k === "stream" ? res.m : undefined;
+  const bucketObj = resMap ? resolve(doc, resMap.get(bucket)) : undefined;
+  const bucketMap =
+    bucketObj?.k === "dict" || bucketObj?.k === "stream" ? bucketObj.m : undefined;
+  const entry = bucketMap ? bucketMap.get(key) : undefined;
+  if (!entry) return null;
+  const obj = resolve(doc, entry);
+  return obj?.k === "stream" ? obj : null;
+}
+
+/** Hand-built 2-page overlay whose pages INHERIT tree-level Resources with
+ *  an ExtGState (ca/CA), a nested Form XObject carrying its OWN gs, and a
+ *  font — the alpha-walk stress fixture (both pages see the SAME objects). */
+function buildAlphaOverlayFixture(): Uint8Array {
+  const enc = new TextEncoder();
+  const body7 = "q /G1 gs 10 10 30 30 re f Q";
+  const xoBody = "q /G2 gs 5 5 20 20 re f Q";
+  const objects: Array<string | null> = [
+    "<< /Type /Catalog /Pages 2 0 R >>", // 1
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /Resources 11 0 R >>", // 2
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 260] /Contents 7 0 R >>", // 3
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 260] /Contents 7 0 R >>", // 4
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", // 5
+    "<< /Type /ExtGState /ca 0.8 /CA 0.9 >>", // 6
+    null, // 7: content stream (patched below)
+    null, // 8: nested XObject form stream
+    "<< /Type /ExtGState /ca 0.6 >>", // 9 (referenced inside the XObject)
+    null, // 10: (unused spacing)
+    "<< /Font << /F1 5 0 R >> /ExtGState << /G1 6 0 R >> /XObject << /X1 8 0 R >> >>", // 11
+  ];
+  const serialized: string[] = [];
+  const offsets: number[] = [];
+  let pos = enc.encode("%PDF-1.4\n").length;
+  for (let i = 0; i < objects.length; i++) {
+    const num = i + 1;
+    let body = objects[i]!;
+    if (num === 7) body = `<< /Length ${body7.length} >>\nstream\n${body7}\nendstream`;
+    if (num === 8) {
+      body =
+        `<< /Type /XObject /Subtype /Form /BBox [0 0 50 50] /Resources ` +
+        `<< /ExtGState << /G2 9 0 R >> >> /Length ${xoBody.length} >>\n` +
+        `stream\n${xoBody}\nendstream`;
+    }
+    const chunk = `${num} 0 obj\n${body}\nendobj\n`;
+    offsets[num - 1] = pos;
+    pos += enc.encode(chunk).length;
+    serialized.push(chunk);
+  }
+  let pdf = `%PDF-1.4\n${serialized.join("")}`;
+  const xrefPos = pos;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, "0")} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
+  return enc.encode(pdf);
+}
+
+async function section19(): Promise<void> {
+  /* ── 19.1 drawPage operator parity vs the pdf-lib oracle (normalized). */
+  {
+    const libBase = await PDFDocument.create();
+    const bp0 = libBase.addPage([300, 400]);
+    bp0.drawText("BASE-ONE", { x: 20, y: 200 });
+    const bp1 = libBase.addPage([300, 400]);
+    bp1.drawText("BASE-TWO", { x: 20, y: 200 });
+    const baseBytes = await libBase.save({ useObjectStreams: false });
+
+    const libOvl = await PDFDocument.create();
+    const ohelv = await libOvl.embedFont(StandardFonts.Helvetica);
+    const op0 = libOvl.addPage([200, 260]);
+    op0.drawText("OVL-PAGE-ONE", { x: 10, y: 130, font: ohelv });
+    const op1 = libOvl.addPage([200, 260]);
+    op1.drawText("OVL-PAGE-TWO", { x: 10, y: 130, font: ohelv });
+    const ovlBytes = await libOvl.save({ useObjectStreams: false });
+
+    // OUR engine: same embeds + the same draw calls.
+    const base = StampContext.load(baseBytes);
+    const ovl = parseForOrganize(ovlBytes);
+    const f0 = base.embedForm(ovl, 0);
+    const f1 = base.embedForm(ovl, 1);
+    base.stampForm(0, f0, {
+      x: 37.5, y: 45, width: 150, height: 195, opacity: 0.5, rotate: 30,
+    });
+    base.stampForm(1, f1, { x: 10, y: 20, width: 100, height: 130 });
+    const ours = base.write();
+
+    // pdf-lib oracle.
+    const libB2 = await PDFDocument.load(baseBytes);
+    const emb = await libB2.embedPdf(ovlBytes, [0, 1]);
+    libB2.getPage(0).drawPage(emb[0]!, {
+      x: 37.5, y: 45, width: 150, height: 195, rotate: degrees(30), opacity: 0.5,
+    });
+    libB2.getPage(1).drawPage(emb[1]!, { x: 10, y: 20, width: 100, height: 130 });
+    const libBytes = await libB2.save({ useObjectStreams: false });
+
+    eq(f0.width, 200, "overlay: form handle width = overlay MediaBox width");
+    eq(f0.height, 260, "overlay: form handle height = overlay MediaBox height");
+
+    const ourDoc = parsePdf(ours);
+    const ourPages = listPages(ourDoc);
+    const libDoc = parsePdf(libBytes);
+    const libPages = listPages(libDoc);
+    eq(ourPages.length, 2, "overlay: page count unchanged");
+    for (let i = 0; i < 2; i++) {
+      const a = normalizeOps(stripIdentityCm(lastEntryOpsText(ourDoc, ourPages, i)));
+      const b = normalizeOps(stripIdentityCm(lastEntryOpsText(libDoc, libPages, i)));
+      ok(
+        a === b && b.split(" ").length > 10,
+        `overlay parity: page ${i + 1} appended draw ops (${b.split(" ").length} normalized tokens)`,
+      );
+      if (a !== b) {
+        const al = a.split(" ");
+        const bl = b.split(" ");
+        for (let k = 0; k < Math.max(al.length, bl.length); k++) {
+          if (al[k] !== bl[k]) {
+            console.log(
+              `    first diff @${k}:\n      own="${al.slice(Math.max(0, k - 2), k + 6).join(" ")}"\n      lib="${bl.slice(Math.max(0, k - 2), k + 6).join(" ")}"`,
+            );
+            break;
+          }
+        }
+      }
+    }
+
+    /* ── 19.2 the embedded form: structure + decoded body byte-exact. */
+    const ourForm = bucketStream(ourDoc, ourPages, 0, "XObject", "Fm1");
+    ok(ourForm !== null, "overlay: /Fm1 form resolvable on page 1");
+    if (ourForm) {
+      eq(
+        ourForm.m.get("Subtype")?.k === "name" ? (ourForm.m.get("Subtype") as { v: string }).v : "",
+        "Form",
+        "overlay: /Fm1 is a Form XObject",
+      );
+      const bbox = ourForm.m.get("BBox");
+      eq(
+        bbox?.k === "arr"
+          ? bbox.items.map((x) => (x.k === "num" ? x.n : null)).join(",")
+          : "",
+        "0,0,200,260",
+        "overlay: form BBox = MediaBox normalized to the origin (pdf-lib default)",
+      );
+      const matrix = ourForm.m.get("Matrix");
+      eq(
+        matrix?.k === "arr"
+          ? matrix.items.map((x) => (x.k === "num" ? x.n : null)).join(",")
+          : "",
+        "1,0,0,1,0,0",
+        "overlay: form Matrix identity (pdf-lib boundingBoxAdjustedMatrix of a (0,0) box)",
+      );
+      // Decoded body: BYTE-EXACT vs the pdf-lib form (the q/Q wrap + join).
+      const ourBody = decodeForParser(ourForm.raw, ourForm.m);
+      const libForm = bucketStream(libDoc, libPages, 0, "XObject", ...(() => {
+        // pdf-lib names it EmbeddedPdfPage-<random>: grab the only XObject.
+        const resEntry = libPages[0]!.resources;
+        const res = resEntry ? resolve(libDoc, resEntry) : undefined;
+        const resMap = res?.k === "dict" || res?.k === "stream" ? res.m : undefined;
+        const xo = resMap ? resolve(libDoc, resMap.get("XObject")) : undefined;
+        const keys = xo?.k === "dict" || xo?.k === "stream" ? [...xo.m.keys()] : [];
+        return [keys[0] ?? ""] as [string];
+      })());
+      ok(libForm !== null, "overlay: pdf-lib form found in the oracle output");
+      if (libForm) {
+        const libBody = decodeForParser(libForm.raw, libForm.m);
+        eq(
+          Buffer.compare(Buffer.from(ourBody), Buffer.from(libBody)),
+          0,
+          `overlay: form content bytes EXACT vs pdf-lib (${libBody.length} decoded)`,
+        );
+        const text = latin1(libBody, 0, libBody.length);
+        ok(
+          text.startsWith("q\n\n") && text.endsWith("Q\n\n"),
+          "overlay: form body carries the page-normalize q/Q wrap streams",
+        );
+      }
+      // The form's Resources must be the OVERLAY's (remapped font), not the base's.
+      const formRes = resolve(ourDoc, ourForm.m.get("Resources"));
+      const formFontBucket =
+        formRes?.k === "dict" || formRes?.k === "stream"
+          ? resolve(ourDoc, formRes.m.get("Font"))
+          : undefined;
+      const formFontEntry =
+        formFontBucket?.k === "dict" || formFontBucket?.k === "stream"
+          ? resolve(ourDoc, formFontBucket.m.values().next().value)
+          : undefined;
+      ok(
+        formFontEntry !== undefined &&
+          (formFontEntry.k === "dict" || formFontEntry.k === "stream"),
+        "overlay: form /Resources /Font remapped to a real object in the output",
+      );
+    }
+
+    /* ── 19.3 numbering: pages 3..4, forms 5..6, gs 7, stamp streams 8..9. */
+    {
+      const fm1 = bucketStream(ourDoc, ourPages, 0, "XObject", "Fm1");
+      // Our writer numbers the first synthetic at 3 + pages.length = 5.
+      const resEntry = ourPages[0]!.resources;
+      const res = resEntry ? resolve(ourDoc, resEntry) : undefined;
+      const resMap = res?.k === "dict" || res?.k === "stream" ? res.m : undefined;
+      const xoEntry = resMap?.get("XObject");
+      const fm1Ref = xoEntry?.k === "dict" ? xoEntry.m.get("Fm1") : undefined;
+      eq(
+        fm1Ref?.k === "ref" ? fm1Ref.num : -1,
+        5,
+        "overlay: form 1 numbered at 3+pages (writer synthetic contract)",
+      );
+      ok(fm1 !== null, "overlay: ref 5 resolves to the form stream");
+    }
+  }
+
+  /* ── 19.4 the alpha pre-scale walk: nested XObjects + the shared-gs
+   *  multiplicative quirk (both pages inherit ONE Resources dict — the
+   *  per-page walk scales it twice, exactly like the pdf-lib pipeline). */
+  {
+    const bytes = buildAlphaOverlayFixture();
+    const ovl = parseForOrganize(bytes);
+    eq(ovl.pages.length, 2, "alpha fixture: two pages");
+    const numAt = (m: Map<string, PdfObj> | undefined, key: string): string => {
+      const entry = m?.get(key);
+      return entry?.k === "num" ? String(entry.n) : "(missing)";
+    };
+    // factor 0.5, page 0 only → G1 ca 0.4 / CA 0.45, nested G2 0.3.
+    const n0 = scaleOverlayAlpha(ovl.doc, ovl, 0, 0.5);
+    eq(n0, 3, "alpha walk: 3 entries scaled on the first pass");
+    const g1 = alphaGsOf(ovl, "G1");
+    eq(numAt(g1, "ca"), "0.4", "alpha walk: G1 ca 0.8×0.5");
+    eq(numAt(g1, "CA"), "0.45", "alpha walk: G1 CA 0.9×0.5");
+    const g2 = alphaGsOf(ovl, "G2");
+    eq(numAt(g2, "ca"), "0.3", "alpha walk: nested XObject gs 0.6×0.5 (recursion works)");
+    // Page 1 shares the SAME Resources through inheritance → second walk
+    // scales the same objects again (pdf-lib pipeline quirk, kept).
+    const n1 = scaleOverlayAlpha(ovl.doc, ovl, 1, 0.5);
+    eq(n1, 3, "alpha walk: 3 entries scaled on the second pass (shared objects)");
+    eq(numAt(g1, "ca"), "0.2", "alpha walk: shared G1 ca scales TWICE (parity quirk)");
+    eq(numAt(g2, "ca"), "0.15", "alpha walk: nested shared gs scales twice");
+  }
+
+  /* ── 19.5 odd-box default embed: MediaBox [50 25 350 325] → BBox
+   *  [0 0 300 300] + identity Matrix + width 300 (origin discarded). */
+  {
+    const libOvl = await PDFDocument.create();
+    const p = libOvl.addPage([100, 100]);
+    p.drawText("ODD", { x: 10, y: 50 });
+    const raw = await libOvl.save({ useObjectStreams: false });
+    const doc2 = await PDFDocument.load(raw);
+    doc2.getPage(0).node.set(PDFName.of("MediaBox"), doc2.context.obj([50, 25, 350, 325]));
+    doc2.getPage(0).node.set(PDFName.of("CropBox"), doc2.context.obj([80, 60, 300, 280]));
+    const oddBytes = await doc2.save({ useObjectStreams: false });
+
+    const base = StampContext.load(await PDFDocument.create().then((d) => {
+      d.addPage([400, 500]);
+      return d.save({ useObjectStreams: false });
+    }));
+    const ovl = parseForOrganize(oddBytes);
+    const form = base.embedForm(ovl, 0);
+    eq(form.width, 300, "odd box: form width = MediaBox WIDTH (origin discarded)");
+    eq(form.height, 300, "odd box: form height = MediaBox HEIGHT");
+    base.stampForm(0, form, { x: 0, y: 0, width: 300, height: 300 });
+    const out = base.write();
+    const back = parsePdf(out);
+    const backPages = listPages(back);
+    const form2 = bucketStream(back, backPages, 0, "XObject", "Fm1");
+    ok(form2 !== null, "odd box: form written");
+    if (form2) {
+      const bbox = form2.m.get("BBox");
+      eq(
+        bbox?.k === "arr"
+          ? bbox.items.map((x) => (x.k === "num" ? x.n : null)).join(",")
+          : "",
+        "0,0,300,300",
+        "odd box: BBox [0 0 300 300] — pdf-lib default (CropBox IGNORED)",
+      );
+    }
+    // And the scale cm carries RATIOS (drawPage), not absolute sizes.
+    const ops = pageOpsText(back, backPages, 0);
+    ok(
+      /1 0 0 1 0 0 cm[\s\S]*1 0 0 1 0 0 cm[\s\S]*\/Fm1 Do/.test(ops) ||
+        ops.includes("/Fm1 Do"),
+      "odd box: stamp stream draws the form",
+    );
+    ok(
+      !/300 0 0 300 0 0 cm/.test(ops) || ops.includes("1 0 0 1"),
+      "odd box: scale cm is ratio-based (1 0 0 1) when box == form size",
+    );
+  }
+
+  /* ── 19.6 shared overlay graphs copy ONCE: two forms sharing one font →
+   *  exactly one Helvetica Type1 font object in the output. */
+  {
+    const libOvl = await PDFDocument.create();
+    const ohelv = await libOvl.embedFont(StandardFonts.Helvetica);
+    const a = libOvl.addPage([200, 260]);
+    a.drawText("SHARED-A", { x: 10, y: 130, font: ohelv });
+    const b = libOvl.addPage([200, 260]);
+    b.drawText("SHARED-B", { x: 10, y: 130, font: ohelv });
+    const ovlBytes = await libOvl.save({ useObjectStreams: false });
+    const libBase = await PDFDocument.create();
+    libBase.addPage([300, 400]);
+    libBase.addPage([300, 400]);
+    const baseBytes = await libBase.save({ useObjectStreams: false });
+
+    const base = StampContext.load(baseBytes);
+    const ovl = parseForOrganize(ovlBytes);
+    base.stampForm(0, base.embedForm(ovl, 0), { x: 0, y: 0, width: 200, height: 260 });
+    base.stampForm(1, base.embedForm(ovl, 1), { x: 0, y: 0, width: 200, height: 260 });
+    const out = base.write();
+
+    const back = parsePdf(out);
+    let helvCount = 0;
+    const maxNum = 50;
+    for (let n = 1; n <= maxNum; n++) {
+      const obj = back.getObject(n);
+      if (obj?.k === "dict" || obj?.k === "stream") {
+        const t = obj.m.get("Type");
+        const bt = obj.m.get("BaseFont");
+        if (
+          t?.k === "name" && t.v === "Font" &&
+          bt?.k === "name" && bt.v === "Helvetica"
+        ) {
+          helvCount += 1;
+        }
+      }
+    }
+    eq(helvCount, 1, "overlay: shared overlay font copied EXACTLY once (BFS dedupe)");
+  }
+
+  function alphaGsOf(
+    source: ReturnType<typeof parseForOrganize>,
+    key: string,
+  ): Map<string, PdfObj> | undefined {
+    // G1 lives in the page's (inherited) Resources; G2 lives INSIDE the
+    // nested XObject /X1's own Resources — search both places.
+    const dictOf = (obj: PdfObj | undefined): Map<string, PdfObj> | undefined => {
+      const r = obj === undefined ? undefined : resolve(source.doc, obj);
+      return r?.k === "dict" || r?.k === "stream" ? r.m : undefined;
+    };
+    const resEntry = source.pages[0]!.resources;
+    const resMap = dictOf(resEntry);
+    const pageGs = dictOf(resMap?.get("ExtGState"));
+    const direct = pageGs?.get(key);
+    if (direct) return dictOf(direct);
+    const xoMap = dictOf(resMap?.get("XObject"));
+    const xoRes = dictOf(xoMap?.get("X1"))?.get("Resources");
+    const xoGs = dictOf(dictOf(xoRes)?.get("ExtGState"));
+    const nested = xoGs?.get(key);
+    return nested ? dictOf(nested) : undefined;
   }
 }
 

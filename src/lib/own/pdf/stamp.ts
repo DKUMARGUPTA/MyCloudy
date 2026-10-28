@@ -11,6 +11,9 @@
  *
  *   drawText:  q [gs] BT r g b rg /F1 size Tf cos sin -sin cos x y Tm <hex> Tj ET Q
  *   drawImage: q [gs] 1 0 0 1 x y cm cos sin -sin cos 0 0 cm w 0 0 h 0 0 cm /Im0 Do Q
+ *   drawForm:  q [gs] 1 0 0 1 x y cm cos sin -sin cos 0 0 cm xScale 0 0 yScale 0 0 cm /Fm1 Do Q
+ *             (P6-j — pdf-lib drawPage: the scale cm carries RATIOs; the gs
+ *              carries BOTH ca and CA, the overlay worker's patched state)
  *
  * "Behind content" is native here: the stamp stream is PREPENDED to the
  * page's /Contents array (pdf-lib had to append-then-move; we build the
@@ -21,12 +24,20 @@
  *
  * Per-page behind/front: ONE flag per page (last call wins) — the stamp tools
  * use a single mode per run.
+ *
+ * P6-j adds the overlay route: embedForm() embeds a page of ANOTHER parsed
+ * document as a source-anchored Form XObject (pdf-lib's default embedPdf
+ * box), and stampForm() draws it with pdf-lib drawPage parity. The overlay
+ * document's referenced graphs (fonts, nested XObjects) are BFS-copied
+ * exactly once per source object by the shared writer.
  */
 
 import { parseForOrganize, type OrganizeSource } from "./ops";
+import { pageFormEmbed } from "./compose";
 import { latin1 } from "./lexer";
 import {
   type PdfObj,
+  arr,
   asDict,
   cloneDict,
   newDict,
@@ -48,7 +59,7 @@ import {
   materializeInheritable,
   type PdfPageInfo,
 } from "./document";
-import { writeDocument, type WritePage } from "./writer";
+import { writeDocument, type WritePage, type WriteSynthetic } from "./writer";
 
 export interface StampTextOptions {
   /** Baseline-left x in PDF user space (pdf-lib semantics). */
@@ -95,6 +106,30 @@ export interface StampTtfFont {
   encodeHex(text: string): string;
 }
 
+/** An embedded PAGE form handle (P6-j, the overlay route) — pass to
+ * stampForm(). width/height are the page's MediaBox dims (pdf-lib's default
+ * `embedPdf` box: media origin discarded). */
+export interface StampForm {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Draw options for an embedded page form (pdf-lib drawPage parity). */
+export interface StampFormOptions {
+  /** Draw-box origin (pdf-lib rotates around this point). */
+  x: number;
+  y: number;
+  /** Draw-box size; the form is scaled by width/form.width ratios. */
+  width: number;
+  height: number;
+  /** 0..1; omit for fully opaque (no ExtGState emitted). */
+  opacity?: number;
+  /** Degrees counter-clockwise. Default 0. */
+  rotate?: number;
+  /** Draw UNDER the existing content. Default false. */
+  behind?: boolean;
+}
+
 /** One embedded TTF's reserved objects + accumulated state (all mutable so
  * the subset/W/ToUnicode materialize at write() time — pdf-lib embeds lazily
  * at save() the same way). */
@@ -130,6 +165,13 @@ interface GsEntry {
   token: string;
 }
 
+interface FormEntry {
+  num: number;
+  token: string;
+  width: number;
+  height: number;
+}
+
 const ENC = new TextEncoder();
 
 /** latin1 encode (PDFDocEncoding for CIDSystemInfo strings / CMap text). */
@@ -151,11 +193,16 @@ export class StampContext {
   readonly pages: readonly PdfPageInfo[];
 
   private readonly source: OrganizeSource;
-  private readonly synthetics: PdfObj[] = [];
+  /** P6-j: synthetics may be source-anchored (overlay forms). */
+  private readonly synthetics: WriteSynthetic[] = [];
   private nextNum: number;
   private readonly fonts = new Map<StampFontKey, FontEntry>();
   private readonly images = new Map<StampImage, ImageEntry>();
+  /** Embedded page forms (P6-j), by their unique handle. */
+  private readonly forms = new Map<StampForm, FormEntry>();
   private readonly gsStates = new Map<string, GsEntry>();
+  /** The ca+CA flavor (pdf-lib drawPage + the overlay worker's CA patch). */
+  private readonly gsBothStates = new Map<string, GsEntry>();
   /** ops fragments per page; [0] is the "front"/"behind" marker. */
   private readonly layers: (string[] | undefined)[] = [];
   /** page → reserved stamp-stream object number. */
@@ -515,7 +562,102 @@ export class StampContext {
   }
 
   /**
-   * Write the stamped document. Non-destructive: the page plan is rebuilt
+   * Embed ONE page of ANOTHER document as a Form XObject (P6-j — the
+   * overlay route). Mirrors pdf-lib's DEFAULT `embedPdf` box: BBox =
+   * [0, 0, mediaW, mediaH] (the MediaBox dims, origin discarded), identity
+   * Matrix, q/Q-wrapped decoded contents, Resources own-or-inherited. The
+   * form rides as a SOURCE-ANCHORED synthetic: its /Resources refs remap
+   * through the overlay document's copy map and the referenced graphs
+   * (fonts, nested XObjects…) are BFS-copied exactly once per source object.
+   */
+  embedForm(source: OrganizeSource, pageIndex: number): StampForm {
+    const page = source.pages[pageIndex];
+    if (!page) {
+      throw new PdfError(
+        "corrupt",
+        `embedForm: page index ${pageIndex} out of range`,
+      );
+    }
+    const [mx0, my0, mx1, my1] = page.mediaBox;
+    const width = mx1 - mx0;
+    const height = my1 - my0;
+    if (
+      !Number.isFinite(width) || !Number.isFinite(height) ||
+      width <= 0 || height <= 0 || width > 14_400 || height > 14_400
+    ) {
+      throw new PdfError("corrupt", "embedForm: page has an unusable MediaBox");
+    }
+    const embed = pageFormEmbed(source.doc, page, {
+      left: 0,
+      bottom: 0,
+      right: width,
+      top: height,
+    });
+    const objNum = this.reserve();
+    this.synthetics.push({
+      sourceDoc: source.doc,
+      obj: {
+        k: "stream",
+        m: new Map<string, PdfObj>([
+          ["Type", { k: "name", v: "XObject" }],
+          ["Subtype", { k: "name", v: "Form" }],
+          ["FormType", num(1)],
+          ["BBox", arr(num(0), num(0), num(width), num(height))],
+          // Identity — the default box already sits at the origin.
+          ["Matrix", arr(num(1), num(0), num(0), num(1), num(0), num(0))],
+          ["Resources", embed.resources ?? { k: "dict", m: new Map() }],
+          ["Filter", { k: "name", v: "FlateDecode" }],
+        ]),
+        raw: embed.content,
+      },
+    });
+    const handle: StampForm = { width, height };
+    this.forms.set(handle, {
+      num: objNum,
+      token: `form:${objNum}`,
+      width,
+      height,
+    });
+    return handle;
+  }
+
+  /** Draw an embedded page form onto a page (pdf-lib drawPage parity). */
+  stampForm(pageIndex: number, form: StampForm, opts: StampFormOptions): void {
+    const entry = this.forms.get(form);
+    if (!entry) {
+      throw new PdfError("corrupt", "stampForm: unknown form handle");
+    }
+    this.page(pageIndex);
+    if (
+      typeof opts.width !== "number" || typeof opts.height !== "number" ||
+      !Number.isFinite(opts.width) || !Number.isFinite(opts.height) ||
+      opts.width <= 0 || opts.height <= 0
+    ) {
+      throw new PdfError("corrupt", "stamp form box must be positive");
+    }
+    const key = this.resourceKey(pageIndex, "XObject", entry.token, "Fm");
+    // pdf-lib drawPage: the draw box scales the form by RATIOS
+    // (width / embeddedPage.width), unlike drawImage's absolute w/h.
+    const gs = opts.opacity !== undefined ? this.ensureGsBoth(opts.opacity) : undefined;
+    const gsKey = gs ? this.resourceKey(pageIndex, "ExtGState", gs.token, "GS") : undefined;
+
+    const angle = ((opts.rotate ?? 0) * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    const ops: string[] = [
+      "q",
+      ...(gsKey ? [`/${gsKey} gs`] : []),
+      `1 0 0 1 ${pdfNumToString(opts.x)} ${pdfNumToString(opts.y)} cm`,
+      `${pdfNumToString(cos)} ${pdfNumToString(sin)} ${pdfNumToString(-sin)} ${pdfNumToString(cos)} 0 0 cm`,
+      `${pdfNumToString(opts.width / entry.width)} 0 0 ${pdfNumToString(opts.height / entry.height)} 0 0 cm`,
+      `/${key} Do`,
+      "Q",
+    ];
+    this.pushOps(pageIndex, ops.join("\n"), opts.behind === true);
+  }
+
+  /** Write the stamped document. Non-destructive: the page plan is rebuilt
    * from the accumulated layers, so callers may stamp more and write again.
    */
   write(onPage?: (fraction: number, page: number) => void): Uint8Array {
@@ -616,6 +758,31 @@ export class StampContext {
   }
 
   /**
+   * The ca+CA ExtGState (P6-j): pdf-lib's drawPage(opacity) injects `ca`
+   * only, and the overlay worker patches `CA` onto it so stroke content
+   * dims too — this is that patched state, emitted once (deduplicated
+   * across pages, like every stamp resource).
+   */
+  private ensureGsBoth(opacity: number): GsEntry {
+    const value = Math.min(1, Math.max(0, opacity));
+    const rounded = value.toFixed(4);
+    let entry = this.gsBothStates.get(rounded);
+    if (!entry) {
+      const objNum = this.reserve();
+      this.synthetics.push(
+        newDict([
+          ["Type", { k: "name", v: "ExtGState" }],
+          ["ca", num(value)],
+          ["CA", num(value)],
+        ]),
+      );
+      entry = { num: objNum, token: `gsb:${rounded}` };
+      this.gsBothStates.set(rounded, entry);
+    }
+    return entry;
+  }
+
+  /**
    * Local resource name for a global token on one page: picks the first free
    * `/F<n>`-style name that does not collide with the page's existing entries
    * in that category, then remembers it (stable across writes).
@@ -680,7 +847,16 @@ export class StampContext {
       return this.fonts.get(fontKey)?.num;
     }
     if (category === "ExtGState") {
+      if (token.startsWith("gsb:")) {
+        return this.gsBothStates.get(token.slice("gsb:".length))?.num;
+      }
       return this.gsStates.get(token.slice("gs:".length))?.num;
+    }
+    if (token.startsWith("form:")) {
+      for (const entry of this.forms.values()) {
+        if (entry.token === token) return entry.num;
+      }
+      return undefined;
     }
     for (const entry of this.images.values()) {
       if (entry.token === token) return entry.num;

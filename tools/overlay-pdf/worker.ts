@@ -1,11 +1,10 @@
-import { PDFDocument } from "pdf-lib";
-
 import type {
   WorkerRunRequest,
   WorkerResponse,
 } from "@/lib/workers/protocol";
+import { PdfError, StampContext } from "@/lib/own/pdf";
 import { classifyOverlayError, resolveOverlayOptions } from "./engine";
-import { overlayPdfs } from "./worker-lib";
+import { loadOverlaySource, overlayPdfs } from "./worker-lib";
 
 /**
  * Overlay PDF worker (PRD §8.3): stamps every page of an overlay PDF onto
@@ -14,6 +13,13 @@ import { overlayPdfs } from "./worker-lib";
  * network is touched (files arrive by structured clone, the Blob returns
  * the same way). The heavy pipeline lives in worker-lib.ts, shared with the
  * smoke test so the test exercises exactly what ships.
+ *
+ * P6-j: 100% OUR OWN PDF ENGINE. The base document rides a StampContext
+ * (pages preserved byte-exact, the draw ops appended/prepended to /Contents),
+ * and the overlay pages embed as source-anchored Form XObjects whose
+ * referenced graphs (fonts, nested XObjects…) the writer BFS-copies exactly
+ * once per source object — pdf-lib embedPdf/drawPage parity, verified in
+ * smoke-pdf-core §19.
  */
 
 function post(response: WorkerResponse): void {
@@ -43,63 +49,71 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   // R6-b honesty (merge-pdf/pagegrid standard): overlay has TWO inputs, so a
   // locked-file refusal must NAME the file — "unlock it first" is useless
-  // when the user can't tell the base from the stamp. Structural probe first
-  // (pdf-lib ignoreEncryption load + isEncrypted — never a raw-bytes
-  // "/Encrypt" sniff), then the plain load; both refusals carry the name.
-  const loadNamed = async (
-    bytes: Uint8Array,
-    fileName: string
-  ): Promise<PDFDocument | null> => {
-    let probe: PDFDocument | null = null;
+  // when the user can't tell the base from the stamp. Our parser refuses
+  // encrypted documents with a typed error up front (the structural probe
+  // IS the parse), and every refusal carries the name.
+  const loadNamedBase = (): StampContext => {
     try {
-      probe = await PDFDocument.load(bytes, {
-        ignoreEncryption: true,
-        updateMetadata: false,
-      });
-    } catch {
-      // Not parseable at all — the plain load below produces the honest
-      // corrupt refusal for this file.
-    }
-    if (probe?.isEncrypted) {
-      post({
-        type: "error",
-        runId,
-        code: "tool.errorEncrypted",
-        detail: fileName,
-      });
-      return null;
-    }
-    try {
-      return await PDFDocument.load(bytes, {
-        ignoreEncryption: false,
-        updateMetadata: false,
-      });
+      return StampContext.load(baseBytes);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof PdfError && error.code === "encrypted") {
+        post({
+          type: "error",
+          runId,
+          code: "tool.errorEncrypted",
+          detail: baseFile.name,
+        });
+        throw new Error("handled");
+      }
       post({
         type: "error",
         runId,
-        code: /password|encrypt/i.test(message)
-          ? "tool.errorEncrypted"
-          : "tool.errorCorrupt",
-        detail: fileName,
+        code: "tool.errorCorrupt",
+        detail: baseFile.name,
       });
-      return null;
+      throw new Error("handled");
+    }
+  };
+  const loadNamedOverlay = () => {
+    try {
+      return loadOverlaySource(overlayBytes);
+    } catch (error: unknown) {
+      if (error instanceof PdfError && error.code === "encrypted") {
+        post({
+          type: "error",
+          runId,
+          code: "tool.errorEncrypted",
+          detail: overlayFile.name,
+        });
+        throw new Error("handled");
+      }
+      post({
+        type: "error",
+        runId,
+        code: "tool.errorCorrupt",
+        detail: overlayFile.name,
+      });
+      throw new Error("handled");
     }
   };
 
-  const baseDoc = await loadNamed(baseBytes, baseFile.name);
-  if (baseDoc === null) return;
-  const overlayDoc = await loadNamed(overlayBytes, overlayFile.name);
-  if (overlayDoc === null) return;
-  if (overlayDoc.getPageCount() === 0) {
+  let baseDoc: StampContext;
+  let overlaySource: ReturnType<typeof loadOverlaySource>;
+  try {
+    baseDoc = loadNamedBase();
+    overlaySource = loadNamedOverlay();
+  } catch {
+    return; // the named refusal was already posted
+  }
+  if (overlaySource.pages.length === 0) {
     post({ type: "error", runId, code: "overlay.errorNoPages" });
     return;
   }
 
   let stamped: number;
+  let saved: Uint8Array;
   try {
-    stamped = await overlayPdfs(baseDoc, overlayDoc, opts, (progress) => {
+    const outcome = overlayPdfs(baseDoc, overlaySource, opts, (progress) => {
       post({
         type: "progress",
         runId,
@@ -108,6 +122,9 @@ async function run(request: WorkerRunRequest): Promise<void> {
         detail: { page: progress.page, pages: progress.pages },
       });
     });
+    stamped = outcome.stamped;
+    post({ type: "progress", runId, pct: 96, stage: "saving" });
+    saved = outcome.bytes;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     if (/no pages selected/.test(message)) {
@@ -122,8 +139,6 @@ async function run(request: WorkerRunRequest): Promise<void> {
     return;
   }
 
-  post({ type: "progress", runId, pct: 96, stage: "saving" });
-  const saved = await baseDoc.save({ useObjectStreams: true });
   const outputs = [
     {
       name: `${safeBaseName(baseFile.name)}-overlaid.pdf`,
@@ -147,6 +162,7 @@ self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
   if (data?.type !== "run") return;
   run(data).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
+    if (message === "handled") return;
     post({
       type: "error",
       runId: data.runId,

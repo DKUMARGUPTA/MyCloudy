@@ -1,14 +1,13 @@
 import {
-  PDFArray,
-  PDFContext,
-  PDFDict,
-  PDFDocument,
-  PDFName,
-  PDFNumber,
-  degrees,
-  type PDFEmbeddedPage,
-  type PDFPage,
-} from "pdf-lib";
+  type OrganizeSource,
+  type ParsedPdf,
+  type PdfObj,
+  StampContext,
+  type StampForm,
+  num,
+  parseForOrganize,
+  resolve,
+} from "@/lib/own/pdf";
 
 import {
   overlayPageFor,
@@ -19,112 +18,96 @@ import {
 
 /**
  * Overlay PDF core pipeline (worker + smoke share this module so the test
- * exercises EXACTLY what ships):
+ * exercises EXACTLY what ships) — 100% OUR OWN ENGINE (P6-j; was pdf-lib
+ * embedPdf/drawPage):
  *
  *  1. `scaleOverlayAlpha` pre-scales every ExtGState (ca/CA) reachable from
- *     the overlay page Resources by the chosen opacity. WHY: pdf-lib's
- *     `drawPage(opacity)` sets only the outer `ca` — but any `gs` INSIDE the
- *     overlay REPLACES it (PDF graphics-state semantics), so alpha-bearing
- *     content would ignore the slider. Pre-scaling the inner states + the
- *     outer ca gives true multiplicative globalAlpha semantics — the same
- *     math the preview canvas uses (`ctx.globalAlpha`).
- *  2. `addStrokeAlpha` patches the ExtGState pdf-lib injects for the outer
- *     opacity (ca only) with CA as well — strokes must dim too.
- *  3. Only the overlay pages actually needed are embedded (first / match /
- *     cycle resolved against the targets first).
+ *     the OVERLAY page Resources by the chosen opacity. WHY: the draw-time
+ *     ExtGState sets only the outer alpha — but any `gs` INSIDE the overlay
+ *     REPLACES it (PDF graphics-state semantics), so alpha-bearing content
+ *     would ignore the slider. Pre-scaling the inner states + the outer
+ *     ca/CA gives true multiplicative globalAlpha semantics — the same math
+ *     the preview canvas uses (`ctx.globalAlpha`). The walk mutates the
+ *     parsed overlay graph BEFORE the write, so the embedded form's
+ *     BFS-copied Resources carry the scaled values (mirrors how the pdf-lib
+ *     worker mutated the overlay document before embedPdf copied it).
+ *  2. Only the overlay pages actually needed are embedded (first / match /
+ *     cycle resolved against the targets first) — as SOURCE-ANCHORED Form
+ *     XObjects: BBox [0,0,mediaW,mediaH] (pdf-lib's default embed box, media
+ *     origin discarded), identity Matrix, q/Q-wrapped decoded contents, the
+ *     overlay's fonts/graphs BFS-copied exactly once per source object.
+ *  3. `stampForm` draws each form with pdf-lib drawPage operator parity
+ *     (translate/rotate/scale-RATIO cm triple) and a ca+CA ExtGState —
+ *     pdf-lib injects `ca` only and the CA was patched onto it so stroke
+ *     content dims identically.
  *
- * "Behind content" reorders the page's /Contents array so the overlay stream
- * (pdf-lib appends it LAST) runs FIRST — the watermark-round technique.
+ * "Behind content" is native to the stamp kernel: our stream is PREPENDED
+ * to the page's /Contents array.
  */
 
-/** Multiplies ca/CA of every ExtGState reachable from a Resources dict. Returns the number of scaled entries. */
-export function scaleOverlayAlpha(
-  ctx: PDFContext,
-  res: PDFDict | undefined,
+/** Resolve an object, accepting both dict and stream (pdf-lib's PDFStream
+ *  extends PDFDict — XObjects/gs entries are often streams). */
+function resolveDictish(doc: ParsedPdf, obj: PdfObj | undefined):
+  Map<string, PdfObj> | undefined {
+  const resolved = obj === undefined ? undefined : resolve(doc, obj);
+  if (!resolved) return undefined;
+  if (resolved.k === "dict" || resolved.k === "stream") return resolved.m;
+  return undefined;
+}
+
+/** The recursive walk core, over an already-resolved Resources map. */
+function scaleOverlayAlphaDict(
+  doc: ParsedPdf,
+  res: Map<string, PdfObj>,
   factor: number,
-  depth = 0
+  depth: number
 ): number {
-  if (!res || depth > 8) return 0;
+  if (depth > 8) return 0;
   let n = 0;
-  const gsDict = res.lookupMaybe(PDFName.of("ExtGState"), PDFDict);
+  const gsDict = resolveDictish(doc, res.get("ExtGState"));
   if (gsDict) {
-    for (const [, value] of gsDict.entries()) {
-      const gs = ctx.lookupMaybe(value, PDFDict);
+    for (const [, value] of gsDict) {
+      const gs = resolveDictish(doc, value);
       if (!gs) continue;
-      for (const key of [PDFName.of("ca"), PDFName.of("CA")]) {
-        const cur = gs.lookupMaybe(key, PDFNumber);
-        if (cur) {
-          gs.set(key, ctx.obj(Math.min(1, cur.asNumber() * factor)));
+      for (const key of ["ca", "CA"] as const) {
+        const cur = resolve(doc, gs.get(key));
+        if (cur?.k === "num") {
+          gs.set(key, num(Math.min(1, cur.n * factor)));
           n += 1;
         }
       }
     }
   }
   // Nested form XObjects carry their own Resources.
-  const xoDict = res.lookupMaybe(PDFName.of("XObject"), PDFDict);
+  const xoDict = resolveDictish(doc, res.get("XObject"));
   if (xoDict) {
-    for (const [, value] of xoDict.entries()) {
-      const xo = ctx.lookupMaybe(value, PDFDict);
-      n += scaleOverlayAlpha(
-        ctx,
-        xo?.lookupMaybe(PDFName.of("Resources"), PDFDict),
-        factor,
-        depth + 1
-      );
+    for (const [, value] of xoDict) {
+      const xo = resolveDictish(doc, value);
+      if (!xo) continue;
+      const xoRes = resolveDictish(doc, xo.get("Resources"));
+      if (xoRes) n += scaleOverlayAlphaDict(doc, xoRes, factor, depth + 1);
     }
   }
   return n;
 }
 
-/** Snapshot of a page's ExtGState resource keys (to diff after drawPage). */
-function extGStateKeys(page: PDFPage): Set<string> {
-  const keys = new Set<string>();
-  const gsDict = page.node
-    .Resources()
-    ?.lookupMaybe(PDFName.of("ExtGState"), PDFDict);
-  if (gsDict) {
-    for (const [key] of gsDict.entries()) keys.add(String(key));
-  }
-  return keys;
-}
-
 /**
- * pdf-lib's drawPage(opacity) injects an ExtGState with `ca` only — strokes
- * (borders, lines) would stay at full strength. This adds `CA` to the newly
- * injected state so stroke content dims identically.
+ * Multiplies ca/CA of every ExtGState reachable from a page's Resources.
+ * Returns the number of scaled entries. Mirrors the pdf-lib walk: per
+ * overlay PAGE (so an ExtGState object shared by two pages is scaled twice
+ * — the multiplicative quirk of the shipped pipeline, kept for parity),
+ * recursing into nested XObjects' Resources, depth-capped at 8.
  */
-function addStrokeAlpha(
-  ctx: PDFContext,
-  page: PDFPage,
-  opacity: number,
-  before: ReadonlySet<string>
-): void {
-  const gsDict = page.node
-    .Resources()
-    ?.lookupMaybe(PDFName.of("ExtGState"), PDFDict);
-  if (!gsDict) return;
-  for (const [key, value] of gsDict.entries()) {
-    if (before.has(String(key))) continue;
-    const gs = ctx.lookupMaybe(value, PDFDict);
-    if (
-      gs &&
-      gs.lookupMaybe(PDFName.of("ca"), PDFNumber) !== undefined &&
-      gs.get(PDFName.of("CA")) === undefined
-    ) {
-      gs.set(PDFName.of("CA"), ctx.obj(opacity));
-    }
-  }
-}
-
-/** Moves this page's pdf-lib draw stream (appended last) to the front — behind content. */
-function moveDrawStreamFirst(page: PDFPage): void {
-  const contents = page.node.Contents();
-  if (!(contents instanceof PDFArray)) return;
-  const size = contents.size();
-  if (size < 2) return;
-  const mine = contents.get(size - 1);
-  contents.remove(size - 1);
-  contents.insert(0, mine);
+export function scaleOverlayAlpha(
+  doc: ParsedPdf,
+  source: OrganizeSource,
+  pageIndex: number,
+  factor: number
+): number {
+  const entry = source.pages[pageIndex]!.resources;
+  const res = resolveDictish(doc, entry);
+  if (!res) return 0;
+  return scaleOverlayAlphaDict(doc, res, factor, 0);
 }
 
 export interface OverlayProgress {
@@ -133,19 +116,31 @@ export interface OverlayProgress {
   pages: number;
 }
 
+export interface OverlayOutcome {
+  /** The written output bytes (fresh classic-xref PDF, our engine). */
+  bytes: Uint8Array;
+  /** How many base pages actually received the overlay. */
+  stamped: number;
+}
+
 /**
- * The full pipeline: mutate overlay alpha (when dimmed), embed the needed
- * overlay pages, draw them onto the target base pages with the shared
- * placement math, honor behind-content, save. Returns the stamped count.
+ * The full pipeline: pre-scale overlay alpha (when dimmed), embed the needed
+ * overlay pages as form XObjects, stamp them onto the target base pages with
+ * the shared placement math, honor behind-content, write. Returns the output
+ * bytes + the stamped count.
+ *
+ * Throws plain `Error` with the engine's legacy markers ("invalid page
+ * range" / "no pages selected" / "no page match") for the worker's error
+ * mapping, and typed `PdfError` (encrypted/corrupt) for load failures.
  */
-export async function overlayPdfs(
-  baseDoc: PDFDocument,
-  overlayDoc: PDFDocument,
+export function overlayPdfs(
+  base: StampContext,
+  overlay: OrganizeSource,
   opts: OverlayOptions,
   onProgress: (progress: OverlayProgress) => void
-): Promise<number> {
-  const baseCount = baseDoc.getPageCount();
-  const overlayCount = overlayDoc.getPageCount();
+): OverlayOutcome {
+  const baseCount = base.pageCount;
+  const overlayCount = overlay.pages.length;
   const targets = stampTargets(opts, baseCount);
   if (targets === null) throw new Error("overlay: invalid page range");
   if (targets.length === 0) throw new Error("overlay: no pages selected");
@@ -158,47 +153,50 @@ export async function overlayPdfs(
   }
   if (needed.size === 0) throw new Error("overlay: no page match");
 
-  // Pre-scale alpha-bearing overlay content (multiplicative semantics).
+  // Pre-scale alpha-bearing overlay content (multiplicative semantics), on
+  // EVERY overlay page — exactly where the pdf-lib pipeline walked.
   if (opts.opacity < 1) {
-    for (const page of overlayDoc.getPages()) {
-      scaleOverlayAlpha(overlayDoc.context, page.node.Resources(), opts.opacity);
+    for (let i = 0; i < overlayCount; i += 1) {
+      scaleOverlayAlpha(overlay.doc, overlay, i, opts.opacity);
     }
   }
 
+  // Embed the needed overlay pages (ascending — stable form numbering).
   const indices = [...needed].sort((a, b) => a - b);
-  const embedded = await baseDoc.embedPdf(overlayDoc, indices);
-  const embByIndex = new Map<number, PDFEmbeddedPage>(
-    indices.map((index, position) => [index, embedded[position]])
-  );
+  const forms = new Map<number, StampForm>();
+  for (const index of indices) {
+    forms.set(index, base.embedForm(overlay, index));
+  }
 
   let done = 0;
   let stamped = 0;
   for (const pageIndex of targets) {
     const overlayIndex = overlayPageFor(opts.source, pageIndex, overlayCount);
     if (overlayIndex !== null) {
-      const emb = embByIndex.get(overlayIndex);
-      if (emb) {
-        const page = baseDoc.getPage(pageIndex);
+      const form = forms.get(overlayIndex);
+      if (form) {
+        const page = base.pages[pageIndex]!;
+        // pdf-lib placement math runs on the MediaBox dims (getWidth/
+        // getHeight semantics), and the embedded form's dims are the
+        // MediaBox dims too — a full-page overlay covers the media box.
+        const pageW = page.mediaBox[2] - page.mediaBox[0];
+        const pageH = page.mediaBox[3] - page.mediaBox[1];
         const { boxW, boxH, sx, sy } = overlayPlacement(
-          page.getWidth(),
-          page.getHeight(),
-          emb.width,
-          emb.height,
+          pageW,
+          pageH,
+          form.width,
+          form.height,
           opts
         );
-        const gsBefore = opts.opacity < 1 ? extGStateKeys(page) : null;
-        page.drawPage(emb, {
+        base.stampForm(pageIndex, form, {
           x: sx,
           y: sy,
           width: boxW,
           height: boxH,
-          rotate: degrees(opts.rotation),
-          opacity: opts.opacity,
+          opacity: opts.opacity < 1 ? opts.opacity : undefined,
+          rotate: opts.rotation,
+          behind: opts.behind,
         });
-        if (gsBefore !== null) {
-          addStrokeAlpha(baseDoc.context, page, opts.opacity, gsBefore);
-        }
-        if (opts.behind) moveDrawStreamFirst(page);
         stamped += 1;
       }
     }
@@ -210,5 +208,10 @@ export async function overlayPdfs(
     });
   }
 
-  return stamped;
+  return { bytes: base.write(), stamped };
+}
+
+/** Parse an overlay PDF for `overlayPdfs` (typed encrypted/corrupt throws). */
+export function loadOverlaySource(bytes: Uint8Array): OrganizeSource {
+  return parseForOrganize(bytes);
 }

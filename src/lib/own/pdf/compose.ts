@@ -41,6 +41,67 @@ export interface ComposedForm {
   key: string;
 }
 
+/** One embeddable page form's material (pdf-lib PDFPageEmbedder parity). */
+export interface PageFormEmbed {
+  /** Flate-wrapped content bytes (the q/Q-wrapped decoded streams). */
+  content: Uint8Array;
+  /** The /BBox array entries. */
+  bbox: [number, number, number, number];
+  /** The /Matrix entries (origin-adjusted translate). */
+  matrix: [number, number, number, number, number, number];
+  /** Own-or-inherited Resources value (ref or dict); undefined → empty. */
+  resources: PdfObj | undefined;
+}
+
+/**
+ * The pdf-lib `PDFPageEmbedder` pipeline for ONE page's content + box, shared
+ * by ComposeContext.embedPage (explicit crop rect) and StampContext.embedForm
+ * (the DEFAULT MediaBox-normalized embed — pdf-lib's `fullPageBoundingBox`
+ * discards the media origin, so `box` is {0, 0, W, H} there).
+ *
+ * Content bytes are pdf-lib byte-exact: `PDFPageLeaf.normalize` wraps the
+ * (copied) page's content streams with push/pop graphics-state streams, then
+ * `decodeContents` merges them with a newline after EVERY entry — so the
+ * body is `q\n` `\n` …streams… `\n` `Q\n` `\n`.
+ */
+export function pageFormEmbed(
+  doc: ParsedPdf,
+  page: PdfPageInfo,
+  box: { left: number; bottom: number; right: number; top: number },
+): PageFormEmbed {
+  const contents = page.dict.get("Contents");
+  if (contents === undefined) {
+    throw new PdfError("corrupt", "embedPage: page has no /Contents");
+  }
+  const resolvedContents = resolve(doc, contents);
+  const streams: Array<PdfObj & { k: "stream" }> = [];
+  if (resolvedContents?.k === "stream") {
+    streams.push(resolvedContents);
+  } else if (resolvedContents?.k === "arr") {
+    for (const item of resolvedContents.items) {
+      const stream = resolve(doc, item);
+      if (stream?.k === "stream") streams.push(stream);
+    }
+  }
+  if (streams.length === 0) {
+    throw new PdfError("corrupt", "embedPage: no decodable content streams");
+  }
+  // The wrap streams carry their own trailing newline, and every entry gets
+  // a join newline after it — exactly how pdf-lib's merge produces the body.
+  const decoded: Uint8Array[] = [ENC.encode("q\n"), ENC.encode("\n")];
+  for (const stream of streams) {
+    decoded.push(decodeForParser(stream.raw, stream.m));
+    decoded.push(ENC.encode("\n"));
+  }
+  decoded.push(ENC.encode("Q\n"), ENC.encode("\n"));
+  return {
+    content: flateImageBytes(mergeBytes(decoded)),
+    bbox: [box.left, box.bottom, box.right, box.top],
+    matrix: [1, 0, 0, 1, -box.left, -box.bottom],
+    resources: page.resources,
+  };
+}
+
 interface FormEntry {
   pageIndex: number;
   /** Flate-wrapped content bytes (built at embed time, stable). */
@@ -131,41 +192,17 @@ export class ComposeContext {
       return this.formHandle(cached);
     }
     const [x0, y0, x1, y1] = page.cropBox;
-    const contents = page.dict.get("Contents");
-    if (contents === undefined) {
-      throw new PdfError("corrupt", "embedPage: page has no /Contents");
-    }
-    const resolvedContents = resolve(this.source.doc, contents);
-    const streams: Array<PdfObj & { k: "stream" }> = [];
-    if (resolvedContents?.k === "stream") {
-      streams.push(resolvedContents);
-    } else if (resolvedContents?.k === "arr") {
-      for (const item of resolvedContents.items) {
-        const stream = resolve(this.source.doc, item);
-        if (stream?.k === "stream") streams.push(stream);
-      }
-    }
-    if (streams.length === 0) {
-      throw new PdfError("corrupt", "embedPage: no decodable content streams");
-    }
-    // pdf-lib joins the decoded streams with a newline between (and after)
-    // each; its copier wraps the page contents in q … Q first.
-    const decoded: Uint8Array[] = [];
-    for (const stream of streams) {
-      decoded.push(decodeForParser(stream.raw, stream.m));
-      decoded.push(ENC.encode("\n"));
-    }
-    const joined = mergeBytes(decoded);
-    const wrapped = mergeBytes([
-      ENC.encode("q\n"),
-      joined,
-      ENC.encode("Q"),
-    ]);
+    const embed = pageFormEmbed(this.source.doc, page, {
+      left: x0,
+      bottom: y0,
+      right: x1,
+      top: y1,
+    });
     const entry: FormEntry = {
       pageIndex,
-      content: flateImageBytes(wrapped),
-      bbox: [x0, y0, x1, y1],
-      resources: page.resources,
+      content: embed.content,
+      bbox: embed.bbox,
+      resources: embed.resources,
       order: this.forms.size,
       number: -1,
     };

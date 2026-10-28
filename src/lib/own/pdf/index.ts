@@ -35,9 +35,11 @@ export {
 } from "./ops";
 export { writeDocument, type WritePage, type WriteProgress, type WriteSynthetic } from "./writer";
 export { CreateContext, type CreateImage, type CreateImageOptions, type CreateLineOptions, type CreatePage, type CreateRectOptions, type CreateTextOptions, type CreateEllipseOptions } from "./create";
-export { ComposeContext, type ComposedForm } from "./compose";
+export { ComposeContext, type ComposedForm, type PageFormEmbed, pageFormEmbed } from "./compose";
 export {
   StampContext,
+  type StampForm,
+  type StampFormOptions,
   type StampImage,
   type StampImageOptions,
   type StampTextOptions,
