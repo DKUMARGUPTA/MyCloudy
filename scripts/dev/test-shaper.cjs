@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require("node:fs");
 const { ParsedTtfFont } = require("/home/z/my-project/src/lib/own/pdf/font-ttf.ts");
 const { shapeText } = require("/home/z/my-project/src/lib/own/pdf/shape-deva.ts");

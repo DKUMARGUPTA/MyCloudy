@@ -38,6 +38,7 @@ export {
   type StampImage,
   type StampImageOptions,
   type StampTextOptions,
+  type StampTtfFont,
 } from "./stamp";
 export {
   encodeWinAnsiBytes,
@@ -47,6 +48,8 @@ export {
   type StampFontKey,
 } from "./stamp-fonts";
 export { decodePng, parseJpeg, flateImageBytes, type JpegInfo, type PngImage } from "./images";
+export { ParsedTtfFont, TtfSubsetter } from "./font-ttf";
+export { shapeText, type ShapedGlyph } from "./shape-deva";
 export {
   type PdfObj,
   type PdfNewRef,

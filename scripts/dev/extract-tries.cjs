@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require("node:fs");
 let src = fs.readFileSync("node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js", "utf8");
 // Inject an exports hook at the end of the factory, right before `return fontkit;`

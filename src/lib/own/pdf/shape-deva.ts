@@ -651,7 +651,7 @@ interface RunState {
   pos: MP;
   family: Family;
   /** 1 when the run was entered via a leading ZWNJ/ZWJ (joiner-start). */
-  depth: number;
+  depth?: number;
 }
 
 /**
@@ -763,7 +763,7 @@ function transition(run: RunState, sym: number): RunState | null {
   if (run.pos === MP.NUKTA && sym === S.N) {
     return { pos: run.family === "broken_cluster" ? MP.NU2 : MP.NUKTA, family: run.family };
   }
-  if (run.pos === MP.H_ZWNJ && run.family !== "broken_cluster" && (sym === S.C || sym === S.RA)) {
+  if (run.pos === MP.H_ZWNJ && (sym === S.C || sym === S.RA)) {
     return null;
   }
 
@@ -919,10 +919,20 @@ const DEFAULT_GLOBAL_FEATURES = DEFAULT_STAGE_FEATURES;
 
 /* ─── the public API ────────────────────────────────────────────────────── */
 
-export function shapeText(font: ParsedTtfFont, text: string): ShapedGlyph[] {
+export function shapeText(
+  font: ParsedTtfFont,
+  text: string,
+  session?: Map<number, number[]>,
+): ShapedGlyph[] {
   const engine = new GsubEngine(font);
+  /* The glyph-object memory (fontkit caches glyph objects per id — created
+   * once, never updated — and pdf-lib reads codePoints off those shared
+   * objects; see the extraction note below). */
+  const seen = session ?? new Map<number, number[]>();
 
-  /* 1. glyphsForString: 1:1 cmap mapping */
+  /* 1. glyphsForString: 1:1 cmap mapping. Every raw character CREATES its
+   * cmap glyph object here (fontkit getGlyph(gid, [cp])) — so the raw
+   * mapping seeds the shared codePoints before any substitution runs. */
   const raw: GlyphInfo[] = [];
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
@@ -934,7 +944,9 @@ export function shapeText(font: ParsedTtfFont, text: string): ShapedGlyph[] {
         i++;
       }
     }
-    raw.push(engine.glyph(font.glyphForCodePoint(cp), [cp]));
+    const gid = font.glyphForCodePoint(cp);
+    if (!seen.has(gid)) seen.set(gid, [cp]);
+    raw.push(engine.glyph(gid, [cp]));
   }
   if (raw.length === 0) return [];
 
@@ -1008,20 +1020,18 @@ export function shapeText(font: ParsedTtfFont, text: string): ShapedGlyph[] {
   }
   void resolved;
 
-  /* 8b. fontkit's glyph objects are SHARED per glyph id and getGlyph assigns
-   * the caller's codePoints on EVERY call — so within one layout every
-   * position showing glyph N extracts as the LAST text position that
-   * produced glyph N (e.g. इ and ई share their shaped glyph in this font:
-   * "इ ई" extracts both as ई). Replicate that last-write-wins semantics so
-   * pdf-lib's ToUnicode lineage matches the oracle byte-for-byte. */
-  const lastCps = new Map<number, number[]>();
+  /* 8b. Extraction pass (OTLayoutEngine.substitute): each final position
+   * calls getGlyph(finalId, finalCodePoints) — creating only glyphs not
+   * already cached. Combined with the raw-cmap seeding above, the shared
+   * glyph's codePoints = the FIRST ask: a raw character's [cp] wins over a
+   * later ligature's concatenation (fontkit semantics, mirrored exactly). */
   for (const g of glyphs) {
-    if (g.codePoints.length > 0) lastCps.set(g.id, g.codePoints);
+    if (g.codePoints.length > 0 && !seen.has(g.id)) seen.set(g.id, g.codePoints);
   }
 
   return glyphs.map((g) => ({
     id: g.id,
-    codePoints: lastCps.get(g.id) ?? g.codePoints,
+    codePoints: seen.get(g.id) ?? g.codePoints,
     advanceWidth: font.advanceWidth(g.id),
   }));
 }
@@ -1113,7 +1123,7 @@ function setupSyllables(glyphs: GlyphInfo[]): void {
       glyphs[i]!.shaperInfo = {
         category: CAT_INDEX[cat]!,
         position: 1 << pos,
-        syllableType: tag,
+        syllableType: tag ?? "tagless", // fontkit undefined-tag runs: full processing, no dotted circle
         syllable,
       };
     }

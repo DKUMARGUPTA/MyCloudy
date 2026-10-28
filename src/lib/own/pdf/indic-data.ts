@@ -1,4 +1,3 @@
-/* eslint-disable */
 /**
  * DocoPDF own PDF engine — Unicode classification data for the Devanagari
  * shaper (P6-g). GENERATED at dev time by scripts/gen-indic-data.ts from the

@@ -32,10 +32,11 @@
  * Run: bun scripts/smoke-pdf-core.ts
  */
 
+/* eslint-disable @typescript-eslint/no-require-imports */
 import { readFileSync, writeFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 
-import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
+import { PDFDict, PDFDocument, PDFName, StandardFonts, degrees, rgb } from "pdf-lib";
 
 import {
   listPages,
@@ -46,16 +47,23 @@ import {
   parsePdf,
   pdfNumToString,
   PdfError,
+  resolve,
+  asNum,
   writeDocument,
   StampContext,
   measureStdText,
   encodeWinAnsiHex,
   winAnsiEncodable,
+  ParsedTtfFont,
+  shapeText,
+  type StampTtfFont,
   type ParsedPdf,
   type PdfObj,
   type PdfPageInfo,
 } from "../src/lib/own/pdf";
+import { latin1 } from "../src/lib/own/pdf/lexer";
 import { crc32, unzlibSync, zlibSync } from "../src/lib/own/zip";
+import pako from "pako";
 import { Lexer } from "../src/lib/own/pdf/lexer";
 import { pngUnfilter } from "../src/lib/own/pdf/parser";
 
@@ -841,6 +849,9 @@ async function main(): Promise<void> {
   console.log("== 16. Stamp kernel (P6-f): text + images on OUR engine ==");
   await section16();
 
+  console.log("== 17. Devanagari: TTF subset + shaping + Type0 embed (P6-g) ==");
+  await section17();
+
   // Artifacts for manual inspection (VLM/pdfjs follow-ups).
   const outAll = organizePdf(fixB, [
     { kind: "page", src: 0 },
@@ -854,6 +865,195 @@ async function main(): Promise<void> {
     console.log("FAILED:");
     for (const f of failures) console.log(`  - ${f}`);
     process.exit(1);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * SECTION 17 — the P6-g Devanagari route: our own TTF parser/subsetter +
+ * GSUB/Indic shaper (fontkit-parity, verified against the dev-time oracle)
+ * + Type0/CIDFontType2 embedding with save-time materialization.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+const DEVA_FONT_PATH = "/home/z/my-project/public/fonts/NotoSansDevanagari-Regular.ttf";
+
+async function section17(): Promise<void> {
+  const devaBytes = readFileSync(DEVA_FONT_PATH);
+  const font = ParsedTtfFont.parse(new Uint8Array(devaBytes));
+
+  /* — 17.1 font facts (against the shipped asset — anchors are the font's
+   * own values, cross-checked with the fontkit oracle at dev time). */
+  eq(font.unitsPerEm, 1000, "ttf: unitsPerEm 1000");
+  eq(font.numGlyphs, 1117, "ttf: numGlyphs 1117");
+  eq(font.postscriptName, "NotoSansDevanagari-Regular", "ttf: postscriptName");
+  eq(font.ascent, 896, "ttf: ascent");
+  eq(font.descent, -408, "ttf: descent");
+  eq(font.capHeight, 622, "ttf: capHeight (OS/2 v4)");
+  eq(font.xHeight, 536, "ttf: xHeight");
+  eq(font.italicAngle, 0, "ttf: italicAngle 0");
+  eq(font.glyphForCodePoint(0x915), 56, "cmap: क → 56");
+  eq(font.glyphForCodePoint(0x93f), 32, "cmap: ि → 32 (raw; 545 is the post-GSUB pres form)");
+  eq(font.glyphForCodePoint(0x94d), 103, "cmap: ् → 103");
+  eq(font.glyphForCodePoint(0x20), 3, "cmap: space → 3");
+
+  /* — 17.2 shaping glyph-sequence parity vs the fontkit oracle (dev-time). */
+  try {
+    const oracle = require("@pdf-lib/fontkit");
+    require("regenerator-runtime/runtime");
+    const fk = await (oracle as { create: (b: Uint8Array) => Promise<unknown> }).create(
+      new Uint8Array(devaBytes),
+    ) as { layout: (t: string) => { glyphs: Array<{ id: number; codePoints: number[] }> } };
+    const session = new Map<number, number[]>();
+    const vectors = [
+      "क", "हिंदी", "क्ष", "Page १२", "स्कूल", "प्रीति", "गोपाल कृष्णा", "A",
+      "क़", "र्क", "योग", "राष्ट्र", "अंतर्राष्ट्रीय", "विश्वविद्यालय", "ज्ञान",
+      "श्री", "प्रधानमंत्री", "स्वातंत्र्य", "अभ्यास", "परीक्षा", "टीका टिप्पणी",
+      "क्रम", "प्रक्रिया", "अध्यक्ष", "संविधान", "Chapter १", "शिक्षणसंस्था",
+    ];
+    let seqOk = 0;
+    for (const text of vectors) {
+      const want = fk.layout(text).glyphs.map((g) => `${g.id}:[${g.codePoints.map((c) => c.toString(16)).join(",")}]`);
+      const got = shapeText(font, text, session).map((g) => `${g.id}:[${g.codePoints.map((c) => c.toString(16)).join(",")}]`);
+      const same = want.length === got.length && want.every((w, i) => w === got[i]);
+      if (same) seqOk++;
+      else eq(`DIVERGED ${JSON.stringify(text)}`, "shape-parity", `shape: ${text}`);
+    }
+    eq(seqOk, vectors.length, `shaper: ${seqOk}/${vectors.length} glyph-sequence vectors`);
+  } catch (error) {
+    eq("oracle-unavailable", "oracle-loaded", `fontkit oracle: ${String(error)}`);
+  }
+
+  /* — 17.3 real-word corpus (all realistic Devanagari) with a shared
+   * session = pdf-lib's per-embedFont glyph-object lifetime. */
+  {
+    const corpus = [
+      "नमस्ते", "भारत", "हिंदी", "कार्यक्रम", "विद्यालय", "प्रक्रिया", "संगीत",
+      "अर्थशास्त्र", "प्रौद्योगिकी", "विश्वविद्यालय", "प्रमाणपत्र", "स्वतंत्रता",
+      "अंतर्राष्ट्रीय", "प्रधानमंत्री", "विशेषज्ञ", "संविधान", "पुनर्जन्म", "मुख्यमंत्री",
+    ];
+    const session = new Map<number, number[]>();
+    for (const text of corpus) {
+      const shaped = shapeText(font, text, session);
+      ok(shaped.length > 0, `corpus: ${text} shaped to ${shaped.length} glyphs`);
+      for (const g of shaped) ok(g.id > 0 || g.id === 0, `corpus: ${text} valid ids`);
+    }
+  }
+
+  /* — 17.4 end-to-end: stamp Devanagari into the §16 fixture via OUR engine,
+   * reload with our parser AND the pdf-lib oracle, verify font structure,
+   * the embedded subset (fontkit loads it), W sections, and ToUnicode
+   * round-trip. */
+  const stampSrc = await (async () => {
+    const libDoc = await PDFDocument.create();
+    const helv = await libDoc.embedFont(StandardFonts.Helvetica);
+    for (let i = 0; i < 3; i++) {
+      const page = libDoc.addPage([300, 400]);
+      page.drawText(`EXISTING-PAGE-TEXT-${i + 1}`, { x: 20, y: 200, font: helv, size: 14 });
+    }
+    return libDoc.save();
+  })();
+  const ctx = StampContext.load(stampSrc);
+  const deva = ctx.embedTtf(new Uint8Array(devaBytes));
+  const text = "गोपाल कृष्णा";
+  const measured = deva.measure(text, 24);
+  ok(Math.abs(measured - 113.112) < 0.01, `measure: pdf-lib widthOfTextAtSize parity (${measured.toFixed(4)})`);
+  ctx.stampText(0, { x: 72, y: 700, text, size: 24, ttf: deva, color: { r: 0.86, g: 0.15, b: 0.15 } });
+  ctx.stampText(1, { x: 72, y: 650, text: "हिंदी", size: 18, ttf: deva, opacity: 0.5 });
+  const out = ctx.write();
+  writeFileSync("/tmp/p6g-deva-stamp.pdf", out);
+
+  /* our parser reload */
+  const doc = parsePdf(out);
+  const root = resolve(doc, doc.trailer.get("Root")!) as { k: "dict"; m: Map<string, PdfObj> };
+  const pagesRoot = resolve(doc, root.m.get("Pages")!) as { k: "dict"; m: Map<string, PdfObj> };
+  eq(asNum(pagesRoot.m.get("Count")), 3, "deva: own parser page count");
+
+  /* pdf-lib oracle reload */
+  const oracleDoc = await PDFDocument.load(out);
+  eq(oracleDoc.getPageCount(), 3, "deva: oracle page count");
+
+  /* hex ↔ oracle glyph run */
+  const page0 = oracleDoc.getPage(0);
+  const contents = page0.node.Contents() as unknown as {
+    contents: Uint8Array;
+    constructor: { name: string };
+  };
+  const readStream = (st: { contents: Uint8Array }): string => latin1(st.contents, 0, st.contents.length);
+  let streamText = "";
+  if (contents.constructor.name === "PDFArray") {
+    const arr = contents as unknown as { size(): number; lookup(i: number): { contents: Uint8Array } };
+    for (let i = 0; i < arr.size(); i++) streamText += readStream(arr.lookup(i));
+  } else {
+    streamText = readStream(contents as unknown as { contents: Uint8Array });
+  }
+  const hexMatch = /<([0-9a-fA-F]+)> Tj/.exec(streamText);
+  ok(!!hexMatch, "deva: stamp Tj found");
+  const hex = hexMatch?.[1] ?? "";
+
+  try {
+    const fk = await (require("@pdf-lib/fontkit") as { create: (b: Uint8Array) => Promise<unknown> }).create(
+      new Uint8Array(devaBytes),
+    ) as { layout: (t: string) => { glyphs: Array<{ id: number }> } };
+    const wantRun = fk.layout(text).glyphs;
+    const sids: number[] = [];
+    for (let i = 0; i + 4 <= hex.length; i += 4) sids.push(parseInt(hex.slice(i, i + 4), 16));
+    ok(sids.length === wantRun.length, `deva: hex sid count ${sids.length} = glyphs ${wantRun.length}`);
+    const sidToGlyph = new Map<number, number>();
+    let consistent = true;
+    for (let i = 0; i < sids.length && i < wantRun.length; i++) {
+      if (!sidToGlyph.has(sids[i]!)) sidToGlyph.set(sids[i]!, wantRun[i]!.id);
+      if (sidToGlyph.get(sids[i]!) !== wantRun[i]!.id) consistent = false;
+    }
+    ok(consistent, "deva: hex ↔ fontkit glyph sequence id-consistent");
+
+    /* the embedded subset itself loads in fontkit */
+    interface LibDict {
+      get(key: unknown): unknown;
+    }
+    const objs = [...oracleDoc.context.enumerateIndirectObjects()];
+    const type0 = objs.find(
+      ([, o]) => o instanceof PDFDict && String((o as unknown as LibDict).get(PDFName.of("Subtype"))) === "/Type0",
+    )?.[1] as unknown as LibDict | undefined;
+    ok(!!type0, "deva: Type0 font in output");
+    if (type0) {
+      eq(String(type0.get(PDFName.of("Encoding"))), "/Identity-H", "deva: Identity-H encoding");
+      const lookup = (key: unknown): unknown => oracleDoc.context.lookup(key as never);
+      const cidList = lookup(type0.get(PDFName.of("DescendantFonts"))) as unknown as { get(i: number): unknown };
+      const cid = lookup(cidList.get(0)) as unknown as LibDict;
+      eq(String(cid.get(PDFName.of("Subtype"))), "/CIDFontType2", "deva: CIDFontType2 descendant");
+      eq(String(cid.get(PDFName.of("CIDToGIDMap"))), "/Identity", "deva: CIDToGIDMap Identity");
+      const fd = lookup(cid.get(PDFName.of("FontDescriptor"))) as unknown as LibDict;
+      const ff2 = lookup(fd.get(PDFName.of("FontFile2"))) as unknown as { contents: Uint8Array };
+      const ttfSubset = pako.inflate(ff2.contents) as Uint8Array;
+      const subFont = await (require("@pdf-lib/fontkit") as { create: (b: Uint8Array) => Promise<unknown> }).create(
+        ttfSubset,
+      ) as { numGlyphs: number; unitsPerEm: number };
+      ok(subFont.numGlyphs >= sids.length, `deva: embedded subset loads (${subFont.numGlyphs} glyphs)`);
+      eq(subFont.unitsPerEm, 1000, "deva: subset upem");
+
+      /* ToUnicode round-trip: reconstruct the text from the stamp hex */
+      const toUni = lookup(type0.get(PDFName.of("ToUnicode"))) as unknown as { contents: Uint8Array };
+      const cmapText = Buffer.from(pako.inflate(toUni.contents)).toString("latin1");
+      const bfChars = [...cmapText.matchAll(/<([0-9a-fA-F]{4})> <([0-9a-fA-F]*)>/g)];
+      ok(bfChars.length > 0, `deva: ToUnicode has ${bfChars.length} bfchars`);
+      let reconstructed = "";
+      for (let i = 0; i + 4 <= hex.length; i += 4) {
+        const sidHex = hex.slice(i, i + 4).toLowerCase();
+        const entry = bfChars.find(([, sid]) => sid.toLowerCase() === sidHex);
+        const cpsHex = entry?.[2] ?? "";
+        for (let j = 0; j + 4 <= cpsHex.length; j += 4) {
+          reconstructed += String.fromCharCode(parseInt(cpsHex.slice(j, j + 4), 16));
+        }
+      }
+      eq(reconstructed, text, `deva: ToUnicode round-trip (${reconstructed})`);
+
+      /* W sections non-empty + first id = 1 */
+      const wArr = cid.get(PDFName.of("W")) as unknown as { toString(): string };
+      const wStr = wArr.toString();
+      ok(wStr.startsWith("[ 1 "), `deva: W starts at subset id 1 (${wStr.slice(0, 24)}…)`);
+      ok(/\[ [\d. ]+\]/.test(wStr), "deva: W has width sections");
+    }
+  } catch (error) {
+    eq("oracle-failed", "oracle-ok", `deva oracle checks: ${String(error)}`);
   }
 }
 

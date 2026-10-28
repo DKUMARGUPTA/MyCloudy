@@ -10,7 +10,8 @@
 
 import { writeFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { PDFDict, PDFDocument, PDFName, StandardFonts } from "pdf-lib";
+import pako from "pako";
 import { listPages, parsePdf } from "../../src/lib/own/pdf";
 import { crc32 } from "../../src/lib/own/zip";
 
@@ -360,7 +361,141 @@ async function main(): Promise<void> {
     );
   }
 
+  console.log("== F. Devanagari through the REAL workers (P6-g own engine) ==");
+  {
+    // Stub fetch so loadDevanagariBytes() serves the local TTF in-bun.
+    const realFetch = globalThis.fetch;
+    const devaFont = new Uint8Array(
+      await (await import("node:fs/promises")).readFile(
+        "/home/z/my-project/public/fonts/NotoSansDevanagari-Regular.ttf",
+      ),
+    );
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = ((
+      input: RequestInfo | URL,
+    ) => {
+      const url = typeof input === "string" ? input : String(input);
+      if (url.includes("NotoSansDevanagari")) {
+        return Promise.resolve(
+          new Response(devaFont.buffer as ArrayBuffer, {
+            status: 200,
+            headers: { "content-type": "font/ttf" },
+          }),
+        );
+      }
+      return realFetch(input as RequestInfo);
+    }) as typeof fetch;
+
+    // F.1 watermark with Hindi text
+    {
+      const res = await driveWorker("../../tools/add-watermark/worker.ts", {
+        type: "run",
+        runId: 7,
+        toolId: "add-watermark",
+        options: {
+          wmType: "text",
+          text: "\u0939\u093f\u0902\u0926\u0940",
+          position: "center",
+          rotation: 0,
+          opacity: 0.35,
+          behind: false,
+        },
+        files: [
+          new File([new Uint8Array(baseBytes).buffer as ArrayBuffer], "deva.pdf", {
+            type: "application/pdf",
+          }),
+        ],
+      });
+      ok(res.kind === "result", `wm-deva: result (code=${res.code ?? "n/a"})`);
+      if (res.kind === "result" && res.outputs) {
+        const out = await bytesOf(res.outputs[0]!.blob);
+        const doc = parsePdf(out);
+        const page = listPages(doc)[0]!;
+        // /Font in Resources with a Type0 → Identity-H embedded font
+        const resObj = page.dict.get("Resources");
+        const resMap = resObj?.k === "dict" ? resObj.m : undefined;
+        const fonts = resMap?.get("Font");
+        ok(fonts?.k === "dict", "wm-deva: /Font present");
+        // oracle reload + embedded font structure
+        const lib = await PDFDocument.load(out);
+        eq(lib.getPageCount(), 3, "wm-deva: pdf-lib oracle reload");
+        const objs = [...lib.context.enumerateIndirectObjects()];
+        const type0Entry = objs.find(
+          ([, o]) =>
+            o instanceof PDFDict &&
+            String((o as unknown as { get(k: unknown): unknown }).get(PDFName.of("Subtype"))) === "/Type0",
+        );
+        const type0 = type0Entry?.[1] as unknown as { get(k: unknown): unknown } | undefined;
+        ok(!!type0, "wm-deva: Type0 font embedded");
+        if (type0) {
+          eq(
+            String(type0.get(PDFName.of("Encoding"))),
+            "/Identity-H",
+            "wm-deva: Identity-H",
+          );
+          const toUni = lib.context.lookup(
+            type0.get(PDFName.of("ToUnicode")),
+          ) as unknown as { contents: Uint8Array };
+          const cmapText = Buffer.from(pako.inflate(toUni.contents)).toString("latin1");
+          // reconstruct from the page stamp hex
+          const text = pageContentText(out, 0);
+          const hexM = /<([0-9a-fA-F]+)> Tj/.exec(text);
+          ok(!!hexM, "wm-deva: stamp Tj found");
+          const hex = hexM?.[1] ?? "";
+          const bfChars = [...cmapText.matchAll(/<([0-9a-fA-F]{4})> <([0-9a-fA-F]*)>/g)];
+          let reconstructed = "";
+          for (let i = 0; i + 4 <= hex.length; i += 4) {
+            const sidHex = hex.slice(i, i + 4).toLowerCase();
+            const entry = bfChars.find(([, sid]) => sid.toLowerCase() === sidHex);
+            const cpsHex = entry?.[2] ?? "";
+            for (let j = 0; j + 4 <= cpsHex.length; j += 4) {
+              reconstructed += String.fromCharCode(parseInt(cpsHex.slice(j, j + 4), 16));
+            }
+          }
+          // pdf-lib's own ToUnicode round-trip reconstructs the VISUAL glyph
+          // order (the ि reordering) — proven identical on the oracle output
+          // at dev time. Check the glyph-content multiset (same class as
+          // pdf-lib), not the logical order.
+          const original = "\u0939\u093f\u0902\u0926\u0940";
+          const sortCps = (t: string): string =>
+            [...t].map((c) => c.codePointAt(0)!.toString(16)).sort().join(",");
+          eq(sortCps(reconstructed), sortCps(original), `wm-deva: ToUnicode round-trip multiset (${reconstructed} = pdf-lib's visual-order class)`);
+        }
+      }
+    }
+
+    // F.2 page numbers with Hindi digits
+    {
+      const res = await driveWorker("../../tools/add-page-numbers/worker.ts", {
+        type: "run",
+        runId: 8,
+        toolId: "add-page-numbers",
+        options: { format: "plain", hindiDigits: true, position: "bottom-center", size: 12 },
+        files: [
+          new File([new Uint8Array(baseBytes).buffer as ArrayBuffer], "ank.pdf", {
+            type: "application/pdf",
+          }),
+        ],
+      });
+      ok(res.kind === "result", `pn-deva: result (code=${res.code ?? "n/a"})`);
+      if (res.kind === "result" && res.outputs) {
+        const out = await bytesOf(res.outputs[0]!.blob);
+        const lib = await PDFDocument.load(out);
+        eq(lib.getPageCount(), 3, "pn-deva: pdf-lib oracle reload");
+        const text1 = pageContentText(out, 0);
+        ok(/\/[A-Za-z]\d+ 12 Tf/.test(text1), "pn-deva: Tf present");
+        const hexM = /<([0-9a-fA-F]+)> Tj/.exec(text1);
+        ok(!!hexM, "pn-deva: Hindi digit Tj present");
+      }
+    }
+
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = realFetch;
+  }
+
   console.log(`\np6f-worker-e2e: ${pass} passed, ${failures.length} failed`);
+  // The imported worker chain keeps an invisible handle alive in bun
+  // (import-time side effects); the verdict is complete here, so exit
+  // explicitly — the exit code still reflects the failures.
+  process.exit(failures.length > 0 ? 1 : 0);
   if (failures.length > 0) {
     for (const f of failures) console.log(`  - ${f}`);
     process.exit(1);

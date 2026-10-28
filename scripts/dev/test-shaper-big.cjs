@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require("node:fs");
 const { ParsedTtfFont } = require("/home/z/my-project/src/lib/own/pdf/font-ttf.ts");
 const { shapeText } = require("/home/z/my-project/src/lib/own/pdf/shape-deva.ts");
@@ -64,12 +65,13 @@ for (let i = 0; i < 4000; i++) TESTS.push(randomText());
 
 (async () => {
   const fk = await fontkit.create(bytes);
+  const session = new Map();
   let pass = 0, fail = 0;
   const failures = [];
   for (const text of TESTS) {
     let want, got, wErr = null, gErr = null;
     try { want = fk.layout(text).glyphs.map((g) => `${g.id}:[${g.codePoints.map(c=>c.toString(16)).join(",")}]`); } catch (e) { wErr = e.message; }
-    try { got = shapeText(font, text).map((g) => `${g.id}:[${g.codePoints.map(c=>c.toString(16)).join(",")}]`); } catch (e) { gErr = e.message; }
+    try { got = shapeText(font, text, session).map((g) => `${g.id}:[${g.codePoints.map(c=>c.toString(16)).join(",")}]`); } catch (e) { gErr = e.message; }
     const ok = wErr === gErr && (wErr !== null || (want.length === got.length && want.every((w, i) => w === got[i])));
     if (ok) { pass++; continue; }
     fail++;

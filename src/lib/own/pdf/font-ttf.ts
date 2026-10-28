@@ -1026,6 +1026,11 @@ export class TtfSubsetter {
     return this.glyphIds.length;
   }
 
+  /** The SOURCE font glyph id assigned to a subset id. */
+  sourceId(sid: number): number {
+    return this.glyphIds[sid] ?? 0;
+  }
+
   /**
    * Encode the subset font: head, hhea, loca, maxp, prep, glyf, hmtx
    * (+ cvt/fpgm when the source font has them) — the exact table set

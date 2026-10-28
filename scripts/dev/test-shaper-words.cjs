@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require("node:fs");
 const { ParsedTtfFont } = require("/home/z/my-project/src/lib/own/pdf/font-ttf.ts");
 const { shapeText } = require("/home/z/my-project/src/lib/own/pdf/shape-deva.ts");
@@ -21,11 +22,13 @@ TEXTS.push("Page १ of ५", "गोपाल कृष्णा", "प्र�
 
 (async () => {
   const fk = await fontkit.create(bytes);
+  let session = null;
   let pass = 0, fail = 0;
   const failures = [];
   for (const text of TEXTS) {
     const want = fk.layout(text).glyphs.map((g) => `${g.id}:[${g.codePoints.map(c=>c.toString(16)).join(",")}]`);
-    const got = shapeText(font, text).map((g) => `${g.id}:[${g.codePoints.map(c=>c.toString(16)).join(",")}]`);
+    if (!session) session = new Map();
+    const got = shapeText(font, text, session).map((g) => `${g.id}:[${g.codePoints.map(c=>c.toString(16)).join(",")}]`);
     const ok = want.length === got.length && want.every((w, i) => w === got[i]);
     if (ok) pass++;
     else { fail++; if (failures.length < 5) failures.push({ text, want, got }); }

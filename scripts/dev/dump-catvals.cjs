@@ -1,6 +1,0 @@
-require("/home/z/my-project/scripts/dev/fontkit-patched.cjs");
-require("regenerator-runtime/runtime");
-const I = globalThis.__FONTKIT_INTERNALS;
-for (const cp of [0x915, 0x93f, 0x930, 0x41, 0x966, 0x94d, 0x200d, 0x200c, 0x25cc, 0x905, 0x93c, 0x902, 0x964, 0x901, 0x93e, 0x947, 0x941, 0x950, 0x955, 0x967, 0x970, 0xa8f2]) {
-  console.log(`U+${cp.toString(16).padStart(4, "0")}: cat=${I.indicTrie.get(cp) >> 8} posIdx=${I.indicTrie.get(cp) & 0xff}`);
-}

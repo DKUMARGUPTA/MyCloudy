@@ -17,6 +17,7 @@
  * Nothing from this script ships: the runtime uses only indic-data.ts.
  * Run: bun scripts/gen-indic-data.ts
  */
+/* eslint-disable @typescript-eslint/no-require-imports */
 import { readFileSync, writeFileSync } from "node:fs";
 
 const SOURCE = "/home/z/my-project/node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js";
@@ -239,8 +240,7 @@ console.log("Cf|Mn ranges:", cfMnRanges.length);
 const fmt = (r: Array<[number, number, number]>): string =>
   r.map(([lo, hi, v]) => `  [${lo}, ${hi}, ${v}],`).join("\n");
 
-const header = `/* eslint-disable */
-/**
+const header = `/**
  * DocoPDF own PDF engine — Unicode classification data for the Devanagari
  * shaper (P6-g). GENERATED at dev time by scripts/gen-indic-data.ts from the
  * Unicode database values compiled into @pdf-lib/fontkit (the dev-time oracle
