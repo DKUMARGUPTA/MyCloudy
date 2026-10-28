@@ -27,6 +27,7 @@
  * Run: bun scripts/smoke-images-to-pdf.ts
  */
 import sharp from "sharp";
+import { inflateSync } from "node:zlib";
 import { PDFDocument, PDFName, PDFNumber, PDFRawStream } from "pdf-lib";
 
 import {
@@ -612,6 +613,44 @@ async function openAndInspect(
   };
 }
 
+/**
+ * Decoded content-stream text of pdf-lib page `idx` (oracle-side reads for
+ * the P6-k placement/label checks — our writer emits classic xref with
+ * UNCOMPRESSED page streams, but inflate is attempted either way so the
+ * helper stays honest for re-saved fixtures).
+ */
+async function libPageText(
+  doc: PDFDocument,
+  idx: number
+): Promise<string[]> {
+  const pg = doc.getPage(idx);
+  const contents = pg.node.Contents();
+  const streams: unknown[] = [];
+  const c = contents as unknown as { constructor: { name: string } };
+  if (c?.constructor?.name === "PDFArray") {
+    const arr = contents as unknown as {
+      size(): number;
+      lookup(i: number): unknown;
+    };
+    for (let i = 0; i < arr.size(); i += 1) streams.push(arr.lookup(i));
+  } else {
+    streams.push(contents);
+  }
+  const out: string[] = [];
+  for (const st of streams) {
+    const raw = st as { contents?: Uint8Array };
+    if (!raw?.contents) continue;
+    let bytes = raw.contents;
+    try {
+      bytes = inflateSync(Buffer.from(bytes));
+    } catch {
+      // not flate — use as-is
+    }
+    out.push(Buffer.from(bytes).toString("latin1"));
+  }
+  return out;
+}
+
 async function part2(): Promise<void> {
   installShims();
   await import("../tools/imagegrid/worker");
@@ -825,6 +864,104 @@ async function part2(): Promise<void> {
       run.error?.code,
       "tool.images.errorUnsupported",
       "run 8: errorUnsupported code"
+    );
+  }
+
+  /* ---- 9. P6-k: two-up grid — two images share ONE A4 landscape page ---- */
+  {
+    const run = await runWorker(
+      [new FakeFile("a.jpg", plainJpeg), new FakeFile("b.png", png30x10, "image/png")],
+      { pageSize: "a4", layout: "two", orientation: "landscape" }
+    );
+    assert(run.error === null, "run 9 (two-up): no error", run.error);
+    const { pages, images } = await openAndInspect(run);
+    assertEqual(pages.length, 1, "run 9: one page for two images");
+    assert(
+      Math.abs(pages[0].w - 841.89) < 0.5 && Math.abs(pages[0].h - 595.28) < 0.5,
+      "run 9: A4 landscape page",
+      pages[0]
+    );
+    assertEqual(images.length, 2, "run 9: two embedded XObjects");
+    assertEqual(
+      [images[0]?.width, images[0]?.height],
+      [40, 20],
+      "run 9: XObject 1 dims"
+    );
+    assertEqual(
+      [images[1]?.width, images[1]?.height],
+      [30, 10],
+      "run 9: XObject 2 dims"
+    );
+    // 2/2 placement: the drawImage translate cms must sit in disjoint
+    // x-halves (identity cms are all "0" — filtered out by > 1).
+    const doc = await PDFDocument.load(
+      new Uint8Array(await run.result!.outputs![0].blob.arrayBuffer())
+    );
+    const content = (await libPageText(doc, 0)).join(" ");
+    const cms = content.match(/(?:^|\s)((?:-?[\d.]+) (?:-?[\d.]+)) cm/g) ?? [];
+    assert(cms.length >= 8, "run 9: two drawImage cm triplets present", cms);
+    const txs = cms
+      .map((pair) => Number(pair.trim().split(/\s+/)[0]))
+      .filter((n) => Number.isFinite(n) && n > 1);
+    assert(
+      txs.length >= 2 && Math.max(...txs) - Math.min(...txs) > 300,
+      "run 9: images placed in disjoint halves",
+      txs
+    );
+  }
+
+  /* ---- 10. P6-k: page numbers — the "1 / 2" Helvetica label on every page ---- */
+  {
+    const run = await runWorker(
+      [new FakeFile("a.jpg", plainJpeg), new FakeFile("b.jpg", plainJpeg)],
+      { pageSize: "fit", margin: "none", pageNumbers: true }
+    );
+    assert(run.error === null, "run 10 (numbers): no error", run.error);
+    const { pages } = await openAndInspect(run);
+    assertEqual(pages.length, 2, "run 10: two pages");
+    const doc = await PDFDocument.load(
+      new Uint8Array(await run.result!.outputs![0].blob.arrayBuffer())
+    );
+    for (let i = 0; i < 2; i += 1) {
+      const text = (await libPageText(doc, i)).join(" ");
+      const label = i === 0 ? "1 / 2" : "2 / 2";
+      // WinAnsi hex for the label (pdf-lib/our engine both emit <HEX> Tj)
+      const hex = Buffer.from(label, "latin1").toString("hex").toUpperCase();
+      assert(
+        text.includes(`<${hex}> Tj`),
+        `run 10: page ${i + 1} carries the "${label}" label`,
+        { hex, text: text.slice(0, 400) }
+      );
+    }
+    // Helvetica font resource present on the page
+    const fonts = doc
+      .getPage(0)
+      .node.Resources()
+      ?.lookup(PDFName.of("Font"));
+    assert(
+      fonts !== undefined,
+      "run 10: /Font resource present (Helvetica)",
+      String(fonts)
+    );
+  }
+
+  /* ---- 11. P6-k: background — the full-page fill rect color ---- */
+  {
+    const run = await runWorker(
+      [new FakeFile("a.jpg", plainJpeg)],
+      { pageSize: "a4", background: "dark" }
+    );
+    assert(run.error === null, "run 11 (background): no error", run.error);
+    assert(run.result !== null, "run 11: result posted");
+    const doc = await PDFDocument.load(
+      new Uint8Array(await run.result!.outputs![0].blob.arrayBuffer())
+    );
+    const text = (await libPageText(doc, 0)).join(" ");
+    // BG_RGB.dark = [0.09, 0.09, 0.11] — the first rg fill op
+    assert(
+      /0\.09 0\.09 0\.11 rg/.test(text),
+      "run 11: dark background fill emitted first",
+      text.slice(0, 120)
     );
   }
 }

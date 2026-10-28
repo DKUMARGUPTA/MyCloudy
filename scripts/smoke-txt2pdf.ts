@@ -19,11 +19,23 @@
  *     the engine promises).
  *  5. Worker draw recipe: drawText per positioned run → save → reload →
  *     page count + page sizes match the pageSize option (a4 + letter).
+ * 10. P6-k: the REAL worker module on OUR engine (CreateContext) —
+ *     self/postMessage + fetch shims; pagination parity vs the pdf-lib-
+ *     measured layout above, Devanagari Type0 + FULL ToUnicode round-trip
+ *     of every drawn run, output naming, and the honest error codes.
  *
  * Run: bun scripts/smoke-txt2pdf.ts
  */
 import { readFile, writeFile } from "node:fs/promises";
-import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
+import { inflateSync } from "node:zlib";
+import {
+  PDFDict,
+  PDFDocument,
+  PDFName,
+  StandardFonts,
+  rgb,
+  type PDFFont,
+} from "pdf-lib";
 import "regenerator-runtime/runtime";
 import fontkit from "@pdf-lib/fontkit";
 
@@ -674,5 +686,375 @@ await renderAndReload(
   false
 );
 
+/* ------------------------------------------------------------------ */
+/* 10. The REAL worker on the OWN engine (P6-k)                        */
+/* ------------------------------------------------------------------ */
+/*
+ * The worker now runs CreateContext (our engine) end-to-end. This section
+ * drives the actual worker module with a self/postMessage shim + a fetch
+ * shim serving the self-hosted TTF, then verifies against the pdf-lib
+ * oracle: pagination parity (our measure == the pdf-lib layout the pure
+ * engine computed above), page sizes, output naming, the Type0 Devanagari
+ * subset with a full ToUnicode round-trip of every drawn run, and the
+ * honest error codes.
+ */
+console.log("worker (own engine, real module)");
+{
+  type PostedW = Record<string, unknown> & { type: string; runId: number };
+  const inboxW: PostedW[] = [];
+  const workerGlobal = globalThis as unknown as {
+    postMessage: (msg: unknown) => void;
+    onmessage: ((event: { data: unknown }) => void) | null;
+    location: { href: string };
+  };
+  workerGlobal.postMessage = (msg: unknown): void => {
+    inboxW.push(msg as PostedW);
+  };
+  workerGlobal.location = { href: "http://localhost/" };
+  (globalThis as unknown as Record<string, unknown>).self = workerGlobal;
+
+  const realFetch = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit
+  ): Promise<Response> => {
+    const url = typeof input === "string" ? input : String(input);
+    if (url.endsWith("/fonts/NotoSansDevanagari-Regular.ttf")) {
+      return new Response(new Uint8Array(ttfBytes), {
+        status: 200,
+        headers: { "Content-Type": "font/ttf" },
+      });
+    }
+    return realFetch(input, init);
+  }) as typeof fetch;
+
+  async function runTxtWorker(
+    options: Record<string, unknown>,
+    files: File[]
+  ): Promise<PostedW[]> {
+    inboxW.length = 0;
+    workerGlobal.onmessage?.({
+      data: { type: "run", runId: 1, toolId: "txt-to-pdf", options, files },
+    });
+    for (let i = 0; i < 200; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const terminal = inboxW.find(
+        (m) => m.type === "result" || m.type === "error"
+      );
+      if (terminal) return inboxW.splice(0, inboxW.length);
+    }
+    throw new Error("txt worker never posted a terminal message");
+  }
+
+  const makeFile = (name: string, text: string): File =>
+    new File([new TextEncoder().encode(text)], name, { type: "text/plain" });
+
+  await import("../tools/txt-to-pdf/worker");
+
+  /* ---- 10.1 Latin a4: pagination parity + naming + detail ---- */
+  {
+    const text = asciiParagraphs(5);
+    const expected = layoutTxt(text, a4Opts, measure).pageCount;
+    const out = await runTxtWorker({ pageSize: "a4" }, [makeFile("notes.txt", text)]);
+    const result = out.find((m) => m.type === "result") as
+      | { outputs?: { name: string; blob: Blob }[]; detail?: { files: number; pages: number } }
+      | undefined;
+    check("worker latin: result posted", result !== undefined);
+    if (result) {
+      check(
+        "worker latin: output named notes.pdf",
+        result.outputs?.[0]?.name === "notes.pdf"
+      );
+      check(
+        "worker latin: detail counts (1 file)",
+        result.detail?.files === 1 && result.detail?.pages === expected
+      );
+      const bytes = new Uint8Array(
+        await result.outputs![0].blob.arrayBuffer()
+      );
+      const doc = await PDFDocument.load(bytes);
+      check(
+        `worker latin: pageCount parity (${doc.getPageCount()} == ${expected})`,
+        doc.getPageCount() === expected
+      );
+      const size = doc.getPage(0).getSize();
+      check(
+        "worker latin: A4 size",
+        Math.abs(size.width - PAGE_SIZES.a4.width) < 0.05 &&
+          Math.abs(size.height - PAGE_SIZES.a4.height) < 0.05
+      );
+    }
+  }
+
+  /* ---- 10.2 Hindi: Type0 subset + full ToUnicode round-trip ---- */
+  {
+    const text = `${HINDI}\n\n${MIXED}\n\n${DANDA_RUN}`;
+    const expected = layoutTxt(text, a4Opts, measure).pageCount;
+    const out = await runTxtWorker({ pageSize: "a4" }, [makeFile("नोट्स.txt", text)]);
+    const result = out.find((m) => m.type === "result") as
+      | { outputs?: { name: string; blob: Blob }[] }
+      | undefined;
+    check("worker hindi: result posted", result !== undefined);
+    if (result) {
+      check(
+        "worker hindi: Devanagari output name preserved",
+        result.outputs?.[0]?.name === "नोट्स.pdf"
+      );
+      const bytes = new Uint8Array(
+        await result.outputs![0].blob.arrayBuffer()
+      );
+      const doc = await PDFDocument.load(bytes);
+      check(
+        `worker hindi: pageCount parity (${doc.getPageCount()} == ${expected})`,
+        doc.getPageCount() === expected
+      );
+
+      // Type0 font present
+      const objs = [...doc.context.enumerateIndirectObjects()];
+      const type0 = objs.find(
+        ([, o]) =>
+          o instanceof PDFDict &&
+          String((o as unknown as { get(k: unknown): unknown }).get(PDFName.of("Subtype"))) === "/Type0"
+      )?.[1] as unknown as { get(k: unknown): unknown } | undefined;
+      check("worker hindi: Type0 font embedded", type0 !== undefined);
+
+      if (type0) {
+        // ToUnicode map: sid hex → codepoint hex
+        const toUniRaw = doc.context.lookup(
+          type0.get(PDFName.of("ToUnicode")) as never
+        ) as unknown as { contents: Uint8Array };
+        const cmapText = inflateSync(Buffer.from(toUniRaw.contents)).toString("latin1");
+        const toUni = new Map<string, string>();
+        for (const m of cmapText.matchAll(/<([0-9a-fA-F]{4})> <([0-9a-fA-F]*)>/g)) {
+          toUni.set(m[1]!.toLowerCase(), m[2]!.toLowerCase());
+        }
+        check(
+          `worker hindi: ToUnicode map non-trivial (${toUni.size} bfchars)`,
+          toUni.size > 0
+        );
+
+        // Font names per page: /F<n> → font object
+        let reconstructed = "";
+        for (let p = 0; p < doc.getPageCount(); p += 1) {
+          const pg = doc.getPage(p);
+          const fontDict = pg.node
+            .Resources()
+            ?.lookup(PDFName.of("Font")) as unknown as {
+            entries(): [PDFName, unknown][];
+          } | undefined;
+          check(
+            `worker hindi: page ${p + 1} /Font resource present`,
+            fontDict !== undefined
+          );
+          if (!fontDict) continue;
+          const localFonts = new Map<string, string>();
+          for (const [k, v] of fontDict.entries()) {
+            const fd = doc.context.lookup(v as never) as unknown as {
+              get(ky: unknown): unknown;
+            };
+            localFonts.set(
+              k.asString() ?? String(k),
+              String(fd?.get?.(PDFName.of("Subtype")) ?? "?")
+            );
+          }
+
+          // decode the content stream: track Tf, decode each Tj
+          const contents = pg.node.Contents() as unknown as {
+            constructor: { name: string };
+            contents: Uint8Array;
+            size?: () => number;
+            lookup?: (i: number) => { contents: Uint8Array };
+          };
+          let body = "";
+          const readSt = (st: { contents: Uint8Array }): void => {
+            let b = st.contents;
+            try {
+              b = inflateSync(Buffer.from(b));
+            } catch {
+              /* our writer emits raw streams */
+            }
+            body += Buffer.from(b).toString("latin1");
+          };
+          if (contents?.constructor?.name === "PDFArray") {
+            const arr = contents as unknown as {
+              size(): number;
+              lookup(i: number): { contents: Uint8Array };
+            };
+            for (let i = 0; i < arr.size(); i += 1) readSt(arr.lookup(i));
+          } else {
+            readSt(contents);
+          }
+
+          let currentFont = "";
+          for (const m of body.matchAll(/\/(\S+) [\d.]+ Tf|<([0-9A-Fa-f]+)> Tj/g)) {
+            if (m[1]) {
+              currentFont = localFonts.get(`/${m[1]}`) ?? localFonts.get(m[1]) ?? "";
+              continue;
+            }
+            const hex = m[2] ?? "";
+            if (currentFont === "/Type0") {
+              // 4-hex glyph ids → ToUnicode
+              for (let i = 0; i + 4 <= hex.length; i += 4) {
+                const cpsHex = toUni.get(hex.slice(i, i + 4).toLowerCase()) ?? "";
+                for (let j = 0; j + 4 <= cpsHex.length; j += 4) {
+                  reconstructed += String.fromCharCode(
+                    parseInt(cpsHex.slice(j, j + 4), 16)
+                  );
+                }
+              }
+            } else {
+              // standard font: 2-hex WinAnsi bytes
+              for (let i = 0; i + 2 <= hex.length; i += 2) {
+                reconstructed += String.fromCharCode(
+                  parseInt(hex.slice(i, i + 2), 16)
+                );
+              }
+            }
+          }
+        }
+        // ---- reference: the SAME text through the pdf-lib recipe (the OLD
+        // worker's exact draw pipeline — this smoke's `measure`) ----
+        const refDoc = await PDFDocument.create();
+        refDoc.registerFontkit(fontkit);
+        const refNoto = await refDoc.embedFont(ttfBytes, { subset: true });
+        const refHelv = await refDoc.embedFont(StandardFonts.Helvetica);
+        const refResult = layoutTxt(text, a4Opts, measure);
+        for (const pageData of refResult.pages) {
+          const pg = refDoc.addPage([
+            PAGE_SIZES.a4.width,
+            PAGE_SIZES.a4.height,
+          ]);
+          for (const line of pageData.lines) {
+            if (line.text.length === 0) continue;
+            pg.drawText(line.text, {
+              x: line.x,
+              y: line.baseline,
+              size: line.size,
+              font: line.script === "noto" ? refNoto : refHelv,
+            });
+          }
+        }
+        const refSaved = await refDoc.save();
+        const refDoc2 = await PDFDocument.load(refSaved);
+        const refType0 = [...refDoc2.context.enumerateIndirectObjects()].find(
+          ([, o]) =>
+            o instanceof PDFDict &&
+            String((o as unknown as { get(k: unknown): unknown }).get(PDFName.of("Subtype"))) === "/Type0"
+        )?.[1] as unknown as { get(k: unknown): unknown } | undefined;
+        check("worker hindi: reference Type0 present", refType0 !== undefined);
+        const refToUniRaw = refType0
+          ? (refDoc2.context.lookup(
+              refType0.get(PDFName.of("ToUnicode")) as never
+            ) as unknown as { contents: Uint8Array })
+          : undefined;
+        const refCmapText = refToUniRaw
+          ? inflateSync(Buffer.from(refToUniRaw.contents)).toString("latin1")
+          : "";
+        const refToUni = new Map<string, string>();
+        for (const m of refCmapText.matchAll(/<([0-9a-fA-F]{4})> <([0-9a-fA-F]*)>/g)) {
+          refToUni.set(m[1]!.toLowerCase(), m[2]!.toLowerCase());
+        }
+        let libRecon = "";
+        for (let p = 0; p < refDoc2.getPageCount(); p += 1) {
+          const pg = refDoc2.getPage(p);
+          let body = "";
+          const readSt = (st: { contents: Uint8Array }): void => {
+            let b = st.contents;
+            try {
+              b = new Uint8Array(inflateSync(Buffer.from(b)));
+            } catch {
+              /* pdf-lib re-saved streams may be raw */
+            }
+            body += Buffer.from(b).toString("latin1");
+          };
+          const rc = pg.node.Contents() as unknown as {
+            constructor: { name: string };
+            contents: Uint8Array;
+          };
+          if (rc?.constructor?.name === "PDFArray") {
+            const arr = rc as unknown as {
+              size(): number;
+              lookup(i: number): { contents: Uint8Array };
+            };
+            for (let i = 0; i < arr.size(); i += 1) readSt(arr.lookup(i));
+          } else {
+            readSt(rc);
+          }
+          for (const m of body.matchAll(/<([0-9A-Fa-f]+)> Tj/g)) {
+            const hex = m[1] ?? "";
+            for (let i = 0; i + 4 <= hex.length; i += 4) {
+              const cpsHex =
+                refToUni.get(hex.slice(i, i + 4).toLowerCase()) ?? "";
+              for (let j = 0; j + 4 <= cpsHex.length; j += 4) {
+                libRecon += String.fromCharCode(
+                  parseInt(cpsHex.slice(j, j + 4), 16)
+                );
+              }
+            }
+          }
+        }
+
+        // Fontkit's subset lineage keeps FIRST-ASK codePoints per glyph —
+        // BOTH engines lose the same decomposed-matra counts vs the raw
+        // text (verified live against the pdf-lib oracle in P6-k: identical
+        // deficits). The migration guarantee is ENGINE PARITY: our
+        // reconstruction must equal the oracle's, codepoint for codepoint
+        // (whitespace multisets — wrap points drop spaces in both).
+        const sortCp = (s: string): string =>
+          [...s]
+            .filter((ch) => !/\s/.test(ch))
+            .map((ch) => ch.codePointAt(0)!)
+            .sort((a, b) => a - b)
+            .join(",");
+        check(
+          "worker hindi: ToUnicode round-trip parity vs pdf-lib recipe",
+          sortCp(reconstructed) === sortCp(libRecon),
+          {
+            ours: sortCp(reconstructed).slice(0, 120),
+            lib: sortCp(libRecon).slice(0, 120),
+          }
+        );
+        // Non-vacuous: both reconstructions carry the Devanagari range.
+        check(
+          "worker hindi: reconstructions substantial (Devanagari present both)",
+          [...reconstructed].some((ch) => ch.codePointAt(0)! >= 0x0900) &&
+            [...libRecon].some((ch) => ch.codePointAt(0)! >= 0x0900)
+        );
+      }
+    }
+  }
+
+  /* ---- 10.3 honest error codes through the worker ---- */
+  {
+    const binary = await runTxtWorker(
+      { pageSize: "a4" },
+      [new File([new Uint8Array([0x68, 0x00, 0x69])], "blob.bin")]
+    );
+    check(
+      "worker error: binary sniff",
+      binary.find((m) => m.type === "error")?.["code"] === "txt2pdf.errorBinary"
+    );
+    const empty = await runTxtWorker(
+      { pageSize: "a4" },
+      [makeFile("empty.txt", "")]
+    );
+    check(
+      "worker error: empty file",
+      empty.find((m) => m.type === "error")?.["code"] === "txt2pdf.errorEmpty"
+    );
+    const greek = await runTxtWorker(
+      { pageSize: "a4" },
+      [makeFile("greek.txt", "ΣΦ Ωμέγα")]
+    );
+    check(
+      "worker error: unsupported script",
+      greek.find((m) => m.type === "error")?.["code"] ===
+        "txt2pdf.errorUnsupportedScript"
+    );
+  }
+}
+
 console.log(`\nsmoke-txt2pdf: ${passed} passed, ${failed} failed${failed === 0 ? " — ALL GREEN" : ""}`);
-if (failed > 0) process.exit(1);
+// Explicit exit: registering self.onmessage (the worker import) keeps bun's
+// event loop alive awaiting messages — same discipline as the images smoke.
+process.exit(failed > 0 ? 1 : 0);

@@ -1,10 +1,13 @@
-import { PDFDocument, rgb } from "pdf-lib";
+import {
+  CreateContext,
+  type StampTtfFont,
+} from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { loadDevanagariBytes } from "../stamp-common/deva";
 import { layoutTxt, readTextFile, resolveTxtOptions } from "./engine";
 import {
   PAGE_SIZES,
@@ -21,15 +24,17 @@ import {
  * binary sniff (NUL byte / >10% replacement chars / %PDF- magic), an
  * honest unsupported-script check, and an empty-file check.
  *
- * Font pipeline = the stamp-common recipe (self-hosted
- * /fonts/NotoSansDevanagari-Regular.ttf + @pdf-lib/fontkit, subset:true):
- * pure-Latin files stay on built-in Helvetica; any file containing
- * non-WinAnsi text embeds the Noto font and renders every block that needs
- * it with real Devanagari glyphs. Each input file becomes its own
- * <base>.pdf — up to 10 per run. Device-only, zero network with file data.
+ * Font pipeline = the create/write recipe on OUR engine (P6-i): pure-Latin
+ * files measure/draw through the built-in Helvetica standard-14 (WinAnsi,
+ * metrics exact); any file containing non-WinAnsi text embeds the
+ * self-hosted /fonts/NotoSansDevanagari-Regular.ttf via our own
+ * Type0/CIDFontType2 subsetter + HarfBuzz-grade Indic shaper (embedTtf) and
+ * renders every block that needs it with real Devanagari glyphs. Each input
+ * file becomes its own <base>.pdf — up to 10 per run. Device-only, zero
+ * network with file data, zero pdf-lib in the shipped path.
  */
 
-const TEXT_COLOR = rgb(0.1, 0.1, 0.12);
+const TEXT_COLOR = { r: 0.1, g: 0.1, b: 0.12 } as const;
 
 function post(response: WorkerResponse): void {
   self.postMessage(response);
@@ -96,33 +101,40 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   for (let fileIndex = 0; fileIndex < decoded.length; fileIndex += 1) {
     const file = decoded[fileIndex];
-    const doc = await PDFDocument.create();
-    const stampFonts = await loadStampFonts(doc, file.needNoto);
-    const helv = stampFonts.fontFor("helvetica");
-    const noto = file.needNoto ? stampFonts.fontFor("devanagari") : null;
-
-    const sansSpec: FontSpec = { family: "sans", bold: false, italic: false };
+    const ctx = CreateContext.create();
+    let noto: StampTtfFont | null = null;
+    if (file.needNoto) {
+      const bytes = await loadDevanagariBytes(); // throws "devanagari-font-fetch"
+      noto = ctx.embedTtf(bytes);
+    }
+    // v1 rule: a "noto" block measures WHOLLY through the embedded TTF
+    // (Noto carries Latin glyphs too — the whole-block font decision).
     const measure: MeasureRun = (
       text: string,
       _spec: FontSpec,
       size: number,
       script: ScriptFont
     ) =>
-      (script === "noto" && noto ? noto : helv).widthOfTextAtSize(text, size);
+      script === "noto" && noto
+        ? noto.measure(text, size)
+        : ctx.measure(text, "helvetica", size);
 
     post({ type: "progress", runId, pct: 8, stage: "processing" });
     const result = layoutTxt(file.text, opts, measure);
 
     for (let p = 0; p < result.pages.length; p += 1) {
-      const page = doc.addPage([pageSize.width, pageSize.height]);
+      const page = ctx.addPage(pageSize.width, pageSize.height);
       for (const line of result.pages[p].lines) {
         if (line.text.length === 0) continue;
-        page.drawText(line.text, {
+        page.drawText({
           x: line.x,
           y: line.baseline,
+          text: line.text,
           size: line.size,
-          font: line.script === "noto" && noto ? noto : helv,
           color: TEXT_COLOR,
+          ...(line.script === "noto" && noto
+            ? { ttf: noto }
+            : { font: "helvetica" as const }),
         });
       }
       totalPages += 1;
@@ -138,7 +150,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       });
     }
 
-    const saved = await doc.save({ useObjectStreams: true });
+    const saved = ctx.write();
     outputs.push({
       name: `${file.base}.pdf`,
       mime: "application/pdf",

@@ -1,4 +1,8 @@
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import {
+  CreateContext,
+  type CreateImage,
+  type CreatePage,
+} from "@/lib/own/pdf";
 
 import {
   parsePageSpec,
@@ -14,7 +18,8 @@ import { isTiffBytes, TiffFile, TiffError } from "../imgconv/tiff";
 /**
  * Images → PDF worker (PRD §8.6) — shared by images-to-pdf and its
  * jpg/png/webp/heic/tiff/svg-to-pdf presets. Device-only: files arrive by
- * structured clone, pdf-lib embeds them, the PDF Blob goes straight back.
+ * structured clone, OUR engine (CreateContext, P6-i) embeds them, the PDF
+ * Blob goes straight back. Zero pdf-lib in the shipped path.
  *
  * Quality policy (honest, no silent re-compression):
  * - unrotated JPG/PNG (and unrotated SVG rasters) — and JPGs whose EXIF
@@ -527,10 +532,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     }
   }
 
-  const pdf = await PDFDocument.create();
-  const font = pageNumbers
-    ? await pdf.embedFont(StandardFonts.Helvetica)
-    : null;
+  const ctx = CreateContext.create();
+  const created: CreatePage[] = [];
 
   const groups: ExpandedItem[][] = [];
   if (twoUp) {
@@ -596,20 +599,27 @@ async function run(request: WorkerRunRequest): Promise<void> {
       pageH = landscape ? base[0] : base[1];
     }
 
-    const page = pdf.addPage([pageW, pageH]);
+    const page = ctx.addPage(pageW, pageH);
+    created.push(page);
     page.drawRectangle({
       x: 0,
       y: 0,
       width: pageW,
       height: pageH,
-      color: rgb(background[0], background[1], background[2]),
+      color: {
+        r: background[0],
+        g: background[1],
+        b: background[2],
+      },
     });
 
-    const embed = async (image: PreparedImage) => {
-      return image.kind === "jpeg"
-        ? await pdf.embedJpg(image.bytes)
-        : await pdf.embedPng(image.bytes);
-    };
+    // Embed the ORIGINAL bytes (JPEG = DCT passthrough, PNG = decoded
+    // DeviceRGB/SMask flate) — zero quality loss, exactly like pdf-lib's
+    // embedJpg/embedPng did.
+    const embed = (image: PreparedImage): CreateImage =>
+      image.kind === "jpeg"
+        ? ctx.embedJpeg(image.bytes)
+        : ctx.embedPng(image.bytes);
 
     if (twoUp && prepared.length === 2) {
       const cellW = (pageW - margin * 3) / 2;
@@ -622,9 +632,9 @@ async function run(request: WorkerRunRequest): Promise<void> {
           h: cellH,
         };
         const box = fitInto(prepared[i], cell);
-        const img = await embed(prepared[i]);
-        // pdf-lib wants width/height — w/h from fitInto would be silently
-        // ignored and the image drawn at its native pixel size (P4.4 bug).
+        const img = embed(prepared[i]);
+        // width/height are explicit — w/h from fitInto would otherwise draw
+        // the image at its native pixel size (the P4.4 rule, kept).
         page.drawImage(img, {
           x: box.x,
           y: box.y,
@@ -635,7 +645,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     } else {
       const cell = { x: margin, y: margin, w: pageW - margin * 2, h: pageH - margin * 2 };
       const box = fitInto(prepared[0], cell);
-      const img = await embed(prepared[0]);
+      const img = embed(prepared[0]);
       page.drawImage(img, {
         x: box.x,
         y: box.y,
@@ -653,24 +663,24 @@ async function run(request: WorkerRunRequest): Promise<void> {
     });
   }
 
-  if (font) {
-    const total = pdf.getPageCount();
-    const pages = pdf.getPages();
-    for (let i = 0; i < pages.length; i += 1) {
+  if (pageNumbers) {
+    const total = ctx.pageCount;
+    for (let i = 0; i < created.length; i += 1) {
       const label = `${i + 1} / ${total}`;
-      const size = font.widthOfTextAtSize(label, 9);
-      pages[i].drawText(label, {
-        x: (pages[i].getWidth() - size) / 2,
+      const size = ctx.measure(label, "helvetica", 9);
+      created[i].drawText({
+        x: (created[i].width - size) / 2,
         y: 14,
+        text: label,
         size: 9,
-        font,
-        color: rgb(0.45, 0.45, 0.5),
+        font: "helvetica",
+        color: { r: 0.45, g: 0.45, b: 0.5 },
       });
     }
   }
 
   post({ type: "progress", runId, pct: 95, stage: "saving" });
-  const saved = await pdf.save({ useObjectStreams: true });
+  const saved = ctx.write();
   const base = files[entries[0].source].name.replace(/\.[^.]+$/, "") || "images";
   const safeBase = base.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 120) || "images";
 
