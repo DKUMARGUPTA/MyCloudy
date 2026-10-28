@@ -2,8 +2,10 @@
  * Smoke: excel-to-pdf (RB1-c) — .xlsx → PDF, 100% on-device.
  *
  * Real xlsx fixture built with fflate zipSync, real renders through
- * the worker's exact render.ts, node:zlib inflate oracle, parse-level
- * font asserts on reload.
+ * the worker's exact render.ts on the OWN engine (P6-m: CreateContext
+ * + faces — pdf-lib stays as the reload-oracle ONLY), node:zlib
+ * inflate oracle with the raw-stream fallback, parse-level font
+ * asserts on reload.
  *
  * Run: bun scripts/smoke-excel-to-pdf.ts
  */
@@ -11,8 +13,9 @@ import "regenerator-runtime/runtime";
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+import { PDFDocument } from "pdf-lib";
+import { CreateContext, type StampFontKey } from "../src/lib/own/pdf";
+import type { ConvertFace } from "../tools/convert-common/face";
 import { zipSync, strToU8 } from "../src/lib/own/zip/index";
 
 import {
@@ -149,7 +152,10 @@ function inflatedText(bytes: Uint8Array): string {
     try {
       out += inflateSync(Buffer.from(raw.slice(start, e), "latin1")).toString("latin1");
     } catch {
-      /* font stream */
+      // Not deflated — OUR engine's page contents ride raw (classic
+      // xref, no /Filter): append them literally so text assertions
+      // still see the <HEX> Tj operators (the P6-i readContent recipe).
+      out += raw.slice(start, e);
     }
     idx = e + 9;
   }
@@ -174,22 +180,24 @@ const notoBytes = new Uint8Array(
 );
 
 async function render(wb: ReturnType<typeof parseXlsx>, noto: boolean, landscape = false): Promise<{ bytes: Uint8Array; pages: number }> {
-  const pdfDoc = await PDFDocument.create();
-  let font: PDFFont;
-  let boldFont: PDFFont | null = null;
+  // The worker's exact recipe on the OWN engine (P6-m): the face is
+  // either the embedded Noto subset or the std pair → drawWorkbookPdf
+  // → write(). pdf-lib loads the bytes back ONLY as the reload-oracle.
+  const pdfDoc = CreateContext.create();
+  let font: ConvertFace;
+  let boldKey: StampFontKey | null = null;
   if (noto) {
-    pdfDoc.registerFontkit(fontkit);
-    font = await pdfDoc.embedFont(notoBytes, { subset: true });
+    font = { ttf: pdfDoc.embedTtf(notoBytes) };
   } else {
-    font = pdfDoc.embedStandardFont(StandardFonts.Helvetica);
-    boldFont = pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+    font = { std: "helvetica" };
+    boldKey = "helveticaBold";
   }
-  drawWorkbookPdf(pdfDoc, font, boldFont, wb, {
+  drawWorkbookPdf(pdfDoc, font, boldKey, wb, {
     pageSize: "a4",
     orientation: landscape ? "landscape" : "portrait",
     fit: false,
   });
-  const bytes = await pdfDoc.save();
+  const bytes = pdfDoc.write();
   const reloaded = await PDFDocument.load(bytes);
   return { bytes, pages: reloaded.getPageCount() };
 }

@@ -21,13 +21,21 @@
  *  - Every glyph is drawText — REAL selectable text. Images from the
  *    source document are NEVER drawn (honest limit, see config.ts).
  *
- * Fonts arrive already embedded (worker): `font` is either the
- * non-embedded base-14 Helvetica (pure-WinAnsi docs) or the Noto
- * Devanagari subset; the bold/italic faces may be null and fall back.
+ * Fonts arrive already resolved (worker): `fonts.regular` is either the
+ * non-embedded base-14 Helvetica (pure-WinAnsi docs — bold/italic keys
+ * alongside) or the single Noto Devanagari face (bold/italic then null
+ * and every style falls back — honest).
  */
 
-import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
-import { rgb, type RGB } from "pdf-lib";
+import type { CreateContext, CreatePage, StampFontKey } from "@/lib/own/pdf";
+
+import {
+  faceOpts,
+  faceWidth,
+  rgb,
+  type ConvertFace,
+  type RGB,
+} from "../convert-common/face";
 
 import type { RtfColor, RtfDoc, RtfPara, RtfRun } from "./model";
 
@@ -59,17 +67,21 @@ const COL_TEXT: RGB = rgb(0.09, 0.09, 0.09);
 /* Painter                                                              */
 /* ------------------------------------------------------------------ */
 
+/** The four style slots as converter faces (P6-m): std mode fills every
+ *  key with a base-14 face; noto mode routes EVERYTHING to the single
+ *  embedded ttf (Regular) and nulls the rest — matching the old
+ *  null-fallback semantics exactly. */
 export interface RtfFonts {
-  regular: PDFFont;
-  bold: PDFFont | null;
-  italic: PDFFont | null;
-  boldItalic: PDFFont | null;
+  regular: ConvertFace;
+  bold: StampFontKey | null;
+  italic: StampFontKey | null;
+  boldItalic: StampFontKey | null;
 }
 
 class Painter {
-  readonly pdfDoc: PDFDocument;
+  readonly pdfDoc: CreateContext;
   readonly fonts: RtfFonts;
-  readonly pages: PDFPage[] = [];
+  readonly pages: CreatePage[] = [];
   readonly pageW: number;
   readonly pageH: number;
   readonly marginL: number;
@@ -77,11 +89,11 @@ class Painter {
   readonly marginT: number;
   readonly marginB: number;
   readonly contentW: number;
-  page: PDFPage;
+  page: CreatePage;
   y!: number;
 
   constructor(
-    pdfDoc: PDFDocument,
+    pdfDoc: CreateContext,
     fonts: RtfFonts,
     pageW: number,
     pageH: number,
@@ -99,8 +111,8 @@ class Painter {
     this.page = this.newPage();
   }
 
-  newPage(): PDFPage {
-    this.page = this.pdfDoc.addPage([this.pageW, this.pageH]);
+  newPage(): CreatePage {
+    this.page = this.pdfDoc.addPage(this.pageW, this.pageH);
     this.pages.push(this.page);
     this.y = this.pageH - this.marginT;
     return this.page;
@@ -111,17 +123,19 @@ class Painter {
     if (this.y - need < this.marginB) this.newPage();
   }
 
-  fontFor(bold: boolean, italic: boolean): PDFFont {
+  fontFor(bold: boolean, italic: boolean): ConvertFace {
     const f = this.fonts;
-    if (bold && italic && f.boldItalic) return f.boldItalic;
-    if (bold && f.bold) return f.bold;
-    if (italic && f.italic) return f.italic;
+    // noto mode nulls the styled slots — every style falls back to the
+    // single embedded Regular face (the old null-fallback semantics).
+    if (bold && italic && f.boldItalic) return { std: f.boldItalic };
+    if (bold && f.bold) return { std: f.bold };
+    if (italic && f.italic) return { std: f.italic };
     return f.regular;
   }
 
   width(text: string, size: number, bold: boolean, italic: boolean): number {
     if (!text) return 0;
-    return this.fontFor(bold, italic).widthOfTextAtSize(text, size);
+    return faceWidth(this.pdfDoc, this.fontFor(bold, italic), text, size);
   }
 
   /** Baseline-aligned draw at (x, yTop) — the house text() convention. */
@@ -136,14 +150,15 @@ class Painter {
     color: RtfColor | undefined
   ): void {
     if (!s) return;
-    this.page.drawText(s, {
+    this.page.drawText({
       x,
       y: yTop - baseline,
+      text: s,
       size,
-      font: this.fontFor(bold, italic),
       color: color
         ? rgb(color.r / 255, color.g / 255, color.b / 255)
         : COL_TEXT,
+      ...faceOpts(this.fontFor(bold, italic)),
     });
   }
 
@@ -513,11 +528,11 @@ export interface RtfRenderReport {
 
 /**
  * Paint the whole document into `pdfDoc` (pages added as needed).
- * `fonts` must already be embedded (the 4 Helvetica faces OR the single
+ * `fonts` must already be resolved (the 4 Helvetica faces OR the single
  * Noto Devanagari subset — nulls fall back to the regular face).
  */
 export function drawRtfPdf(
-  pdfDoc: PDFDocument,
+  pdfDoc: CreateContext,
   fonts: RtfFonts,
   doc: RtfDoc,
   opts: RtfRenderOpts

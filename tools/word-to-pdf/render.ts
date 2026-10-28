@@ -17,7 +17,7 @@
  *    (w:br type="page" blocks). Consecutive breaks at a page top do
  *    not stack blank pages.
  *  - Images (audit R4-a): "image" blocks draw their pre-embedded
- *    PDFImage at the paragraph anchor — natural px-as-pt size capped to
+ *    image at the paragraph anchor — natural px-as-pt size capped to
  *    the content width and the full content height, aspect preserved,
  *    never upscaled, never split. Unresolvable relIds are counted
  *    honestly in the report (imagesSkipped), never silently dropped.
@@ -25,14 +25,21 @@
  *
  * Fonts arrive already embedded (worker): `font` is either the
  * non-embedded base-14 Helvetica (pure-WinAnsi docs) or the Noto
- * Devanagari subset; `boldFont` may be null — bold then falls back to
+ * Devanagari subset; `boldKey` may be null — bold then falls back to
  * the regular face. Justify renders as left (honest — word spacing is
  * not stretched); italic falls back to the regular face too (the recipe
  * embeds Regular + Bold only).
  */
 
-import type { PDFDocument, PDFFont, PDFImage, PDFPage } from "pdf-lib";
-import { rgb, type RGB } from "pdf-lib";
+import type { CreateContext, CreateImage, CreatePage, StampFontKey } from "@/lib/own/pdf";
+
+import {
+  faceOpts,
+  faceWidth,
+  rgb,
+  type ConvertFace,
+  type RGB,
+} from "../convert-common/face";
 
 import type {
   DocxImageBlock,
@@ -92,27 +99,27 @@ const COL_BORDER: RGB = rgb(0.62, 0.62, 0.62);
 /* ------------------------------------------------------------------ */
 
 class Painter {
-  readonly pdfDoc: PDFDocument;
-  readonly font: PDFFont;
-  readonly boldFont: PDFFont | null;
-  readonly pages: PDFPage[] = [];
+  readonly pdfDoc: CreateContext;
+  readonly font: ConvertFace;
+  readonly boldKey: StampFontKey | null;
+  readonly pages: CreatePage[] = [];
   readonly pageW: number;
   readonly pageH: number;
   readonly margin: number;
   readonly contentW: number;
-  page: PDFPage;
+  page: CreatePage;
   y!: number;
 
   constructor(
-    pdfDoc: PDFDocument,
-    font: PDFFont,
-    boldFont: PDFFont | null,
+    pdfDoc: CreateContext,
+    font: ConvertFace,
+    boldKey: StampFontKey | null,
     pageSize: "a4" | "letter",
     marginKind: "normal" | "narrow"
   ) {
     this.pdfDoc = pdfDoc;
     this.font = font;
-    this.boldFont = boldFont;
+    this.boldKey = boldKey;
     const [w, h] = PAGE_SIZES[pageSize];
     this.pageW = w;
     this.pageH = h;
@@ -121,8 +128,8 @@ class Painter {
     this.page = this.newPage();
   }
 
-  newPage(): PDFPage {
-    this.page = this.pdfDoc.addPage([this.pageW, this.pageH]);
+  newPage(): CreatePage {
+    this.page = this.pdfDoc.addPage(this.pageW, this.pageH);
     this.pages.push(this.page);
     this.y = this.pageH - this.margin;
     return this.page;
@@ -133,13 +140,16 @@ class Painter {
     if (this.y - need < this.margin) this.newPage();
   }
 
-  fontFor(bold: boolean): PDFFont {
-    return bold && this.boldFont ? this.boldFont : this.font;
+  fontFor(bold: boolean): ConvertFace {
+    // Devanagari mode has no bold variant — hierarchy from size.
+    return bold && !this.font.ttf && this.boldKey
+      ? { std: this.boldKey }
+      : this.font;
   }
 
   width(text: string, size: number, bold: boolean): number {
     if (!text) return 0;
-    return this.fontFor(bold).widthOfTextAtSize(text, size);
+    return faceWidth(this.pdfDoc, this.fontFor(bold), text, size);
   }
 
   /** Baseline-aligned draw at (x, yTop) — the house text() convention. */
@@ -152,12 +162,13 @@ class Painter {
     baseline: number
   ): void {
     if (!s) return;
-    this.page.drawText(s, {
+    this.page.drawText({
       x,
       y: yTop - baseline,
+      text: s,
       size,
-      font: this.fontFor(bold),
       color: COL_TEXT,
+      ...faceOpts(this.fontFor(bold)),
     });
   }
 }
@@ -537,7 +548,7 @@ function drawTable(p: Painter, blk: DocxTableBlock): void {
 function drawImageBlock(
   p: Painter,
   blk: DocxImageBlock,
-  images: Map<string, PDFImage>
+  images: Map<string, CreateImage>
 ): boolean {
   const img = images.get(blk.relId);
   if (!img) return false;
@@ -580,24 +591,24 @@ export interface DocxRenderReport {
 /**
  * Paint the whole document into `pdfDoc` (pages added as needed).
  * `font` must already be embedded (Helvetica standard OR the Noto
- * subset); `boldFont` may be null — bold text then falls back to the
+ * subset); `boldKey` may be null — bold text then falls back to the
  * regular face (Noto ships Regular only). `images` maps the doc's
- * image-block relIds to pre-embedded pdf-lib images (the worker embeds
+ * image-block relIds to pre-embedded images (the worker embeds
  * the media/* parts; audit R4-a) — image blocks with no entry are
  * counted as honest skips in the report.
  */
 export function drawDocxPdf(
-  pdfDoc: PDFDocument,
-  font: PDFFont,
-  boldFont: PDFFont | null,
+  pdfDoc: CreateContext,
+  font: ConvertFace,
+  boldKey: StampFontKey | null,
   doc: ParsedDoc,
   opts: DocxRenderOpts,
-  images: Map<string, PDFImage> = new Map()
+  images: Map<string, CreateImage> = new Map()
 ): DocxRenderReport {
   const p = new Painter(
     pdfDoc,
     font,
-    boldFont,
+    boldKey,
     opts.pageSize === "letter" ? "letter" : "a4",
     opts.margin === "narrow" ? "narrow" : "normal"
   );

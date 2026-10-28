@@ -5,9 +5,11 @@
  * House conventions: REAL fixtures built by the tool's own sample
  * builders (fflate zipSync, mimetype first + stored), node:zlib as the
  * UNZIP oracle (NOT fflate — inflateRawSync for the raw-deflate entries
- * fflate writes), real renders through the worker's exact render.ts,
- * parse-level font asserts on reload, relative imports without .ts,
- * process.exit at the end.
+ * fflate writes) with the raw-stream literal fallback in the PDF text
+ * reader (OUR engine's page contents ride UNCOMPRESSED), real renders
+ * through the worker's exact render.ts on the OWN engine, pdf-lib used
+ * ONLY as the reload/parse ORACLE (page counts, font dumps), relative
+ * imports without .ts, process.exit at the end.
  *
  * Run: bun scripts/smoke-odt-to-pdf.ts
  */
@@ -15,8 +17,9 @@ import "regenerator-runtime/runtime";
 import { readFileSync } from "node:fs";
 import { inflateRawSync } from "node:zlib";
 
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+import { PDFDocument } from "pdf-lib";
+import { CreateContext, type StampFontKey } from "../src/lib/own/pdf";
+import type { ConvertFace } from "../tools/convert-common/face";
 import { zipSync, strToU8 } from "../src/lib/own/zip/index";
 
 import {
@@ -110,7 +113,10 @@ function inflatedText(bytes: Uint8Array): string {
     try {
       out += inflateSync(Buffer.from(raw.slice(start, e), "latin1")).toString("latin1");
     } catch {
-      /* non-flate stream (font) */
+      // Not deflated — OUR engine's page contents ride raw (classic xref,
+      // no /Filter): append them literally so text assertions still see
+      // the <HEX> Tj operators (the P6-i readContent recipe).
+      out += raw.slice(start, e);
     }
     idx = e + 9;
   }
@@ -119,8 +125,8 @@ function inflatedText(bytes: Uint8Array): string {
 
 import { inflateSync } from "node:zlib";
 
-/** pdf-lib emits text as hex tokens (<...> Tj) — literal, exact-token
- *  or bare byte-sequence match. */
+/** pdf-lib and OUR engine both emit text as hex tokens (<...> Tj) —
+ *  literal, exact-token or bare byte-sequence match. */
 function hasText(stream: string, s: string): boolean {
   if (stream.includes(s)) return true;
   const hex = Buffer.from(s, "latin1").toString("hex").toUpperCase();
@@ -138,21 +144,22 @@ async function render(
   opts: { letter?: boolean; narrow?: boolean } = {}
 ): Promise<{ bytes: Uint8Array; pages: number }> {
   const doc = parseOdt(odfBytes);
-  const pdfDoc = await PDFDocument.create();
-  let font: PDFFont;
-  let boldFont: PDFFont | null = null;
+  // The worker's exact recipe on the OWN engine (P6-m): needsNoto →
+  // std keys or embedTtf → drawOdfPdf → write().
+  const pdfDoc = CreateContext.create();
+  let font: ConvertFace;
+  let boldKey: StampFontKey | null = null;
   if (noto) {
-    pdfDoc.registerFontkit(fontkit);
-    font = await pdfDoc.embedFont(notoBytes, { subset: true });
+    font = { ttf: pdfDoc.embedTtf(notoBytes) };
   } else {
-    font = pdfDoc.embedStandardFont(StandardFonts.Helvetica);
-    boldFont = pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+    font = { std: "helvetica" };
+    boldKey = "helveticaBold";
   }
-  drawOdfPdf(pdfDoc, font, boldFont, doc, {
+  drawOdfPdf(pdfDoc, font, boldKey, doc, {
     pageSize: opts.letter ? "letter" : "a4",
     margin: opts.narrow ? "narrow" : "normal",
   });
-  const bytes = await pdfDoc.save();
+  const bytes = pdfDoc.write();
   const reloaded = await PDFDocument.load(bytes);
   return { bytes, pages: reloaded.getPageCount() };
 }

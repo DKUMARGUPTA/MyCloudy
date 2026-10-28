@@ -28,15 +28,22 @@
  *    charts and SmartArt from the source deck are NEVER drawn (honest
  *    limit, see config.ts).
  *
- * Fonts arrive already embedded (worker): `font` is either the
+ * Fonts arrive already resolved (worker): `font` is either the
  * non-embedded base-14 Helvetica (pure-WinAnsi decks) or the Noto
- * Devanagari subset; `boldFont` may be null — bold then falls back to
+ * Devanagari subset; `boldKey` may be null — bold then falls back to
  * the regular face. Justify renders as left (honest — word spacing is
  * not stretched); italic falls back to the regular face too.
  */
 
-import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
-import { rgb, type RGB } from "pdf-lib";
+import type { CreateContext, CreatePage, StampFontKey } from "@/lib/own/pdf";
+
+import {
+  faceOpts,
+  faceWidth,
+  rgb,
+  type ConvertFace,
+  type RGB,
+} from "../convert-common/face";
 
 import type { ParsedPptx, PptRun, PptShape } from "./model";
 
@@ -124,28 +131,35 @@ export interface PptRenderReport {
 /* ------------------------------------------------------------------ */
 
 class Painter {
-  readonly pdfDoc: PDFDocument;
-  readonly font: PDFFont;
-  readonly boldFont: PDFFont | null;
+  readonly pdfDoc: CreateContext;
+  readonly font: ConvertFace;
+  readonly boldKey: StampFontKey | null;
 
-  constructor(pdfDoc: PDFDocument, font: PDFFont, boldFont: PDFFont | null) {
+  constructor(
+    pdfDoc: CreateContext,
+    font: ConvertFace,
+    boldKey: StampFontKey | null
+  ) {
     this.pdfDoc = pdfDoc;
     this.font = font;
-    this.boldFont = boldFont;
+    this.boldKey = boldKey;
   }
 
-  fontFor(bold: boolean): PDFFont {
-    return bold && this.boldFont ? this.boldFont : this.font;
+  fontFor(bold: boolean): ConvertFace {
+    // Devanagari mode has no bold variant — hierarchy from size.
+    return bold && !this.font.ttf && this.boldKey
+      ? { std: this.boldKey }
+      : this.font;
   }
 
   width(text: string, size: number, bold: boolean): number {
     if (!text) return 0;
-    return this.fontFor(bold).widthOfTextAtSize(text, size);
+    return faceWidth(this.pdfDoc, this.fontFor(bold), text, size);
   }
 
   /** Baseline-aligned draw at (x, yTop) — the house text() convention. */
   text(
-    page: PDFPage,
+    page: CreatePage,
     s: string,
     x: number,
     yTop: number,
@@ -155,12 +169,13 @@ class Painter {
     color: RGB
   ): void {
     if (!s) return;
-    page.drawText(s, {
+    page.drawText({
       x,
       y: yTop - baseline,
+      text: s,
       size,
-      font: this.fontFor(bold),
       color,
+      ...faceOpts(this.fontFor(bold)),
     });
   }
 }
@@ -358,7 +373,7 @@ interface BoxGeo {
  */
 function drawTextBox(
   p: Painter,
-  page: PDFPage,
+  page: CreatePage,
   shape: PptShape,
   box: BoxGeo,
   scale: number
@@ -442,18 +457,18 @@ function drawTextBox(
 
 /**
  * Paint the whole deck into `pdfDoc` (one page per slide + optional
- * notes pages). `font` must already be embedded (Helvetica standard OR
- * the Noto subset); `boldFont` may be null — bold text then falls back
+ * notes pages). `font` must already be resolved (Helvetica standard OR
+ * the Noto subset); `boldKey` may be null — bold text then falls back
  * to the regular face (Noto ships Regular only).
  */
 export function drawPptxPdf(
-  pdfDoc: PDFDocument,
-  font: PDFFont,
-  boldFont: PDFFont | null,
+  pdfDoc: CreateContext,
+  font: ConvertFace,
+  boldKey: StampFontKey | null,
   ppt: ParsedPptx,
   opts: PptRenderOpts
 ): PptRenderReport {
-  const p = new Painter(pdfDoc, font, boldFont);
+  const p = new Painter(pdfDoc, font, boldKey);
   const slideW = Math.max(32, ppt.slideW);
   const slideH = Math.max(32, ppt.slideH);
 
@@ -470,11 +485,11 @@ export function drawPptxPdf(
   const margin = MARGIN_PT[opts.margin];
 
   let overflowed = 0;
-  const pages: PDFPage[] = [];
+  const pages: CreatePage[] = [];
 
   /* ---------------- slide pages ---------------- */
   for (const slide of ppt.slides) {
-    const page = pdfDoc.addPage([pageW, pageH]);
+    const page = pdfDoc.addPage(pageW, pageH);
     pages.push(page);
     page.drawRectangle({
       x: 0,
@@ -528,7 +543,7 @@ export function drawPptxPdf(
   if (opts.notes) {
     for (let i = 0; i < ppt.slides.length; i += 1) {
       const slide = ppt.slides[i];
-      let page = pdfDoc.addPage([pageW, pageH]);
+      let page = pdfDoc.addPage(pageW, pageH);
       pages.push(page);
       notesPages += 1;
       page.drawRectangle({
@@ -558,7 +573,7 @@ export function drawPptxPdf(
         if (lines.length === 0) lines.push("");
         for (const line of lines) {
           if (y - NOTES_LH < margin) {
-            page = pdfDoc.addPage([pageW, pageH]);
+            page = pdfDoc.addPage(pageW, pageH);
             pages.push(page);
             notesPages += 1;
             page.drawRectangle({

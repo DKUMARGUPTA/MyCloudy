@@ -21,15 +21,22 @@
  *      width; wrapped cells with honest "…" clipping when one row would
  *      outgrow a page; hairline grid, row-wise pagination.
  *
- * Fonts arrive already embedded (worker): `font` is either the
+ * Fonts arrive already resolved (worker): `font` is either the
  * non-embedded base-14 Helvetica (pure-WinAnsi docs) or the Noto
- * Devanagari subset; `boldFont` may be null — bold then falls back to
+ * Devanagari face; `boldKey` may be null — bold then falls back to
  * the regular face. Every glyph is drawText — REAL selectable text;
  * images/drawings from the source document are NEVER drawn.
  */
 
-import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
-import { rgb, type RGB } from "pdf-lib";
+import type { CreateContext, CreatePage, StampFontKey } from "@/lib/own/pdf";
+
+import {
+  faceOpts,
+  faceWidth,
+  rgb,
+  type ConvertFace,
+  type RGB,
+} from "../convert-common/face";
 
 import type {
   OdfHeadingBlock,
@@ -98,27 +105,27 @@ const COL_HEADER_FILL: RGB = rgb(0.9, 0.91, 0.92);
 /* ------------------------------------------------------------------ */
 
 class Painter {
-  readonly pdfDoc: PDFDocument;
-  readonly font: PDFFont;
-  readonly boldFont: PDFFont | null;
-  readonly pages: PDFPage[] = [];
+  readonly pdfDoc: CreateContext;
+  readonly font: ConvertFace;
+  readonly boldKey: StampFontKey | null;
+  readonly pages: CreatePage[] = [];
   readonly pageW: number;
   readonly pageH: number;
   readonly margin: number;
   readonly contentW: number;
-  page: PDFPage;
+  page: CreatePage;
   y!: number;
 
   constructor(
-    pdfDoc: PDFDocument,
-    font: PDFFont,
-    boldFont: PDFFont | null,
+    pdfDoc: CreateContext,
+    font: ConvertFace,
+    boldKey: StampFontKey | null,
     pageSize: "a4" | "letter",
     marginKind: "normal" | "narrow"
   ) {
     this.pdfDoc = pdfDoc;
     this.font = font;
-    this.boldFont = boldFont;
+    this.boldKey = boldKey;
     const [w, h] = PAGE_SIZES[pageSize];
     this.pageW = w;
     this.pageH = h;
@@ -127,8 +134,8 @@ class Painter {
     this.page = this.newPage();
   }
 
-  newPage(): PDFPage {
-    this.page = this.pdfDoc.addPage([this.pageW, this.pageH]);
+  newPage(): CreatePage {
+    this.page = this.pdfDoc.addPage(this.pageW, this.pageH);
     this.pages.push(this.page);
     this.y = this.pageH - this.margin;
     return this.page;
@@ -139,13 +146,16 @@ class Painter {
     if (this.y - need < this.margin) this.newPage();
   }
 
-  fontFor(bold: boolean): PDFFont {
-    return bold && this.boldFont ? this.boldFont : this.font;
+  fontFor(bold: boolean): ConvertFace {
+    // Devanagari mode has no bold variant — hierarchy comes from size.
+    return bold && !this.font.ttf && this.boldKey
+      ? { std: this.boldKey }
+      : this.font;
   }
 
   width(text: string, size: number, bold: boolean): number {
     if (!text) return 0;
-    return this.fontFor(bold).widthOfTextAtSize(text, size);
+    return faceWidth(this.pdfDoc, this.fontFor(bold), text, size);
   }
 
   /** Baseline-aligned draw at (x, yTop) — the house text() convention. */
@@ -158,12 +168,13 @@ class Painter {
     baseline: number
   ): void {
     if (!s) return;
-    this.page.drawText(s, {
+    this.page.drawText({
       x,
       y: yTop - baseline,
+      text: s,
       size,
-      font: this.fontFor(bold),
       color: COL_TEXT,
+      ...faceOpts(this.fontFor(bold)),
     });
   }
 }
@@ -633,9 +644,9 @@ function clipLines(
 }
 
 function drawSheets(
-  pdfDoc: PDFDocument,
-  font: PDFFont,
-  boldFont: PDFFont | null,
+  pdfDoc: CreateContext,
+  font: ConvertFace,
+  boldKey: StampFontKey | null,
   doc: Extract<ParsedOdf, { kind: "sheets" }>,
   opts: OdfRenderOpts
 ): OdfRenderReport {
@@ -645,24 +656,43 @@ function drawSheets(
   const contentWidth = pageW - 2 * margin;
   const tableTopDrop = 54;
   const sheetNameDrop = 34;
-  const measure: Measure = (text, size) => font.widthOfTextAtSize(text, size);
+  const measure: Measure = (text, size) =>
+    faceWidth(pdfDoc, font, text, size);
   const tableTop = pageH - tableTopDrop;
   const bottom = margin;
   let pagesDrawn = 0;
 
+  const boldFace: ConvertFace | null = !font.ttf && boldKey
+    ? { std: boldKey }
+    : null;
+
   const drawCellText = (
-    page: PDFPage,
+    page: CreatePage,
     text: string,
     x: number,
     y: number,
     bold: boolean
   ): void => {
     if (text === "") return;
-    const face = bold && boldFont ? boldFont : font;
-    page.drawText(text, { x, y, size: SHEET_BODY_SIZE, font: face, color: COL_TEXT });
-    if (bold && !boldFont) {
+    const face = bold && boldFace ? boldFace : font;
+    page.drawText({
+      x,
+      y,
+      text,
+      size: SHEET_BODY_SIZE,
+      color: COL_TEXT,
+      ...faceOpts(face),
+    });
+    if (bold && !boldFace) {
       // Noto ships Regular only — the invoice double-draw faux-bold
-      page.drawText(text, { x: x + 0.3, y, size: SHEET_BODY_SIZE, font: face, color: COL_TEXT });
+      page.drawText({
+        x: x + 0.3,
+        y,
+        text,
+        size: SHEET_BODY_SIZE,
+        color: COL_TEXT,
+        ...faceOpts(face),
+      });
     }
   };
 
@@ -681,15 +711,16 @@ function drawSheets(
     const tableWidth = Math.min(acc, contentWidth);
 
     // ---- first page of the sheet: name header + rule ----
-    const page = pdfDoc.addPage([pageW, pageH]);
+    const page = pdfDoc.addPage(pageW, pageH);
     pagesDrawn += 1;
-    const nameFace = boldFont ?? font;
-    page.drawText(sheet.name, {
+    const nameFace = boldFace ?? font;
+    page.drawText({
       x: x0,
       y: pageH - sheetNameDrop,
+      text: sheet.name,
       size: SHEET_NAME_SIZE,
-      font: nameFace,
       color: COL_TEXT,
+      ...faceOpts(nameFace),
     });
     page.drawLine({
       start: { x: x0, y: pageH - sheetNameDrop - 8 },
@@ -725,7 +756,7 @@ function drawSheets(
     let y = tableTop;
     let pageTopY = tableTop;
     let pageIdx = 0;
-    const pages: PDFPage[] = [page];
+    const pages: CreatePage[] = [page];
     let justBroke = false;
 
     const finishPage = (): void => {
@@ -747,7 +778,7 @@ function drawSheets(
       }
     };
 
-    const drawHeaderRow = (target: PDFPage, top: number): number => {
+    const drawHeaderRow = (target: CreatePage, top: number): number => {
       if (headerCells === null) return top;
       const h = headerH;
       target.drawRectangle({
@@ -792,7 +823,7 @@ function drawSheets(
 
       if (y - rowH < bottom && y < tableTop - 0.5 && !justBroke) {
         finishPage();
-        const next = pdfDoc.addPage([pageW, pageH]);
+        const next = pdfDoc.addPage(pageW, pageH);
         pagesDrawn += 1;
         pages.push(next);
         pageIdx += 1;
@@ -831,7 +862,7 @@ function drawSheets(
 
   if (pagesDrawn === 0) {
     // defensive: a workbook with no renderable sheets still yields one page
-    pdfDoc.addPage([pageW, pageH]);
+    pdfDoc.addPage(pageW, pageH);
     pagesDrawn = 1;
   }
   return { pages: pagesDrawn };
@@ -852,24 +883,24 @@ export interface OdfRenderReport {
 
 /**
  * Paint the whole document into `pdfDoc` (pages added as needed).
- * `font` must already be embedded (Helvetica standard OR the Noto
- * subset); `boldFont` may be null — bold text then falls back to the
- * regular face (Noto ships Regular only).
+ * `font` must already be resolved (Helvetica standard OR the Noto
+ * Devanagari face); `boldKey` may be null — bold text then falls back
+ * to the regular face (Noto ships Regular only).
  */
 export function drawOdfPdf(
-  pdfDoc: PDFDocument,
-  font: PDFFont,
-  boldFont: PDFFont | null,
+  pdfDoc: CreateContext,
+  font: ConvertFace,
+  boldKey: StampFontKey | null,
   doc: ParsedOdf,
   opts: OdfRenderOpts
 ): OdfRenderReport {
   if (doc.kind === "sheets") {
-    return drawSheets(pdfDoc, font, boldFont, doc, opts);
+    return drawSheets(pdfDoc, font, boldKey, doc, opts);
   }
   const p = new Painter(
     pdfDoc,
     font,
-    boldFont,
+    boldKey,
     opts.pageSize === "letter" ? "letter" : "a4",
     opts.margin === "narrow" ? "narrow" : "normal"
   );

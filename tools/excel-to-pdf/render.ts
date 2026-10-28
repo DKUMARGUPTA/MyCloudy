@@ -1,9 +1,10 @@
 /**
  * Excel to PDF renderer (RB1-c) — the vector table painter.
  *
- * Pure pdf-lib drawing, synchronous by design: fonts arrive already
- * embedded by the caller (Helvetica/HelveticaBold for WinAnsi content,
- * the Noto Sans Devanagari subset when needsNoto flipped) — exactly
+ * Pure OWN-engine drawing (src/lib/own/pdf, P6-m), synchronous by
+ * design: the face arrives already picked by the caller (the base-14
+ * Helvetica/HelveticaBold keys for WinAnsi content, the embedded
+ * Noto Sans Devanagari subset when needsNoto flipped) — exactly
  * the create-resume contract, so the smoke script can drive the very
  * same code headless.
  *
@@ -27,8 +28,15 @@
  * than crashing WinAnsi encoding).
  */
 
-import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
-import { rgb, type RGB } from "pdf-lib";
+import type { CreateContext, CreatePage, StampFontKey } from "@/lib/own/pdf";
+
+import {
+  faceOpts,
+  faceWidth,
+  rgb,
+  type ConvertFace,
+  type RGB,
+} from "../convert-common/face";
 
 import {
   computeColumnWidths,
@@ -216,17 +224,18 @@ function layoutRow(
 }
 
 function layoutSheet(
+  pdfDoc: CreateContext,
   sheet: XlsxSheet,
   contentWidth: number,
   contentHeight: number,
   opts: WorkbookRenderOpts,
-  font: PDFFont,
-  boldFont: PDFFont | null
+  font: ConvertFace,
+  boldKey: StampFontKey | null
 ): SheetLayout {
   const measure: Measure = (text, size) =>
-    font.widthOfTextAtSize(text, size);
+    faceWidth(pdfDoc, font, text, size);
   const boldMeasure: Measure = (text, size) =>
-    (boldFont ?? font).widthOfTextAtSize(text, size);
+    faceWidth(pdfDoc, fontFor(font, boldKey, true), text, size);
 
   const natural = computeColumnWidths(sheet);
   const naturalW = natural.reduce((a, b) => a + b, 0);
@@ -275,34 +284,44 @@ function layoutSheet(
 /* Painter                                                             */
 /* ------------------------------------------------------------------ */
 
+/** The face for a bold request — std docs promote to the bold key;
+ *  the Noto face ships Regular only (faux-bold at draw time). */
+function fontFor(
+  font: ConvertFace,
+  boldKey: StampFontKey | null,
+  bold: boolean
+): ConvertFace {
+  return bold && !font.ttf && boldKey ? { std: boldKey } : font;
+}
+
 function drawTextSafe(
-  page: PDFPage,
+  page: CreatePage,
   text: string,
   x: number,
   y: number,
   size: number,
-  font: PDFFont,
-  boldFont: PDFFont | null,
+  font: ConvertFace,
+  boldKey: StampFontKey | null,
   bold: boolean | undefined,
   color: RGB
 ): void {
   if (text === "") return;
-  const face = bold && boldFont ? boldFont : font;
-  page.drawText(text, { x, y, size, font: face, color });
-  if (bold && !boldFont) {
+  const face = fontFor(font, boldKey, bold === true);
+  page.drawText({ x, y, text, size, color, ...faceOpts(face) });
+  if (bold === true && (!boldKey || font.ttf)) {
     // Noto ships Regular only — the invoice double-draw faux-bold
-    page.drawText(text, { x: x + 0.3, y, size, font: face, color });
+    page.drawText({ x: x + 0.3, y, text, size, color, ...faceOpts(face) });
   }
 }
 
 function drawRowContent(
-  page: PDFPage,
+  page: CreatePage,
   layout: SheetLayout,
   row: RowLayout,
   rowTop: number,
   x0: number,
-  font: PDFFont,
-  boldFont: PDFFont | null,
+  font: ConvertFace,
+  boldKey: StampFontKey | null,
   headerStyle: boolean
 ): number {
   // fills first (header fill / zebra)
@@ -337,7 +356,7 @@ function drawRowContent(
         rowTop - FIRST_BASELINE - i * LINE_H,
         headerStyle ? HEADER_SIZE : BODY_SIZE,
         font,
-        boldFont,
+        boldKey,
         bold,
         COL_TEXT
       );
@@ -360,13 +379,15 @@ function drawRowContent(
 
 /**
  * Paints every sheet of `wb` into `pdfDoc` (one fresh page per sheet,
- * continuation pages as the rows demand). Synchronous — the fonts are
- * caller-embedded. Returns the total page count.
+ * continuation pages as the rows demand). Synchronous — the face is
+ * caller-picked (base-14 keys or the embedded Noto subset); `boldKey`
+ * may be null — bold cells then fall back to the regular face with the
+ * faux-bold double-draw. Returns the total page count.
  */
 export function drawWorkbookPdf(
-  pdfDoc: PDFDocument,
-  font: PDFFont,
-  boldFont: PDFFont | null,
+  pdfDoc: CreateContext,
+  font: ConvertFace,
+  boldKey: StampFontKey | null,
   wb: ParsedWorkbook,
   opts: WorkbookRenderOpts
 ): WorkbookRenderReport {
@@ -382,17 +403,18 @@ export function drawWorkbookPdf(
 
   for (let s = 0; s < total; s++) {
     const layout = layoutSheet(
+      pdfDoc,
       wb.sheets[s],
       contentWidth,
       contentHeight,
       opts,
       font,
-      boldFont
+      boldKey
     );
     const tableTop = pageH - TABLE_TOP_DROP;
 
-    const newPage = (): PDFPage => {
-      const page = pdfDoc.addPage([pageW, pageH]);
+    const newPage = (): CreatePage => {
+      const page = pdfDoc.addPage(pageW, pageH);
       pagesDrawn++;
       return page;
     };
@@ -406,7 +428,7 @@ export function drawWorkbookPdf(
       pageH - SHEET_NAME_DROP,
       SHEET_NAME_SIZE,
       font,
-      boldFont,
+      boldKey,
       true,
       COL_TEXT
     );
@@ -419,7 +441,7 @@ export function drawWorkbookPdf(
 
     let y = tableTop;
     let pageTopY = tableTop;
-    const pages: PDFPage[] = [page];
+    const pages: CreatePage[] = [page];
     let pageIdx = 0;
     let justBroke = false;
 
@@ -444,7 +466,7 @@ export function drawWorkbookPdf(
       }
     };
 
-    const drawHeaderRow = (target: PDFPage, top: number): number => {
+    const drawHeaderRow = (target: CreatePage, top: number): number => {
       if (!layout.header) return top;
       return drawRowContent(
         target,
@@ -453,7 +475,7 @@ export function drawWorkbookPdf(
         top,
         x0,
         font,
-        boldFont,
+        boldKey,
         true
       );
     };
@@ -479,7 +501,7 @@ export function drawWorkbookPdf(
       } else {
         justBroke = false;
       }
-      y = drawRowContent(pages[pageIdx], layout, row, y, x0, font, boldFont, false);
+      y = drawRowContent(pages[pageIdx], layout, row, y, x0, font, boldKey, false);
     }
     finishPage();
 
@@ -487,21 +509,22 @@ export function drawWorkbookPdf(
     const footer = footerFmt
       .replace("{n}", String(s + 1))
       .replace("{m}", String(total));
-    const fw = font.widthOfTextAtSize(footer, FOOTER_SIZE);
+    const fw = faceWidth(pdfDoc, font, footer, FOOTER_SIZE);
     for (const p of pages) {
-      p.drawText(footer, {
+      p.drawText({
         x: (pageW - fw) / 2,
         y: FOOTER_Y,
+        text: footer,
         size: FOOTER_SIZE,
-        font,
         color: COL_MUTED,
+        ...faceOpts(font),
       });
     }
   }
 
   if (pagesDrawn === 0) {
     // defensive: a workbook with no renderable sheets still yields one page
-    pdfDoc.addPage([pageW, pageH]);
+    pdfDoc.addPage(pageW, pageH);
     pagesDrawn = 1;
   }
   return { pages: pagesDrawn };

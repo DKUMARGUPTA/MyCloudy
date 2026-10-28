@@ -2,8 +2,11 @@
  * Smoke: word-to-pdf (RB1-a) — .docx → PDF, 100% on-device.
  *
  * House conventions: real fixture built with fflate zipSync, node:zlib
- * inflate oracle for stream text, pdf-lib reload + parse-level asserts,
- * relative imports without .ts, process.exit at the end.
+ * inflate oracle for stream text (with the raw-literal fallback — our
+ * engine writes page contents UNCOMPRESSED), pdf-lib reload +
+ * parse-level asserts as the ORACLE ONLY (P6-m: the render itself is
+ * the OWN engine — CreateContext + ConvertFace), relative imports
+ * without .ts, process.exit at the end.
  *
  * Run: bun scripts/smoke-word-to-pdf.ts
  */
@@ -11,11 +14,12 @@ import "regenerator-runtime/runtime";
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 
-import { PDFDocument, StandardFonts, type PDFFont, type PDFImage } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+import { PDFDocument } from "pdf-lib";
+import { CreateContext, type CreateImage, type StampFontKey } from "../src/lib/own/pdf";
 import { unzipSync, zipSync, strToU8, type Zippable } from "../src/lib/own/zip/index";
 
-import { embedDocumentImage } from "../src/lib/pdf/embed-image";
+import { embedDocumentImageOwn } from "../src/lib/pdf/embed-image-own";
+import type { ConvertFace } from "../tools/convert-common/face";
 import { makeFixturePng } from "./fixture-png";
 import {
   MAX_IMAGES,
@@ -206,7 +210,10 @@ function inflatedText(bytes: Uint8Array): string {
     try {
       out += inflateSync(Buffer.from(raw.slice(start, e), "latin1")).toString("latin1");
     } catch {
-      /* non-flate stream (font) */
+      // Not deflated — OUR engine's page contents ride raw (classic xref,
+      // no /Filter): append them literally so text assertions still see
+      // the <HEX> Tj operators (the P6-i readContent recipe).
+      out += raw.slice(start, e);
     }
     idx = e + 9;
   }
@@ -324,19 +331,20 @@ interface RenderOut {
 }
 async function render(docxBytes: Uint8Array, noto: boolean, letter = false): Promise<RenderOut> {
   const parsed = parseDocx(docxBytes);
-  const pdfDoc = await PDFDocument.create();
-  let font: PDFFont;
-  let boldFont: PDFFont | null = null;
+  // The worker's exact recipe on the OWN engine (P6-m): needsNoto →
+  // std keys or embedTtf → drawDocxPdf → write().
+  const pdfDoc = CreateContext.create();
+  let font: ConvertFace;
+  let boldKey: StampFontKey | null = null;
   if (noto) {
-    pdfDoc.registerFontkit(fontkit);
-    font = await pdfDoc.embedFont(notoBytes, { subset: true });
+    font = { ttf: pdfDoc.embedTtf(notoBytes) };
   } else {
-    font = pdfDoc.embedStandardFont(StandardFonts.Helvetica);
-    boldFont = pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+    font = { std: "helvetica" };
+    boldKey = "helveticaBold";
   }
   // images (audit R4-a) — the worker's exact embed step: relIds → rels →
   // media/* zip parts → shared helper (original bytes under bun)
-  const images = new Map<string, PDFImage>();
+  const images = new Map<string, CreateImage>();
   if (parsed.blocks.some((b) => b.kind === "image")) {
     let zip: Record<string, Uint8Array> = {};
     try {
@@ -358,16 +366,16 @@ async function render(docxBytes: Uint8Array, noto: boolean, letter = false): Pro
       if (path === "") continue;
       const mediaBytes = lookupMediaEntry(zip, path);
       if (mediaBytes === undefined) continue;
-      const embedded = await embedDocumentImage(pdfDoc, mediaBytes);
+      const embedded = await embedDocumentImageOwn(pdfDoc, mediaBytes);
       if (embedded === null) continue;
       images.set(relId, embedded.image);
     }
   }
-  const report = drawDocxPdf(pdfDoc, font, boldFont, parsed, {
+  const report = drawDocxPdf(pdfDoc, font, boldKey, parsed, {
     pageSize: letter ? "letter" : "a4",
     margin: "normal",
   }, images);
-  const bytes = await pdfDoc.save();
+  const bytes = pdfDoc.write();
   const reloaded = await PDFDocument.load(bytes);
   return {
     bytes,

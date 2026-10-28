@@ -1,10 +1,10 @@
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
+import { CreateContext } from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { loadDevanagariBytes } from "../stamp-common/deva";
 import { needsNoto, outputBaseName, parseRtf, stats } from "./model";
 import { drawRtfPdf, type RtfFonts } from "./render";
 
@@ -19,10 +19,10 @@ import { drawRtfPdf, type RtfFonts } from "./render";
  *  2. font pick — pure-WinAnsi content embeds NO font at all (base-14
  *     Helvetica + Bold + Oblique + BoldOblique, all free), while ANY
  *     Devanagari char (incl. \uNNNN? escapes) switches to the
- *     self-hosted Noto Sans Devanagari (fontkit subset:true) — the
- *     create-resume/stamp-common recipe;
+ *     self-hosted Noto Sans Devanagari (OUR Type0/CIDFontType2 subsetter
+ *     + Indic shaper) — the create-resume/stamp-common recipe;
  *  3. drawRtfPdf — the exact render.ts the smoke script drives;
- *  4. save with producer "DocoPDF" and the localized file name.
+ *  4. write with producer "DocoPDF" and the localized file name.
  *
  * Options: pageSize ("auto"|"a4"|"letter"), margin
  * ("auto"|"normal"|"narrow") and locale ("en"|"hi" — the localized
@@ -82,26 +82,25 @@ async function run(request: WorkerRunRequest): Promise<void> {
     };
     const locale = String(request.options.locale) === "hi" ? "hi" : "en";
 
-    const pdfDoc = await PDFDocument.create();
+    const pdfDoc = CreateContext.create();
     let fonts: RtfFonts;
     if (needsNoto(doc)) {
       // Devanagari (or any non-WinAnsi) content → the embedded Noto
       // subset. OFL ships Regular only: every style renders regular
       // (hierarchy comes from size) — the honest Hindi answer.
-      const stampFonts = await loadStampFonts(pdfDoc, true);
-      const noto: PDFFont = stampFonts.fontFor("devanagari");
+      const notoBytes = await loadDevanagariBytes();
       fonts = {
-        regular: noto,
+        regular: { ttf: pdfDoc.embedTtf(notoBytes) },
         bold: null,
         italic: null,
         boldItalic: null,
       };
     } else {
       fonts = {
-        regular: pdfDoc.embedStandardFont(StandardFonts.Helvetica),
-        bold: pdfDoc.embedStandardFont(StandardFonts.HelveticaBold),
-        italic: pdfDoc.embedStandardFont(StandardFonts.HelveticaOblique),
-        boldItalic: pdfDoc.embedStandardFont(StandardFonts.HelveticaBoldOblique),
+        regular: { std: "helvetica" },
+        bold: "helveticaBold",
+        italic: "helveticaOblique",
+        boldItalic: "helveticaBoldOblique",
       };
     }
     post({ type: "progress", runId, pct: 45, stage: "processing" });
@@ -116,7 +115,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
     const outName = `${outputBaseName(file.name, locale)}.pdf`;
     const docStats = stats(doc);
-    const bytes2 = await pdfDoc.save();
+    const bytes2 = pdfDoc.write();
     post({
       type: "result",
       runId,

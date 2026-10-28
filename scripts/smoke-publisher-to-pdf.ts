@@ -50,8 +50,9 @@ import "regenerator-runtime/runtime";
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+import { PDFDocument } from "pdf-lib";
+import { CreateContext, type StampFontKey } from "../src/lib/own/pdf";
+import type { ConvertFace } from "../tools/convert-common/face";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 import {
@@ -279,18 +280,19 @@ async function renderDoc(
   reportPages: number;
   reloaded: PDFDocument;
 }> {
-  const pdfDoc = await PDFDocument.create();
-  let font: PDFFont;
-  let boldFont: PDFFont | null = null;
+  // The worker's exact recipe on the OWN engine (P6-m): needsNoto →
+  // std keys or embedTtf → drawPubPdf → write().
+  const pdfDoc = CreateContext.create();
+  let font: ConvertFace;
+  let boldKey: StampFontKey | null = null;
   if (needsNoto(doc)) {
-    pdfDoc.registerFontkit(fontkit);
-    font = await pdfDoc.embedFont(notoBytes, { subset: true });
+    font = { ttf: pdfDoc.embedTtf(notoBytes) };
   } else {
-    font = pdfDoc.embedStandardFont(StandardFonts.Helvetica);
-    boldFont = pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+    font = { std: "helvetica" };
+    boldKey = "helveticaBold";
   }
-  const report = drawPubPdf(pdfDoc, font, boldFont, doc, opts);
-  const bytes = await pdfDoc.save();
+  const report = drawPubPdf(pdfDoc, font, boldKey, doc, opts);
+  const bytes = pdfDoc.write();
   const reloaded = await PDFDocument.load(bytes);
   return {
     bytes,
@@ -1046,14 +1048,12 @@ console.log("── 5. REAL renders (the worker's exact engine path) ───�
   // overflows in Helvetica-Bold must wrap — pre-fix it measured with the
   // regular face and drew one ~507pt line 23pt past the right margin.
   {
-    const probe = await PDFDocument.create();
-    const helv = probe.embedStandardFont(StandardFonts.Helvetica);
-    const helvBold = probe.embedStandardFont(StandardFonts.HelveticaBold);
+    const probe = CreateContext.create();
     const contentW = PAGE_SIZES.a4[0] - MARGIN_PT.normal * 2;
     let n = 1;
-    while (helv.widthOfTextAtSize("A".repeat(n + 1), 27) <= contentW) n += 1;
-    check("wrap vector: n fits the regular face at 27pt (heading 1 of base 18)", helv.widthOfTextAtSize("A".repeat(n), 27) <= contentW, n);
-    check("wrap vector: n overflows the BOLD face (why the measuring face matters)", helvBold.widthOfTextAtSize("A".repeat(n), 27) > contentW, n);
+    while (probe.measure("A".repeat(n + 1), "helvetica", 27) <= contentW) n += 1;
+    check("wrap vector: n fits the regular face at 27pt (heading 1 of base 18)", probe.measure("A".repeat(n), "helvetica", 27) <= contentW, n);
+    check("wrap vector: n overflows the BOLD face (why the measuring face matters)", probe.measure("A".repeat(n), "helveticaBold", 27) > contentW, n);
     check("wrap vector: classifyHeading sees the caps line as a heading", classifyHeading("A".repeat(n)) === 1);
     const wdoc = await parsePub(
       buildCfb({

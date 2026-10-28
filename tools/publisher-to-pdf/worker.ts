@@ -1,12 +1,16 @@
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
+import {
+  CreateContext,
+  type StampFontKey,
+} from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { loadDevanagariBytes } from "../stamp-common/deva";
 import { needsNoto, outputPdfName, parsePub, PubError } from "./model";
 import { drawPubPdf } from "./render";
+import type { ConvertFace } from "../convert-common/face";
 
 /**
  * Publisher to PDF worker (RB4-e) — device-only, zero network beyond the
@@ -21,9 +25,10 @@ import { drawPubPdf } from "./render";
  *  3. font pick — pure-WinAnsi content embeds NO font at all (base-14
  *     Helvetica + HelveticaBold for heuristic headings), while ANY
  *     Devanagari character switches to the self-hosted Noto Sans
- *     Devanagari (fontkit subset:true) — the create-resume recipe;
+ *     Devanagari (OUR Type0/CIDFontType2 subsetter) — the create-resume
+ *     recipe;
  *  4. drawPubPdf — the exact render.ts the smoke script drives;
- *  5. save with producer/creator "DocoPDF" and the localized name.
+ *  5. write with producer/creator "DocoPDF" and the localized name.
  *
  * Options: pageSize ("a4"|"letter"), margin ("normal"|"narrow"),
  * fontSize (8–18, default 10.5) and fileWord (the localized fallback
@@ -87,22 +92,22 @@ async function run(request: WorkerRunRequest): Promise<void> {
       .slice(0, 60)
       .trim();
 
-    const pdfDoc = await PDFDocument.create();
-    let font: PDFFont;
-    let boldFont: PDFFont | null = null;
+    const pdfDoc = CreateContext.create();
+    let font: ConvertFace;
+    let boldKey: StampFontKey | null = null;
     if (needsNoto(doc)) {
       // Devanagari (or any non-WinAnsi) content → the embedded Noto
       // subset. OFL ships Regular only: heuristic headings keep their
       // size hierarchy, weight falls back to the regular face.
-      const fonts = await loadStampFonts(pdfDoc, true);
-      font = fonts.fontFor("devanagari");
+      const bytes = await loadDevanagariBytes();
+      font = { ttf: pdfDoc.embedTtf(bytes) };
     } else {
-      font = pdfDoc.embedStandardFont(StandardFonts.Helvetica);
-      boldFont = pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+      font = { std: "helvetica" };
+      boldKey = "helveticaBold";
     }
     post({ type: "progress", runId, pct: 45, stage: "processing" });
 
-    const report = drawPubPdf(pdfDoc, font, boldFont, doc, {
+    const report = drawPubPdf(pdfDoc, font, boldKey, doc, {
       ...opts,
       baseSize,
     });
@@ -113,7 +118,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     pdfDoc.setTitle(outputPdfName(file.name, fileWord).replace(/\.pdf$/i, ""));
     pdfDoc.setCreationDate(new Date());
 
-    const outBytes = await pdfDoc.save();
+    const outBytes = pdfDoc.write();
     post({
       type: "result",
       runId,

@@ -1,10 +1,11 @@
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
+import { CreateContext, type StampFontKey } from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { loadDevanagariBytes } from "../stamp-common/deva";
+import type { ConvertFace } from "../convert-common/face";
 import {
   MAX_PPTX_BYTES,
   PptxParseError,
@@ -27,9 +28,10 @@ import { drawPptxPdf } from "./render";
  *  2. font pick — one decision for the whole deck: pure-WinAnsi content
  *     embeds NO font at all (base-14 Helvetica + HelveticaBold), while
  *     ANY Devanagari char (or a Devanagari notes heading) switches to
- *     the self-hosted Noto Sans Devanagari (fontkit subset:true);
+ *     the self-hosted Noto Sans Devanagari (OUR Type0/CIDFontType2
+ *     subsetter + Indic shaper);
  *  3. drawPptxPdf — the exact render.ts the smoke script drives;
- *  4. save with producer/creator "DocoPDF" and the localized file name.
+ *  4. write with producer/creator "DocoPDF" and the localized file name.
  *
  * Options: pageSize ("slide-native"|"a4"|"letter"), margin
  * ("normal"|"narrow"), notes (speaker-notes pages), fit (fill the page
@@ -122,22 +124,22 @@ async function run(request: WorkerRunRequest): Promise<void> {
     };
     const lang = request.options.lang === "hi" ? "hi" : "en";
 
-    const pdfDoc = await PDFDocument.create();
-    let font: PDFFont;
-    let boldFont: PDFFont | null = null;
+    const pdfDoc = CreateContext.create();
+    let font: ConvertFace;
+    let boldKey: StampFontKey | null = null;
     if (needsNoto(ppt, opts.notes ? opts.notesHeadingFmt : "")) {
       // Devanagari (or any non-WinAnsi) content → the embedded Noto
       // subset. OFL ships Regular only: hierarchy comes from size, and
       // bold text falls back to the regular face.
-      const fonts = await loadStampFonts(pdfDoc, true);
-      font = fonts.fontFor("devanagari");
+      const notoBytes = await loadDevanagariBytes();
+      font = { ttf: pdfDoc.embedTtf(notoBytes) };
     } else {
-      font = pdfDoc.embedStandardFont(StandardFonts.Helvetica);
-      boldFont = pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+      font = { std: "helvetica" };
+      boldKey = "helveticaBold";
     }
     post({ type: "progress", runId, pct: 45, stage: "processing" });
 
-    const report = drawPptxPdf(pdfDoc, font, boldFont, ppt, opts);
+    const report = drawPptxPdf(pdfDoc, font, boldKey, ppt, opts);
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
     const baseName = outputBaseName(file.name, lang);
@@ -146,7 +148,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     pdfDoc.setTitle(baseName);
     pdfDoc.setCreationDate(new Date());
 
-    const outBytes = await pdfDoc.save();
+    const outBytes = pdfDoc.write();
     post({
       type: "result",
       runId,

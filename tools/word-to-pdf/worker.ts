@@ -1,12 +1,16 @@
-import { PDFDocument, StandardFonts, type PDFFont, type PDFImage } from "pdf-lib";
+import {
+  CreateContext,
+  type CreateImage,
+  type StampFontKey,
+} from "@/lib/own/pdf";
 import { unzipSync } from "@/lib/own/zip";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { embedDocumentImage } from "@/lib/pdf/embed-image";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { embedDocumentImageOwn } from "@/lib/pdf/embed-image-own";
+import { loadDevanagariBytes } from "../stamp-common/deva";
 import {
   MAX_IMAGES,
   needsNoto,
@@ -18,6 +22,7 @@ import {
   type DocxImageBlock,
 } from "./model";
 import { drawDocxPdf } from "./render";
+import type { ConvertFace } from "../convert-common/face";
 
 /**
  * Word to PDF worker (RB1-a — 67th tool) — device-only, zero network
@@ -29,15 +34,16 @@ import { drawDocxPdf } from "./render";
  *     parseWordRun — full defensive clamp at the boundary;
  *  2. font pick — pure-WinAnsi content embeds NO font at all
  *     (base-14 Helvetica + HelveticaBold), while ANY Devanagari char
- *     switches to the self-hosted Noto Sans Devanagari (fontkit
- *     subset:true) — the create-resume/stamp-common recipe;
+ *     switches to the self-hosted Noto Sans Devanagari (OUR
+ *     Type0/CIDFontType2 subsetter + Indic shaper) — the
+ *     create-resume/publisher recipe;
  *  3. images (audit R4-a): every image block's relId resolves through
  *     document.xml.rels to its media/* zip part and embeds via the
  *     shared helper (original bytes, downscale only for oversized,
  *     ≤ MAX_IMAGES) — missing parts/unsupported formats degrade to an
  *     honest skip count, never a crash or a silent drop;
  *  4. drawDocxPdf — the exact render.ts the smoke script drives;
- *  5. save with producer "DocoPDF" and the localized file name.
+ *  5. write with producer "DocoPDF" and the localized file name.
  *
  * Options: pageSize ("a4"|"letter"), margin ("normal"|"narrow") and
  * fileWord (the localized fallback word for a nameless file).
@@ -86,23 +92,23 @@ async function run(request: WorkerRunRequest): Promise<void> {
       .slice(0, 60)
       .trim();
 
-    const pdfDoc = await PDFDocument.create();
-    let font: PDFFont;
-    let boldFont: PDFFont | null = null;
+    const pdfDoc = CreateContext.create();
+    let font: ConvertFace;
+    let boldKey: StampFontKey | null = null;
     if (needsNoto(doc)) {
       // Devanagari (or any non-WinAnsi) content → the embedded Noto
       // subset. OFL ships Regular only: hierarchy comes from size, and
       // bold text falls back to the regular face.
-      const fonts = await loadStampFonts(pdfDoc, true);
-      font = fonts.fontFor("devanagari");
+      const bytes = await loadDevanagariBytes();
+      font = { ttf: pdfDoc.embedTtf(bytes) };
     } else {
-      font = pdfDoc.embedStandardFont(StandardFonts.Helvetica);
-      boldFont = pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+      font = { std: "helvetica" };
+      boldKey = "helveticaBold";
     }
     post({ type: "progress", runId, pct: 45, stage: "processing" });
 
     // images (audit R4-a): resolve relIds → media/* zip parts → embed
-    const images = new Map<string, PDFImage>();
+    const images = new Map<string, CreateImage>();
     if (doc.blocks.some((b) => b.kind === "image")) {
       let zip: Record<string, Uint8Array> = {};
       try {
@@ -124,13 +130,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
         if (path === "") continue;
         const mediaBytes = lookupMediaEntry(zip, path);
         if (mediaBytes === undefined) continue;
-        const embedded = await embedDocumentImage(pdfDoc, mediaBytes);
+        const embedded = await embedDocumentImageOwn(pdfDoc, mediaBytes);
         if (embedded === null) continue;
         images.set(relId, embedded.image);
       }
     }
 
-    const report = drawDocxPdf(pdfDoc, font, boldFont, doc, opts, images);
+    const report = drawDocxPdf(pdfDoc, font, boldKey, doc, opts, images);
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
     pdfDoc.setProducer("DocoPDF");
@@ -138,7 +144,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     pdfDoc.setTitle(outputPdfName(file.name, fileWord).replace(/\.pdf$/i, ""));
     pdfDoc.setCreationDate(new Date());
 
-    const bytes2 = await pdfDoc.save();
+    const bytes2 = pdfDoc.write();
     post({
       type: "result",
       runId,

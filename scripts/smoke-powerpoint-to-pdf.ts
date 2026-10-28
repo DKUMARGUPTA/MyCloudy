@@ -3,9 +3,10 @@
  *
  * House conventions: real fixture built with the model's own fflate
  * zipSync builder, node:zlib inflateRaw oracle for the ZIP entries
- * (NOT fflate), pdf-lib reload + parse-level asserts, real renders by
- * importing the worker's exact render.ts, relative imports without
- * .ts, process.exit at the end.
+ * (NOT fflate), pdf-lib reload + parse-level asserts (the P6-m
+ * reload-oracle — renders themselves ride the OWN engine), real
+ * renders by importing the worker's exact render.ts, relative imports
+ * without .ts, process.exit at the end.
  *
  * Run: bun scripts/smoke-powerpoint-to-pdf.ts
  */
@@ -13,8 +14,9 @@ import "regenerator-runtime/runtime";
 import { readFileSync } from "node:fs";
 import { inflateRawSync, inflateSync } from "node:zlib";
 
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+import { PDFDocument } from "pdf-lib";
+import { CreateContext, type StampFontKey } from "../src/lib/own/pdf";
+import type { ConvertFace } from "../tools/convert-common/face";
 import { strToU8, zipSync } from "../src/lib/own/zip/index";
 
 import {
@@ -101,7 +103,10 @@ function inflatedText(bytes: Uint8Array): string {
         "latin1"
       );
     } catch {
-      /* non-flate stream (font) */
+      // Not deflated — OUR engine's page contents ride raw (classic
+      // xref, no /Filter): append them literally so text assertions
+      // still see the <HEX> Tj operators (the P6-i readContent recipe).
+      out += raw.slice(start, e);
     }
     idx = e + 9;
   }
@@ -355,25 +360,27 @@ async function render(o: RenderOpts): Promise<{
   pages: number;
   report: ReturnType<typeof drawPptxPdf>;
 }> {
+  // The worker's exact recipe on the OWN engine (P6-m): the face is
+  // either the embedded Noto subset or the std pair → drawPptxPdf →
+  // write(). pdf-lib loads the bytes back ONLY as the reload-oracle.
   const parsed = parsePptx(buildSamplePptx({ hindi: o.hindi, overflow: o.overflow }));
-  const pdfDoc = await PDFDocument.create();
-  let font: PDFFont;
-  let boldFont: PDFFont | null = null;
+  const pdfDoc = CreateContext.create();
+  let font: ConvertFace;
+  let boldKey: StampFontKey | null = null;
   if (o.noto) {
-    pdfDoc.registerFontkit(fontkit);
-    font = await pdfDoc.embedFont(notoBytes, { subset: true });
+    font = { ttf: pdfDoc.embedTtf(notoBytes) };
   } else {
-    font = pdfDoc.embedStandardFont(StandardFonts.Helvetica);
-    boldFont = pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+    font = { std: "helvetica" };
+    boldKey = "helveticaBold";
   }
-  const report = drawPptxPdf(pdfDoc, font, boldFont, parsed, {
+  const report = drawPptxPdf(pdfDoc, font, boldKey, parsed, {
     pageSize: o.pageSize,
     margin: o.margin ?? "normal",
     notes: o.notes === true,
     fit: o.fit === true,
     notesHeadingFmt: o.hindi ? "स्लाइड {n} — नोट्स" : "Slide {n} — notes",
   });
-  const bytes = await pdfDoc.save();
+  const bytes = pdfDoc.write();
   const reloaded = await PDFDocument.load(bytes);
   return { bytes, pages: reloaded.getPageCount(), report };
 }

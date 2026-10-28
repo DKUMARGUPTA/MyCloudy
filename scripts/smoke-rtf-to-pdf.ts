@@ -3,8 +3,10 @@
  *
  * House conventions (word-to-pdf precedent): a REAL sample built by the
  * model's own buildSampleRtf, focused mini-fixtures for the group-stack
- * state machine, node:zlib inflate oracle for stream text, pdf-lib
- * reload + parse-level asserts (FontFile2 / Identity-H via
+ * state machine, node:zlib inflate oracle for stream text (with the
+ * raw-stream literal fallback — OUR engine's page contents ride
+ * UNCOMPRESSED), pdf-lib used ONLY as the reload/parse ORACLE
+ * (page counts, FontFile2 / Identity-H via
  * enumerateIndirectObjects), relative imports without .ts,
  * process.exit at the end.
  *
@@ -14,8 +16,8 @@ import "regenerator-runtime/runtime";
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+import { PDFDocument } from "pdf-lib";
+import { CreateContext } from "../src/lib/own/pdf";
 
 import {
   MAX_PARAS,
@@ -88,15 +90,19 @@ function inflatedText(bytes: Uint8Array): string {
     try {
       out += inflateSync(Buffer.from(raw.slice(start, e), "latin1")).toString("latin1");
     } catch {
-      /* non-flate stream (font) */
+      // Not deflated — OUR engine's page contents ride raw (classic xref,
+      // no /Filter): append them literally so text assertions still see
+      // the <HEX> Tj operators (the P6-i readContent recipe).
+      out += raw.slice(start, e);
     }
     idx = e + 9;
   }
   return out;
 }
 
-/** pdf-lib emits text as hex tokens (<...> Tj) — literal, exact-token
- *  or bare byte-sequence match (the word-to-pdf pinned helper). */
+/** pdf-lib and OUR engine both emit text as hex tokens (<...> Tj) —
+ *  literal, exact-token or bare byte-sequence match (the word-to-pdf
+ *  pinned helper). */
 function hasText(stream: string, s: string): boolean {
   if (stream.includes(s)) return true;
   const hex = Buffer.from(s, "latin1").toString("hex").toUpperCase();
@@ -115,25 +121,30 @@ async function render(
 ): Promise<{ bytes: Uint8Array; pages: number; pageW: number; pageH: number }> {
   const doc = parseRtf(bytesOf(rtf));
   if (!doc) throw new Error("fixture failed to parse");
-  const pdfDoc = await PDFDocument.create();
+  // The worker's exact recipe on the OWN engine (P6-m): needsNoto →
+  // std keys or embedTtf → drawRtfPdf → write().
+  const pdfDoc = CreateContext.create();
   let fonts: RtfFonts;
   if (noto) {
-    pdfDoc.registerFontkit(fontkit);
-    const f: PDFFont = await pdfDoc.embedFont(notoBytes, { subset: true });
-    fonts = { regular: f, bold: null, italic: null, boldItalic: null };
+    fonts = {
+      regular: { ttf: pdfDoc.embedTtf(notoBytes) },
+      bold: null,
+      italic: null,
+      boldItalic: null,
+    };
   } else {
     fonts = {
-      regular: pdfDoc.embedStandardFont(StandardFonts.Helvetica),
-      bold: pdfDoc.embedStandardFont(StandardFonts.HelveticaBold),
-      italic: pdfDoc.embedStandardFont(StandardFonts.HelveticaOblique),
-      boldItalic: pdfDoc.embedStandardFont(StandardFonts.HelveticaBoldOblique),
+      regular: { std: "helvetica" },
+      bold: "helveticaBold",
+      italic: "helveticaOblique",
+      boldItalic: "helveticaBoldOblique",
     };
   }
   const report = drawRtfPdf(pdfDoc, fonts, doc, {
     pageSize: opts.pageSize ?? "auto",
     margin: opts.margin ?? "auto",
   });
-  const bytes = await pdfDoc.save();
+  const bytes = pdfDoc.write();
   const reloaded = await PDFDocument.load(bytes);
   return {
     bytes,

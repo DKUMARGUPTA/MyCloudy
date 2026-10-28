@@ -1,10 +1,10 @@
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
+import { CreateContext, type StampFontKey } from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { loadDevanagariBytes } from "../stamp-common/deva";
 import {
   needsNoto,
   OdfParseError,
@@ -12,6 +12,7 @@ import {
   parseOdt,
 } from "./model";
 import { drawOdfPdf } from "./render";
+import type { ConvertFace } from "../convert-common/face";
 
 /**
  * OpenDocument to PDF worker (RB2-b — the 72nd tool) — device-only,
@@ -23,10 +24,11 @@ import { drawOdfPdf } from "./render";
  *     .odg, missing content.xml, empty body) posts its honest code;
  *  2. font pick — pure-WinAnsi content embeds NO font at all
  *     (base-14 Helvetica + HelveticaBold), while ANY Devanagari char
- *     switches to the self-hosted Noto Sans Devanagari (fontkit
- *     subset:true) — the create-resume/stamp-common recipe;
+ *     switches to the self-hosted Noto Sans Devanagari (OUR
+ *     Type0/CIDFontType2 subsetter + Indic shaper) — the
+ *     create-resume/stamp-common recipe;
  *  3. drawOdfPdf — the exact render.ts the smoke script drives;
- *  4. save with producer/creator "DocoPDF" and the localized name.
+ *  4. write with producer/creator "DocoPDF" and the localized name.
  *
  * Options: pageSize ("a4"|"letter"), margin ("normal"|"narrow") and
  * lang ("en"|"hi" — the localized fallback word for a nameless file).
@@ -69,22 +71,22 @@ async function run(request: WorkerRunRequest): Promise<void> {
     };
     const lang = String(request.options.lang) === "hi" ? "hi" : "en";
 
-    const pdfDoc = await PDFDocument.create();
-    let font: PDFFont;
-    let boldFont: PDFFont | null = null;
+    const pdfDoc = CreateContext.create();
+    let font: ConvertFace;
+    let boldKey: StampFontKey | null = null;
     if (needsNoto(doc)) {
       // Devanagari (or any non-WinAnsi) content → the embedded Noto
       // subset. OFL ships Regular only: hierarchy comes from size, and
       // bold text falls back to the regular face.
-      const fonts = await loadStampFonts(pdfDoc, true);
-      font = fonts.fontFor("devanagari");
+      const notoBytes = await loadDevanagariBytes();
+      font = { ttf: pdfDoc.embedTtf(notoBytes) };
     } else {
-      font = pdfDoc.embedStandardFont(StandardFonts.Helvetica);
-      boldFont = pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+      font = { std: "helvetica" };
+      boldKey = "helveticaBold";
     }
     post({ type: "progress", runId, pct: 45, stage: "processing" });
 
-    const report = drawOdfPdf(pdfDoc, font, boldFont, doc, opts);
+    const report = drawOdfPdf(pdfDoc, font, boldKey, doc, opts);
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
     const baseName = outputBaseName(file.name, lang);
@@ -93,7 +95,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     pdfDoc.setTitle(baseName);
     pdfDoc.setCreationDate(new Date());
 
-    const bytes2 = await pdfDoc.save();
+    const bytes2 = pdfDoc.write();
     post({
       type: "result",
       runId,

@@ -21,12 +21,19 @@
  *
  * Fonts arrive already embedded (worker): `font` is either the
  * non-embedded base-14 Helvetica (pure-WinAnsi docs) or the Noto
- * Devanagari subset; `boldFont` may be null — headings then fall back
+ * Devanagari subset; `boldKey` may be null — headings then fall back
  * to the regular face.
  */
 
-import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
-import { rgb, type RGB } from "pdf-lib";
+import type { CreateContext, CreatePage, StampFontKey } from "@/lib/own/pdf";
+
+import {
+  faceOpts,
+  faceWidth,
+  rgb,
+  type ConvertFace,
+  type RGB,
+} from "../convert-common/face";
 
 import { HEADING_SCALE, MARGIN_PT, PAGE_SIZES, type ParsedPub, type PubPara } from "./model";
 
@@ -47,27 +54,27 @@ const COL_TEXT: RGB = rgb(0.09, 0.09, 0.09);
 /* ------------------------------------------------------------------ */
 
 class Painter {
-  readonly pdfDoc: PDFDocument;
-  readonly font: PDFFont;
-  readonly boldFont: PDFFont | null;
-  readonly pages: PDFPage[] = [];
+  readonly pdfDoc: CreateContext;
+  readonly font: ConvertFace;
+  readonly boldKey: StampFontKey | null;
+  readonly pages: CreatePage[] = [];
   readonly pageW: number;
   readonly pageH: number;
   readonly margin: number;
   readonly contentW: number;
-  page: PDFPage;
+  page: CreatePage;
   y!: number;
 
   constructor(
-    pdfDoc: PDFDocument,
-    font: PDFFont,
-    boldFont: PDFFont | null,
+    pdfDoc: CreateContext,
+    font: ConvertFace,
+    boldKey: StampFontKey | null,
     pageSize: "a4" | "letter",
     marginKind: "normal" | "narrow"
   ) {
     this.pdfDoc = pdfDoc;
     this.font = font;
-    this.boldFont = boldFont;
+    this.boldKey = boldKey;
     const [w, h] = PAGE_SIZES[pageSize];
     this.pageW = w;
     this.pageH = h;
@@ -76,8 +83,8 @@ class Painter {
     this.page = this.newPage();
   }
 
-  newPage(): PDFPage {
-    this.page = this.pdfDoc.addPage([this.pageW, this.pageH]);
+  newPage(): CreatePage {
+    this.page = this.pdfDoc.addPage(this.pageW, this.pageH);
     this.pages.push(this.page);
     this.y = this.pageH - this.margin;
     return this.page;
@@ -88,13 +95,16 @@ class Painter {
     if (this.y - need < this.margin) this.newPage();
   }
 
-  fontFor(bold: boolean): PDFFont {
-    return bold && this.boldFont ? this.boldFont : this.font;
+  fontFor(bold: boolean): ConvertFace {
+    // Devanagari mode has no bold variant — hierarchy from size.
+    return bold && !this.font.ttf && this.boldKey
+      ? { std: this.boldKey }
+      : this.font;
   }
 
   width(text: string, size: number, bold: boolean): number {
     if (!text) return 0;
-    return this.fontFor(bold).widthOfTextAtSize(text, size);
+    return faceWidth(this.pdfDoc, this.fontFor(bold), text, size);
   }
 
   /** Baseline-aligned draw at (x, yTop) — the house text() convention. */
@@ -107,12 +117,13 @@ class Painter {
     baseline: number
   ): void {
     if (!s) return;
-    this.page.drawText(s, {
+    this.page.drawText({
       x,
       y: yTop - baseline,
+      text: s,
       size,
-      font: this.fontFor(bold),
       color: COL_TEXT,
+      ...faceOpts(this.fontFor(bold)),
     });
   }
 }
@@ -248,20 +259,20 @@ export interface PubRenderReport {
 /**
  * Paint the salvaged story text into `pdfDoc` (pages added as needed).
  * `font` must already be embedded (Helvetica standard OR the Noto
- * subset); `boldFont` may be null — headings then fall back to the
+ * subset); `boldKey` may be null — headings then fall back to the
  * regular face (Noto ships Regular only).
  */
 export function drawPubPdf(
-  pdfDoc: PDFDocument,
-  font: PDFFont,
-  boldFont: PDFFont | null,
+  pdfDoc: CreateContext,
+  font: ConvertFace,
+  boldKey: StampFontKey | null,
   doc: ParsedPub,
   opts: PubRenderOpts
 ): PubRenderReport {
   const p = new Painter(
     pdfDoc,
     font,
-    boldFont,
+    boldKey,
     opts.pageSize === "letter" ? "letter" : "a4",
     opts.margin === "narrow" ? "narrow" : "normal"
   );

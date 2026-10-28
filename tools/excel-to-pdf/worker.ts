@@ -1,10 +1,11 @@
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
+import { CreateContext, type StampFontKey } from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { loadDevanagariBytes } from "../stamp-common/deva";
+import type { ConvertFace } from "../convert-common/face";
 import {
   XlsxParseError,
   isWinAnsiText,
@@ -23,10 +24,11 @@ import { drawWorkbookPdf } from "./render";
  *     non-zip, non-OOXML zips, corrupt parts, no readable sheets);
  *  2. parseExcelRun — the worker-boundary option coercion + clamps;
  *  3. font pick — any non-WinAnsi cell (Devanagari, ₹ …) embeds the
- *     self-hosted Noto Sans Devanagari subset, pure-WinAnsi data
- *     stays on the base-14 Helvetica pair (nothing embedded);
+ *     self-hosted Noto Sans Devanagari subset (OUR Type0/CIDFontType2
+ *     subsetter + Indic shaper), pure-WinAnsi data stays on the base-14
+ *     Helvetica pair (nothing embedded);
  *  4. drawWorkbookPdf — the exact render.ts the smoke script drives;
- *  5. save with producer "DocoPDF" and the localized output name.
+ *  5. write with producer "DocoPDF" and the localized output name.
  *
  * All display labels arrive pre-resolved in the options (the surface's
  * t()): the footer template and the fallback file word. When the
@@ -83,31 +85,31 @@ async function run(request: WorkerRunRequest): Promise<void> {
     }
     post({ type: "progress", runId, pct: 24, stage: "processing" });
 
-    const doc = await PDFDocument.create();
-    let font: PDFFont;
-    let boldFont: PDFFont | null = null;
+    const pdfDoc = CreateContext.create();
+    let font: ConvertFace;
+    let boldKey: StampFontKey | null = null;
     if (needsNoto(selected)) {
       // Devanagari / ₹ / any non-WinAnsi content → the embedded Noto
       // subset (Regular only — hierarchy from the faux-bold double-draw)
-      const fonts = await loadStampFonts(doc, true);
-      font = fonts.fontFor("devanagari");
+      const notoBytes = await loadDevanagariBytes();
+      font = { ttf: pdfDoc.embedTtf(notoBytes) };
     } else {
-      font = doc.embedStandardFont(StandardFonts.Helvetica);
-      boldFont = doc.embedStandardFont(StandardFonts.HelveticaBold);
+      font = { std: "helvetica" };
+      boldKey = "helveticaBold";
     }
     post({ type: "progress", runId, pct: 45, stage: "processing" });
 
     // Helvetica (WinAnsi) cannot encode a localized Hindi footer — the
     // honest fallback keeps the run alive instead of crashing the draw.
     const footerFmt =
-      boldFont !== null && !isWinAnsiText(runOpts.footerFmt)
+      boldKey !== null && !isWinAnsiText(runOpts.footerFmt)
         ? "Sheet {n} of {m}"
         : runOpts.footerFmt;
 
     const report = drawWorkbookPdf(
-      doc,
+      pdfDoc,
       font,
-      boldFont,
+      boldKey,
       { ...wb, sheets: selected },
       {
         pageSize: runOpts.pageSize,
@@ -119,14 +121,14 @@ async function run(request: WorkerRunRequest): Promise<void> {
     );
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
-    doc.setProducer("DocoPDF");
-    doc.setCreator("DocoPDF");
-    doc.setTitle(
+    pdfDoc.setProducer("DocoPDF");
+    pdfDoc.setCreator("DocoPDF");
+    pdfDoc.setTitle(
       selected.length === 1 ? selected[0].name : safeOutputBase(file.name, "")
     );
-    doc.setCreationDate(new Date());
+    pdfDoc.setCreationDate(new Date());
 
-    const bytes2 = await doc.save();
+    const outBytes = pdfDoc.write();
     const base = safeOutputBase(file.name, "");
     const name =
       base !== "spreadsheet"
@@ -139,7 +141,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
         {
           name,
           mime: "application/pdf",
-          blob: new Blob([bytes2 as unknown as BlobPart], {
+          blob: new Blob([outBytes as unknown as BlobPart], {
             type: "application/pdf",
           }),
         },
