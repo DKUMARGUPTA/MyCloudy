@@ -1,10 +1,11 @@
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
+import { CreateContext, type StampTtfFont } from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { loadDevanagariBytes } from "../stamp-common/deva";
+import { type ConvertFace } from "../convert-common/face";
 import {
   decodeHtmlBytes,
   inputTooLarge,
@@ -28,11 +29,12 @@ import { drawHtmlPdf, type HtmlFontSet } from "./render";
  *  2. parseHtml → parseHtmlRun — full defensive clamp at the boundary;
  *  3. font pick — a SINGLE decision per document: pure-WinAnsi content
  *     embeds NO font file at all (the base-14 Helvetica × Courier ×
- *     italic set), while ANY non-WinAnsi char switches everything to
- *     the self-hosted Noto Sans Devanagari subset (fontkit subset:true,
- *     Regular only — hierarchy honestly comes from size);
+ *     italic set as std keys), while ANY non-WinAnsi char switches
+ *     everything to the self-hosted Noto Sans Devanagari subset (OUR
+ *     Type0/CIDFontType2 subsetter + Indic shaper, Regular only —
+ *     hierarchy honestly comes from size);
  *  4. drawHtmlPdf — the exact render.ts the smoke script drives;
- *  5. save with producer/creator "DocoPDF" and the title-derived name.
+ *  5. write with producer/creator "DocoPDF" and the title-derived name.
  *
  * Options: pageSize ("a4"|"letter"), margin ("normal"|"narrow"),
  * baseFontSize ("small"|"normal"|"large"), showLinks (boolean) and
@@ -45,40 +47,37 @@ const BASE_FONT_SIZES: Record<string, number> = {
   large: 12.5,
 };
 
-function enFontSet(pdfDoc: PDFDocument): HtmlFontSet {
-  const cache = new Map<string, PDFFont>();
-  const key = (b: boolean, i: boolean, m: boolean): string =>
-    `${b ? "B" : ""}${i ? "I" : ""}${m ? "M" : ""}`;
+/** the worker's EN font set — the 8 base-14 std keys as cheap face
+ * consts (the create-side recipe: std faces embed nothing, so the old
+ * pdf-lib embedStandardFont cache has no work left to dedupe). */
+function enFontSet(): HtmlFontSet {
+  const courier = { std: "courier" } as const;
+  const courierBold = { std: "courierBold" } as const;
+  const courierBoldOblique = { std: "courierBoldOblique" } as const;
+  const courierOblique = { std: "courierOblique" } as const;
+  const helvetica = { std: "helvetica" } as const;
+  const helveticaBold = { std: "helveticaBold" } as const;
+  const helveticaBoldOblique = { std: "helveticaBoldOblique" } as const;
+  const helveticaOblique = { std: "helveticaOblique" } as const;
   return {
     isNoto: false,
-    resolve(bold, italic, mono) {
-      const k = key(bold, italic, mono);
-      const hit = cache.get(k);
-      if (hit) return hit;
-      let font: PDFFont;
+    resolve(bold, italic, mono): ConvertFace {
       if (mono) {
-        font = pdfDoc.embedStandardFont(
-          bold && italic
-            ? StandardFonts.CourierBoldOblique
-            : bold
-              ? StandardFonts.CourierBold
-              : italic
-                ? StandardFonts.CourierOblique
-                : StandardFonts.Courier
-        );
-      } else {
-        font = pdfDoc.embedStandardFont(
-          bold && italic
-            ? StandardFonts.HelveticaBoldOblique
-            : bold
-              ? StandardFonts.HelveticaBold
-              : italic
-                ? StandardFonts.HelveticaOblique
-                : StandardFonts.Helvetica
-        );
+        return bold && italic
+          ? courierBoldOblique
+          : bold
+            ? courierBold
+            : italic
+              ? courierOblique
+              : courier;
       }
-      cache.set(k, font);
-      return font;
+      return bold && italic
+        ? helveticaBoldOblique
+        : bold
+          ? helveticaBold
+          : italic
+            ? helveticaOblique
+            : helvetica;
     },
   };
 }
@@ -128,20 +127,20 @@ async function run(request: WorkerRunRequest): Promise<void> {
     };
     const lang: "en" | "hi" = String(request.options.lang) === "hi" ? "hi" : "en";
 
-    const pdfDoc = await PDFDocument.create();
+    const pdfDoc = CreateContext.create();
     let fonts: HtmlFontSet;
     if (needsNoto(doc)) {
       // Devanagari (or any non-WinAnsi) content → the embedded Noto
       // subset for EVERYTHING. OFL ships Regular only: hierarchy comes
       // from size, and bold text falls back to the regular face.
-      const stampFonts = await loadStampFonts(pdfDoc, true);
-      const noto = stampFonts.fontFor("devanagari");
+      // loadDevanagariBytes throws the typed "devanagari-font-fetch".
+      const noto: StampTtfFont = pdfDoc.embedTtf(await loadDevanagariBytes());
       fonts = {
         isNoto: true,
-        resolve: () => noto,
+        resolve: () => ({ ttf: noto }),
       };
     } else {
-      fonts = enFontSet(pdfDoc);
+      fonts = enFontSet();
     }
     post({ type: "progress", runId, pct: 60, stage: "processing" });
 
@@ -154,7 +153,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     pdfDoc.setTitle(baseName);
     pdfDoc.setCreationDate(new Date());
 
-    const outBytes = await pdfDoc.save();
+    const outBytes = pdfDoc.write();
     post({
       type: "result",
       runId,

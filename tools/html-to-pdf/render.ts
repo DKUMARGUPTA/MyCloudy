@@ -25,11 +25,11 @@
  *
  * R5-b CSS BOX-MODEL SUBSET (blocks with style="…"):
  *  - background rectangles (with border-radius via real bezier arcs —
- *    drawSvgPath) drawn UNDER the text, per-block ink (color), padding
- *    insets, and borders as stroked lines (dashed/dotted via the PDF
- *    dash operator). A box that splits across a page break continues
- *    as square-cornered per-line chunks (no rounded continuation) —
- *    the <pre> block precedent.
+ *    OUR engine's drawRoundedRectangle, P6-n) drawn UNDER the text,
+ *    per-block ink (color), padding insets, and borders as stroked
+ *    lines (dashed/dotted via the PDF dash operator). A box that splits
+ *    across a page break continues as square-cornered per-line chunks
+ *    (no rounded continuation) — the <pre> block precedent.
  *  - text-align shifts every line inside its box; justify is a REAL
  *    last-line-left justify (extra space distributed between words).
  *  - Tables: table-level background under the cells, per-cell
@@ -40,15 +40,29 @@
  *  - An UNSTYLED document runs the exact pre-R5-b code path — style is
  *    purely additive (byte-identical renders, smoke-locked).
  *
- * Fonts arrive already embedded (worker): `fonts` is either the
+ * Fonts arrive already resolved (worker): `fonts` is either the
  * base-14 Helvetica/Courier set (pure-WinAnsi docs — no FontFile2) or
  * the Noto Devanagari subset for EVERYTHING (Regular only — bold,
  * italic and mono honestly fall back to the one face, hierarchy comes
  * from size alone).
+ *
+ * P6-n: painted on OUR own engine (CreateContext/CreatePage) through
+ * the shared converter faces (ConvertFace — std keys or the embedded
+ * ttf); widthOfTextAtSize became faceWidth so wraps/pagination stay
+ * identical by construction, and the rounded boxes ride the engine's
+ * drawRoundedRectangle (operator-parity with pdf-lib's drawSvgPath
+ * rounded-rect shape — probed in scripts/dev/probe-svgpath-*.ts).
  */
 
-import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
-import { rgb, type RGB } from "pdf-lib";
+import type { CreateContext, CreatePage } from "@/lib/own/pdf";
+
+import {
+  faceOpts,
+  faceWidth,
+  rgb,
+  type ConvertFace,
+  type RGB,
+} from "../convert-common/face";
 
 import {
   HEADING_SIZES,
@@ -128,7 +142,7 @@ function headingSpec(level: number, base: number): HeadingSpec {
 export interface HtmlFontSet {
   /** true when every string goes to the single Noto Devanagari face. */
   isNoto: boolean;
-  resolve(bold: boolean, italic: boolean, mono: boolean): PDFFont;
+  resolve(bold: boolean, italic: boolean, mono: boolean): ConvertFace;
 }
 
 /* ------------------------------------------------------------------ */
@@ -136,19 +150,19 @@ export interface HtmlFontSet {
 /* ------------------------------------------------------------------ */
 
 class Painter {
-  readonly pdfDoc: PDFDocument;
+  readonly pdfDoc: CreateContext;
   readonly fonts: HtmlFontSet;
-  readonly pages: PDFPage[] = [];
+  readonly pages: CreatePage[] = [];
   readonly pageW: number;
   readonly pageH: number;
   readonly margin: number;
   readonly contentW: number;
   readonly base: number;
-  page: PDFPage;
+  page: CreatePage;
   y!: number;
 
   constructor(
-    pdfDoc: PDFDocument,
+    pdfDoc: CreateContext,
     fonts: HtmlFontSet,
     pageSize: "a4" | "letter",
     marginKind: "normal" | "narrow",
@@ -165,8 +179,8 @@ class Painter {
     this.page = this.newPage();
   }
 
-  newPage(): PDFPage {
-    this.page = this.pdfDoc.addPage([this.pageW, this.pageH]);
+  newPage(): CreatePage {
+    this.page = this.pdfDoc.addPage(this.pageW, this.pageH);
     this.pages.push(this.page);
     this.y = this.pageH - this.margin;
     return this.page;
@@ -177,13 +191,13 @@ class Painter {
     if (this.y - need < this.margin) this.newPage();
   }
 
-  font(bold: boolean, italic: boolean, m: boolean): PDFFont {
+  font(bold: boolean, italic: boolean, m: boolean): ConvertFace {
     return this.fonts.resolve(bold, italic, m);
   }
 
   width(text: string, size: number, bold: boolean, italic: boolean, m: boolean): number {
     if (!text) return 0;
-    return this.font(bold, italic, m).widthOfTextAtSize(text, size);
+    return faceWidth(this.pdfDoc, this.font(bold, italic, m), text, size);
   }
 
   /** Baseline-aligned draw at (x, yTop) — the house text() convention. */
@@ -199,11 +213,12 @@ class Painter {
     color: RGB = COL_TEXT
   ): void {
     if (!s) return;
-    this.page.drawText(s, {
+    this.page.drawText({
       x,
       y: yTop - baseline,
+      text: s,
       size,
-      font: this.font(bold, italic, m),
+      ...faceOpts(this.font(bold, italic, m)),
       color,
     });
   }
@@ -715,7 +730,7 @@ interface BoxEdges {
 function colorEq(a: RGB | undefined, b: RGB | undefined): boolean {
   if (a === b) return true;
   if (a === undefined || b === undefined) return false;
-  return a.red === b.red && a.green === b.green && a.blue === b.blue;
+  return a.r === b.r && a.g === b.g && a.b === b.b;
 }
 
 function resolveEdges(st: StyleProps, ink: RGB): BoxEdges {
@@ -746,35 +761,6 @@ function edgeLine(
     color: e.color,
     dashArray: e.dash,
   });
-}
-
-/** SVG-space (y down) rounded-rect path at origin, size w×h. */
-function roundedRectPath(w: number, h: number, r: number): string {
-  const rr = Math.min(r, w / 2, h / 2);
-  if (rr <= 0) {
-    return `M 0 0 L ${fmtPt(w)} 0 L ${fmtPt(w)} ${fmtPt(h)} L 0 ${fmtPt(h)} Z`;
-  }
-  const W = fmtPt(w);
-  const H = fmtPt(h);
-  const R = fmtPt(rr);
-  const WmR = fmtPt(w - rr);
-  const HmR = fmtPt(h - rr);
-  return [
-    `M ${R} 0`,
-    `L ${WmR} 0`,
-    `A ${R} ${R} 0 0 1 ${W} ${R}`,
-    `L ${W} ${HmR}`,
-    `A ${R} ${R} 0 0 1 ${WmR} ${H}`,
-    `L ${R} ${H}`,
-    `A ${R} ${R} 0 0 1 0 ${HmR}`,
-    `L 0 ${R}`,
-    `A ${R} ${R} 0 0 1 ${R} 0`,
-    "Z",
-  ].join(" ");
-}
-
-function fmtPt(n: number): string {
-  return String(Math.round(n * 1000) / 1000);
 }
 
 /**
@@ -811,11 +797,13 @@ function drawBoxChrome(
     edges.left.dash === undefined;
   const borderColor = edges.top?.color ?? ink;
   if (radius > 0) {
-    const path = roundedRectPath(w, h, radius);
     if (uniform && edgesPresent(edges)) {
-      p.page.drawSvgPath(path, {
+      p.page.drawRoundedRectangle({
         x,
-        y: yTop,
+        yTop,
+        width: w,
+        height: h,
+        radius,
         ...(bg !== undefined ? { color: bg } : {}),
         borderColor,
         borderWidth: edges.top?.width ?? 1,
@@ -823,7 +811,7 @@ function drawBoxChrome(
       return;
     }
     if (bg !== undefined) {
-      p.page.drawSvgPath(path, { x, y: yTop, color: bg });
+      p.page.drawRoundedRectangle({ x, yTop, width: w, height: h, radius, color: bg });
     }
   } else if (bg !== undefined) {
     p.page.drawRectangle({ x, y: yTop - h, width: w, height: h, color: bg });
@@ -1473,10 +1461,14 @@ function drawTable(
       if (cell.bg !== undefined) {
         if (cellSty[c]?.radius) {
           // rounded cell FILL only — cell borders stay square (collapse)
-          p.page.drawSvgPath(
-            roundedRectPath(w, rowH, cellSty[c]?.radius ?? 0),
-            { x, y: p.y, color: cell.bg }
-          );
+          p.page.drawRoundedRectangle({
+            x,
+            yTop: p.y,
+            width: w,
+            height: rowH,
+            radius: cellSty[c]?.radius ?? 0,
+            color: cell.bg,
+          });
         } else {
           p.page.drawRectangle({
             x,
@@ -1609,12 +1601,12 @@ export interface HtmlRenderReport {
 
 /**
  * Paint the whole document into `pdfDoc` (pages added as needed).
- * `fonts` must already be embedded (the base-14 set OR the Noto
+ * `fonts` must already be resolved (the base-14 set OR the Noto
  * subset); bold/italic/mono honestly fall back to the single face in
  * Noto mode.
  */
 export function drawHtmlPdf(
-  pdfDoc: PDFDocument,
+  pdfDoc: CreateContext,
   fonts: HtmlFontSet,
   doc: ParsedHtml,
   opts: HtmlRenderOpts

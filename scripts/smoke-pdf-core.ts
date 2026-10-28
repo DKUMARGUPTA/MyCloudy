@@ -878,6 +878,9 @@ async function main(): Promise<void> {
   console.log("== 20. Renderer-family surfaces (P6-l): Tc + rotated rect + Info ==");
   await section20();
 
+  console.log("== 21. Webby-four surfaces (P6-n): rounded rect + dash + insertPage/getPages ==");
+  await section21();
+
   // Artifacts for manual inspection (VLM/pdfjs follow-ups).
   const outAll = organizePdf(fixB, [
     { kind: "page", src: 0 },
@@ -2672,6 +2675,190 @@ async function section20(): Promise<void> {
         `p6l info: ours matches (${needle.slice(0, 24)}…)`,
       );
     }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * SECTION 21 — the P6-n webby-four engine surfaces: drawRoundedRectangle
+ * (pdf-lib's drawSvgPath rounded-rect operator shape, probed in
+ * scripts/dev/probe-svgpath-ops.ts), drawLine dashArray, insertPage +
+ * getPages (the epub TOC/folio machinery).
+ * ══════════════════════════════════════════════════════════════════════ */
+async function section21(): Promise<void> {
+  const W = 595.28;
+  const H = 841.89;
+
+  /* ── 21.1 drawRoundedRectangle: the probed pdf-lib drawSvgPath shape —
+   * translate + rotate-identity + y-flip cm trio, colors, [] 0 d, the
+   * m/l/4×c/h path in SVG-local space, f/S/B paint. */
+  {
+    const ctx = CreateContext.create();
+    const p = ctx.addPage(W, H);
+    p.drawRoundedRectangle({
+      x: 56,
+      yTop: 742,
+      width: 483.28,
+      height: 58,
+      radius: 6,
+      color: { r: 1, g: 0.953, b: 0.804 },
+      borderColor: { r: 0.941, g: 0.678, b: 0.306 },
+      borderWidth: 1.5,
+    });
+    const doc = parsePdf(ctx.write());
+    const pages = listPages(doc);
+    const ops = latin1(
+      contentBytesOf(doc, pages, 0),
+      0,
+      contentBytesOf(doc, pages, 0).length,
+    );
+    ok(
+      ops.startsWith(
+        "q\n1 0 0 1 56 742 cm\n1 0 0 1 0 0 cm\n1 0 0 -1 0 0 cm\n",
+      ),
+      "p6n rrect: the translate+rotate-identity+y-flip cm trio (pdf-lib drawSvgPath)",
+    );
+    ok(ops.includes("1 0.953 0.804 rg"), "p6n rrect: fill rg");
+    ok(ops.includes("0.941 0.678 0.306 RG"), "p6n rrect: stroke RG");
+    ok(/(^|\n)1\.5 w(\n|$)/.test(ops), "p6n rrect: border width");
+    ok(ops.includes("6 0 m"), "p6n rrect: moveTo at (r, 0)");
+    ok(ops.includes("477.28 0 l"), "p6n rrect: top edge line to (w−r, 0)");
+    const arcs = (ops.match(/ c\n/g) || []).length;
+    ok(arcs === 4, `p6n rrect: exactly 4 quarter-arc béziers (got ${arcs})`);
+    ok(/h\nB\nQ\n?$/.test(ops), "p6n rrect: closepath + fill+stroke paint + Q");
+    // κ control point: (w−r+κr, 0) for the TR arc — κ=4/3·(√2−1)
+    // (477.28 + 6κ = 480.59370849898465, our pdfNumToString trims to 9 dp)
+    ok(
+      ops.includes("480.593708499 0 "),
+      "p6n rrect: TR-arc control point (w−r+κr, 0)",
+    );
+    // fill-only → f, no RG/w
+    const ctx2 = CreateContext.create();
+    const p2 = ctx2.addPage(W, H);
+    p2.drawRoundedRectangle({
+      x: 10,
+      yTop: 700,
+      width: 100,
+      height: 40,
+      radius: 5,
+      color: { r: 1, g: 1, b: 1 },
+    });
+    const ops2 = latin1(
+      contentBytesOf(parsePdf(ctx2.write()), listPages(parsePdf(ctx2.write())), 0),
+      0,
+      contentBytesOf(parsePdf(ctx2.write()), listPages(parsePdf(ctx2.write())), 0).length,
+    );
+    ok(!ops2.includes(" RG"), "p6n rrect: fill-only has no stroke color");
+    ok(/h\nf\nQ\n?$/.test(ops2), "p6n rrect: fill-only paints f");
+  }
+
+  /* ── 21.2 drawLine dashArray: [3 2] 0 d after the width op; absent →
+   * the [] 0 d reset. */
+  {
+    const ctx = CreateContext.create();
+    const p = ctx.addPage(W, H);
+    p.drawLine({
+      start: { x: 56, y: 620 },
+      end: { x: 539, y: 620 },
+      thickness: 3,
+      color: { r: 0.2, g: 0.478, b: 0.722 },
+      dashArray: [3, 2],
+    });
+    p.drawLine({ start: { x: 0, y: 0 }, end: { x: 10, y: 10 } });
+    const doc = parsePdf(ctx.write());
+    const pages = listPages(doc);
+    const ops = latin1(
+      contentBytesOf(doc, pages, 0),
+      0,
+      contentBytesOf(doc, pages, 0).length,
+    );
+    ok(ops.includes("[3 2] 0 d"), "p6n dash: pattern emitted");
+    ok(
+      /3 w\n\[3 2\] 0 d/.test(ops),
+      "p6n dash: dash op follows the width op (pdf-lib order)",
+    );
+    ok(
+      /1 w\n\[\] 0 d/.test(ops),
+      "p6n dash: absent dashArray keeps the [] 0 d reset",
+    );
+  }
+
+  /* ── 21.3 insertPage + getPages: the epub TOC/folio machinery. Pages
+   * splice mid-document; getPages() returns handles in final order;
+   * earlier-created handles keep writing to THEIR page. */
+  {
+    const ctx = CreateContext.create();
+    const first = ctx.addPage(W, H);
+    first.drawText({
+      x: 72,
+      y: 700,
+      text: "cover",
+      size: 12,
+      font: "helvetica",
+    });
+    const chapter = ctx.addPage(W, H);
+    chapter.drawText({
+      x: 72,
+      y: 700,
+      text: "chapter",
+      size: 12,
+      font: "helvetica",
+    });
+    const toc = ctx.insertPage(1, W, H);
+    toc.drawText({
+      x: 72,
+      y: 700,
+      text: "contents",
+      size: 12,
+      font: "helveticaBold",
+    });
+    ok(ctx.pageCount === 3, "p6n insert: pageCount counts the splice");
+    const pages = ctx.getPages();
+    ok(pages.length === 3, "p6n getPages: all handles");
+    ok(
+      pages[0].width === W && pages[2].width === W && pages[1].width === W,
+      "p6n getPages: sizes ride the recs",
+    );
+    // folio-style stamp into every page via getPages()
+    pages.forEach((pg, i) => {
+      pg.drawText({
+        x: 72,
+        y: 40,
+        text: String(i + 1),
+        size: 9,
+        font: "helvetica",
+      });
+    });
+    const doc = parsePdf(ctx.write());
+    const back = listPages(doc);
+    ok(back.length === 3, "p6n insert: written doc has 3 pages");
+    // drawText rides WinAnsi UPPERCASE hex literals — check the words there.
+    const hx = (s: string): string =>
+      Array.from(s, (ch) => ch.charCodeAt(0).toString(16).padStart(2, "0"))
+        .join("")
+        .toUpperCase();
+    const t0 = latin1(contentBytesOf(doc, back, 0), 0, contentBytesOf(doc, back, 0).length);
+    const t1 = latin1(contentBytesOf(doc, back, 1), 0, contentBytesOf(doc, back, 1).length);
+    const t2 = latin1(contentBytesOf(doc, back, 2), 0, contentBytesOf(doc, back, 2).length);
+    ok(
+      t0.includes(`<${hx("cover")}>`) && t0.includes(`<${hx("1")}>`),
+      "p6n insert: page 0 = cover + folio 1",
+    );
+    ok(
+      t1.includes(`<${hx("contents")}>`) && t1.includes(`<${hx("2")}>`),
+      "p6n insert: page 1 = the INSERTED toc + folio 2",
+    );
+    ok(
+      t2.includes(`<${hx("chapter")}>`) && t2.includes(`<${hx("3")}>`),
+      "p6n insert: page 2 = chapter + folio 3 (order preserved)",
+    );
+    // out-of-range insert refuses honestly
+    let refused = false;
+    try {
+      ctx.insertPage(99, W, H);
+    } catch {
+      refused = true;
+    }
+    ok(refused, "p6n insert: out-of-range index refuses");
   }
 }
 

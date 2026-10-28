@@ -5,12 +5,15 @@
  * House conventions (smoke-html-to-pdf base): pure-module vectors for
  * the API route's logic (which lives in tools/webpage-to-pdf/url-guard.ts
  * + model.ts precisely so it is testable WITHOUT the Next runtime),
- * REAL renders through the worker's exact pipeline (parseHtml →
- * parseHtmlRun → needsNoto → drawHtmlPdf, node:zlib inflate oracle for
- * stream text, pdf-lib reload font/geometry asserts), naming vectors
- * and rejection vectors. A LIVE network call is deliberately NOT made
- * here — browser QA covers the real /api/fetch-page round trip; this
- * smoke proves everything the pipe hands back would render.
+ * REAL renders through the worker's exact pipeline on OUR own engine
+ * (parseHtml → parseHtmlRun → needsNoto → drawHtmlPdf with CreateContext
+ * + ConvertFace faces; node:zlib inflate oracle for stream text with
+ * the raw-stream literal fallback — our engine's page contents ride
+ * UNCOMPRESSED; pdf-lib reload font/geometry asserts as the ORACLE
+ * only), naming vectors and rejection vectors. A LIVE network call is
+ * deliberately NOT made here — browser QA covers the real
+ * /api/fetch-page round trip; this smoke proves everything the pipe
+ * hands back would render.
  *
  * Run: bun scripts/smoke-webpage-to-pdf.ts
  */
@@ -18,8 +21,10 @@ import "regenerator-runtime/runtime";
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+import { PDFDocument } from "pdf-lib"; // reload-oracle ONLY (P6-n)
+
+import { CreateContext } from "../src/lib/own/pdf";
+import { type ConvertFace } from "../tools/convert-common/face";
 
 import {
   buildSampleHtml,
@@ -82,7 +87,11 @@ function inflatedText(bytes: Uint8Array): string {
         "latin1"
       );
     } catch {
-      /* non-flate stream (font) */
+      // Not deflated — OUR engine writes page contents UNCOMPRESSED
+      // (classic xref, no /Filter): append the raw stream slice so
+      // operator/text assertions still see it (the P6-i readContent
+      // recipe — same shape as the rtf smoke).
+      out += raw.slice(start, e);
     }
     idx = e + 9;
   }
@@ -100,41 +109,36 @@ const notoBytes = new Uint8Array(
   readFileSync("public/fonts/NotoSansDevanagari-Regular.ttf")
 );
 
-/** the worker's exact EN font set (base-14, lazily embedded). */
-function enFontSet(pdfDoc: PDFDocument): HtmlFontSet {
-  const cache = new Map<string, PDFFont>();
-  const key = (b: boolean, i: boolean, m: boolean): string =>
-    `${b ? "B" : ""}${i ? "I" : ""}${m ? "M" : ""}`;
+/** the worker's exact EN font set — the 8 base-14 std-key faces
+ * (P6-n: cheap consts; std faces embed nothing on OUR engine). */
+function enFontSet(): HtmlFontSet {
+  const courier = { std: "courier" } as const;
+  const courierBold = { std: "courierBold" } as const;
+  const courierBoldOblique = { std: "courierBoldOblique" } as const;
+  const courierOblique = { std: "courierOblique" } as const;
+  const helvetica = { std: "helvetica" } as const;
+  const helveticaBold = { std: "helveticaBold" } as const;
+  const helveticaBoldOblique = { std: "helveticaBoldOblique" } as const;
+  const helveticaOblique = { std: "helveticaOblique" } as const;
   return {
     isNoto: false,
-    resolve(bold, italic, mono) {
-      const k = key(bold, italic, mono);
-      const hit = cache.get(k);
-      if (hit) return hit;
-      let font: PDFFont;
+    resolve(bold, italic, mono): ConvertFace {
       if (mono) {
-        font = pdfDoc.embedStandardFont(
-          bold && italic
-            ? StandardFonts.CourierBoldOblique
-            : bold
-              ? StandardFonts.CourierBold
-              : italic
-                ? StandardFonts.CourierOblique
-                : StandardFonts.Courier
-        );
-      } else {
-        font = pdfDoc.embedStandardFont(
-          bold && italic
-            ? StandardFonts.HelveticaBoldOblique
-            : bold
-              ? StandardFonts.HelveticaBold
-              : italic
-                ? StandardFonts.HelveticaOblique
-                : StandardFonts.Helvetica
-        );
+        return bold && italic
+          ? courierBoldOblique
+          : bold
+            ? courierBold
+            : italic
+              ? courierOblique
+              : courier;
       }
-      cache.set(k, font);
-      return font;
+      return bold && italic
+        ? helveticaBoldOblique
+        : bold
+          ? helveticaBold
+          : italic
+            ? helveticaOblique
+            : helvetica;
     },
   };
 }
@@ -142,8 +146,8 @@ function enFontSet(pdfDoc: PDFDocument): HtmlFontSet {
 /**
  * The WORKER's exact render path (minus the network): parseHtml →
  * parseHtmlRun boundary coercion → needsNoto → the single font
- * decision → drawHtmlPdf — with the same font recipe (base-14 set vs
- * the Noto subset the worker embeds through loadStampFonts).
+ * decision → drawHtmlPdf — with the same font recipe on the OWN
+ * engine (base-14 std keys vs the embedded Noto subset via embedTtf).
  */
 async function renderPage(
   html: string,
@@ -155,14 +159,13 @@ async function renderPage(
   }
 ): Promise<{ bytes: Uint8Array; pages: number; doc: ParsedHtml }> {
   const doc = parseHtmlRun(JSON.stringify(parseHtml(html)));
-  const pdfDoc = await PDFDocument.create();
+  const pdfDoc = CreateContext.create();
   let fonts: HtmlFontSet;
   if (needsNoto(doc)) {
-    pdfDoc.registerFontkit(fontkit);
-    const noto = await pdfDoc.embedFont(notoBytes, { subset: true });
-    fonts = { isNoto: true, resolve: () => noto };
+    const noto = pdfDoc.embedTtf(notoBytes);
+    fonts = { isNoto: true, resolve: () => ({ ttf: noto }) };
   } else {
-    fonts = enFontSet(pdfDoc);
+    fonts = enFontSet();
   }
   const report = drawHtmlPdf(pdfDoc, fonts, doc, {
     pageSize: opts.pageSize ?? "a4",
@@ -170,7 +173,7 @@ async function renderPage(
     baseFontSize: opts.baseFontSize ?? 11,
     showLinks: opts.showLinks ?? false,
   });
-  const bytes = await pdfDoc.save();
+  const bytes = pdfDoc.write();
   const reloaded = await PDFDocument.load(bytes);
   return { bytes, pages: reloaded.getPageCount(), doc };
 }

@@ -1,12 +1,15 @@
-import { PDFDocument, StandardFonts, type PDFFont, type PDFImage } from "pdf-lib";
+import {
+  CreateContext,
+  type CreateImage,
+} from "@/lib/own/pdf";
 import { unzipSync as fflateUnzipSync, type Unzipped } from "@/lib/own/zip";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { embedDocumentImage } from "@/lib/pdf/embed-image";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { embedDocumentImageOwn } from "@/lib/pdf/embed-image-own";
+import { loadDevanagariBytes } from "../stamp-common/deva";
 import {
   chapterWordFor,
   EpubParseError,
@@ -32,13 +35,14 @@ import { drawEpubPdf, type EpubFontSet } from "./render";
  *     mimetype, missing container.xml, missing OPF, empty spine, no
  *     readable text) posts its honest code;
  *  2. font pick — a SINGLE decision per document: pure-WinAnsi books
- *     embed NO font file at all (the base-14 Helvetica × Courier ×
- *     italic set), while ANY non-WinAnsi char (or a localized Hindi
- *     TOC heading / chapter fallback word) switches everything to the
- *     self-hosted Noto Sans Devanagari subset (fontkit subset:true,
- *     Regular only — hierarchy honestly comes from size);
- *  3. cover embed — the OPF-declared PNG/JPG cover via pdf-lib's
- *     embedPng/embedJpg (a cover that fails to embed is honestly
+ *     embed NO font file at all (the base-14 std-key set — Helvetica ×
+ *     Courier × italic, non-embedded), while ANY non-WinAnsi char (or a
+ *     localized Hindi TOC heading / chapter fallback word) switches
+ *     everything to the self-hosted Noto Sans Devanagari (OUR
+ *     Type0/CIDFontType2 subsetter + Indic shaper, Regular only —
+ *     hierarchy honestly comes from size);
+ *  3. cover embed — the OPF-declared PNG/JPG cover via OUR engine's
+ *     SYNC embedPng/embedJpeg (a cover that fails to embed is honestly
  *     skipped, never a hard failure);
  *  4. chapter images (audit R4-a) — the book's resolved image refs
  *     (ParsedEpub.images) embed through the shared helper (original
@@ -48,7 +52,7 @@ import { drawEpubPdf, type EpubFontSet } from "./render";
  *     cover page, chapters on fresh pages with their images at their
  *     paragraph anchors, inserted TOC with exact page numbers,
  *     optional folios;
- *  6. save with producer/creator "DocoPDF", PDF title/author from
+ *  6. write with producer/creator "DocoPDF", PDF title/author from
  *     the OPF metadata, and the title-derived download name.
  *
  * Options: pageSize ("a4"|"letter"), margin ("normal"|"narrow"|"wide"),
@@ -63,40 +67,39 @@ const BASE_FONT_SIZES: Record<string, number> = {
   large: 12.5,
 };
 
-function enFontSet(pdfDoc: PDFDocument): EpubFontSet {
-  const cache = new Map<string, PDFFont>();
-  const key = (b: boolean, i: boolean, m: boolean): string =>
-    `${b ? "B" : ""}${i ? "I" : ""}${m ? "M" : ""}`;
+/**
+ * The base-14 8-way resolution as ConvertFace consts — faces are cheap
+ * constants on OUR engine (std keys embed nothing), so there is no
+ * cache to keep (the P6-m converter recipe).
+ */
+function enFontSet(): EpubFontSet {
+  const courierBoldOblique = { std: "courierBoldOblique" } as const;
+  const courierBold = { std: "courierBold" } as const;
+  const courierOblique = { std: "courierOblique" } as const;
+  const courier = { std: "courier" } as const;
+  const helveticaBoldOblique = { std: "helveticaBoldOblique" } as const;
+  const helveticaBold = { std: "helveticaBold" } as const;
+  const helveticaOblique = { std: "helveticaOblique" } as const;
+  const helvetica = { std: "helvetica" } as const;
   return {
     isNoto: false,
     resolve(bold, italic, mono) {
-      const k = key(bold, italic, mono);
-      const hit = cache.get(k);
-      if (hit) return hit;
-      let font: PDFFont;
       if (mono) {
-        font = pdfDoc.embedStandardFont(
-          bold && italic
-            ? StandardFonts.CourierBoldOblique
-            : bold
-              ? StandardFonts.CourierBold
-              : italic
-                ? StandardFonts.CourierOblique
-                : StandardFonts.Courier
-        );
-      } else {
-        font = pdfDoc.embedStandardFont(
-          bold && italic
-            ? StandardFonts.HelveticaBoldOblique
-            : bold
-              ? StandardFonts.HelveticaBold
-              : italic
-                ? StandardFonts.HelveticaOblique
-                : StandardFonts.Helvetica
-        );
+        return bold && italic
+          ? courierBoldOblique
+          : bold
+            ? courierBold
+            : italic
+              ? courierOblique
+              : courier;
       }
-      cache.set(k, font);
-      return font;
+      return bold && italic
+        ? helveticaBoldOblique
+        : bold
+          ? helveticaBold
+          : italic
+            ? helveticaOblique
+            : helvetica;
     },
   };
 }
@@ -146,7 +149,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     };
     const lang: "en" | "hi" = String(request.options.lang) === "hi" ? "hi" : "en";
 
-    const pdfDoc = await PDFDocument.create();
+    const pdfDoc = CreateContext.create();
 
     // font pick — one decision for the whole book. The Hindi UI words
     // (विषय-सूची / अध्याय) and any non-WinAnsi chapter title count.
@@ -159,25 +162,24 @@ async function run(request: WorkerRunRequest): Promise<void> {
       // Devanagari (or any non-WinAnsi) content → the embedded Noto
       // subset for EVERYTHING. OFL ships Regular only: hierarchy comes
       // from size, and bold text falls back to the regular face.
-      const stampFonts = await loadStampFonts(pdfDoc, true);
-      const noto = stampFonts.fontFor("devanagari");
+      const noto = pdfDoc.embedTtf(await loadDevanagariBytes());
       fonts = {
         isNoto: true,
-        resolve: () => noto,
+        resolve: () => ({ ttf: noto }),
       };
     } else {
-      fonts = enFontSet(pdfDoc);
+      fonts = enFontSet();
     }
     post({ type: "progress", runId, pct: 60, stage: "processing" });
 
     // cover embed — a cover that fails to embed is honestly skipped
-    let coverImage: PDFImage | null = null;
+    let coverImage: CreateImage | null = null;
     if (opts.includeCover && book.cover !== null) {
       try {
         coverImage =
           book.cover.kind === "png"
-            ? await pdfDoc.embedPng(book.cover.bytes)
-            : await pdfDoc.embedJpg(book.cover.bytes);
+            ? pdfDoc.embedPng(book.cover.bytes)
+            : pdfDoc.embedJpeg(book.cover.bytes);
       } catch {
         coverImage = null;
       }
@@ -186,7 +188,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     // chapter images (audit R4-a): the book's resolved refs embed once
     // per unique zip path; a part that fails here just leaves the
     // honest alt text (parse-level skips were counted already)
-    const chapterImages = new Map<string, PDFImage>();
+    const chapterImages = new Map<string, CreateImage>();
     if (book.images.length > 0) {
       let files: Unzipped = {};
       try {
@@ -197,7 +199,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       for (const ref of book.images) {
         const entry = lookupEntry(files, ref.path);
         if (entry === undefined) continue;
-        const embedded = await embedDocumentImage(pdfDoc, entry);
+        const embedded = await embedDocumentImageOwn(pdfDoc, entry);
         if (embedded === null) continue;
         chapterImages.set(ref.path, embedded.image);
       }
@@ -217,7 +219,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     if (book.author !== "") pdfDoc.setAuthor(book.author);
     pdfDoc.setCreationDate(new Date());
 
-    const outBytes = await pdfDoc.save();
+    const outBytes = pdfDoc.write();
     const st = stats(book);
     post({
       type: "result",

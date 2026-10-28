@@ -7,9 +7,15 @@
  * cover is built here with node:zlib because the model must stay
  * worker-pure), node:zlib as the UNZIP oracle (NOT fflate —
  * inflateRawSync for the raw-deflate entries fflate writes), real
- * renders through the worker's exact render.ts (font recipe + cover
- * embed + metadata calls replicated verbatim), parse-level font asserts
- * on reload, relative imports without .ts, process.exit at the end.
+ * renders through the worker's exact render.ts on OUR CreateContext
+ * engine (P6-n: the face recipe + SYNC cover/chapter-image embeds +
+ * metadata calls replicated verbatim; std keys / embedTtf Devanagari),
+ * pdf-lib used ONLY as the reload/parse ORACLE (page counts, dims,
+ * FontFile2 / Identity-H via enumerateIndirectObjects, per-page
+ * streams via decodePDFRawStream), node:zlib inflate for stream text
+ * with the raw-stream literal fallback (OUR engine writes page
+ * contents UNCOMPRESSED), parse-level font asserts on reload,
+ * relative imports without .ts, process.exit at the end.
  *
  * Run: bun scripts/smoke-epub-to-pdf.ts
  */
@@ -21,16 +27,13 @@ import {
   PDFArray,
   PDFDocument,
   PDFRawStream,
-  StandardFonts,
   decodePDFRawStream,
-  type PDFFont,
-  type PDFImage,
   type PDFPage,
-} from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+} from "pdf-lib"; // reload/parse ORACLE only (P6-n)
+import { CreateContext, type CreateImage } from "../src/lib/own/pdf";
 import { unzipSync, zipSync, strToU8, type Unzipped, type Zippable } from "../src/lib/own/zip/index";
 
-import { embedDocumentImage } from "../src/lib/pdf/embed-image";
+import { embedDocumentImageOwn } from "../src/lib/pdf/embed-image-own";
 import {
   buildSampleEpub,
   chapterWordFor,
@@ -123,7 +126,10 @@ function inflatedText(bytes: Uint8Array): string {
     try {
       out += inflateSync(Buffer.from(raw.slice(start, e), "latin1")).toString("latin1");
     } catch {
-      /* non-flate stream (font) */
+      // Not deflated — OUR engine's page contents ride raw (classic
+      // xref, no /Filter): append them literally so text assertions
+      // still see the <HEX> Tj operators (the P6-i readContent recipe).
+      out += raw.slice(start, e);
     }
     idx = e + 9;
   }
@@ -232,40 +238,39 @@ const notoBytes = new Uint8Array(
 
 /* ---- the worker's exact font recipe + render + metadata sequence ---- */
 
-function enFontSet(pdfDoc: PDFDocument): EpubFontSet {
-  const cache = new Map<string, PDFFont>();
-  const key = (b: boolean, i: boolean, m: boolean): string =>
-    `${b ? "B" : ""}${i ? "I" : ""}${m ? "M" : ""}`;
+/**
+ * The base-14 8-way resolution as ConvertFace consts — the worker's
+ * enFontSet shape on OUR engine (std keys embed nothing; nothing to
+ * cache, the P6-m converter recipe).
+ */
+function enFontSet(): EpubFontSet {
+  const courierBoldOblique = { std: "courierBoldOblique" } as const;
+  const courierBold = { std: "courierBold" } as const;
+  const courierOblique = { std: "courierOblique" } as const;
+  const courier = { std: "courier" } as const;
+  const helveticaBoldOblique = { std: "helveticaBoldOblique" } as const;
+  const helveticaBold = { std: "helveticaBold" } as const;
+  const helveticaOblique = { std: "helveticaOblique" } as const;
+  const helvetica = { std: "helvetica" } as const;
   return {
     isNoto: false,
     resolve(bold, italic, mono) {
-      const k = key(bold, italic, mono);
-      const hit = cache.get(k);
-      if (hit) return hit;
-      let font: PDFFont;
       if (mono) {
-        font = pdfDoc.embedStandardFont(
-          bold && italic
-            ? StandardFonts.CourierBoldOblique
-            : bold
-              ? StandardFonts.CourierBold
-              : italic
-                ? StandardFonts.CourierOblique
-                : StandardFonts.Courier
-        );
-      } else {
-        font = pdfDoc.embedStandardFont(
-          bold && italic
-            ? StandardFonts.HelveticaBoldOblique
-            : bold
-              ? StandardFonts.HelveticaBold
-              : italic
-                ? StandardFonts.HelveticaOblique
-                : StandardFonts.Helvetica
-        );
+        return bold && italic
+          ? courierBoldOblique
+          : bold
+            ? courierBold
+            : italic
+              ? courierOblique
+              : courier;
       }
-      cache.set(k, font);
-      return font;
+      return bold && italic
+        ? helveticaBoldOblique
+        : bold
+          ? helveticaBold
+          : italic
+            ? helveticaOblique
+            : helvetica;
     },
   };
 }
@@ -281,10 +286,11 @@ interface RenderOpts {
 }
 
 /**
- * Mirrors the worker step for step: parse → font decision → cover
- * embed → chapter-image embed → drawEpubPdf → metadata
- * (producer/creator/title/author) → save. The parse itself runs on the
- * fixture bytes like request.files.
+ * Mirrors the worker step for step on the OWN engine (P6-n): parse →
+ * font decision (std keys / embedTtf Devanagari) → cover embed →
+ * chapter-image embed → drawEpubPdf → metadata
+ * (producer/creator/title/author) → write. The parse itself runs on
+ * the fixture bytes like request.files.
  */
 async function renderBook(
   epubBytes: Uint8Array,
@@ -292,7 +298,7 @@ async function renderBook(
 ): Promise<{ bytes: Uint8Array; report: EpubRenderReport; book: ParsedEpub }> {
   const book = parseEpub(epubBytes);
   const lang: "en" | "hi" = opts.hindiUi ? "hi" : "en";
-  const pdfDoc = await PDFDocument.create();
+  const pdfDoc = CreateContext.create();
   const wantNoto =
     opts.noto === true ||
     needsNoto(book) ||
@@ -300,19 +306,18 @@ async function renderBook(
     book.chapters.some((c) => titleNeedsNoto(c.title));
   let fonts: EpubFontSet;
   if (wantNoto) {
-    pdfDoc.registerFontkit(fontkit);
-    const noto = await pdfDoc.embedFont(notoBytes, { subset: true });
-    fonts = { isNoto: true, resolve: () => noto };
+    const noto = pdfDoc.embedTtf(notoBytes);
+    fonts = { isNoto: true, resolve: () => ({ ttf: noto }) };
   } else {
-    fonts = enFontSet(pdfDoc);
+    fonts = enFontSet();
   }
-  let coverImage: PDFImage | null = null;
+  let coverImage: CreateImage | null = null;
   if (opts.cover !== false && book.cover !== null) {
     try {
       coverImage =
         book.cover.kind === "png"
-          ? await pdfDoc.embedPng(book.cover.bytes)
-          : await pdfDoc.embedJpg(book.cover.bytes);
+          ? pdfDoc.embedPng(book.cover.bytes)
+          : pdfDoc.embedJpeg(book.cover.bytes);
     } catch {
       coverImage = null;
     }
@@ -320,7 +325,7 @@ async function renderBook(
   // chapter images (audit R4-a) — the worker's exact embed step:
   // resolved refs → zip part → shared helper (original bytes under bun;
   // a part that fails here just leaves the honest alt text)
-  const chapterImages = new Map<string, PDFImage>();
+  const chapterImages = new Map<string, CreateImage>();
   if (book.images.length > 0) {
     let files: Unzipped = {};
     try {
@@ -331,7 +336,7 @@ async function renderBook(
     for (const ref of book.images) {
       const entry = lookupEntry(files, ref.path);
       if (entry === undefined) continue;
-      const embedded = await embedDocumentImage(pdfDoc, entry);
+      const embedded = await embedDocumentImageOwn(pdfDoc, entry);
       if (embedded === null) continue;
       chapterImages.set(ref.path, embedded.image);
     }
@@ -353,7 +358,7 @@ async function renderBook(
   pdfDoc.setTitle(baseName);
   if (book.author !== "") pdfDoc.setAuthor(book.author);
   pdfDoc.setCreationDate(new Date());
-  const bytes = await pdfDoc.save();
+  const bytes = pdfDoc.write();
   return { bytes, report, book };
 }
 
@@ -468,10 +473,11 @@ console.log("── 1. fixture + node:zlib ZIP oracle ────────�
       cover.data[2] === 0x4e &&
       cover.data[3] === 0x47
   );
-  // the hand-built PNG must be valid for pdf-lib (parsed here, drawn below)
-  const probe = await PDFDocument.create();
-  const embedded = await probe.embedPng(coverPng);
-  check("cover PNG embeds via pdf-lib (32×48)", embedded.width === 32 && embedded.height === 48, `${embedded.width}x${embedded.height}`);
+  // the hand-built PNG must be valid for OUR engine's embed path
+  // (parsed here, drawn below)
+  const probe = CreateContext.create();
+  const embedded = probe.embedPng(coverPng);
+  check("cover PNG embeds via OUR engine (32×48)", embedded.width === 32 && embedded.height === 48, `${embedded.width}x${embedded.height}`);
 }
 
 console.log("── 2. parseEpub: EPUB 3 nav fixture ───────────────────────");

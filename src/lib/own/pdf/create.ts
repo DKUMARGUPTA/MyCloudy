@@ -12,8 +12,14 @@
  *   drawText:      q [gs] BT r g b rg /F size Tf 24 TL cos sin -sin cos x y Tm
  *                  <HEX> Tj T* ET Q   (drawLinesOfText shape: TL + trailing
  *                  T* are pdf-lib's; hex is UPPERcase like its toHexString)
- *   drawLine:      q r g b RG th w [] 0 d x1 y1 m x1 y1 m x2 y2 l S Q
- *                  (pdf-lib emits moveTo TWICE — the duplicate is kept for parity)
+ *   drawLine:      q r g b RG th w [dash] 0 d x1 y1 m x1 y1 m x2 y2 l S Q
+ *                  (pdf-lib emits moveTo TWICE — the duplicate is kept for
+ *                  parity; [dash] is the lineDashArray, [] when absent)
+ *   drawRoundedRect (P6-n, pdf-lib's drawSvgPath rounded-rect shape):
+ *                  q 1 0 0 1 x yTop cm 1 0 0 1 0 0 cm 1 0 0 -1 0 0 cm
+ *                  [rg] [RG] [w] [] 0 d  r 0 m w−r 0 l <κarc> c … h f|S|B Q
+ *                  (translate + rotate-identity + the SVG y-flip; the four
+ *                  quarter-arc béziers use the drawEllipse κ)
  *   drawRectangle: q r g b rg bw w [] 0 d x y cm 1 0 0 1 0 0 cm 1 0 0 1 0 0 cm
  *                  0 0 m 0 h l w h l w 0 l h f|S|B Q
  *                  (translate + rotate-0 + skew-0 cm triplet; the identity
@@ -116,6 +122,26 @@ export interface CreateLineOptions {
   /** Default black (pdf-lib adds rgb(0,0,0) when color is absent). */
   color?: { r: number; g: number; b: number };
   opacity?: number;
+  /** Dash pattern — pdf-lib's lineDashArray (P6-n, the html dashed
+   * borders): emitted as `[a b] 0 d` AFTER the width op; absent → the
+   * usual `[] 0 d` reset. */
+  dashArray?: number[];
+}
+
+/** Rounded rectangle (P6-n — pdf-lib's drawSvgPath rounded-rect shape,
+ * html-to-pdf's border-radius boxes). y grows DOWN from `yTop`, so the
+ * caller passes the box's TOP edge in PDF space exactly like pdf-lib's
+ * drawSvgPath `{x, y}` + the engine's internal y-flip. */
+export interface CreateRoundedRectOptions {
+  x: number;
+  /** TOP edge y in PDF user space (the translate origin, pre-flip). */
+  yTop: number;
+  width: number;
+  height: number;
+  radius: number;
+  color?: { r: number; g: number; b: number };
+  borderColor?: { r: number; g: number; b: number };
+  borderWidth?: number;
 }
 
 export interface CreateEllipseOptions {
@@ -347,6 +373,38 @@ export class CreateContext {
     const rec: CreatedPageRec = { width, height, ops: [], local: new Map() };
     this.pages.push(rec);
     return new CreatePageImpl(this, rec, this.pages.length - 1);
+  }
+
+  /**
+   * Insert an empty page at `index` (pdf-lib's insertPage — P6-n, the
+   * epub TOC pages that must land BETWEEN cover and chapters). Resources
+   * are page-local and object numbers are assigned at write() time, so
+   * splicing the recs array is the whole story.
+   */
+  insertPage(index: number, width: number, height: number): CreatePage {
+    if (
+      !Number.isFinite(width) || !Number.isFinite(height) ||
+      width <= 0 || height <= 0
+    ) {
+      throw new PdfError("corrupt", "page size must be positive");
+    }
+    if (!Number.isInteger(index) || index < 0 || index > this.pages.length) {
+      throw new PdfError("corrupt", `page index ${index} out of range`);
+    }
+    const rec: CreatedPageRec = { width, height, ops: [], local: new Map() };
+    this.pages.splice(index, 0, rec);
+    return new CreatePageImpl(this, rec, index);
+  }
+
+  /**
+   * Drawing handles for every page so far, in final order (pdf-lib's
+   * getPages — P6-n, the epub folio stamping pass that writes into pages
+   * created earlier).
+   */
+  getPages(): CreatePage[] {
+    return this.pages.map(
+      (rec, index) => new CreatePageImpl(this, rec, index),
+    );
   }
 
   /** Embed a JPEG (DCT passthrough). Returns the reusable draw handle. */
@@ -822,6 +880,7 @@ export interface CreatePage {
   drawText(opts: CreateTextOptions): void;
   drawRectangle(opts: CreateRectOptions): void;
   drawLine(opts: CreateLineOptions): void;
+  drawRoundedRectangle(opts: CreateRoundedRectOptions): void;
   drawEllipse(opts: CreateEllipseOptions): void;
   drawImage(image: CreateImage, opts: CreateImageOptions): void;
 }
@@ -960,19 +1019,97 @@ class CreatePageImpl implements CreatePage {
   drawLine(opts: CreateLineOptions): void {
     const color = opts.color ?? { r: 0, g: 0, b: 0 };
     const thickness = opts.thickness ?? 1;
+    const dash =
+      opts.dashArray && opts.dashArray.length > 0
+        ? `[${opts.dashArray.map((v) => pdfNumToString(v)).join(" ")}] 0 d`
+        : "[] 0 d";
     this.ctx.push(
       this.rec,
       [
         "q",
         `${pdfNumToString(color.r)} ${pdfNumToString(color.g)} ${pdfNumToString(color.b)} RG`,
         `${pdfNumToString(thickness)} w`,
-        "[] 0 d",
+        dash,
         `${pdfNumToString(opts.start.x)} ${pdfNumToString(opts.start.y)} m`,
         // pdf-lib's drawLine emits moveTo TWICE (api/operations.js) — the
         // duplicate is preserved for parity with the oracle's streams.
         `${pdfNumToString(opts.start.x)} ${pdfNumToString(opts.start.y)} m`,
         `${pdfNumToString(opts.end.x)} ${pdfNumToString(opts.end.y)} l`,
         "S",
+        "Q",
+      ].join("\n"),
+    );
+  }
+
+  drawRoundedRectangle(opts: CreateRoundedRectOptions): void {
+    const color = opts.color;
+    const borderColor = opts.borderColor;
+    if (!color && !borderColor) {
+      // pdf-lib's drawPath defaults the fill to black when neither is given.
+      return this.drawRoundedRectangle({
+        ...opts,
+        color: { r: 0, g: 0, b: 0 },
+      });
+    }
+    const borderWidth = opts.borderColor ? (opts.borderWidth ?? 1) : 0;
+    const rr = Math.min(opts.radius, opts.width / 2, opts.height / 2);
+    const w = opts.width;
+    const h = opts.height;
+    // Local SVG-space coordinates (y grows down from yTop — the translate
+    // + y-flip cm pair below is exactly pdf-lib's drawSvgPath shape, probed:
+    //   1 0 0 1 x yTop cm / 1 0 0 1 0 0 cm / 1 0 0 -1 0 0 cm
+    // The four quarter-arc control points use the same κ as drawEllipse
+    // (4/3·(√2−1) = 4/3·tan(π/8)); their positions were verified against
+    // pdf-lib's arcToCubicCurves output for sweep-1 quarter arcs.
+    const k = rr * KAPPA;
+    const path: string[] = [];
+    if (rr <= 0) {
+      path.push(
+        `0 0 m`,
+        `${pdfNumToString(w)} 0 l`,
+        `${pdfNumToString(w)} ${pdfNumToString(h)} l`,
+        `0 ${pdfNumToString(h)} l`,
+        "h",
+      );
+    } else {
+      path.push(
+        `${pdfNumToString(rr)} 0 m`,
+        `${pdfNumToString(w - rr)} 0 l`,
+        // TR arc: (w−r,0) → (w,r), controls (w−r+k,0) (w,r−k)
+        `${pdfNumToString(w - rr + k)} 0 ${pdfNumToString(w)} ${pdfNumToString(rr - k)} ${pdfNumToString(w)} ${pdfNumToString(rr)} c`,
+        `${pdfNumToString(w)} ${pdfNumToString(h - rr)} l`,
+        // BR arc: (w,h−r) → (w−r,h), controls (w,h−r+k) (w−r+k,h)
+        `${pdfNumToString(w)} ${pdfNumToString(h - rr + k)} ${pdfNumToString(w - rr + k)} ${pdfNumToString(h)} ${pdfNumToString(w - rr)} ${pdfNumToString(h)} c`,
+        `${pdfNumToString(rr)} ${pdfNumToString(h)} l`,
+        // BL arc: (r,h) → (0,h−r), controls (r−k,h) (0,h−r+k)
+        `${pdfNumToString(rr - k)} ${pdfNumToString(h)} 0 ${pdfNumToString(h - rr + k)} 0 ${pdfNumToString(h - rr)} c`,
+        `0 ${pdfNumToString(rr)} l`,
+        // TL arc: (0,r) → (r,0), controls (0,r−k) (r−k,0)
+        `0 ${pdfNumToString(rr - k)} ${pdfNumToString(rr - k)} 0 ${pdfNumToString(rr)} 0 c`,
+        "h",
+      );
+    }
+    this.ctx.push(
+      this.rec,
+      [
+        "q",
+        `1 0 0 1 ${pdfNumToString(opts.x)} ${pdfNumToString(opts.yTop)} cm`,
+        "1 0 0 1 0 0 cm", // rotate(0) — pdf-lib always emits the identity
+        "1 0 0 -1 0 0 cm", // scale(1, −1) — the SVG y-flip
+        ...(color
+          ? [`${pdfNumToString(color.r)} ${pdfNumToString(color.g)} ${pdfNumToString(color.b)} rg`]
+          : []),
+        ...(borderColor
+          ? [
+              `${pdfNumToString(borderColor.r)} ${pdfNumToString(borderColor.g)} ${pdfNumToString(borderColor.b)} RG`,
+              `${pdfNumToString(borderWidth)} w`,
+            ]
+          : []),
+        "[] 0 d",
+        ...path,
+        color && borderColor ? "B"
+          : color ? "f"
+            : "S",
         "Q",
       ].join("\n"),
     );

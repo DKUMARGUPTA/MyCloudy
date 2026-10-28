@@ -25,12 +25,22 @@
  */
 import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
+import { PDFDocument } from "pdf-lib"; // reload-oracle ONLY (P6-n)
 import "regenerator-runtime/runtime";
-import fontkit from "@pdf-lib/fontkit";
+
+import { CreateContext, type StampTtfFont } from "../src/lib/own/pdf";
+import {
+  faceOpts,
+  faceWidth,
+  rgb,
+  type ConvertFace,
+} from "../tools/convert-common/face";
+import {
+  embedDocumentImageOwn,
+  sniffEmbedKind,
+} from "../src/lib/pdf/embed-image-own";
 
 import { makeFixturePng } from "./fixture-png";
-import { embedDocumentImage, sniffEmbedKind } from "../src/lib/pdf/embed-image";
 import { config as mdConfig } from "../tools/markdown-to-pdf/config";
 
 import {
@@ -70,36 +80,41 @@ function check(name: string, ok: boolean, detail = ""): void {
 
 /* ------------------------------------------------------------------ */
 /* Font set — the worker's exact loading + selection logic             */
+/* (P6-n: the OWN-engine faces — std keys + the embedTtf Devanagari;    */
+/*  widthOfTextAtSize → faceWidth so wraps stay identical by           */
+/*  construction, the P6-l/m precedent)                                */
 /* ------------------------------------------------------------------ */
-
-interface FontSet {
-  helv: PDFFont;
-  helvBold: PDFFont;
-  helvOblique: PDFFont;
-  helvBoldOblique: PDFFont;
-  courier: PDFFont;
-  courierBold: PDFFont;
-  noto: PDFFont;
-}
 
 const TTF_PATH = "/home/z/my-project/public/fonts/NotoSansDevanagari-Regular.ttf";
 
-async function makeFontSet(doc: PDFDocument): Promise<FontSet> {
-  doc.registerFontkit(fontkit);
-  const ttfBytes = new Uint8Array(await readFile(TTF_PATH));
+/** Smoke font set (P6-n faces — the worker's loadFonts shape). */
+interface SmokeFontSet {
+  helv: ConvertFace;
+  helvBold: ConvertFace;
+  helvOblique: ConvertFace;
+  helvBoldOblique: ConvertFace;
+  courier: ConvertFace;
+  courierBold: ConvertFace;
+  noto: StampTtfFont;
+}
+
+const notoBytes = new Uint8Array(await readFile(TTF_PATH));
+
+function makeFontSet(doc: CreateContext): SmokeFontSet {
+  // std keys embed nothing; noto rides OUR Type0 subsetter (embedTtf)
   return {
-    helv: await doc.embedFont(StandardFonts.Helvetica),
-    helvBold: await doc.embedFont(StandardFonts.HelveticaBold),
-    helvOblique: await doc.embedFont(StandardFonts.HelveticaOblique),
-    helvBoldOblique: await doc.embedFont(StandardFonts.HelveticaBoldOblique),
-    courier: await doc.embedFont(StandardFonts.Courier),
-    courierBold: await doc.embedFont(StandardFonts.CourierBold),
-    noto: await doc.embedFont(ttfBytes, { subset: true }),
+    helv: { std: "helvetica" },
+    helvBold: { std: "helveticaBold" },
+    helvOblique: { std: "helveticaOblique" },
+    helvBoldOblique: { std: "helveticaBoldOblique" },
+    courier: { std: "courier" },
+    courierBold: { std: "courierBold" },
+    noto: doc.embedTtf(notoBytes),
   };
 }
 
-function fontFor(set: FontSet, spec: FontSpec, script: ScriptFont): PDFFont {
-  if (script === "noto") return set.noto;
+function fontFor(set: SmokeFontSet, spec: FontSpec, script: ScriptFont): ConvertFace {
+  if (script === "noto") return { ttf: set.noto };
   if (spec.family === "mono") return spec.bold ? set.courierBold : set.courier;
   if (spec.bold && spec.italic) return set.helvBoldOblique;
   if (spec.bold) return set.helvBold;
@@ -107,13 +122,13 @@ function fontFor(set: FontSet, spec: FontSpec, script: ScriptFont): PDFFont {
   return set.helv;
 }
 
-const measureDoc = await PDFDocument.create();
-const measureFonts = await makeFontSet(measureDoc);
+const measureDoc = CreateContext.create();
+const measureFonts = makeFontSet(measureDoc);
 const measure: MeasureRun = (text, spec, size, script) =>
-  fontFor(measureFonts, spec, script).widthOfTextAtSize(text, size);
+  faceWidth(measureDoc, fontFor(measureFonts, spec, script), text, size);
 
 const runWidth = (run: PositionedTextRun): number =>
-  fontFor(measureFonts, run.spec, run.script).widthOfTextAtSize(run.text, run.size);
+  faceWidth(measureDoc, fontFor(measureFonts, run.spec, run.script), run.text, run.size);
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (markdown STRINGS)                                         */
@@ -655,8 +670,8 @@ console.log("images (audit R4-a)");
     sniffEmbedKind(pngBytes.subarray(0, 16)) === "png" &&
       sniffEmbedKind(new Uint8Array([0x47, 0x49, 0x46, 0x38])) === null
   );
-  const renderDoc = await PDFDocument.create();
-  const embedded = await embedDocumentImage(renderDoc, pngBytes);
+  const renderDoc = CreateContext.create();
+  const embedded = await embedDocumentImageOwn(renderDoc, pngBytes);
   check(
     "embedDocumentImage embeds original bytes under bun (no re-encode)",
     embedded !== null &&
@@ -665,9 +680,9 @@ console.log("images (audit R4-a)");
       embedded.downscaled === false,
     embedded === null ? "null" : `${embedded.width}x${embedded.height} downscaled=${embedded.downscaled}`
   );
-  const renderFonts = await makeFontSet(renderDoc);
+  const renderFonts = makeFontSet(renderDoc);
   const renderMeasure: MeasureRun = (text, spec, size, script) =>
-    fontFor(renderFonts, spec, script).widthOfTextAtSize(text, size);
+    faceWidth(renderDoc, fontFor(renderFonts, spec, script), text, size);
   const renderLayout = layoutMd(
     localParsed,
     optsA4,
@@ -678,14 +693,15 @@ console.log("images (audit R4-a)");
   const inkText = rgb(0.1, 0.1, 0.12);
   const inkMuted = rgb(0.45, 0.45, 0.5);
   for (const draw of renderLayout.pages) {
-    const page = renderDoc.addPage([A4.width, A4.height]);
+    const page = renderDoc.addPage(A4.width, A4.height);
     for (const run of draw.runs) {
       if (run.text.length === 0) continue;
-      page.drawText(run.text, {
+      page.drawText({
         x: run.x,
         y: run.baseline,
+        text: run.text,
         size: run.size,
-        font: fontFor(renderFonts, run.spec, run.script),
+        ...faceOpts(fontFor(renderFonts, run.spec, run.script)),
         color: run.color === "muted" ? inkMuted : inkText,
       });
     }
@@ -695,7 +711,7 @@ console.log("images (audit R4-a)");
       page.drawImage(img, { x: image.x, y: image.y, width: image.w, height: image.h });
     }
   }
-  const savedPng = await renderDoc.save({ useObjectStreams: true });
+  const savedPng = renderDoc.write();
   const outPath = "/home/z/my-project/download/qa-audit4-md-image.pdf";
   await writeFile(outPath, savedPng);
   const reloadedPng = await PDFDocument.load(await readFile(outPath), {
@@ -885,15 +901,15 @@ async function renderAndReload(
   mdOptions: MdOptions,
   outPath: string
 ): Promise<void> {
-  const doc = await PDFDocument.create();
-  const fonts = await makeFontSet(doc);
+  const doc = CreateContext.create();
+  const fonts = makeFontSet(doc);
   const docMeasure: MeasureRun = (text, spec, size, script) =>
-    fontFor(fonts, spec, script).widthOfTextAtSize(text, size);
+    faceWidth(doc, fontFor(fonts, spec, script), text, size);
   const parsed = parseMarkdown(COMBINED, fromMarkdown);
   const result = layoutMd(parsed, mdOptions, docMeasure);
   const size = PAGE_SIZES[mdOptions.pageSize];
   for (const draw of result.pages) {
-    const page = doc.addPage([size.width, size.height]);
+    const page = doc.addPage(size.width, size.height);
     if (draw.warm) {
       page.drawRectangle({
         x: 0,
@@ -921,11 +937,12 @@ async function renderAndReload(
     }
     for (const run of draw.runs) {
       if (run.text.length === 0) continue;
-      page.drawText(run.text, {
+      page.drawText({
         x: run.x,
         y: run.baseline,
+        text: run.text,
         size: run.size,
-        font: fontFor(fonts, run.spec, run.script),
+        ...faceOpts(fontFor(fonts, run.spec, run.script)),
         color:
           run.color === "link"
             ? COLORS.link
@@ -935,7 +952,7 @@ async function renderAndReload(
       });
     }
   }
-  const saved = await doc.save({ useObjectStreams: false });
+  const saved = doc.write();
   await writeFile(outPath, saved);
   const reloaded = await PDFDocument.load(await readFile(outPath), {
     updateMetadata: false,

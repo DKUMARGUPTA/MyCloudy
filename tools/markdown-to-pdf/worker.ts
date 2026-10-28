@@ -1,10 +1,16 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage } from "pdf-lib";
+import {
+  CreateContext,
+  type CreateImage,
+  type StampTtfFont,
+} from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
-import { embedDocumentImage, sniffEmbedKind } from "@/lib/pdf/embed-image";
+import { embedDocumentImageOwn, sniffEmbedKind } from "@/lib/pdf/embed-image-own";
+import { loadDevanagariBytes } from "../stamp-common/deva";
+import { faceOpts, faceWidth, rgb, type ConvertFace } from "../convert-common/face";
 import { readTextFile } from "../txt-to-pdf/engine";
 import {
   PAGE_SIZES,
@@ -22,17 +28,19 @@ import {
   resolveMdOptions,
   type MdImageDims,
 } from "./engine";
-import { loadStampFonts } from "../stamp-common/worker-lib";
 
 /**
  * Markdown → PDF worker (PRD §8.6). Parses with mdast-util-from-markdown
  * INSIDE this worker and lays the document out with the shared
  * text-layout engine (see ../txt-to-pdf/text-layout.ts), then paints with
- * pdf-lib: headings in Helvetica bold, body 10-12pt, Courier code blocks
- * with gray backgrounds, quote bars, footnote-style links + a Links
- * section, optional warm-paper theme. Devanagari (any non-WinAnsi block)
- * renders through the embedded Noto font — same stamp-common pipeline as
- * every text tool here. Each file becomes its own <base>.pdf. Device-only.
+ * OUR CreateContext engine (P6-n): headings in Helvetica bold, body
+ * 10-12pt, Courier code blocks with gray backgrounds, quote bars,
+ * footnote-style links + a Links section, optional warm-paper theme.
+ * Devanagari (any non-WinAnsi block) renders through the embedded Noto
+ * font — OUR Type0/CIDFontType2 subsetter + Indic shaper (embedTtf), the
+ * same create-side recipe as every converted family here. Each file
+ * becomes its own <base>.pdf. Device-only, zero pdf-lib in the shipped
+ * path.
  *
  * IMAGES (audit R4-a): the drop accepts PNG/JPEG files alongside the
  * markdown (≤ MAX_MD_FILES files, ≤ MAX_MD_TOTAL_BYTES total — honest
@@ -126,37 +134,39 @@ function post(response: WorkerResponse): void {
   self.postMessage(response);
 }
 
-/** Font set one output document needs. */
+/** Font set one output document needs (P6-n faces: std keys + ttf). */
 interface FontSet {
-  helv: PDFFont;
-  helvBold: PDFFont;
-  helvOblique: PDFFont;
-  helvBoldOblique: PDFFont;
-  courier: PDFFont;
-  courierBold: PDFFont;
-  noto: PDFFont | null;
+  helv: ConvertFace;
+  helvBold: ConvertFace;
+  helvOblique: ConvertFace;
+  helvBoldOblique: ConvertFace;
+  courier: ConvertFace;
+  courierBold: ConvertFace;
+  noto: StampTtfFont | null;
   measure: MeasureRun;
-  fontFor: (spec: FontSpec, script: ScriptFont) => PDFFont;
+  fontFor: (spec: FontSpec, script: ScriptFont) => ConvertFace;
 }
 
 async function loadFonts(
-  doc: PDFDocument,
+  doc: CreateContext,
   needNoto: boolean
 ): Promise<FontSet> {
-  // stamp-common pipeline: standard fonts + the embedded Devanagari TTF
-  const stampFonts = await loadStampFonts(doc, needNoto);
-  const helv = stampFonts.fontFor("helvetica");
-  const helvBold = stampFonts.fontFor("helveticaBold");
-  const courier = stampFonts.fontFor("courier");
-  const courierBold = stampFonts.fontFor("courierBold");
-  const helvOblique = doc.embedStandardFont(StandardFonts.HelveticaOblique);
-  const helvBoldOblique = doc.embedStandardFont(
-    StandardFonts.HelveticaBoldOblique
-  );
-  const noto = needNoto ? stampFonts.fontFor("devanagari") : null;
+  // the create-side recipe: base-14 std keys (no embed) + the embedded
+  // Devanagari TTF through OUR subsetter/shaper (embedTtf)
+  let noto: StampTtfFont | null = null;
+  if (needNoto) {
+    const bytes = await loadDevanagariBytes(); // throws "devanagari-font-fetch"
+    noto = doc.embedTtf(bytes);
+  }
+  const courier = { std: "courier" } as const;
+  const courierBold = { std: "courierBold" } as const;
+  const helvBoldOblique = { std: "helveticaBoldOblique" } as const;
+  const helvBold = { std: "helveticaBold" } as const;
+  const helvOblique = { std: "helveticaOblique" } as const;
+  const helv = { std: "helvetica" } as const;
 
-  const fontFor = (spec: FontSpec, script: ScriptFont): PDFFont => {
-    if (script === "noto" && noto) return noto;
+  const fontFor = (spec: FontSpec, script: ScriptFont): ConvertFace => {
+    if (script === "noto" && noto) return { ttf: noto };
     if (spec.family === "mono") return spec.bold ? courierBold : courier;
     if (spec.bold && spec.italic) return helvBoldOblique;
     if (spec.bold) return helvBold;
@@ -172,7 +182,7 @@ async function loadFonts(
     courierBold,
     noto,
     measure: (text: string, spec: FontSpec, size: number, script: ScriptFont) =>
-      fontFor(spec, script).widthOfTextAtSize(text, size),
+      faceWidth(doc, fontFor(spec, script), text, size),
     fontFor,
   };
 }
@@ -260,7 +270,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const file = decoded[fileIndex];
     const parsed = parseMarkdown(file.text, mdParse);
     const needNoto = blockScript(file.text) === "noto";
-    const doc = await PDFDocument.create();
+    const doc = CreateContext.create();
     const fonts = await loadFonts(doc, needNoto);
 
     post({ type: "progress", runId, pct: 8, stage: "processing" });
@@ -271,7 +281,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     // references never reach the map — the layout degrades them to the
     // honest "[alt]" text and counts them for the result card.
     const dims: MdImageDims = new Map();
-    const embeddedByUrl = new Map<string, PDFImage>();
+    const embeddedByUrl = new Map<string, CreateImage>();
     for (const url of collectImageUrls(parsed)) {
       const assetName = matchImageAsset(
         url,
@@ -280,7 +290,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       if (assetName === null || dims.has(url)) continue;
       const asset = assets.find((a) => a.name === assetName);
       if (asset === undefined) continue;
-      const embedded = await embedDocumentImage(doc, asset.bytes);
+      const embedded = await embedDocumentImageOwn(doc, asset.bytes);
       if (embedded === null) continue;
       dims.set(url, { width: embedded.width, height: embedded.height });
       embeddedByUrl.set(url, embedded.image);
@@ -289,7 +299,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const result = layoutMd(parsed, opts, fonts.measure, dims);
 
     for (let p = 0; p < result.pages.length; p += 1) {
-      const page = doc.addPage([pageSize.width, pageSize.height]);
+      const page = doc.addPage(pageSize.width, pageSize.height);
       const draw = result.pages[p];
       if (draw.warm) {
         page.drawRectangle({
@@ -318,11 +328,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
       }
       for (const run of draw.runs) {
         if (run.text.length === 0) continue;
-        page.drawText(run.text, {
+        page.drawText({
           x: run.x,
           y: run.baseline,
+          text: run.text,
           size: run.size,
-          font: fonts.fontFor(run.spec, run.script),
+          ...faceOpts(fonts.fontFor(run.spec, run.script)),
           color:
             run.color === "link"
               ? COLORS.link
@@ -357,7 +368,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     totalEmbedded += result.imageCount;
     totalSkipped += result.imagesSkipped;
 
-    const saved = await doc.save({ useObjectStreams: true });
+    const saved = doc.write();
     outputs.push({
       name: `${file.base}.pdf`,
       mime: "application/pdf",

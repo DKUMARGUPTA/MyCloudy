@@ -12,14 +12,15 @@
  *    html-to-pdf scope, nothing more. Every chapter starts on a
  *    FRESH page (the odt per-chapter pagination pattern). Chapter
  *    images (audit R4-a): a paragraph that is exactly one [alt] run
- *    carrying a resolved zip path draws its pre-embedded PDFImage
- *    there — natural size capped to the content box, aspect preserved,
- *    never upscaled; everything else stays honest alt text.
+ *    carrying a resolved zip path draws its pre-embedded image handle
+ *    (CreateImage on OUR engine) there — natural size capped to the
+ *    content box, aspect preserved, never upscaled; everything else
+ *    stays honest alt text.
  *  - Cover page: the EPUB's PNG/JPG cover, contain-fit and centered.
  *  - TOC page ("Contents"): chapter titles with EXACT page numbers —
  *    chapters are painted first and their start pages recorded, then
  *    the TOC pages are INSERTED between cover and chapters
- *    (pdf-lib insertPage), so the printed number = recorded start +
+ *    (OUR engine's insertPage), so the printed number = recorded start +
  *    toc-page count + 1. No guessing, no links without numbers.
  *  - Page numbers option: a centered folio in the bottom margin of
  *    every non-cover page, stamped after the TOC insertion so the
@@ -27,15 +28,22 @@
  *  - Metadata: the worker writes PDF title/author from the OPF.
  *  - Every glyph is drawText — REAL selectable vector text only.
  *
- * Fonts arrive already embedded (worker): `fonts` is either the
- * base-14 Helvetica/Courier set (pure-WinAnsi books — no FontFile2) or
- * the Noto Devanagari subset for EVERYTHING (Regular only — bold,
- * italic and mono honestly fall back to the one face, hierarchy comes
- * from size alone).
+ * Fonts arrive already resolved (worker, P6-n OWN-engine faces):
+ * `fonts` is either the base-14 std-key set (pure-WinAnsi books — no
+ * FontFile2) or the embedded Noto Devanagari face for EVERYTHING
+ * (Regular only — bold, italic and mono honestly fall back to the one
+ * face, hierarchy comes from size alone).
  */
 
-import type { PDFDocument, PDFFont, PDFImage, PDFPage } from "pdf-lib";
-import { rgb, type RGB } from "pdf-lib";
+import type { CreateContext, CreateImage, CreatePage } from "@/lib/own/pdf";
+
+import {
+  faceOpts,
+  faceWidth,
+  rgb,
+  type ConvertFace,
+  type RGB,
+} from "../convert-common/face";
 
 import {
   HEADING_SIZES,
@@ -120,13 +128,13 @@ function headingSpec(level: number, base: number): HeadingSpec {
 }
 
 /* ------------------------------------------------------------------ */
-/* Font set (worker embeds; render resolves)                             */
+/* Font set (worker provides the faces; render resolves)               */
 /* ------------------------------------------------------------------ */
 
 export interface EpubFontSet {
   /** true when every string goes to the single Noto Devanagari face. */
   isNoto: boolean;
-  resolve(bold: boolean, italic: boolean, mono: boolean): PDFFont;
+  resolve(bold: boolean, italic: boolean, mono: boolean): ConvertFace;
 }
 
 /* ------------------------------------------------------------------ */
@@ -134,19 +142,19 @@ export interface EpubFontSet {
 /* ------------------------------------------------------------------ */
 
 class Painter {
-  readonly pdfDoc: PDFDocument;
+  readonly pdfDoc: CreateContext;
   readonly fonts: EpubFontSet;
-  readonly pages: PDFPage[] = [];
+  readonly pages: CreatePage[] = [];
   readonly pageW: number;
   readonly pageH: number;
   readonly margin: number;
   readonly contentW: number;
   readonly base: number;
-  page: PDFPage;
+  page: CreatePage;
   y!: number;
 
   constructor(
-    pdfDoc: PDFDocument,
+    pdfDoc: CreateContext,
     fonts: EpubFontSet,
     pageSize: "a4" | "letter",
     margin: number,
@@ -163,8 +171,8 @@ class Painter {
     this.page = this.newPage();
   }
 
-  newPage(): PDFPage {
-    this.page = this.pdfDoc.addPage([this.pageW, this.pageH]);
+  newPage(): CreatePage {
+    this.page = this.pdfDoc.addPage(this.pageW, this.pageH);
     this.pages.push(this.page);
     this.y = this.pageH - this.margin;
     return this.page;
@@ -175,13 +183,13 @@ class Painter {
     if (this.y - need < this.margin) this.newPage();
   }
 
-  font(bold: boolean, italic: boolean, m: boolean): PDFFont {
+  font(bold: boolean, italic: boolean, m: boolean): ConvertFace {
     return this.fonts.resolve(bold, italic, m);
   }
 
   width(text: string, size: number, bold: boolean, italic: boolean, m: boolean): number {
     if (!text) return 0;
-    return this.font(bold, italic, m).widthOfTextAtSize(text, size);
+    return faceWidth(this.pdfDoc, this.font(bold, italic, m), text, size);
   }
 
   /** Baseline-aligned draw at (x, yTop) — the house text() convention. */
@@ -197,11 +205,12 @@ class Painter {
     color: RGB = COL_TEXT
   ): void {
     if (!s) return;
-    this.page.drawText(s, {
+    this.page.drawText({
       x,
       y: yTop - baseline,
+      text: s,
       size,
-      font: this.font(bold, italic, m),
+      ...faceOpts(this.font(bold, italic, m)),
       color,
     });
   }
@@ -573,7 +582,7 @@ function drawHeading(
 function drawPara(
   p: Painter,
   blk: Extract<HtmlBlock, { kind: "para" }>,
-  chapterImages: Map<string, PDFImage>
+  chapterImages: Map<string, CreateImage>
 ): number {
   if (blk.runs.length === 1 && blk.runs[0].img !== undefined) {
     const img = chapterImages.get(blk.runs[0].img);
@@ -863,7 +872,7 @@ function drawTable(
 function drawChapter(
   p: Painter,
   chapter: EpubChapter,
-  chapterImages: Map<string, PDFImage>
+  chapterImages: Map<string, CreateImage>
 ): number {
   let imagesDrawn = 0;
   for (const blk of chapter.doc.blocks) {
@@ -901,12 +910,12 @@ function drawChapter(
 /* ------------------------------------------------------------------ */
 
 function drawCoverPage(
-  pdfDoc: PDFDocument,
-  image: PDFImage,
+  pdfDoc: CreateContext,
+  image: CreateImage,
   pageW: number,
   pageH: number
 ): void {
-  const page = pdfDoc.addPage([pageW, pageH]);
+  const page = pdfDoc.addPage(pageW, pageH);
   const iw = image.width;
   const ih = image.height;
   if (iw <= 0 || ih <= 0) return;
@@ -934,6 +943,7 @@ interface TocEntrySpec {
 
 /** Plain wrap of a TOC title within the title column. */
 function wrapTocTitle(
+  pdfDoc: CreateContext,
   fonts: EpubFontSet,
   title: string,
   width: number,
@@ -945,8 +955,8 @@ function wrapTocTitle(
   for (const word of title.split(" ")) {
     if (word === "") continue;
     const font = fonts.resolve(false, false, false);
-    const w = font.widthOfTextAtSize(word, size);
-    const space = lineW > 0 ? font.widthOfTextAtSize(" ", size) : 0;
+    const w = faceWidth(pdfDoc, font, word, size);
+    const space = lineW > 0 ? faceWidth(pdfDoc, font, " ", size) : 0;
     if (lineW > 0 && lineW + space + w > width) {
       out.push(line);
       line = word;
@@ -968,7 +978,7 @@ function wrapTocTitle(
  * cannot change line wraps, so the layout is number-value-independent).
  */
 function drawTocPages(
-  pdfDoc: PDFDocument,
+  pdfDoc: CreateContext,
   fonts: EpubFontSet,
   book: ParsedEpub,
   starts: number[],
@@ -989,7 +999,7 @@ function drawTocPages(
   for (let i = 0; i < book.chapters.length; i++) {
     const ch = book.chapters[i];
     const title = ch.title !== "" ? ch.title : `${opts.chapterWord} ${i + 1}`;
-    let lines = wrapTocTitle(fonts, title, titleW, size);
+    let lines = wrapTocTitle(pdfDoc, fonts, title, titleW, size);
     if (lines.length > TOC_MAX_LINES) {
       lines = lines.slice(0, TOC_MAX_LINES);
       const last = lines[lines.length - 1] ?? "";
@@ -1029,14 +1039,15 @@ function drawTocPages(
 
   let pageNo = 0;
   for (const entries of pageOf) {
-    const page = pdfDoc.insertPage(insertAt + pageNo, [pageW, pageH]);
+    const page = pdfDoc.insertPage(insertAt + pageNo, pageW, pageH);
     let y = pageH - margin;
     if (pageNo === 0) {
-      page.drawText(opts.tocTitle, {
+      page.drawText({
         x: margin,
         y: y - headerSize,
+        text: opts.tocTitle,
         size: headerSize,
-        font: boldFont,
+        ...faceOpts(boldFont),
         color: COL_TEXT,
       });
       y -= headerH;
@@ -1046,21 +1057,23 @@ function drawTocPages(
       for (let l = 0; l < spec.lines.length; l++) {
         const text = spec.lines[l];
         if (l === 0) {
-          const numW = font.widthOfTextAtSize(spec.number, size);
-          page.drawText(spec.number, {
+          const numW = faceWidth(pdfDoc, font, spec.number, size);
+          page.drawText({
             x: margin + contentW - numW,
             y: y - size,
+            text: spec.number,
             size,
-            font,
+            ...faceOpts(font),
             color: COL_TOC_NUM,
           });
         }
         if (text !== "") {
-          page.drawText(text, {
+          page.drawText({
             x: margin,
             y: y - size,
+            text,
             size,
-            font,
+            ...faceOpts(font),
             color: COL_TEXT,
           });
         }
@@ -1078,7 +1091,7 @@ function drawTocPages(
 /* ------------------------------------------------------------------ */
 
 function stampPageNumbers(
-  pdfDoc: PDFDocument,
+  pdfDoc: CreateContext,
   fonts: EpubFontSet,
   skipPages: number,
   margin: number
@@ -1087,13 +1100,14 @@ function stampPageNumbers(
   const pages = pdfDoc.getPages();
   for (let i = skipPages; i < pages.length; i++) {
     const label = String(i + 1);
-    const { width } = pages[i].getSize();
-    const w = font.widthOfTextAtSize(label, FOLIO_SIZE);
-    pages[i].drawText(label, {
+    const width = pages[i].width;
+    const w = faceWidth(pdfDoc, font, label, FOLIO_SIZE);
+    pages[i].drawText({
       x: (width - w) / 2,
       y: Math.max(12, margin - FOLIO_GAP - FOLIO_SIZE),
+      text: label,
       size: FOLIO_SIZE,
-      font,
+      ...faceOpts(font),
       color: COL_MUTED,
     });
   }
@@ -1137,20 +1151,20 @@ export interface EpubRenderReport {
 
 /**
  * Paint the whole book into `pdfDoc` (pages added/inserted as needed).
- * `fonts` must already be embedded (the base-14 set OR the Noto
- * subset); `coverImage` must already be embedded by the caller (the
- * worker's embedPng/embedJpg); `chapterImages` maps the book's
- * resolved image paths (ParsedEpub.images) to pre-embedded pdf-lib
+ * `fonts` must already be resolved (the base-14 std-key set OR the
+ * embedded Noto face); `coverImage` must already be embedded by the
+ * caller (the worker's embedPng/embedJpeg); `chapterImages` maps the
+ * book's resolved image paths (ParsedEpub.images) to pre-embedded
  * images — image paragraphs without an entry keep their honest alt
  * text (audit R4-a). Chapters always start on a fresh page, so the
  * TOC page numbers are exact without a second render pass.
  */
 export function drawEpubPdf(
-  pdfDoc: PDFDocument,
+  pdfDoc: CreateContext,
   fonts: EpubFontSet,
   book: ParsedEpub,
-  coverImage: PDFImage | null,
-  chapterImages: Map<string, PDFImage>,
+  coverImage: CreateImage | null,
+  chapterImages: Map<string, CreateImage>,
   opts: EpubRenderOpts
 ): EpubRenderReport {
   const pageSize = opts.pageSize === "letter" ? "letter" : "a4";
@@ -1169,7 +1183,7 @@ export function drawEpubPdf(
   const starts: number[] = [];
   let imagesDrawn = 0;
   for (const chapter of book.chapters) {
-    starts.push(pdfDoc.getPageCount());
+    starts.push(pdfDoc.pageCount);
     const p = new Painter(pdfDoc, fonts, pageSize, margin, base);
     imagesDrawn += drawChapter(p, chapter, chapterImages);
   }
@@ -1198,7 +1212,7 @@ export function drawEpubPdf(
   }
 
   return {
-    pages: pdfDoc.getPageCount(),
+    pages: pdfDoc.pageCount,
     tocPages,
     coverPages,
     imagesDrawn,
