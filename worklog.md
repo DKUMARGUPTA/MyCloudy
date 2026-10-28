@@ -5288,3 +5288,18 @@ Work Log:
 
 Stage Summary:
 - P6-g committed as 4a808b6 (plus this addendum note). PUSH STILL BLOCKED on the missing /home/z/.tokens/docopdf.env — restore procedure in the P6-g section above.
+
+---
+Task ID: P6-g-closeout
+Agent: main (Z.ai Code session, continuation)
+Task: Final P6-g verification sweep + housekeeping (battery verification was pending when the previous context ended).
+
+Work Log:
+- BATTERY VERIFIED COMPLETE: /tmp/r6b-smoke-battery.txt holds all 124 smoke results (finished 07:55, ~10 min before commit 4a808b6 at 08:06 — i.e. it tested exactly the committed code). 107 PASS / 17 FAIL with the EXACT same pre-existing cron-agent failures (cts, generate-password, i18n-params, invoice-visually, ocr, p12-einvoice, p9-×5, pdf-to-tiff, pdf-to-webp, resize-kb, verify-signatures, web-optimize, xml-invoice) — ZERO regressions. Confirmed the P6-g surfaces green in the run logs: smoke-pdf-core 384/384 (§17 incl. deva ToUnicode 18 bfchars, गोपाल कृष्णा round-trip, W array from subset id 1, width sections), smoke-watermark / smoke-pagenumbers / smoke-merge / smoke-split all PASS.
+- CLEANUP: removed scripts/dev/test-ttf-embed.cjs (113-line early embed experiment, fully superseded by smoke-pdf-core §17 + p6f-worker-e2e §F) → commit dfc1db3. Kept oracle harnesses: extract-tries.cjs (the GENERATOR of fontkit-patched.cjs — do not delete), fontkit-patched.cjs, fuzz-machine.ts + indic-machine.json, inspect-deva-gsub.ts, p6f-worker-e2e.ts, test-shaper*.cjs.
+- TOKEN: /home/z/.tokens/ still missing → push still blocked (procedure in the P6-g section above).
+- CRON: job 479877 had auto-disabled AGAIN ("Disabled due to exec limits exceeded", run_count 1) → deleted, recreated fresh as job 480039 (webDevReview, fixed_rate 900s, priority 1, Asia/Calcutta, standard payload).
+
+Stage Summary:
+- P6-g fully closed: code (4a808b6) + housekeeping (dfc1db3) + battery verified (107/124, zero regressions) + cron alive (480039).
+- Next phase remains P6-h per the P6-g plan: assemble/halve/nup onto organizeMerge; or the create/write side (blank-page StampContext writer for create-pdf + write-pdf); lock/unlock once our RC4/AES wiring exists; push when token restored.
