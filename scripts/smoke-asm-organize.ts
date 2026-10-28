@@ -554,8 +554,14 @@ console.log("\n── 4. wiring locks + i18n ───────────�
   check("surface passes rotateOffset to thumbnails", surface.includes("rotateOffset: rotate"));
   check("model exports rotatePage + duplicatePage", read("tools/assemble-pdf/model.ts").includes("export function rotatePage") && read("tools/assemble-pdf/model.ts").includes("export function duplicatePage"));
   const workerSrc = read("tools/assemble-pdf/worker.ts");
-  check("worker adds the offset to the copied node's own /Rotate", workerSrc.includes("copied.getRotation().angle"));
-  check("worker never writes /Rotate for untouched refs", workerSrc.includes("rotate !== undefined && rotate !== 0"));
+  check(
+    "worker adds the offset to the effective /Rotate (R14 quadrant rule)",
+    workerSrc.includes("baseQ + rotate") && workerSrc.includes("norm360")
+  );
+  check(
+    "worker never writes /Rotate for untouched refs",
+    workerSrc.includes("if (rotate === undefined || rotate === 0) return undefined;")
+  );
   check("thumbnails helper has the R14 offset mode", read("src/lib/pdf/thumbnails.ts").includes("rotateOffset"));
 
   const en = JSON.parse(read("src/i18n/en.json")) as Record<string, Record<string, string>>;

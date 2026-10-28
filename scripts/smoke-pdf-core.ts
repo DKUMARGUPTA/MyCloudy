@@ -1407,8 +1407,27 @@ async function section16(): Promise<void> {
     eq(fMap?.has("F2"), true, "inherit: our font merged next to it");
     const lib = await PDFDocument.load(out);
     eq(lib.getPageCount(), 2, "inherit: pdf-lib reload");
-    // The untouched page 1 still has no own /Resources (inherits from parent).
-    eq(back[1]!.dict.get("Resources"), undefined, "inherit: unstamped page untouched");
+    // P6-h: the UNSTAMPED page materializes its inherited /Resources too
+    // (pdf-lib copyPDFPage parity — the rebuilt tree drops /Parent, so
+    // inherited entries must move onto the leaf or the page's content would
+    // reference fonts that no longer resolve). Self-contained copy now.
+    // The unstamped page keeps the parent's Resources as a REFSHARED graph
+    // copy (the stamped page's clone is separate by design — merging F2
+    // never mutates the shared parent dict). Its F1 must resolve to a real
+    // copied font object in the output.
+    const res1 = back[1]!.dict.get("Resources");
+    const resMap1 = res1?.k === "dict" ? res1.m : undefined;
+    ok(resMap1 !== undefined, "inherit: unstamped page materialized own /Resources");
+    const fontMap1 = resMap1?.get("Font");
+    const fMap1 = fontMap1?.k === "dict" ? fontMap1.m : undefined;
+    eq(fMap1?.has("F1"), true, "inherit: unstamped page's F1 carried from parent");
+    const f1Entry = fMap1?.get("F1");
+    const f1Obj =
+      f1Entry?.k === "ref"
+        ? parsePdf(out).getObject(f1Entry.num)
+        : undefined;
+    const f1Base = f1Obj?.k === "dict" ? f1Obj.m.get("BaseFont") : undefined;
+    eq(f1Base?.k === "name" && f1Base.v === "Times-Roman", true, "inherit: F1 ref resolves to the copied font");
   }
 
   /* ── 16.7 getTitle (latin1 + absent) ── */

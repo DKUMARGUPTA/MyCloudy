@@ -538,6 +538,74 @@ async function main(): Promise<void> {
   );
 
   /* -------------------------------------------------------------- */
+  console.log("\n6b. P6-h: inherited boxes + rotation materialize on copies");
+  {
+    // Raw fixture: /Rotate 90, MediaBox AND CropBox inherited from the
+    // /Pages root (leaf declares none) — the classic scanned-doc layout.
+    // Without materialization the rebuilt tree drops /Parent and the
+    // output pages lose their view box (and the rotation the cut math
+    // relied on). Both halves must carry own MediaBox+CropBox entries now.
+    const enc = new TextEncoder();
+    const objects: Array<string | null> = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 /Rotate 90 /MediaBox [0 0 400 300] /CropBox [0 0 400 300] >>",
+      "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+      null,
+    ];
+    const body4 = "0 0 200 300 re f";
+    const serialized: string[] = [];
+    const offsets: number[] = [];
+    let pos = enc.encode("%PDF-1.4\n").length;
+    for (let i = 0; i < objects.length; i++) {
+      const num = i + 1;
+      let body = objects[i]!;
+      if (num === 4) body = `<< /Length ${body4.length} >>\nstream\n${body4}\nendstream`;
+      const chunk = `${num} 0 obj\n${body}\nendobj\n`;
+      offsets[num - 1] = pos;
+      pos += enc.encode(chunk).length;
+      serialized.push(chunk);
+    }
+    const xrefPos = pos;
+    let pdf = `%PDF-1.4\n${serialized.join("")}`;
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (const off of offsets) {
+      pdf += `${String(off).padStart(10, "0")} 00000 n \n`;
+    }
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
+    const inherited = enc.encode(pdf);
+
+    const outInh = await runHalve(inherited, values({}));
+    const inhReload = await PDFDocument.load(outInh.bytes);
+    check(
+      "inherited: two output pages",
+      outInh.pages === 2 && inhReload.getPageCount() === 2,
+      `${outInh.pages}/${inhReload.getPageCount()}`
+    );
+    // Display 300×400 (user 400×300 rotated 90°) cut vertically at 50%:
+    // display X maps to user Y, so the halves are full-width user bands
+    // [0,0,400,150] (display-left) and [0,150,400,150] (display-right) —
+    // the same mapping the /Rotate 90 vectors above pin at 40%.
+    check(
+      "inherited: halves cut the rotated view on the user Y axis",
+      boxNear(inhReload.getPage(0).getMediaBox(), { x: 0, y: 0, width: 400, height: 150 }) &&
+        boxNear(inhReload.getPage(1).getMediaBox(), { x: 0, y: 150, width: 400, height: 150 }),
+      `${inhReload.getPage(0).getMediaBox().toString()} / ${inhReload.getPage(1).getMediaBox().toString()}`
+    );
+    check(
+      "inherited: own CropBox materialized on every copy",
+      boxNear(inhReload.getPage(0).getCropBox(), { x: 0, y: 0, width: 400, height: 150 }) &&
+        boxNear(inhReload.getPage(1).getCropBox(), { x: 0, y: 150, width: 400, height: 150 }),
+      `${inhReload.getPage(0).getCropBox().toString()} / ${inhReload.getPage(1).getCropBox().toString()}`
+    );
+    check(
+      "inherited: /Rotate 90 materialized on every copy",
+      inhReload.getPage(0).getRotation().angle === 90 &&
+        inhReload.getPage(1).getRotation().angle === 90,
+      `${inhReload.getPage(0).getRotation().angle}/${inhReload.getPage(1).getRotation().angle}`
+    );
+  }
+
+  /* -------------------------------------------------------------- */
   console.log("\n7. E2E — error codes");
   const { PDFDocument: CantooDoc } = await import("@cantoo/pdf-lib");
   const cantoo = await CantooDoc.create();

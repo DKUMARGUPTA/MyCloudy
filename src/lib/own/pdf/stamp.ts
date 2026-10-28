@@ -45,6 +45,7 @@ import { ParsedTtfFont, TtfSubsetter } from "./font-ttf";
 import { shapeText } from "./shape-deva";
 import {
   listPages,
+  materializeInheritable,
   type PdfPageInfo,
 } from "./document";
 import { writeDocument, type WritePage } from "./writer";
@@ -523,14 +524,19 @@ export class StampContext {
     const pages: WritePage[] = this.source.pages.map((page, i) => {
       const layer = this.layers[i];
       if (layer === undefined || layer.length < 2) {
+        const dict = cloneDict(page.dict, { drop: ["Parent"] });
+        // P6-h: pages relying on tree inheritance must not lose their
+        // boxes/rotation/resources just because we rebuilt the page tree.
+        materializeInheritable(dict, page);
         return {
           type: "copy" as const,
           doc: this.source.doc,
           srcNum: page.ref.num,
-          dict: cloneDict(page.dict, { drop: ["Parent"] }),
+          dict,
         };
       }
       const dict = cloneDict(page.dict, { drop: ["Parent"] });
+      materializeInheritable(dict, page);
       // /Contents: our stream goes FIRST (behind) or LAST (front).
       const existing = existingContents(page.dict);
       const ours: PdfObj = newref(this.streamNums.get(i)!);

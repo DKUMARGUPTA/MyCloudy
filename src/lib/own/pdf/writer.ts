@@ -35,7 +35,22 @@ export type WritePage =
       srcNum: number;
       dict: Map<string, PdfObj>;
     }
-  | { type: "blank"; width: number; height: number };
+  | { type: "blank"; width: number; height: number }
+  | {
+      /**
+       * Authored page (P6-h, the N-up route): a brand-new sheet with its
+       * own content stream and resources. `resources` values may use
+       * new-space refs ("newref" or plain refs — synthetics serialize in
+       * new numbering) to reference form XObjects from the same write.
+       */
+      type: "new";
+      width: number;
+      height: number;
+      /** Raw content-stream bytes (already-encoded operators). */
+      content: Uint8Array;
+      /** Resource dict object (or undefined for an empty /Resources). */
+      resources?: PdfObj;
+    };
 
 /**
  * A synthetic object authored by stamp-side code (P6-f) — a stamp content
@@ -46,8 +61,15 @@ export type WritePage =
  * truth), so the caller can pre-compute each object's number and reference it
  * from page dicts via { k: "newref", num }. Objects must be self-contained
  * except for newrefs.
+ *
+ * P6-h adds SOURCE-ANCHORED synthetics ({ sourceDoc, obj }): objects whose
+ * refs point into a parsed SOURCE document (a Form XObject carrying the
+ * embedded page's /Resources). Their refs remap through that source's copy
+ * map, and their referenced graphs are discovered by the writer's BFS like
+ * copied-page graphs — shared objects (a font used by two embedded pages)
+ * are still written exactly once per source doc.
  */
-export type WriteSynthetic = PdfObj;
+export type WriteSynthetic = PdfObj | { sourceDoc: ParsedPdf; obj: PdfObj };
 
 const ENC = new TextEncoder();
 
@@ -175,6 +197,19 @@ export function writeDocument(
       docIdx.set(p.doc, docIdx.size);
     }
   }
+  const syntheticsList: Array<PdfObj | { sourceDoc: ParsedPdf; obj: PdfObj }> =
+    synthetics ?? [];
+  // Source-anchored synthetics also need a docIdx slot for ref remapping.
+  for (const s of syntheticsList) {
+    if (
+      typeof s === "object" &&
+      s !== null &&
+      "sourceDoc" in s &&
+      !docIdx.has(s.sourceDoc)
+    ) {
+      docIdx.set(s.sourceDoc, docIdx.size);
+    }
+  }
 
   const catalogNum = 1;
   const pagesTreeNum = 2;
@@ -189,7 +224,7 @@ export function writeDocument(
       map.set(`${docIdx.get(p.doc)}:${p.srcNum}`, newNum);
       emit.push({ doc: p.doc, obj: { k: "dict", m: p.dict }, pageNo: planIndex + 1 });
       kids.push({ k: "ref", num: newNum, gen: 0 });
-    } else {
+    } else if (p.type === "blank") {
       // Blank page: dict + empty content stream, both synthetic.
       const dictNum = next++;
       const streamNum = next++;
@@ -219,13 +254,53 @@ export function writeDocument(
       emit.push({ obj: { k: "dict", m: pageDict }, pageNo: planIndex + 1 });
       emit.push({ obj: emptyStream });
       kids.push({ k: "ref", num: dictNum, gen: 0 });
+    } else {
+      // Authored page (P6-h): dict + caller-provided content stream, both
+      // synthetic — same two-object numbering as a blank page.
+      const dictNum = next++;
+      const streamNum = next++;
+      const pageDict = new Map<string, PdfObj>([
+        ["Type", { k: "name", v: "Page" }],
+        ["Parent", { k: "ref", num: pagesTreeNum, gen: 0 }],
+        [
+          "MediaBox",
+          {
+            k: "arr",
+            items: [
+              { k: "num", n: 0 },
+              { k: "num", n: 0 },
+              { k: "num", n: p.width },
+              { k: "num", n: p.height },
+            ],
+          },
+        ],
+        [
+          "Resources",
+          p.resources ?? { k: "dict", m: new Map() },
+        ],
+        ["Contents", { k: "ref", num: streamNum, gen: 0 }],
+      ]);
+      const stream: PdfObj = {
+        k: "stream",
+        m: new Map<string, PdfObj>([
+          ["Length", { k: "num", n: p.content.length }],
+        ]),
+        raw: p.content,
+      };
+      emit.push({ obj: { k: "dict", m: pageDict }, pageNo: planIndex + 1 });
+      emit.push({ obj: stream });
+      kids.push({ k: "ref", num: dictNum, gen: 0 });
     }
   }
 
   // ── synthetic stamp objects (fixed numbering: after the page dicts) ──
   const syntheticEmit: EmitEntry[] = [];
-  for (const obj of synthetics ?? []) {
-    syntheticEmit.push({ obj });
+  for (const s of syntheticsList) {
+    if (typeof s === "object" && s !== null && "sourceDoc" in s) {
+      syntheticEmit.push({ doc: s.sourceDoc, obj: s.obj });
+    } else {
+      syntheticEmit.push({ obj: s as PdfObj });
+    }
     next++; // number already implied by position: 3 + pages.length + index
   }
 
@@ -237,6 +312,14 @@ export function writeDocument(
     if (p.type === "copy") {
       collectRefs({ k: "dict", m: p.dict }, (r) => {
         queue.push({ doc: p.doc, num: r.num });
+      }, "Parent");
+    }
+  }
+  // Seed: refs from source-anchored synthetics (Form XObject /Resources).
+  for (const s of syntheticsList) {
+    if (typeof s === "object" && s !== null && "sourceDoc" in s) {
+      collectRefs(s.obj, (r) => {
+        queue.push({ doc: s.sourceDoc, num: r.num });
       }, "Parent");
     }
   }

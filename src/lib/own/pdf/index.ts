@@ -18,6 +18,7 @@ export {
 export type { Token } from "./lexer";
 export {
   listPages,
+  materializeInheritable,
   normalizeRotation,
   type PdfPageInfo,
 } from "./document";
@@ -33,6 +34,7 @@ export {
   type PlanEntry,
 } from "./ops";
 export { writeDocument, type WritePage, type WriteProgress, type WriteSynthetic } from "./writer";
+export { ComposeContext, type ComposedForm } from "./compose";
 export {
   StampContext,
   type StampImage,

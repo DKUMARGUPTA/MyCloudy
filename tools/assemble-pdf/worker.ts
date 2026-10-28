@@ -1,4 +1,12 @@
-import { degrees, PDFDocument } from "pdf-lib";
+import {
+  asNum,
+  organizeMerge,
+  parseForOrganize,
+  PdfError,
+  type MergePlanEntry,
+  type OrganizeSource,
+  type PdfPageInfo,
+} from "@/lib/own/pdf";
 
 import type { OptionValues } from "@/lib/tools/config-types";
 import type { WorkerRunRequest, WorkerResponse } from "@/lib/workers/protocol";
@@ -10,19 +18,30 @@ import {
 } from "./model";
 
 /**
- * Assemble PDF — device-only worker (PRD §8.1; pdf-lib, MIT).
+ * Assemble PDF — device-only worker (PRD §8.1).
+ *
+ * P6-h: runs 100% on OUR OWN PDF micro-engine (src/lib/own/pdf — zero
+ * external code). Each source file is parsed ONCE (typed refusal for
+ * encrypted inputs — the structural trailer probe, never a raw-bytes sniff —
+ * and typed corrupt errors naming the exact file); every column is then
+ * rebuilt through the shared multi-document reachable-set union with
+ * byte-exact content passthrough and pdf-lib-copyPages-parity inheritance
+ * materialization (inherited MediaBox/CropBox/Rotate/Resources move onto
+ * the copied leaves instead of being lost).
  *
  * Rebuilds the workspace columns the surface serialized into the
- * "assemble" option, then executes the plan the SAME pure model
- * computes (planAssemble) so preview and output can never disagree:
+ * "assemble" option, then executes the plan the SAME pure model computes
+ * (planAssemble) so preview and output can never disagree:
  *
  * - merge: one PDF from all columns — optionally zipper-interleaved
  *   (front/back scans) and/or reversed
  * - separate: one PDF per column (multi-output; the result view offers
  *   per-file downloads plus "Download all (ZIP)")
  *
- * Source files load lazily and ONCE (Map), pages copy one-by-one so
- * interleaved orders stay exact. Never touches the network.
+ * R14 rotation semantics preserved exactly: the user's offset ADDS to the
+ * page's effective /Rotate; a non-quadrant base (damaged files) snaps to 0
+ * before the addition (the R13 quadrantRotate rule) while untouched pages
+ * keep their own /Rotate byte-for-byte. Never touches the network.
  */
 
 function post(response: WorkerResponse): void {
@@ -71,6 +90,32 @@ function resolveOptions(options: OptionValues): ResolvedOptions {
     outputName:
       typeof options.outputName === "string" ? options.outputName : "",
   };
+}
+
+const norm360 = (n: number): number =>
+  ((Math.trunc(n) % 360) + 360) % 360;
+
+/**
+ * R14 rotation offset → engine rotateDelta. The engine writes
+ * /Rotate normalizeRotation(page.rotate + delta) — `page.rotate` is always a
+ * quadrant — so `target − page.rotate` lands on the wanted angle, and a
+ * delta of 360 forces the write when the page's OWN /Rotate is a damaged
+ * non-quadrant that must normalize to the user's intended angle (pdf-lib's
+ * `if (target !== base) setRotation(target)` parity).
+ */
+function rotateDeltaFor(page: PdfPageInfo, rotate: number): number | undefined {
+  if (rotate === undefined || rotate === 0) return undefined;
+  // Own /Rotate first (pdf-lib's copied leaf carries its own entry), the
+  // inherited value otherwise (our parse resolves it — as does pdf-lib's
+  // copyPDFPage materialization).
+  const own = asNum(page.dict.get("Rotate"));
+  const base = norm360(own !== undefined ? own : page.rotate);
+  const baseQ = base === 90 || base === 180 || base === 270 ? base : 0;
+  const target = norm360(baseQ + rotate);
+  if (target === base) return undefined;
+  let delta = target - page.rotate;
+  if (delta === 0) delta = 360;
+  return delta;
 }
 
 async function run(request: WorkerRunRequest): Promise<void> {
@@ -133,9 +178,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
     (sum, doc) => sum + doc.pages.length,
     0
   );
-  const sources = new Map<string, PDFDocument>();
+  /** fileId → parsed source + its index into the global sources array. */
+  const sources = new Map<string, { source: OrganizeSource; docIndex: number }>();
+  /** Global source array (docIndex = position). */
+  const sourcesArr: OrganizeSource[] = [];
 
-  const loadSource = async (fileId: string): Promise<PDFDocument> => {
+  const loadSource = async (fileId: string): Promise<{ source: OrganizeSource; docIndex: number }> => {
     const cached = sources.get(fileId);
     if (cached !== undefined) return cached;
     const file = fileById.get(fileId);
@@ -150,39 +198,22 @@ async function run(request: WorkerRunRequest): Promise<void> {
       detail: { pages: 1 },
     });
     const bytes = new Uint8Array(await file.arrayBuffer());
-    // R6-b honesty: probe the trailer STRUCTURALLY (pdf-lib ignoreEncryption
-    // load + isEncrypted — never a raw-bytes "/Encrypt" sniff), then the
-    // plain load; both refusals name the exact source file.
-    let probe: PDFDocument | null = null;
+    // R6-b honesty: the typed parse refuses encrypted inputs structurally
+    // (trailer /Encrypt — never a raw-bytes sniff); both refusals name the
+    // exact source file.
+    let source: OrganizeSource;
     try {
-      probe = await PDFDocument.load(bytes, {
-        ignoreEncryption: true,
-        updateMetadata: false,
-      });
-    } catch {
-      // Not parseable at all — the plain load below keeps producing the
-      // honest corrupt refusal for this file.
-    }
-    if (probe?.isEncrypted) {
-      throw new AssembleRefusal("tool.errorEncrypted", file.name);
-    }
-    let doc: PDFDocument;
-    try {
-      doc = await PDFDocument.load(bytes, {
-        ignoreEncryption: false,
-        updateMetadata: false,
-      });
+      source = parseForOrganize(bytes);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new AssembleRefusal(
-        /password|encrypt/i.test(message)
-          ? "tool.errorEncrypted"
-          : "tool.errorCorrupt",
-        file.name
-      );
+      if (error instanceof PdfError && error.code === "encrypted") {
+        throw new AssembleRefusal("tool.errorEncrypted", file.name);
+      }
+      throw new AssembleRefusal("tool.errorCorrupt", file.name);
     }
-    sources.set(fileId, doc);
-    return doc;
+    const entry = { source, docIndex: sourcesArr.length };
+    sourcesArr.push(source);
+    sources.set(fileId, entry);
+    return entry;
   };
 
   let donePages = 0;
@@ -195,37 +226,25 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   for (let docIndex = 0; docIndex < plan.length; docIndex += 1) {
     const doc = plan[docIndex];
-    const out = await PDFDocument.create();
 
+    // Per-column plan against the shared parsed sources. Page bounds are
+    // pre-checked here so an out-of-range slot maps to the SAME
+    // tool.errorInvalidPages refusal the pdf-lib era produced.
+    const planEntries: MergePlanEntry[] = [];
     for (let index = 0; index < doc.pages.length; index += 1) {
       const [fileId, pageIndex, rotate] = doc.pages[index];
-      const source = await loadSource(fileId);
-      if (pageIndex >= source.getPageCount()) {
+      const loaded = await loadSource(fileId);
+      if (pageIndex >= loaded.source.pages.length) {
         post({ type: "error", runId, code: "tool.errorInvalidPages" });
         return;
       }
-      const [copied] = await out.copyPages(source, [pageIndex]);
-      out.addPage(copied);
-
-      // R14: the user's rotation offset ADDS to whatever /Rotate the
-      // source page already shipped with — read from the COPIED node
-      // (copyPages carries it, so base and content are in sync by
-      // construction; the R13 stale-blob trust mask is unnecessary
-      // here). Untouched refs (rotate 0/absent) skip the write entirely:
-      // the page keeps its own /Rotate byte-for-byte — the zero-
-      // regression path for legacy 2-tuple payloads.
-      if (rotate !== undefined && rotate !== 0) {
-        const norm = (n: number): number =>
-          ((Math.trunc(n) % 360) + 360) % 360;
-        const base = norm(copied.getRotation().angle);
-        // Non-quadrant bases (damaged/tampered files) snap to 0 — the
-        // R13 quadrantRotate rule — so a broken source still exports
-        // instead of dying on pdf-lib's quadrant assert.
-        const baseQ =
-          base === 90 || base === 180 || base === 270 ? base : 0;
-        const target = norm(baseQ + rotate);
-        if (target !== base) copied.setRotation(degrees(target));
-      }
+      const page = loaded.source.pages[pageIndex]!;
+      const rotateDelta = rotateDeltaFor(page, rotate ?? 0);
+      planEntries.push(
+        rotateDelta === undefined
+          ? { kind: "page", doc: loaded.docIndex, src: pageIndex }
+          : { kind: "page", doc: loaded.docIndex, src: pageIndex, rotateDelta },
+      );
 
       donePages += 1;
       post({
@@ -247,7 +266,33 @@ async function run(request: WorkerRunRequest): Promise<void> {
       });
     }
 
-    const saved = await out.save({ useObjectStreams: true });
+    // One multi-document rebuild per output column — every source graph is
+    // copied through the shared reachable-set union (a font shared by two
+    // files is still written once per document it came from). Only the
+    // files THIS column draws from join the rebuild, so the output header
+    // version is the max of its own sources (never a sibling column's).
+    const docOrder: number[] = [];
+    const localIndexOf = new Map<number, number>();
+    const remappedEntries: MergePlanEntry[] = planEntries.map((entry) => {
+      if (entry.kind !== "page") return entry;
+      let local = localIndexOf.get(entry.doc);
+      if (local === undefined) {
+        local = docOrder.length;
+        localIndexOf.set(entry.doc, local);
+        docOrder.push(entry.doc);
+      }
+      return { ...entry, doc: local };
+    });
+    const sourcesList = docOrder.map((globalIndex) => sourcesArr[globalIndex]!);
+    let saved: Uint8Array;
+    try {
+      saved = organizeMerge(sourcesList, remappedEntries);
+    } catch (error: unknown) {
+      if (error instanceof PdfError && error.code === "encrypted") {
+        throw new AssembleRefusal("tool.errorEncrypted", "");
+      }
+      throw error;
+    }
 
     // Merge mode keeps the typed output name; columns keep their own.
     let name: string;

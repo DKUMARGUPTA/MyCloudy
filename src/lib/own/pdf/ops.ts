@@ -14,7 +14,12 @@
  * Everything below runs on OUR parser + OUR writer — zero external code.
  */
 
-import { listPages, normalizeRotation, type PdfPageInfo } from "./document";
+import {
+  listPages,
+  materializeInheritable,
+  normalizeRotation,
+  type PdfPageInfo,
+} from "./document";
 import { type PdfObj, cloneDict, num } from "./objects";
 import { PdfError, parsePdf, type ParsedPdf } from "./parser";
 import { writeDocument, type WritePage } from "./writer";
@@ -26,6 +31,13 @@ export type PlanEntry =
       src: number;
       /** Rotation added to the page's existing /Rotate (normalized). */
       rotateDelta?: number;
+      /**
+       * Extra own-dict overrides applied to the copied page (P6-h, the
+       * halve route): typically MediaBox/CropBox windowing and clamped
+       * Bleed/Trim/Art boxes. Applied AFTER rotateDelta — explicit entries
+       * win. Inheritable entries still materialize for keys not in `set`.
+       */
+      set?: Array<[string, PdfObj]>;
     }
   | { kind: "blank"; width: number; height: number }
   | {
@@ -53,6 +65,8 @@ export type MergePlanEntry =
       src: number;
       /** Rotation added to the page's existing /Rotate (normalized). */
       rotateDelta?: number;
+      /** Own-dict overrides on the copied page (see PlanEntry.set). */
+      set?: Array<[string, PdfObj]>;
     }
   | { kind: "blank"; width: number; height: number }
   | {
@@ -139,10 +153,12 @@ function buildWritePages(source: OrganizeSource, plan: PlanEntry[]): WritePage[]
       const target = normalizeRotation(page.rotate + entry.rotateDelta);
       set.push(["Rotate", num(target)]);
     }
+    if (entry.set !== undefined) set.push(...entry.set);
     const dict = cloneDict(page.dict, {
       drop: ["Parent"],
       set: set.length > 0 ? set : undefined,
     });
+    materializeInheritable(dict, page);
     return { type: "copy" as const, doc: source.doc, srcNum: page.ref.num, dict };
   });
 }
@@ -271,10 +287,12 @@ export function organizeMerge(
       const target = normalizeRotation(page.rotate + entry.rotateDelta);
       set.push(["Rotate", num(target)]);
     }
+    if (entry.set !== undefined) set.push(...entry.set);
     const dict = cloneDict(page.dict, {
       drop: ["Parent"],
       set: set.length > 0 ? set : undefined,
     });
+    materializeInheritable(dict, page);
     return {
       type: "copy" as const,
       doc: source.doc,

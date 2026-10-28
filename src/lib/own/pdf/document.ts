@@ -34,6 +34,15 @@ export interface PdfPageInfo {
    * /ExtGState entries into that clone.
    */
   resources: PdfObj | undefined;
+  /**
+   * Own-or-inherited raw entries for every spec-inheritable key that ANY
+   * ancestor actually declared (P6-h). The writer drops /Parent when copying
+   * a page, so anything inherited from the tree MUST move onto the leaf or
+   * it is lost — pdf-lib's copyPDFPage does exactly this for its four keys
+   * (Resources/MediaBox/CropBox/Rotate); we cover the spec's full set
+   * (adding BleedBox/TrimBox/ArtBox).
+   */
+  inheritable: ReadonlyMap<string, PdfObj>;
 }
 
 const MAX_TREE_DEPTH = 64;
@@ -102,6 +111,9 @@ export function listPages(doc: ParsedPdf): PdfPageInfo[] {
         cropBox: boxOr(merged.get("CropBox"), media),
         rotate: normalizeRotation(asNum(merged.get("Rotate")) ?? 0),
         resources: merged.get("Resources"),
+        // Hand out the merged inheritables read-only. The map is built fresh
+        // per visited node and never mutated afterwards, so sharing is safe.
+        inheritable: merged,
       });
       return;
     }
@@ -134,3 +146,22 @@ export function listPages(doc: ParsedPdf): PdfPageInfo[] {
 const INHERIT_KEYS = [
   "MediaBox", "CropBox", "Resources", "Rotate", "BleedBox", "TrimBox", "ArtBox",
 ] as const;
+
+/**
+ * Materialize spec-inheritable entries onto a CLONED page dict (P6-h).
+ *
+ * Writers drop /Parent when rebuilding a page tree, so a page that relied
+ * on tree inheritance would otherwise lose its boxes, rotation and — worst
+ * of all — its /Resources (content referencing /F1 etc. stops rendering).
+ * pdf-lib's PDFObjectCopier.copyPDFPage does this for Resources/MediaBox/
+ * CropBox/Rotate; we cover the spec's full inheritable set. No-op for pages
+ * whose own dict already declares every key the tree provides.
+ */
+export function materializeInheritable(
+  dict: Map<string, PdfObj>,
+  page: PdfPageInfo,
+): void {
+  for (const [key, value] of page.inheritable) {
+    if (!dict.has(key)) dict.set(key, value);
+  }
+}

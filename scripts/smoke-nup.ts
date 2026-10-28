@@ -408,6 +408,78 @@ async function main(): Promise<void> {
   await writeFile("/home/z/my-project/download/qa-p41-nup.pdf", fixture);
 
   /* -------------------------------------------------------------- */
+  console.log("\n8b. P6-h — multi-stream /Contents + inherited Resources");
+  {
+    // Raw fixture: one page whose /Contents is an ARRAY of two streams
+    // (left half black in stream 1, a center dot in stream 2 — if the form
+    // joined the streams wrong, one of the two would vanish), with /Resources
+    // (a Type1 font dict) INHERITED from the /Pages root so the form's
+    // source-anchored resource copy path is exercised too.
+    const enc = new TextEncoder();
+    const s1 = "0 0 150 200 re f";
+    const s2 = "175 90 10 10 re f";
+    const objects: Array<string | null> = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources << /Font << /F1 7 0 R >> >> >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents [4 0 R 5 0 R] >>",
+      null,
+      null,
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>",
+    ];
+    const bodies = new Map<number, string>([[4, s1], [5, s2]]);
+    const serialized: string[] = [];
+    const offsets: number[] = [];
+    let pos = enc.encode("%PDF-1.4\n").length;
+    for (let i = 0; i < objects.length; i++) {
+      const num = i + 1;
+      const body = bodies.has(num)
+        ? `<< /Length ${bodies.get(num)!.length} >>\nstream\n${bodies.get(num)}\nendstream`
+        : objects[i]!;
+      const chunk = `${num} 0 obj\n${body}\nendobj\n`;
+      offsets[num - 1] = pos;
+      pos += enc.encode(chunk).length;
+      serialized.push(chunk);
+    }
+    const xrefPos = pos;
+    let pdf = `%PDF-1.4\n${serialized.join("")}`;
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (const off of offsets) {
+      pdf += `${String(off).padStart(10, "0")} 00000 n \n`;
+    }
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
+    const multi = enc.encode(pdf);
+
+    const outM = await runNup(multi, values({ layout: 2, sheetOrientation: "landscape" }));
+    check("multi-stream: one sheet", outM.sheets === 1, `sheets=${outM.sheets}`);
+
+    // Both content streams must land: black display-left from stream 1 AND
+    // the center dot from stream 2 (a join bug loses one of them).
+    const planM = planSheets(1, { ...NUP_DEFAULTS, layout: 2, orientation: "landscape" }, null);
+    const cellM = planM.sheets[0].cells[0];
+    const placeM = embedPlacement(cellM, 300, 200, 0);
+    const renderM = await renderPage(outM.bytes, 1);
+    check(
+      "multi-stream: stream 1 (black left half) rendered inside its cell",
+      renderM.darkAt(placeM.visX + placeM.visW * 0.2, placeM.visY + placeM.visH * 0.5),
+      "stream-1 content missing"
+    );
+    check(
+      "multi-stream: stream 2 (center dot) rendered too — the join lost nothing",
+      renderM.darkAt(placeM.visX + placeM.visW * 0.6, placeM.visY + placeM.visH * 0.5),
+      "stream-2 content missing"
+    );
+
+    // The embedded form must carry the INHERITED /Resources through the
+    // source-anchored copy path (pdf-lib reload: font reachable from the form).
+    const reloadM = await PDFDocument.load(outM.bytes, { ignoreEncryption: true });
+    check(
+      "multi-stream: output reloads (pdf-lib oracle)",
+      reloadM.getPageCount() === 1,
+      `pages=${reloadM.getPageCount()}`
+    );
+  }
+
+  /* -------------------------------------------------------------- */
   console.log("\n9. E2E — error codes");
   const { PDFDocument: CantooDoc } = await import("@cantoo/pdf-lib");
   const cantoo = await CantooDoc.create();

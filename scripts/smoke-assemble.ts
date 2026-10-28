@@ -16,7 +16,7 @@
  * Run: bun scripts/smoke-assemble.ts
  */
 import { readFileSync } from "node:fs";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, degrees } from "pdf-lib";
 
 import { TOOL_CONFIGS } from "../src/lib/tools/configs";
 import { ALL_TOOLS } from "../src/lib/tools/registry";
@@ -60,6 +60,78 @@ async function makeEncryptedPdf(): Promise<Uint8Array> {
   doc.addPage([300, 300]);
   doc.encrypt({ userPassword: "secret", algorithm: "AES-256" });
   return doc.save({ useObjectStreams: false });
+}
+
+/**
+ * Raw-bytes fixture (P6-h): /Rotate 90 + MediaBox inherited from the /Pages
+ * root — the scanned-doc layout pdf-lib's copyPDFPage materializes and our
+ * engine now materializes too. Leaf has neither own entry.
+ */
+function buildInheritedRotateFixture(): Uint8Array {
+  const enc = new TextEncoder();
+  const objects: Array<string | null> = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 /Rotate 90 /MediaBox [0 0 300 400] >>",
+    "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+    null, // 4: content stream (patched below)
+  ];
+  const body4 = "0 0 50 50 re f";
+  const serialized: string[] = [];
+  const offsets: number[] = [];
+  let pos = enc.encode("%PDF-1.4\n").length;
+  for (let i = 0; i < objects.length; i++) {
+    const num = i + 1;
+    let body = objects[i]!;
+    if (num === 4) body = `<< /Length ${body4.length} >>\nstream\n${body4}\nendstream`;
+    const chunk = `${num} 0 obj\n${body}\nendobj\n`;
+    offsets[num - 1] = pos;
+    pos += enc.encode(chunk).length;
+    serialized.push(chunk);
+  }
+  const xrefPos = pos;
+  let pdf = `%PDF-1.4\n${serialized.join("")}`;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) {
+    pdf += `${String(off).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
+  return enc.encode(pdf);
+}
+
+/**
+ * Raw-bytes fixture (P6-h): a DAMAGED non-quadrant own /Rotate 45 — the
+ * R13/R14 snap-to-zero rule normalizes it to the user's intended quadrant
+ * when a turn offset is applied.
+ */
+function buildDamagedRotateFixture(): Uint8Array {
+  const enc = new TextEncoder();
+  const objects: Array<string | null> = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Rotate 45 /Contents 4 0 R >>",
+    null,
+  ];
+  const body4 = "0 0 50 50 re f";
+  const serialized: string[] = [];
+  const offsets: number[] = [];
+  let pos = enc.encode("%PDF-1.4\n").length;
+  for (let i = 0; i < objects.length; i++) {
+    const num = i + 1;
+    let body = objects[i]!;
+    if (num === 4) body = `<< /Length ${body4.length} >>\nstream\n${body4}\nendstream`;
+    const chunk = `${num} 0 obj\n${body}\nendobj\n`;
+    offsets[num - 1] = pos;
+    pos += enc.encode(chunk).length;
+    serialized.push(chunk);
+  }
+  const xrefPos = pos;
+  let pdf = `%PDF-1.4\n${serialized.join("")}`;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) {
+    pdf += `${String(off).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
+  return enc.encode(pdf);
 }
 
 /* ------------------------------------------------------------------ */
@@ -274,10 +346,90 @@ console.log("\n── 6. i18n: posted codes exist in en + hi ──────�
     read("tools/assemble-pdf/worker.ts").includes("new AssembleRefusal(\"tool.errorEncrypted\", file.name)")
   );
   check(
-    "worker probe is structural (ignoreEncryption + isEncrypted)",
-    read("tools/assemble-pdf/worker.ts").includes("ignoreEncryption: true") &&
-      read("tools/assemble-pdf/worker.ts").includes("probe?.isEncrypted")
+    "worker probe is structural (own-engine typed parse refuses /Encrypt)",
+    read("tools/assemble-pdf/worker.ts").includes("error.code === \"encrypted\"") &&
+      read("tools/assemble-pdf/worker.ts").includes("parseForOrganize(bytes)") &&
+      !read("tools/assemble-pdf/worker.ts").includes("from \"pdf-lib\"")
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* 7. P6-h: R14 rotation offsets + inherited-attribute materialization */
+/* ------------------------------------------------------------------ */
+
+console.log("\n── 7. P6-h: rotation + inheritance on the own engine ───");
+{
+  // (a) R14: user turn ADDS to the page's own /Rotate (90 + 90 = 180);
+  //     untouched sibling page keeps its own /Rotate byte-for-byte.
+  const doc = await PDFDocument.create();
+  const p1 = doc.addPage([300, 400]);
+  p1.setRotation(degrees(90));
+  const p2 = doc.addPage([300, 400]);
+  p2.setRotation(degrees(180));
+  const srcBytes = await doc.save({ useObjectStreams: false });
+  const assemble = JSON.stringify([
+    ["Rot", [["fa", 0, 90], ["fa", 1]]],
+  ]);
+  const msgs = await drive(
+    7040,
+    { assemble, outputMode: "merge" },
+    [new File([srcBytes as BlobPart], "rot-source.pdf")],
+    ["fa"]
+  );
+  const result = msgs.find((m) => m.type === "result") as Extract<WorkerResponse, { type: "result" }>;
+  check("rot: run produced a result", Boolean(result));
+  if (result) {
+    const out = await PDFDocument.load(
+      new Uint8Array(await result.outputs[0].blob.arrayBuffer()),
+      { ignoreEncryption: true }
+    );
+    check("rot: turned page 90 + 90 → 180", out.getPage(0).getRotation().angle === 180, out.getPage(0).getRotation().angle);
+    check("rot: untouched page keeps own 180", out.getPage(1).getRotation().angle === 180, out.getPage(1).getRotation().angle);
+    check("rot: page count preserved", out.getPageCount() === 2, out.getPageCount());
+  }
+
+  // (b) Inherited /Rotate + MediaBox (on the /Pages root): the copied leaf
+  //     must MATERIALIZE both (pdf-lib copyPDFPage parity) — without it the
+  //     rebuilt tree drops /Parent and the page loses its box + rotation.
+  const inheritedBytes = buildInheritedRotateFixture();
+  const asm2 = JSON.stringify([["Inh", [["fa", 0]]]]);
+  const msgs2 = await drive(
+    7041,
+    { assemble: asm2, outputMode: "merge" },
+    [new File([inheritedBytes as BlobPart], "inherited-rotate.pdf")],
+    ["fa"]
+  );
+  const result2 = msgs2.find((m) => m.type === "result") as Extract<WorkerResponse, { type: "result" }>;
+  check("inherit: run produced a result", Boolean(result2));
+  if (result2) {
+    const out2 = await PDFDocument.load(
+      new Uint8Array(await result2.outputs[0].blob.arrayBuffer()),
+      { ignoreEncryption: true }
+    );
+    check("inherit: /Rotate 90 materialized on the copy", out2.getPage(0).getRotation().angle === 90, out2.getPage(0).getRotation().angle);
+    const size = out2.getPage(0).getSize();
+    check("inherit: MediaBox materialized (300x400)", Math.abs(size.width - 300) < 0.01 && Math.abs(size.height - 400) < 0.01, `${size.width}x${size.height}`);
+  }
+
+  // (c) Damaged non-quadrant /Rotate 45 + user turn 90 → snaps to quadrant
+  //     90 (the R13/R14 rule; pdf-lib writes 90, we write 90).
+  const damagedBytes = buildDamagedRotateFixture();
+  const asm3 = JSON.stringify([["Dmg", [["fa", 0, 90]]]]);
+  const msgs3 = await drive(
+    7042,
+    { assemble: asm3, outputMode: "merge" },
+    [new File([damagedBytes as BlobPart], "damaged-rotate.pdf")],
+    ["fa"]
+  );
+  const result3 = msgs3.find((m) => m.type === "result") as Extract<WorkerResponse, { type: "result" }>;
+  check("damaged: run produced a result", Boolean(result3));
+  if (result3) {
+    const out3 = await PDFDocument.load(
+      new Uint8Array(await result3.outputs[0].blob.arrayBuffer()),
+      { ignoreEncryption: true }
+    );
+    check("damaged: 45 + turn 90 → snapped to 90", out3.getPage(0).getRotation().angle === 90, out3.getPage(0).getRotation().angle);
+  }
 }
 
 /* ------------------------------------------------------------------ */
