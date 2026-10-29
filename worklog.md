@@ -5780,3 +5780,9 @@ Stage Summary:
 - Own engine now covers **50 tool families pdf-lib-free**. Remaining pdf-lib importers: **23 files** — P6-w-b lock-common/security.ts (1: own-engine AES-256 V5/R6 + AES-128 V4 encryption writer — the crypto family's last file) → P6-x fonts/OCR (8) → P6-y e-invoice (5) → P6-z misc (8) → P6-v-b pdf-to-pdfa (1) → P6-END (embed-image type-only trim + pdf-finisher audit).
 - Engine capability note: signature fields (signed + empty), the byte-surgeon contract (sentinel + gap), and split-run rendering are now ENGINE seams — the fill/flatten/verify family and any future signing feature build on them.
 - NEXT: **P6-w-b — lock-common/security.ts** (the @cantoo/pdf-lib fork's last consumer; unlock = own-engine fresh-context rebuild via the redact pattern, lock = R6/R4 key derivation + /Encrypt dict + per-object crypt on the own writer).
+
+## ⚠ PUSH-PENDING (P6-w-a commit f4d2374 is LOCAL ONLY — token lost to the sandbox recycle)
+- The session-start recycle (17:33) wiped /home/z/.tokens/docopdf.env + /home/z/my-project/.env.credentials (both lived OUTSIDE the project tree). `git ls-remote` works unauthenticated (repo public), but PUSH needs MYCLOUDY_GH_TOKEN.
+- REMOTE TRUTH at time of loss: origin/main = e518542 (P6-v-a). LOCAL AHEAD BY 1: f4d2374 (P6-w-a, all gates green: tsc 0, eslint 0, battery 108/108, E2E byte-verified).
+- RECOVERY (next session, first action): obtain a fresh fine-grained PAT (DKUMARGUPTA/MyCloudy, Contents R+W) → `MYCLOUDY_GH_TOKEN=<tok> bash scripts/push-github.sh` → verify https://mycloudy-beta.vercel.app deploys f4d2374 → THEN continue P6-w-b. NEVER amend/reset — the commit rides as-is.
+- History-rewrite ban stands (cron + main session races; rollback exception unchanged).
