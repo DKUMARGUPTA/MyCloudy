@@ -1,4 +1,8 @@
-import { PDFDocument, degrees } from "pdf-lib";
+import {
+  PdfError,
+  StampContext,
+  type StampImage,
+} from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
@@ -14,9 +18,9 @@ import {
 } from "./engine";
 
 /**
- * Sign PDF worker (PRD §7.6): flattens every placement into the page
- * content with pdf-lib — the signature becomes permanent page pixels,
- * exactly like a printed, signed document.
+ * Sign PDF worker (PRD §7.6, P6-w-a port): flattens every placement into
+ * the page content with the OWN ENGINE — the signature becomes permanent
+ * page pixels, exactly like a printed, signed document.
  *
  * Input contract:
  * - options.sigkey      the current file's workspace id
@@ -63,11 +67,11 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   post({ type: "progress", runId, pct: 6, stage: "reading" });
-  let doc: PDFDocument;
+  let ctx: StampContext;
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     // A visual countersign on an already-signed contract is the classic
-    // trap: pdf-lib's full re-save shifts every byte offset and silently
+    // trap: a full re-save shifts every byte offset and silently
     // invalidates the existing signature's /ByteRange. Honest refusal
     // (the digital-signature guard recipe) — a second cryptographic
     // signature must go through the Digital signature tool instead.
@@ -75,27 +79,26 @@ async function run(request: WorkerRunRequest): Promise<void> {
       post({ type: "error", runId, code: "tool.errorAlreadySigned" });
       return;
     }
-    doc = await PDFDocument.load(bytes, {
-      ignoreEncryption: false,
-      updateMetadata: false,
-    });
+    ctx = StampContext.load(bytes);
   } catch (error) {
-    post({
-      type: "error",
-      runId,
-      code:
-        error instanceof Error && /encrypt/i.test(error.message)
-          ? "tool.errorEncrypted"
-          : "tool.errorCorrupt",
-    });
+    // Own-engine typed errors (PdfError carries a code).
+    if (error instanceof PdfError) {
+      post({
+        type: "error",
+        runId,
+        code: error.code === "encrypted" ? "tool.errorEncrypted" : "tool.errorCorrupt",
+      });
+      return;
+    }
+    post({ type: "error", runId, code: "tool.errorCorrupt" });
     return;
   }
 
-  const pageCount = doc.getPageCount();
-  const geoms: PageGeom[] = doc.getPages().map((page) => ({
-    rotation: page.getRotation().angle,
-    width: page.getWidth(),
-    height: page.getHeight(),
+  const pageCount = ctx.pageCount;
+  const geoms: PageGeom[] = ctx.pages.map((info) => ({
+    rotation: info.rotate,
+    width: info.mediaBox[2] - info.mediaBox[0],
+    height: info.mediaBox[3] - info.mediaBox[1],
   }));
 
   // Resolve every placement's page targets once — invalid ranges abort
@@ -111,12 +114,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   // Embed each distinct signature exactly once.
   post({ type: "progress", runId, pct: 16, stage: "processing" });
-  const embedded = new Map<string, { img: Awaited<ReturnType<PDFDocument["embedPng"]>>; aspect: number }>();
+  const embedded = new Map<string, { img: StampImage; aspect: number }>();
   for (const [id, asset] of assetById) {
     if (!placements.some((p) => p.sigId === id)) continue;
     try {
       const bytes = new Uint8Array(await asset.arrayBuffer());
-      const img = await doc.embedPng(bytes);
+      const img = ctx.embedPng(bytes);
       embedded.set(id, { img, aspect: img.height / img.width });
     } catch {
       post({ type: "error", runId, code: "tool.errorSignAssetBroken" });
@@ -133,15 +136,14 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const entry = embedded.get(placement.sigId);
     if (!entry || !targets) continue;
     for (const pageIndex of targets) {
-      const page = doc.getPage(pageIndex);
-      const geom = geoms[pageIndex];
+      const geom = geoms[pageIndex]!;
       const box = placementToDrawBox(placement, geom, entry.aspect);
-      page.drawImage(entry.img, {
+      ctx.stampImage(pageIndex, entry.img, {
         x: box.sx,
         y: box.sy,
         width: box.w,
         height: box.h,
-        rotate: degrees(box.angle),
+        rotate: box.angle,
         opacity: box.op,
       });
       done += 1;
@@ -156,7 +158,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   post({ type: "progress", runId, pct: 92, stage: "saving" });
-  const outBytes = await doc.save({ useObjectStreams: true });
+  const outBytes = ctx.write();
   post({
     type: "result",
     runId,

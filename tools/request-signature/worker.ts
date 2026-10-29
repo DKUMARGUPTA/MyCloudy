@@ -1,4 +1,9 @@
-import { PDFDocument } from "pdf-lib";
+import {
+  CreateContext,
+  PdfError,
+  StampContext,
+  type StampTtfFont,
+} from "@/lib/own/pdf";
 import { strToU8 } from "@/lib/own/zip";
 
 import type { OptionValues } from "@/lib/tools/config-types";
@@ -7,7 +12,7 @@ import type {
   WorkerResponse,
 } from "@/lib/workers/protocol";
 import { hasExistingSignature } from "../digital-signature/model";
-import { loadStampFonts } from "../stamp-common/worker-lib";
+import { loadDevanagariBytes } from "../stamp-common/deva";
 import { FlattenFormsError, flattenDocument } from "../flatten-pdf/engine";
 import {
   buildRequestText,
@@ -93,23 +98,23 @@ async function run(request: WorkerRunRequest): Promise<void> {
     return;
   }
 
-  let doc: PDFDocument;
+  let ctx: StampContext;
   try {
-    doc = await PDFDocument.load(bytes, {
-      ignoreEncryption: false,
-      updateMetadata: false,
-    });
+    ctx = StampContext.load(bytes);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    post({
-      type: "error",
-      runId,
-      code: /encrypt/i.test(message) ? "tool.errorEncrypted" : "tool.errorCorrupt",
-    });
+    if (error instanceof PdfError) {
+      post({
+        type: "error",
+        runId,
+        code: error.code === "encrypted" ? "tool.errorEncrypted" : "tool.errorCorrupt",
+      });
+      return;
+    }
+    post({ type: "error", runId, code: "tool.errorCorrupt" });
     return;
   }
 
-  const pageCount = doc.getPageCount();
+  const pageCount = ctx.pageCount;
   if (pageCount < 1) {
     post({ type: "error", runId, code: "tool.errorCorrupt" });
     return;
@@ -132,10 +137,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       // flattenDocument works on BYTES (its own parse); the flattened
       // output becomes the working document for the sign-here boxes.
       const flattened = flattenDocument(bytes, { scope: "forms-only" });
-      doc = await PDFDocument.load(flattened.bytes, {
-        ignoreEncryption: false,
-        updateMetadata: false,
-      });
+      ctx = StampContext.load(flattened.bytes);
     } catch (error) {
       if (error instanceof FlattenFormsError) {
         post({ type: "error", runId, code: "reqsig.errFlatten" });
@@ -164,42 +166,46 @@ async function run(request: WorkerRunRequest): Promise<void> {
     needsNoto(d.subject) ||
     needsNoto(d.message);
 
-  const stamp = await loadStampFonts(doc, needDeva);
-  const fonts = {
-    base: stamp.fontFor("helvetica"),
-    bold: stamp.fontFor("helveticaBold"),
-    deva: needDeva ? stamp.fontFor("devanagari") : null,
-  };
+  // The split-run font bundle — base-14 keys embed nothing; the
+  // Devanagari face embeds per-document only when the content needs it.
+  let deva: StampTtfFont | null = null;
+  if (needDeva) {
+    deva = ctx.embedTtf(await loadDevanagariBytes());
+  }
+  const fonts = { base: "helvetica" as const, bold: "helveticaBold" as const, deva };
 
   post({ type: "progress", runId, pct: 42, stage: "processing" });
 
   // --- the prepared PDF ------------------------------------------------
   const sigFields = readBool(options, "sigFields", true);
-  const report = drawSignHereBoxes(doc, runPack, fonts, { sigFields });
+  const report = drawSignHereBoxes(ctx, runPack, fonts, { sigFields });
 
   post({ type: "progress", runId, pct: 60, stage: "saving" });
 
   const base = safeBaseName(file.name);
   const pdfName = `${base}-to-sign.pdf`;
-  const prepared = await doc.save({ useObjectStreams: true });
+  const prepared = ctx.write();
 
   post({ type: "progress", runId, pct: 72, stage: "processing" });
 
   // --- the request-note PDF ---------------------------------------------
-  const noteDoc = await PDFDocument.create();
-  const noteStamp = await loadStampFonts(noteDoc, needDeva);
+  const noteDoc = CreateContext.create();
+  let noteDeva: StampTtfFont | null = null;
+  if (needDeva) {
+    noteDeva = noteDoc.embedTtf(await loadDevanagariBytes());
+  }
   buildNotePdf(
     noteDoc,
     runPack,
     file.name,
     {
-      base: noteStamp.fontFor("helvetica"),
-      bold: noteStamp.fontFor("helveticaBold"),
-      deva: needDeva ? noteStamp.fontFor("devanagari") : null,
+      base: "helvetica",
+      bold: "helveticaBold",
+      deva: noteDeva,
     }
   );
   const noteName = `${base}-request-note.pdf`;
-  const noteBytes = await noteDoc.save({ useObjectStreams: true });
+  const noteBytes = noteDoc.write();
 
   // --- the plain-text note + the zip pack --------------------------------
   const txt = buildRequestText(runPack, file.name);
@@ -242,10 +248,18 @@ async function run(request: WorkerRunRequest): Promise<void> {
   });
 }
 
-self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
+self.onmessage = (event: MessageEvent<WorkerRunRequest>): void => {
   const data = event.data;
   if (data?.type !== "run") return;
   run(data).catch((error: unknown) => {
+    if (error instanceof PdfError) {
+      post({
+        type: "error",
+        runId: data.runId,
+        code: error.code === "encrypted" ? "tool.errorEncrypted" : "tool.errorGeneric",
+      });
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     post({
       type: "error",

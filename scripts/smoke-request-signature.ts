@@ -61,6 +61,7 @@ import {
   PDFArray,
   PDFDocument,
   PDFDict,
+  PDFHexString,
   PDFName,
   PDFRawStream,
   StandardFonts,
@@ -731,6 +732,23 @@ console.log("── 2. REAL E2E through the worker (self-shimmed) ────�
   check("worker EN: prepared PDF still has 2 pages", doc.getPageCount() === 2);
 
   const objects = [...doc.context.enumerateIndirectObjects()];
+  // The engine's house convention (P6-o): field /T values are UTF-16BE hex
+  // strings (pdf-lib's PDFHexString.fromText form); pdf-lib literal
+  // strings still decode — accept BOTH (the reload reader does too).
+  const feffDecode = (bytes: Uint8Array): string => {
+    const hex = Buffer.from(bytes).toString("hex");
+    let out = "";
+    // Skip the FEFF BOM (4 hex chars), then read UTF-16BE pairs.
+    for (let i = 4; i + 4 <= hex.length; i += 4) {
+      out += String.fromCharCode(parseInt(hex.slice(i, i + 4), 16));
+    }
+    return out;
+  };
+  const tNameText = (t: ReturnType<PDFDict["get"]>): string => {
+    if (t === undefined) return "";
+    if (t instanceof PDFHexString) return feffDecode(t.asBytes());
+    return t.toString().replace(/^\(|\)$/g, "");
+  };
   const sigFieldsFound: { name: string; kidCount: number; dict: PDFDict }[] = [];
   const widgetDicts: PDFDict[] = [];
   for (const [, obj] of objects) {
@@ -740,7 +758,7 @@ console.log("── 2. REAL E2E through the worker (self-shimmed) ────�
       const kids = obj.get(PDFName.of("Kids"));
       const kidsArray = doc.context.lookup(kids);
       sigFieldsFound.push({
-        name: t === undefined ? "" : t.toString(),
+        name: tNameText(t),
         kidCount: kidsArray instanceof PDFArray ? kidsArray.size() : 0,
         dict: obj,
       });
@@ -752,7 +770,7 @@ console.log("── 2. REAL E2E through the worker (self-shimmed) ────�
   check(
     "prepared: exactly 2 real /FT /Sig field dicts, right /T names",
     sigFieldsFound.length === 2 &&
-      sigFieldsFound.map((f) => f.name).join(",") === "(SignHere_1),(SignHere_2)",
+      sigFieldsFound.map((f) => f.name).join(",") === "SignHere_1,SignHere_2",
     sigFieldsFound.map((f) => f.name)
   );
   check(
@@ -845,7 +863,7 @@ console.log("── 2. REAL E2E through the worker (self-shimmed) ────�
       "prepared: page-1 widget /Parent resolves to the SignHere_1 field dict",
       parentDict instanceof PDFDict &&
         parentDict.get(PDFName.of("FT")) === PDFName.of("Sig") &&
-        parentDict.get(PDFName.of("T"))!.toString() === "(SignHere_1)"
+        tNameText(parentDict.get(PDFName.of("T"))) === "SignHere_1"
     );
   } else {
     check("prepared: page-1 widget present for /Parent check", false);

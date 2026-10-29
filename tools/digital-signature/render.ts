@@ -1,37 +1,43 @@
 /**
- * Digital signature — render (RB6-FIN-a4). The pdf-lib painter + the
- * low-level signature-field construction, extracted from worker.ts so
- * the smoke drives the EXACT export code in bun (request-signature
- * precedent): same block geometry, same /Sig field + /V placeholder
- * dict, same serialization the byte surgeon expects.
+ * Digital signature — render (RB6-FIN-a4, P6-w-a port). The OWN-ENGINE
+ * painter + the low-level signature-field construction, extracted from
+ * worker.ts so the smoke drives the EXACT export code in bun
+ * (request-signature precedent): same block geometry, same /Sig field +
+ * /V placeholder dict, same serialization the byte surgeon expects.
  *
  *  - drawSignatureBlock paints the visible block (vector ink, the
  *    WinAnsi-vs-Noto split-run recipe: Latin-only blocks render with
  *    base-14 Helvetica and embed NOTHING; Devanagari or ₹ runs switch
  *    to the embedded Noto Sans Devanagari for exactly those runs) —
  *    signer CN, "Digitally signed", date, reason, location;
- *  - addSignatureField creates the REAL AcroForm /FT /Sig field + its
- *    widget (request-signature's low-level dict recipe) and sets /V to
- *    the signature dictionary: /Type /Sig, /Filter /Adobe.PPKLite,
- *    /SubFilter /adbe.pkcs7.detached, /Reason, /Location, /M (PDF date),
+ *  - addSignatureField creates the REAL AcroForm /FT /Sig field with its
+ *    appearance-free widget (StampContext.createSignatureField — the
+ *    engine's dict recipe mirrors pdf-lib's PDFWidgetAnnotation.create +
+ *    acroForm.addField + page.node.addAnnot) and sets /V to the signature
+ *    dictionary: /Type /Sig, /Filter /Adobe.PPKLite, /SubFilter
+ *    /adbe.pkcs7.detached, /Reason, /Location, /Name, /M (PDF date),
  *    a /Contents placeholder of exactly `placeholderHexLen` ZERO hex
  *    chars and a four-sentinel /ByteRange the model's byte surgeon
  *    rewrites in place at fixed 10-digit width.
  *
- * Everything here is pure pdf-lib — no canvas, no browser APIs — so the
+ * Everything here is pure engine — no canvas, no browser APIs — so the
  * worker and the smoke run the identical code path. Nothing is uploaded.
  */
 
 import {
-  AnnotationFlags,
-  PDFHexString,
-  PDFName,
-  PDFString,
-  PDFWidgetAnnotation,
-  degrees,
-  rgb,
-} from "pdf-lib";
-import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
+  StampContext,
+  type StampFontKey,
+  type StampRgb,
+  type StampTtfFont,
+  arr,
+  encodeWinAnsiBytes,
+  hstr,
+  lstr,
+  measureStdText,
+  name,
+  num,
+  type PdfObj,
+} from "@/lib/own/pdf";
 
 import {
   displayRectToUser,
@@ -43,32 +49,34 @@ import {
   pdfDateString,
   sanitizeText,
   splitTextRuns,
-  type ByteRange,
-  type Rect,
   type SignRun,
 } from "./model";
+// isWinAnsiChar rides the ./model import above (the tool's own WinAnsi
+// table — the pdf-lib PDFFont.canEncode convention the smoke vectors pin).
 import type { X509Summary } from "./pkcs12";
 
 /* ------------------------------------------------------------------ */
 /* Palette + fonts                                                      */
 /* ------------------------------------------------------------------ */
 
-const COL_TEXT = rgb(0.067, 0.067, 0.067);
-const COL_MUTED = rgb(0.35, 0.37, 0.4);
-const COL_ACCENT = rgb(0.043, 0.42, 0.302);
-const COL_RULE = rgb(0.55, 0.57, 0.6);
+const COL_TEXT: StampRgb = { r: 0.067, g: 0.067, b: 0.067 };
+const COL_MUTED: StampRgb = { r: 0.35, g: 0.37, b: 0.4 };
+const COL_ACCENT: StampRgb = { r: 0.043, g: 0.42, b: 0.302 };
+const COL_RULE: StampRgb = { r: 0.55, g: 0.57, b: 0.6 };
 
-/** The font bundle the worker embeds before calling in. */
+/** The font bundle the worker prepares before calling in. */
 export interface BlockFonts {
-  base: PDFFont;
-  bold: PDFFont;
+  /** Standard-font key for Latin runs (embeds nothing). */
+  base: StampFontKey;
+  /** Standard-font key for Latin bold runs. */
+  bold: StampFontKey;
   /** null on the pure-WinAnsi path (nothing embedded). */
-  deva: PDFFont | null;
+  deva: StampTtfFont | null;
 }
 
 export interface BlockPlan {
   /** Final user-space rect (points, y up, MediaBox offset applied). */
-  rect: Rect;
+  rect: { x: number; y: number; w: number; h: number };
   /** Display-space rect (what the user sees — the smoke's oracle). */
   display: { left: number; top: number; w: number; h: number };
 }
@@ -77,15 +85,22 @@ export interface BlockPlan {
 /* Split-run text helpers (WinAnsi + Devanagari in one string)          */
 /* ------------------------------------------------------------------ */
 
-function fontFor(fonts: BlockFonts, deva: boolean): PDFFont {
-  return deva && fonts.deva !== null ? fonts.deva : fonts.base;
+function runIsDeva(fonts: BlockFonts, deva: boolean): boolean {
+  return deva && fonts.deva !== null;
+}
+
+/** Width of one run with the split-run rule. */
+function runWidth(fonts: BlockFonts, text: string, deva: boolean, size: number): number {
+  return runIsDeva(fonts, deva)
+    ? fonts.deva!.measure(text, size)
+    : measureStdText(text, fonts.base, size);
 }
 
 /** Width of a string with the split-run rule (right face per run). */
 export function measureText(fonts: BlockFonts, text: string, size: number): number {
   let w = 0;
   for (const run of splitTextRuns(text)) {
-    w += fontFor(fonts, run.deva).widthOfTextAtSize(run.text, size);
+    w += runWidth(fonts, run.text, run.deva, size);
   }
   return w;
 }
@@ -97,13 +112,14 @@ export function measureText(fonts: BlockFonts, text: string, size: number): numb
  * horizontally in the viewer (request-signature recipe).
  */
 export function drawSplitLine(
-  page: PDFPage,
+  ctx: StampContext,
+  slot: number,
   fonts: BlockFonts,
   text: string,
   x: number,
   y: number,
   size: number,
-  opts: { bold?: boolean; color?: ReturnType<typeof rgb>; rotate?: number } = {}
+  opts: { bold?: boolean; color?: StampRgb; rotate?: number } = {}
 ): void {
   const color = opts.color ?? COL_TEXT;
   const theta = ((opts.rotate ?? 0) * Math.PI) / 180;
@@ -112,28 +128,34 @@ export function drawSplitLine(
   let cx = x;
   let cy = y;
   for (const run of splitTextRuns(text)) {
-    const font = fontFor(fonts, run.deva);
-    page.drawText(run.text, {
+    const deva = runIsDeva(fonts, run.deva);
+    // The SAME face for both passes — Latin bold is the double-stroke
+    // trick over the REGULAR face (the original never swapped to a bold
+    // face here; fonts.bold exists for other callers).
+    const face = deva ? ({ ttf: fonts.deva! } as const) : ({ font: fonts.base } as const);
+    ctx.stampText(slot, {
       x: cx,
       y: cy,
+      text: run.text,
       size,
-      font,
+      ...face,
       color,
-      ...(opts.rotate !== undefined ? { rotate: degrees(opts.rotate) } : {}),
+      ...(opts.rotate !== undefined ? { rotate: opts.rotate } : {}),
     });
     if (opts.bold) {
       // No bold Noto face — the create-invoice double-stroke trick,
       // offset along the rotated baseline + text-down direction.
-      page.drawText(run.text, {
+      ctx.stampText(slot, {
         x: cx + 0.3 * (cos + sin),
         y: cy + 0.3 * (sin - cos),
+        text: run.text,
         size,
-        font,
+        ...face,
         color,
-        ...(opts.rotate !== undefined ? { rotate: degrees(opts.rotate) } : {}),
+        ...(opts.rotate !== undefined ? { rotate: opts.rotate } : {}),
       });
     }
-    const w = font.widthOfTextAtSize(run.text, size);
+    const w = runWidth(fonts, run.text, run.deva, size);
     cx += w * cos;
     cy += w * sin;
   }
@@ -144,30 +166,32 @@ export function drawSplitLine(
 /* ------------------------------------------------------------------ */
 
 /**
- * Paints the visible block on `page`: a hairline frame with an accent
+ * Paints the visible block on `slot`: a hairline frame with an accent
  * top rule, then the signer CN (bold), the "Digitally signed" date line
  * and the optional reason / location rows — all vector ink under the
  * appearance-free widget. Returns the display-space plan (the smoke's
  * hand-checkable geometry).
  */
 export function drawSignatureBlock(
-  page: PDFPage,
+  ctx: StampContext,
+  slot: number,
   run: SignRun,
   summary: X509Summary,
   signDate: string,
   fonts: BlockFonts
 ): BlockPlan {
   const allowNoto = fonts.deva !== null;
-  const mediaBox = page.getMediaBox();
-  const userW = mediaBox.width;
-  const userH = mediaBox.height;
-  const rotation = ((page.getRotation().angle % 360) + 360) % 360;
+  const info = ctx.pages[slot]!;
+  const mediaBox = info.mediaBox;
+  const userW = mediaBox[2] - mediaBox[0];
+  const userH = mediaBox[3] - mediaBox[1];
+  const rotation = ((info.rotate % 360) + 360) % 360;
   const disp = displaySize(rotation, userW, userH);
   const drect = positionToDisplayRect(run.position, disp.w, disp.h);
-  const u = displayRectToUser(drect, rotation, userW, userH, mediaBox.x, mediaBox.y);
+  const u = displayRectToUser(drect, rotation, userW, userH, mediaBox[0], mediaBox[1]);
 
   // --- frame ----------------------------------------------------------
-  page.drawRectangle({
+  ctx.stampRect(slot, {
     x: u.x,
     y: u.y,
     width: u.w,
@@ -180,7 +204,7 @@ export function drawSignatureBlock(
   const ruleInset = 6;
   switch (rotation) {
     case 90:
-      page.drawLine({
+      ctx.stampLine(slot, {
         start: { x: u.x + u.w - ruleInset, y: u.y + ruleInset },
         end: { x: u.x + u.w - ruleInset, y: u.y + u.h - ruleInset },
         thickness: 1.5,
@@ -188,7 +212,7 @@ export function drawSignatureBlock(
       });
       break;
     case 180:
-      page.drawLine({
+      ctx.stampLine(slot, {
         start: { x: u.x + ruleInset, y: u.y + u.h - ruleInset },
         end: { x: u.x + u.w - ruleInset, y: u.y + u.h - ruleInset },
         thickness: 1.5,
@@ -196,15 +220,15 @@ export function drawSignatureBlock(
       });
       break;
     case 270:
-      page.drawLine({
+      ctx.stampLine(slot, {
         start: { x: u.x + ruleInset, y: u.y + ruleInset },
-        end: { x: u.x + ruleInset, y: u.y + u.h - ruleInset },
+        end: { x: u.x + u.w - ruleInset, y: u.y + ruleInset },
         thickness: 1.5,
         color: COL_ACCENT,
       });
       break;
     default:
-      page.drawLine({
+      ctx.stampLine(slot, {
         start: { x: u.x + ruleInset, y: u.y + u.h - ruleInset },
         end: { x: u.x + u.w - ruleInset, y: u.y + u.h - ruleInset },
         thickness: 1.5,
@@ -239,10 +263,10 @@ export function drawSignatureBlock(
     text: string,
     fromTop: number,
     size: number,
-    opts: { bold?: boolean; color?: ReturnType<typeof rgb> } = {}
+    opts: { bold?: boolean; color?: StampRgb } = {}
   ): void => {
     const at = anchor(padX, fromTop);
-    drawSplitLine(page, fonts, truncate(sanitizeText(text, allowNoto), size), at.x, at.y, size, {
+    drawSplitLine(ctx, slot, fonts, truncate(sanitizeText(text, allowNoto), size), at.x, at.y, size, {
       ...opts,
       rotate: rotation,
     });
@@ -264,21 +288,8 @@ export function drawSignatureBlock(
 /* The signature field + the /V placeholder dict                        */
 /* ------------------------------------------------------------------ */
 
-/**
- * A text string for the /Reason /Location /Name entries: a literal PDF
- * string when every char is WinAnsi-safe, else a UTF-16BE hex string
- * with the BOM (PDF 32000 §7.9.2.2 — how Acrobat carries Devanagari).
- */
-export function pdfTextStringValue(s: string): PDFString | PDFHexString {
-  let winAnsi = true;
-  for (const ch of s) {
-    if (!isWinAnsiChar(ch.codePointAt(0) ?? 0)) {
-      winAnsi = false;
-      break;
-    }
-  }
-  if (winAnsi) return PDFString.of(s);
-  let hex = "feff";
+/** UTF-16BE bytes with the FEFF BOM (surrogate pairs handled). */
+function utf16beBytes(s: string): Uint8Array {
   const units: number[] = [];
   for (const ch of s) {
     const cp = ch.codePointAt(0) ?? 0;
@@ -289,10 +300,39 @@ export function pdfTextStringValue(s: string): PDFString | PDFHexString {
       units.push(0xd800 + (v >> 10), 0xdc00 + (v & 0x3ff));
     }
   }
-  for (const u of units) {
-    hex += u.toString(16).padStart(4, "0");
+  const out = new Uint8Array(2 + units.length * 2);
+  out[0] = 0xfe;
+  out[1] = 0xff;
+  for (let i = 0; i < units.length; i += 1) {
+    out[2 + i * 2] = units[i]! >> 8;
+    out[3 + i * 2] = units[i]! & 0xff;
   }
-  return PDFHexString.of(hex.toUpperCase());
+  return out;
+}
+
+function asciiBytes(s: string): Uint8Array {
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i += 1) out[i] = s.charCodeAt(i) & 0xff;
+  return out;
+}
+
+/**
+ * A text string for the /Reason /Location /Name entries: a literal PDF
+ * string when every char is WinAnsi-safe, else a UTF-16BE hex string
+ * with the BOM (PDF 32000 §7.9.2.2 — how Acrobat carries Devanagari).
+ */
+export function pdfTextStringValue(s: string): PdfObj {
+  let winAnsi = true;
+  for (const ch of s) {
+    if (!isWinAnsiChar(ch.codePointAt(0) ?? 0)) {
+      winAnsi = false;
+      break;
+    }
+  }
+  if (winAnsi) {
+    return lstr(new Uint8Array(encodeWinAnsiBytes(s, "helvetica")));
+  }
+  return hstr(utf16beBytes(s));
 }
 
 export interface SigFieldInput {
@@ -312,77 +352,63 @@ export interface SigFieldInput {
 export interface SigFieldResult {
   fieldName: string;
   /** The sentinel /ByteRange as written (pre-surgery). */
-  byteRange: ByteRange;
+  byteRange: [number, number, number, number];
   /** The /Contents placeholder hex length. */
   placeholderHexLen: number;
 }
 
+/** The four-sentinel /ByteRange — exactly 10 digits each. */
+const BR_SENTINEL = 1111111111;
+
 /**
  * Creates ONE real signature field over `rect` with the /V placeholder
- * dictionary the model's byte surgeon finalizes:
+ * dictionary the model's byte surgeon finalizes (the engine method
+ * mirrors pdf-lib's registration order: V dict → field dict → widget):
  *
- *   field dict  { FT: /Sig, T: <name>, V: <sigDict> }  — registered,
- *   pushed into the AcroForm's /Fields array;
- *   widget      { Subtype: /Widget, Rect, P }          — registered as
- *   the field's single /Kids entry, pushed into the page's /Annots,
- *   Print flag set.
+ *   field dict  { FT: /Sig, T: <name>, V: <sigDict>, Kids: [widget] }
+ *   — pushed into the AcroForm's /Fields array;
+ *   widget      { Subtype: /Widget, Rect, P, F: Print } — registered as
+ *   the field's single /Kids entry, pushed into the page's /Annots.
  *
- * The /V dict carries the four-sentinel /ByteRange
- * (1111111111 ×4 — exactly 10 digits each) and the /Contents zero-hex
- * gap; save() must be called with { useObjectStreams: false } so both
- * land as plain bytes.
+ * The /V dict carries the four-sentinel /ByteRange (1111111111 ×4 —
+ * exactly 10 digits each) and the /Contents zero-hex gap; write() must
+ * run in the engine's classic mode (no object streams) so both land as
+ * plain searchable bytes.
  */
 export function addSignatureField(
-  doc: PDFDocument,
-  page: PDFPage,
+  ctx: StampContext,
+  slot: number,
   input: SigFieldInput
 ): SigFieldResult {
-  const context = doc.context;
+  // Insertion order matters: /ByteRange precedes /Contents, so the
+  // array sits a few bytes before the gap in the saved bytes (the
+  // surgeon's search window).
+  const value: Array<[string, PdfObj]> = [
+    ["Type", name("Sig")],
+    ["Filter", name("Adobe.PPKLite")],
+    ["SubFilter", name("adbe.pkcs7.detached")],
+    [
+      "ByteRange",
+      arr(num(BR_SENTINEL), num(BR_SENTINEL), num(BR_SENTINEL), num(BR_SENTINEL)),
+    ],
+    // N hex '0' chars = N/2 zero bytes through the writer's hex encoder.
+    ["Contents", hstr(new Uint8Array(input.placeholderHexLen >> 1))],
+  ];
+  if (input.reason !== "") value.push(["Reason", pdfTextStringValue(input.reason)]);
+  if (input.location !== "") value.push(["Location", pdfTextStringValue(input.location)]);
+  if (input.signerName !== "") value.push(["Name", pdfTextStringValue(input.signerName)]);
+  value.push(["M", lstr(asciiBytes(pdfDateString(input.signingTime)))]);
 
-  const sigDict = context.obj({
-    Type: "Sig",
-    Filter: "Adobe.PPKLite",
-    SubFilter: "adbe.pkcs7.detached",
-    // Insertion order matters: /ByteRange precedes /Contents, so the
-    // array sits a few bytes before the gap in the saved bytes (the
-    // surgeon's search window).
-    ByteRange: [1111111111, 1111111111, 1111111111, 1111111111],
-    Contents: PDFHexString.of("0".repeat(input.placeholderHexLen)),
+  ctx.createSignatureField({
+    name: input.fieldName,
+    slot,
+    rect: { x: input.rect.x, y: input.rect.y, width: input.rect.w, height: input.rect.h },
+    value,
   });
-  if (input.reason !== "") {
-    sigDict.set(PDFName.of("Reason"), pdfTextStringValue(input.reason));
-  }
-  if (input.location !== "") {
-    sigDict.set(PDFName.of("Location"), pdfTextStringValue(input.location));
-  }
-  if (input.signerName !== "") {
-    sigDict.set(PDFName.of("Name"), pdfTextStringValue(input.signerName));
-  }
-  sigDict.set(PDFName.of("M"), PDFString.of(pdfDateString(input.signingTime)));
-  const sigRef = context.register(sigDict);
-
-  const fieldDict = context.obj({ FT: "Sig" });
-  fieldDict.set(PDFName.of("T"), PDFString.of(input.fieldName));
-  fieldDict.set(PDFName.of("V"), sigRef);
-  const fieldRef = context.register(fieldDict);
-  doc.getForm().acroForm.addField(fieldRef);
-
-  const widget = PDFWidgetAnnotation.create(context, fieldRef);
-  widget.setRectangle({
-    x: input.rect.x,
-    y: input.rect.y,
-    width: input.rect.w,
-    height: input.rect.h,
-  });
-  if (page.ref !== undefined) widget.setP(page.ref);
-  widget.setFlagTo(AnnotationFlags.Print, true);
-  const widgetRef = context.register(widget.dict);
-  fieldDict.set(PDFName.of("Kids"), context.obj([widgetRef]));
-  page.node.addAnnot(widgetRef);
 
   return {
     fieldName: input.fieldName,
-    byteRange: [1111111111, 1111111111, 1111111111, 1111111111],
+    byteRange: [BR_SENTINEL, BR_SENTINEL, BR_SENTINEL, BR_SENTINEL],
     placeholderHexLen: input.placeholderHexLen,
   };
 }

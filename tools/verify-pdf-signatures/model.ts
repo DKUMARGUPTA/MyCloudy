@@ -87,6 +87,30 @@ export function toLatin(bytes: Uint8Array): string {
   return out;
 }
 
+/**
+ * A signature field's /T display name: the own engine's house form is
+ * UTF-16BE hex with the FEFF BOM (P6-w-a); pdf-lib's literal form is
+ * carried through as-is. Hex payloads decode; literal payloads keep
+ * their raw content (the legacy behavior — names carry no escapes).
+ */
+function decodeSigFieldText(s: PdfStrVal): string | null {
+  if (!s.hex) return s.text;
+  const clean = s.text.replace(/\s+/g, "");
+  if (clean.length % 2 !== 0 || /[^0-9a-fA-F]/.test(clean)) return s.text;
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < bytes.length; i += 1) {
+    bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    let out = "";
+    for (let i = 2; i + 1 < bytes.length; i += 2) {
+      out += String.fromCharCode((bytes[i]! << 8) | bytes[i + 1]!);
+    }
+    return out;
+  }
+  return toLatin(bytes);
+}
+
 /** True when the bytes carry the %PDF- magic (header may sit at any offset). */
 export function sniffPdfBytes(bytes: Uint8Array): boolean {
   const head = bytes.subarray(0, 2048);
@@ -1624,7 +1648,7 @@ export function collectSigFields(walk: PdfWalk): FieldScan {
           ? rectArr.items.map((it) => (it.k === "num" ? it.num : 0))
           : null;
       const nameVal = str(fieldDict.map.get("T"));
-      const fieldName = nameVal !== null ? nameVal.text : null;
+      const fieldName = nameVal !== null ? decodeSigFieldText(nameVal) : null;
       const page = fieldPage(fieldDict, fieldNum, kidNums);
       const vDict = dict(fieldDict.map.get("V"));
       const hasContents =

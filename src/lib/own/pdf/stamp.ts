@@ -1265,7 +1265,135 @@ export class StampContext {
     return handle;
   }
 
-  /** Reserve the field dict + AcroForm skeleton shared by every flavour. */
+  /**
+   * P6-w-a: the signature-field authoring seam (digital-signature /
+   * request-signature). Creates ONE AcroForm signature field, mirroring
+   * pdf-lib's low-level dict recipe (PDFWidgetAnnotation.create +
+   * acroForm.addField + page.node.addAnnot):
+   *
+   *   V dict     (when `value` entries are given) — an indirect object with
+   *              the caller's EXACT key order (the byte surgeons search the
+   *              serialized /ByteRange + /Contents placeholders in these
+   *              bytes — insertion order is load-bearing);
+   *   field dict { FT: /Sig, T, V?, Kids: [widget] } — pushed into the
+   *              AcroForm's /Fields array;
+   *   widget     { Type: /Annot, Subtype: /Widget, Rect, Parent, P, F: 4 }
+   *              — INTENTIONALLY appearance-free (an empty signature field
+   *              renders nothing in viewers; the visible ink is page
+   *              content the caller stamps underneath), pushed into the
+   *              page's /Annots with the Print flag set.
+   *
+   * The field deliberately does NOT join the StampFormField machinery (no
+   * AP materialization, no /DA, no NeedAppearances contribution — the
+   * P6-u fieldCount guard stays honest on sign outputs).
+   */
+  createSignatureField(opts: {
+    /** Unique /T name (the callers dedupe against readAcroFormFields). */
+    name: string;
+    /** Slot (page) the widget annot lands on. */
+    slot: number;
+    /**
+     * User-space widget rect. null → the invisible [0,0,0,0] (pdf-lib's
+     * signature1 convention in pki-common; digital-signature passes the
+     * visible block rect here). NO border expansion — pdf-lib
+     * setRectangle semantics, unlike addFormWidget's bw/2 growth.
+     */
+    rect?: { x: number; y: number; width: number; height: number } | null;
+    /**
+     * Ordered /V signature-dictionary entries (Type/Filter/SubFilter/
+     * ByteRange/Contents/Reason/Location/Name/M — the caller owns every
+     * byte-relevant value). null/omitted → an EMPTY signature field
+     * (request-signature's to-sign packs).
+     */
+    value?: Array<[string, PdfObj]> | null;
+  }): { fieldNum: number; vNum: number | null; widgetNum: number } {
+    if (typeof opts.name !== "string" || opts.name.length === 0) {
+      throw new PdfError("corrupt", "form field name must be a non-empty string");
+    }
+    this.page(opts.slot); // range check
+    this.ensureAcroFormDict();
+
+    let vNum: number | null = null;
+    if (opts.value !== undefined && opts.value !== null) {
+      vNum = this.reserve();
+      this.synthetics.push(newDict(opts.value));
+    }
+
+    const fieldNum = this.reserve();
+    const dict = newDict([
+      ["FT", { k: "name", v: "Sig" }],
+      ["T", { k: "hstr", b: pdfTextBytes(opts.name) }],
+      ...(vNum !== null ? ([["V", newref(vNum)]] as Array<[string, PdfObj]>) : []),
+      ["Kids", { k: "arr", items: [] }],
+    ]);
+    this.synthetics.push(dict);
+
+    const rect = opts.rect ?? { x: 0, y: 0, width: 0, height: 0 };
+    const widgetNum = this.reserve();
+    const widget = newDict([
+      ["Type", { k: "name", v: "Annot" }],
+      ["Subtype", { k: "name", v: "Widget" }],
+      [
+        "Rect",
+        arr(
+          num(rect.x),
+          num(rect.y),
+          num(rect.x + rect.width),
+          num(rect.y + rect.height),
+        ),
+      ],
+      ["Parent", newref(fieldNum)],
+      ["P", newref(3 + opts.slot)], // all-copy plan: slot s = object 3+s
+      ["F", num(4)], // AnnotationFlags.Print (pdf-lib parity)
+    ]);
+    this.synthetics.push(widget);
+
+    const kids = dict.m.get("Kids");
+    if (kids && kids.k === "arr") kids.items.push(newref(widgetNum));
+    const fields = this.acroFormDict!.m.get("Fields");
+    if (fields && fields.k === "arr") fields.items.push(newref(fieldNum));
+    let list = this.slotAnnots.get(opts.slot);
+    if (!list) {
+      list = [];
+      this.slotAnnots.set(opts.slot, list);
+    }
+    list.push(newref(widgetNum));
+
+    return { fieldNum, vNum, widgetNum };
+  }
+
+  /** P6-w-a: get-or-build the output /AcroForm dict (shared by the form
+   * builder and the signature-field seam). When the SOURCE carries an
+   * /AcroForm its entries are seeded in (P6-o-a) so existing field refs
+   * survive the writer's renumber. */
+  private ensureAcroFormDict(): void {
+    if (this.acroFormNum !== null) return;
+    this.acroFormNum = this.reserve();
+    const fieldsArr: PdfObj = { k: "arr", items: [] };
+    const source = this.sourceAcroForm();
+    const pairs: Array<[string, PdfObj]> = [];
+    if (source) {
+      const fieldsEntry = source.m.get("Fields");
+      const fieldsVal =
+        fieldsEntry && fieldsEntry.k === "ref"
+          ? resolve(this.source.doc, fieldsEntry)
+          : fieldsEntry;
+      if (fieldsVal && fieldsVal.k === "arr") {
+        for (const item of fieldsVal.items) fieldsArr.items.push(item);
+      }
+      for (const [key, value] of source.m) {
+        if (key !== "Fields") pairs.push([key, value]);
+      }
+    }
+    pairs.push(["Fields", fieldsArr]);
+    this.acroFormDict = newDict(pairs);
+    if (source) {
+      this.synthetics.push({ sourceDoc: this.source.doc, obj: this.acroFormDict });
+    } else {
+      this.synthetics.push(this.acroFormDict);
+    }
+  }
+
   private newFormField(
     kind: "text" | "checkbox" | "dropdown" | "radio",
     name: string,
@@ -1273,39 +1401,7 @@ export class StampContext {
     if (typeof name !== "string" || name.length === 0) {
       throw new PdfError("corrupt", "form field name must be a non-empty string");
     }
-    if (this.acroFormNum === null) {
-      this.acroFormNum = this.reserve();
-      const fieldsArr: PdfObj = { k: "arr", items: [] };
-      // P6-o-a: when the SOURCE document already carries an /AcroForm
-      // (make-pdf-fillable run on its own output, Acrobat-authored forms),
-      // pdf-lib's addField pushes into the EXISTING /Fields array — mirror
-      // that by seeding ours with the source's items and cloning its other
-      // entries. The dict is SOURCE-ANCHORED so the old field refs remap
-      // through the writer's reachable-graph renumber (without the anchor
-      // the entire existing form would be dropped from the output).
-      const source = this.sourceAcroForm();
-      const pairs: Array<[string, PdfObj]> = [];
-      if (source) {
-        const fieldsEntry = source.m.get("Fields");
-        const fieldsVal =
-          fieldsEntry && fieldsEntry.k === "ref"
-            ? resolve(this.source.doc, fieldsEntry)
-            : fieldsEntry;
-        if (fieldsVal && fieldsVal.k === "arr") {
-          for (const item of fieldsVal.items) fieldsArr.items.push(item);
-        }
-        for (const [key, value] of source.m) {
-          if (key !== "Fields") pairs.push([key, value]);
-        }
-      }
-      pairs.push(["Fields", fieldsArr]);
-      this.acroFormDict = newDict(pairs);
-      if (source) {
-        this.synthetics.push({ sourceDoc: this.source.doc, obj: this.acroFormDict });
-      } else {
-        this.synthetics.push(this.acroFormDict);
-      }
-    }
+    this.ensureAcroFormDict();
     const fieldNum = this.reserve();
     const dict = newDict([
       ["FT", { k: "name", v: FORM_FT[kind] }],

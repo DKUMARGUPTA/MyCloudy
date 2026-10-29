@@ -53,6 +53,7 @@ import {
   PDFArray,
   PDFDict,
   PDFDocument,
+  PDFHexString,
   PDFName,
   PDFRawStream,
   PDFRef,
@@ -98,6 +99,24 @@ import {
 import { P12_CODES, parsePkcs12 } from "../tools/digital-signature/pkcs12";
 import { buildDetachedSignedData } from "../tools/digital-signature/cms";
 import { blockNeedsNoto, drawSignatureBlock, pdfTextStringValue } from "../tools/digital-signature/render";
+
+/** The engine's house /T form (UTF-16BE hex, P6-w-a) + the pdf-lib literal
+ * form both decode to the plain name. */
+function decFieldT(t: ReturnType<PDFDict["get"]> | undefined): string | null {
+  if (t === undefined) return null;
+  if (t instanceof PDFHexString) {
+    const bytes = t.asBytes();
+    if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+      let out = "";
+      for (let i = 2; i + 1 < bytes.length; i += 2) {
+        out += String.fromCharCode((bytes[i]! << 8) | bytes[i + 1]!);
+      }
+      return out;
+    }
+    return Buffer.from(bytes).toString("latin1");
+  }
+  return t.toString().replace(/^\(|\)$/g, "");
+}
 import { analyzeSignatures } from "../tools/verify-pdf-signatures/model";
 import type {
   WorkerRunRequest,
@@ -607,7 +626,7 @@ console.log("── 0. wiring sanity (source text) ─────────�
   );
   check(
     "worker: object-stream-free save (the byte surgeon needs plain bytes)",
-    workerSrc.includes("useObjectStreams: false")
+    workerSrc.includes("ctx.write()") && !workerSrc.includes("useObjectStreams")
   );
   check(
     "worker: the p12 rides request.assets (collectAssets bridge)",
@@ -1022,17 +1041,21 @@ console.log("── 1. model vectors ──────────────�
   );
 
   // ---- pdfTextStringValue encoding --------------------------------------
+  // The engine's string forms: WinAnsi → literal, else UTF-16BE hex —
+  // serialized through the engine's own writer (serializePreserve, bytes).
+  const { serializePreserve } = await import("@/lib/own/pdf");
+  const ser = (o: ReturnType<typeof pdfTextStringValue>): string =>
+    Buffer.from(serializePreserve(o)).toString("latin1");
   check(
     "pdfTextStringValue: WinAnsi → literal PDF string",
-    pdfTextStringValue("Contract approval").toString() === "(Contract approval)"
+    ser(pdfTextStringValue("Contract approval")) === "(Contract approval)"
   );
-  const hindi = pdfTextStringValue("अनुबंध");
-  const hindiText = hindi.toString();
+  const hindiSer = ser(pdfTextStringValue("अनुबंध"));
   check(
     "pdfTextStringValue: Devanagari → UTF-16BE hex string with BOM",
-    hindiText.startsWith("<FEFF") &&
-      Buffer.from(hindiText.slice(1, -1), "hex").subarray(0, 2).toString("latin1") === "\xfe\xff",
-    hindiText.slice(0, 16)
+    /^<feff/i.test(hindiSer) &&
+      Buffer.from(hindiSer.slice(1, -1), "hex").subarray(0, 2).toString("latin1") === "\xfe\xff",
+    hindiSer.slice(0, 16)
   );
 }
 
@@ -1286,7 +1309,7 @@ console.log("── 3. REAL E2E through the worker ─────────�
   check(
     "worker EN: field /FT /Sig + /T Signature1",
     fieldDict.get(PDFName.of("FT"))?.toString() === "/Sig" &&
-      fieldDict.get(PDFName.of("T"))?.toString() === "(Signature1)"
+      decFieldT(fieldDict.get(PDFName.of("T"))) === "Signature1"
   );
   const annots = reloaded.getPage(1).node.Annots();
   check("worker EN: widget on page 2", annots !== undefined && annots.size() === 1, annots?.size());
@@ -1429,7 +1452,7 @@ console.log("── 3. REAL E2E through the worker ─────────�
   check(
     "block: the date value ink (UTC stamp pattern)",
     /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/.test(
-      page2Ink.replace(/\)\s*Tj/g, ") Tj").replace(/<([0-9A-F]{4,})>\s*Tj/g, (_m, hex: string) =>
+      page2Ink.replace(/\)\s*Tj/g, ") Tj").replace(/<([0-9a-fA-F]{4,})>\s*Tj/g, (_m, hex: string) =>
         Buffer.from(hex, "hex").toString("latin1")
       )
     )
@@ -1843,11 +1866,12 @@ console.log("── 4. finalizeSignedPdf unit (the surgeon, end to end) ──")
   srcPage.drawText("plain", { x: 10, y: 200, size: 10, font: await srcDoc.embedFont(StandardFonts.Helvetica) });
   const baseBytes = await srcDoc.save({ useObjectStreams: false });
 
-  const doc = await PDFDocument.load(baseBytes, { updateMetadata: false });
+  const { StampContext } = await import("@/lib/own/pdf");
+  const ctx = StampContext.load(baseBytes);
   const signingTime = new Date(Date.now() + 1234);
   const L = await estimateCmsLength({ pkcs8: FX.signerKey.pkcs8, certDer: FX.signerCert.certDer }, signingTime);
   const { addSignatureField } = await import("../tools/digital-signature/render");
-  addSignatureField(doc, doc.getPage(0), {
+  addSignatureField(ctx, 0, {
     placeholderHexLen: L * 2,
     reason: "Unit reason",
     location: "Unit city",
@@ -1856,7 +1880,7 @@ console.log("── 4. finalizeSignedPdf unit (the surgeon, end to end) ──")
     fieldName: sigFieldName(new Set()),
     signerName: "Smoke Test Signer",
   });
-  const saved = new Uint8Array(await doc.save({ useObjectStreams: false }));
+  const saved = ctx.write();
   check(
     "finalize setup: placeholder gap present at 2L hex chars",
     findContentsGap(saved, L * 2) !== null
@@ -1927,14 +1951,18 @@ console.log("── 5. parseRun honesty + final sweep ────────�
   const rotDoc = await PDFDocument.create();
   const page = rotDoc.addPage([595.28, 841.89]);
   page.setRotation({ type: "degrees", angle: 90 } as never);
+  const rotBase = await rotDoc.save({ useObjectStreams: false });
+  const { StampContext } = await import("@/lib/own/pdf");
+  const rotCtx = StampContext.load(rotBase);
   const fonts = {
-    base: await rotDoc.embedFont(StandardFonts.Helvetica),
-    bold: await rotDoc.embedFont(StandardFonts.HelveticaBold),
+    base: "helvetica" as const,
+    bold: "helveticaBold" as const,
     deva: null,
   };
   const run: SignRun = runOf(parseSignRun(makeSign({ reason: "Rotated", page: 0, position: "br" }), 1)).run;
   const plan = drawSignatureBlock(
-    page,
+    rotCtx,
+    0,
     run,
     { subjectCn: "Smoke Test Signer", subjectO: "QA", issuerCn: "", serialHex: "", notBefore: new Date(), notAfter: new Date() },
     "2026-10-22 12:00:34 UTC",
@@ -1945,7 +1973,7 @@ console.log("── 5. parseRun honesty + final sweep ────────�
     near(plan.rect.w, 64) && near(plan.rect.h, 200),
     plan.rect
   );
-  const rotBytes = await rotDoc.save({ useObjectStreams: false });
+  const rotBytes = rotCtx.write();
   const rotReload = await PDFDocument.load(rotBytes, { updateMetadata: false });
   const rotInk = pageContentLatin1(rotReload, 0);
   check(

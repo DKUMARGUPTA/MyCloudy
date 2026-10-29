@@ -1,37 +1,39 @@
 /**
- * Request signature — render (RB6-b). The pdf-lib painter for the signing
- * pack, extracted from worker.ts so the smoke script drives the EXACT
- * export code in bun (create-fillable-pdf-form precedent): same geometry,
- * same /Sig field construction, same note layout.
+ * Request signature — render (RB6-b, P6-w-a port). The OWN-ENGINE painter
+ * for the signing pack, extracted from worker.ts so the smoke script
+ * drives the EXACT export code in bun (create-fillable-pdf-form
+ * precedent): same geometry, same /Sig field construction, same note
+ * layout.
  *
  *  - drawSignHereBoxes paints, per user-placed spot, a visible numbered
  *    "Sign here" placeholder — a DASHED amber rectangle with the spot
  *    number + label + recipient + due date — and (optionally) lays a REAL
- *    empty AcroForm signature field (/FT /Sig) over exactly that rect,
- *    built with pdf-lib's low-level dict API: an {FT /Sig, T} field dict
- *    registered into the AcroForm's /Fields array + a widget-annotation
- *    kid carrying /Rect + /P, pushed into the page's /Annots with the
- *    Print flag set (the create-fillable-pdf-form tool shows the form API;
- *    /Sig has no pdf-lib high-level creator, so this is the equivalent of
- *    what PDFAcroText.create + addFieldToParent + addToPage do).
+ *    empty AcroForm signature field (/FT /Sig) over exactly that rect via
+ *    StampContext.createSignatureField (the engine's low-level dict
+ *    recipe: an {FT /Sig, T} field dict pushed into the AcroForm's
+ *    /Fields array + an appearance-free widget-annotation kid carrying
+ *    /Rect + /P + the Print flag, pushed into the page's /Annots — the
+ *    equivalent of what PDFAcroText.create + addFieldToParent + addToPage
+ *    did under pdf-lib; /Sig has no high-level creator anywhere).
  *  - buildNotePdf paints the request-note PDF (A4, vector text, the
  *    WinAnsi-vs-Noto split-run recipe: Latin-only notes use base-14
  *    Helvetica and embed NOTHING; Devanagari or ₹ runs switch to the
  *    embedded Noto Sans Devanagari for exactly those runs).
  *
- * Everything here is pure pdf-lib — no canvas, no browser APIs — so the
+ * Everything here is pure engine — no canvas, no browser APIs — so the
  * worker and the smoke run the identical code path. Nothing is uploaded.
  */
 
 import {
-  AnnotationFlags,
-  PDFName,
-  PDFString,
-  PDFWidgetAnnotation,
-  degrees,
-  rgb,
-} from "pdf-lib";
-import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
+  CreateContext,
+  StampContext,
+  readAcroFormFields,
+  type CreatePage,
+  type StampFontKey,
+  type StampRgb,
+  type StampTtfFont,
+  measureStdText,
+} from "@/lib/own/pdf";
 import { zipSync, type Zippable } from "@/lib/own/zip";
 
 import {
@@ -42,8 +44,8 @@ import {
   labelOf,
   sanitizeText,
   sigFieldNames,
-  splitTextRuns,
   spotDisplayRect,
+  splitTextRuns,
 } from "./model";
 import type { RequestPackRun } from "./types";
 
@@ -54,19 +56,21 @@ import type { RequestPackRun } from "./types";
 const A4: [number, number] = [595.28, 841.89];
 const NOTE_MARGIN = 40;
 
-const COL_AMBER = rgb(0.78, 0.47, 0.04);
-const COL_AMBER_SOFT = rgb(0.55, 0.35, 0.05);
-const COL_MUTED = rgb(0.35, 0.37, 0.4);
-const COL_TEXT = rgb(0.067, 0.067, 0.067);
-const COL_RULE = rgb(0.55, 0.57, 0.6);
-const COL_ACCENT = rgb(0.043, 0.42, 0.302);
+const COL_AMBER: StampRgb = { r: 0.78, g: 0.47, b: 0.04 };
+const COL_AMBER_SOFT: StampRgb = { r: 0.55, g: 0.35, b: 0.05 };
+const COL_MUTED: StampRgb = { r: 0.35, g: 0.37, b: 0.4 };
+const COL_TEXT: StampRgb = { r: 0.067, g: 0.067, b: 0.067 };
+const COL_RULE: StampRgb = { r: 0.55, g: 0.57, b: 0.6 };
+const COL_ACCENT: StampRgb = { r: 0.043, g: 0.42, b: 0.302 };
 
-/** The font bundle the worker embeds before calling in. */
+/** The font bundle the worker prepares before calling in. */
 export interface RenderFonts {
-  base: PDFFont;
-  bold: PDFFont;
+  /** Standard-font key for Latin runs (embeds nothing). */
+  base: StampFontKey;
+  /** Standard-font key for Latin bold runs. */
+  bold: StampFontKey;
   /** null on the pure-WinAnsi path (nothing embedded). */
-  deva: PDFFont | null;
+  deva: StampTtfFont | null;
 }
 
 export interface SpotDrawResult {
@@ -88,15 +92,22 @@ export interface PreparedReport {
 /* Split-run text helpers (WinAnsi + Devanagari in one string)          */
 /* ------------------------------------------------------------------ */
 
-function fontFor(fonts: RenderFonts, deva: boolean): PDFFont {
-  return deva && fonts.deva !== null ? fonts.deva : fonts.base;
+function runIsDeva(fonts: RenderFonts, deva: boolean): boolean {
+  return deva && fonts.deva !== null;
+}
+
+/** Width of one run with the split-run rule. */
+function runWidth(fonts: RenderFonts, text: string, deva: boolean, size: number): number {
+  return runIsDeva(fonts, deva)
+    ? fonts.deva!.measure(text, size)
+    : measureStdText(text, fonts.base, size);
 }
 
 /** Width of a string with the split-run rule (right face per run). */
 export function measureText(fonts: RenderFonts, text: string, size: number): number {
   let w = 0;
   for (const run of splitTextRuns(text)) {
-    w += fontFor(fonts, run.deva).widthOfTextAtSize(run.text, size);
+    w += runWidth(fonts, run.text, run.deva, size);
   }
   return w;
 }
@@ -154,13 +165,14 @@ export function wrapRuns(
  * page still reads horizontally in the viewer.
  */
 export function drawSplitLine(
-  page: PDFPage,
+  ctx: StampContext,
+  slot: number,
   fonts: RenderFonts,
   text: string,
   x: number,
   y: number,
   size: number,
-  opts: { bold?: boolean; color?: ReturnType<typeof rgb>; rotate?: number } = {}
+  opts: { bold?: boolean; color?: StampRgb; rotate?: number } = {}
 ): number {
   const color = opts.color ?? COL_TEXT;
   const theta = ((opts.rotate ?? 0) * Math.PI) / 180;
@@ -170,32 +182,31 @@ export function drawSplitLine(
   let cy = y;
   let consumed = 0;
   for (const run of splitTextRuns(text)) {
-    const font = fontFor(fonts, run.deva);
-    page.drawText(run.text, {
+    const deva = runIsDeva(fonts, run.deva);
+    // The SAME face for both passes — Latin bold is the double-stroke
+    // trick over the REGULAR face (the original never swapped faces).
+    const face = deva ? ({ ttf: fonts.deva! } as const) : ({ font: fonts.base } as const);
+    ctx.stampText(slot, {
       x: cx,
       y: cy,
+      text: run.text,
       size,
-      font,
+      ...face,
       color,
-      ...(opts.rotate !== undefined
-        ? { rotate: degrees(opts.rotate) }
-        : {}),
+      ...(opts.rotate !== undefined ? { rotate: opts.rotate } : {}),
     });
     if (opts.bold) {
-      // No bold Noto face — the create-invoice double-stroke trick,
-      // offset along the rotated baseline + text-down direction.
-      page.drawText(run.text, {
+      ctx.stampText(slot, {
         x: cx + 0.3 * (cos + sin),
         y: cy + 0.3 * (sin - cos),
+        text: run.text,
         size,
-        font,
+        ...face,
         color,
-        ...(opts.rotate !== undefined
-          ? { rotate: degrees(opts.rotate) }
-          : {}),
+        ...(opts.rotate !== undefined ? { rotate: opts.rotate } : {}),
       });
     }
-    const w = font.widthOfTextAtSize(run.text, size);
+    const w = runWidth(fonts, run.text, run.deva, size);
     cx += w * cos;
     cy += w * sin;
     consumed += w;
@@ -204,44 +215,34 @@ export function drawSplitLine(
 }
 
 /* ------------------------------------------------------------------ */
-/* The real AcroForm signature field (pdf-lib low-level dict API)      */
+/* The real AcroForm signature field (the engine's low-level seam)      */
 /* ------------------------------------------------------------------ */
 
 /**
- * Creates ONE empty signature field over `rect`:
+ * Creates ONE empty signature field over `rect` (the engine mirrors
+ * pdf-lib's registration order):
  *
- *   field dict  { FT: /Sig, T: <name> }        — registered, pushed into
+ *   field dict  { FT: /Sig, T: <name>, Kids: [widget] } — pushed into
  *   the AcroForm's /Fields array;
- *   widget      { Subtype: /Widget, Rect, P }   — registered as the field's
- *   single /Kids entry, pushed into the page's /Annots, Print flag set.
+ *   widget      { Subtype: /Widget, Rect, P, F: Print }  — registered as
+ *   the field's single /Kids entry, pushed into the page's /Annots.
  *
  * The widget is intentionally appearance-free: an empty signature field
  * renders nothing in viewers — the VISIBLE placeholder is the dashed box
  * drawn underneath by drawSignHereBoxes, at exactly this rect.
  */
 export function createSigField(
-  doc: PDFDocument,
-  page: PDFPage,
+  ctx: StampContext,
+  slot: number,
   name: string,
   rect: { x: number; y: number; w: number; h: number }
 ): void {
-  const context = doc.context;
-  // getForm() creates the catalog's /AcroForm when the document has none.
-  const acroForm = doc.getForm().acroForm;
-
-  const fieldDict = context.obj({ FT: "Sig" });
-  fieldDict.set(PDFName.of("T"), PDFString.of(name));
-  const fieldRef = context.register(fieldDict);
-  acroForm.addField(fieldRef);
-
-  const widget = PDFWidgetAnnotation.create(context, fieldRef);
-  widget.setRectangle({ x: rect.x, y: rect.y, width: rect.w, height: rect.h });
-  if (page.ref !== undefined) widget.setP(page.ref);
-  widget.setFlagTo(AnnotationFlags.Print, true);
-  const widgetRef = context.register(widget.dict);
-  fieldDict.set(PDFName.of("Kids"), context.obj([widgetRef]));
-
-  page.node.addAnnot(widgetRef);
+  ctx.createSignatureField({
+    name,
+    slot,
+    rect: { x: rect.x, y: rect.y, width: rect.w, height: rect.h },
+    value: null,
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -254,12 +255,11 @@ export function createSigField(
  * needs both to land the box where the user SAW it on the rendered page.
  */
 export function drawSignHereBoxes(
-  doc: PDFDocument,
+  ctx: StampContext,
   run: RequestPackRun,
   fonts: RenderFonts,
   opts: { sigFields: boolean }
 ): PreparedReport {
-  const pages = doc.getPages();
   const allowNoto = fonts.deva !== null;
   const d = run.details;
 
@@ -267,9 +267,8 @@ export function drawSignHereBoxes(
   // document already carries (Acrobat addresses fields by name).
   const existing = new Set<string>();
   if (opts.sigFields) {
-    for (const field of doc.getForm().getFields()) {
-      const name = field.getName();
-      if (name !== "") existing.add(name);
+    for (const field of readAcroFormFields(ctx.doc)) {
+      if (field.name !== "") existing.add(field.name);
     }
   }
   const names = sigFieldNames(run.spots.length, existing);
@@ -277,12 +276,12 @@ export function drawSignHereBoxes(
   const report: SpotDrawResult[] = [];
 
   run.spots.forEach((spot, i) => {
-    const page = pages[spot.page];
-    if (page === undefined) return;
-    const mediaBox = page.getMediaBox();
-    const userW = mediaBox.width;
-    const userH = mediaBox.height;
-    const rotation = ((page.getRotation().angle % 360) + 360) % 360;
+    if (spot.page < 0 || spot.page >= ctx.pageCount) return;
+    const info = ctx.pages[spot.page]!;
+    const mediaBox = info.mediaBox;
+    const userW = mediaBox[2] - mediaBox[0];
+    const userH = mediaBox[3] - mediaBox[1];
+    const rotation = ((info.rotate % 360) + 360) % 360;
     const disp = displaySize(rotation, userW, userH);
     const drect = spotDisplayRect(spot, disp.w, disp.h);
     const u = displayRectToUser(
@@ -290,12 +289,12 @@ export function drawSignHereBoxes(
       rotation,
       userW,
       userH,
-      mediaBox.x,
-      mediaBox.y
+      mediaBox[0],
+      mediaBox[1]
     );
 
     // --- the visible dashed placeholder (vector ink) ------------------
-    page.drawRectangle({
+    ctx.stampRect(spot.page, {
       x: u.x,
       y: u.y,
       width: u.w,
@@ -331,7 +330,7 @@ export function drawSignHereBoxes(
       }
     };
     const labelAt = anchor(padX, 13.5);
-    drawSplitLine(page, fonts, shown, labelAt.x, labelAt.y, 9.5, {
+    drawSplitLine(ctx, spot.page, fonts, shown, labelAt.x, labelAt.y, 9.5, {
       bold: true,
       color: COL_AMBER_SOFT,
       rotate: rotation,
@@ -344,7 +343,7 @@ export function drawSignHereBoxes(
           allowNoto
         );
         const at = anchor(padX, 24);
-        drawSplitLine(page, fonts, forLine, at.x, at.y, 7.5, {
+        drawSplitLine(ctx, spot.page, fonts, forLine, at.x, at.y, 7.5, {
           color: COL_MUTED,
           rotate: rotation,
         });
@@ -355,7 +354,7 @@ export function drawSignHereBoxes(
           allowNoto
         );
         const at = anchor(padX, 33.5);
-        drawSplitLine(page, fonts, dueLine, at.x, at.y, 7.5, {
+        drawSplitLine(ctx, spot.page, fonts, dueLine, at.x, at.y, 7.5, {
           color: COL_MUTED,
           rotate: rotation,
         });
@@ -364,9 +363,9 @@ export function drawSignHereBoxes(
 
     // --- the real empty AcroForm signature field over the same rect ---
     if (opts.sigFields) {
-      createSigField(doc, page, names[i], u);
+      createSigField(ctx, spot.page, names[i]!, u);
     }
-    report.push({ name: names[i], page: spot.page, rect: u });
+    report.push({ name: names[i]!, page: spot.page, rect: u });
   });
 
   return { spots: report, sigFields: opts.sigFields };
@@ -377,27 +376,30 @@ export function drawSignHereBoxes(
 /* ------------------------------------------------------------------ */
 
 /**
- * Paints the request note into a FRESH A4 document (the worker creates the
- * doc + fonts, then calls this): subject, recipient/sender/due date/document
- * rows, the message, the numbered spot list (page + position as the user
- * placed it) and the "open in any PDF signer" instructions.
+ * Paints the request note into a FRESH A4 document (the worker creates
+ * the CreateContext + fonts, then calls this): subject, recipient/sender/
+ * due date/document rows, the message, the numbered spot list (page +
+ * position as the user placed it) and the "open in any PDF signer"
+ * instructions.
  */
 export function buildNotePdf(
-  doc: PDFDocument,
+  doc: CreateContext,
   run: RequestPackRun,
   fileName: string,
   fonts: RenderFonts
 ): { pages: number } {
   const allowNoto = fonts.deva !== null;
   const d = run.details;
-  let page = doc.addPage(A4);
+  let page: CreatePage = doc.addPage(A4[0], A4[1]);
   const pageW = A4[0];
   const colW = pageW - 2 * NOTE_MARGIN;
   let y = A4[1] - NOTE_MARGIN;
+  let pageCount = 1;
 
   const newPage = (): void => {
-    page = doc.addPage(A4);
+    page = doc.addPage(A4[0], A4[1]);
     y = A4[1] - NOTE_MARGIN;
+    pageCount += 1;
   };
   const ensure = (need: number): void => {
     if (y - need < NOTE_MARGIN) newPage();
@@ -406,18 +408,18 @@ export function buildNotePdf(
     text: string,
     size: number,
     lineHeight: number,
-    opts: { bold?: boolean; color?: ReturnType<typeof rgb> } = {}
+    opts: { bold?: boolean; color?: StampRgb } = {}
   ): void => {
     const clean = sanitizeText(text, allowNoto);
     for (const line of wrapRuns(clean, fonts, colW, size)) {
       ensure(lineHeight);
-      drawSplitLine(page, fonts, line, NOTE_MARGIN, y - size, size, opts);
+      drawNoteLine(page, fonts, line, NOTE_MARGIN, y - size, size, opts);
       y -= lineHeight;
     }
   };
 
   // --- heading ---------------------------------------------------------
-  drawSplitLine(
+  drawNoteLine(
     page,
     fonts,
     sanitizeText(labelOf(run, "title"), allowNoto),
@@ -446,7 +448,7 @@ export function buildNotePdf(
     ensure(30);
     const keyText = sanitizeText(key, allowNoto);
     const labelW = Math.max(measureText(fonts, keyText, 10), 90);
-    drawSplitLine(page, fonts, keyText, NOTE_MARGIN, y - 10, 10, {
+    drawNoteLine(page, fonts, keyText, NOTE_MARGIN, y - 10, 10, {
       bold: true,
       color: COL_MUTED,
     });
@@ -462,7 +464,7 @@ export function buildNotePdf(
         y -= 15;
         ensure(30);
       }
-      drawSplitLine(page, fonts, line, valueX, y - 10, 10);
+      drawNoteLine(page, fonts, line, valueX, y - 10, 10);
     });
     y -= 26;
   }
@@ -470,7 +472,7 @@ export function buildNotePdf(
   // --- message -----------------------------------------------------------
   if (d.message !== "") {
     y -= 6;
-    drawSplitLine(
+    drawNoteLine(
       page,
       fonts,
       sanitizeText(labelOf(run, "message"), allowNoto),
@@ -486,7 +488,7 @@ export function buildNotePdf(
 
   // --- spot list -----------------------------------------------------------
   y -= 4;
-  drawSplitLine(
+  drawNoteLine(
     page,
     fonts,
     sanitizeText(labelOf(run, "spotsTitle"), allowNoto),
@@ -506,7 +508,7 @@ export function buildNotePdf(
   y -= 12;
 
   // --- how to sign -----------------------------------------------------------
-  drawSplitLine(
+  drawNoteLine(
     page,
     fonts,
     sanitizeText(labelOf(run, "howTitle"), allowNoto),
@@ -527,7 +529,7 @@ export function buildNotePdf(
     thickness: 0.75,
     color: COL_RULE,
   });
-  drawSplitLine(
+  drawNoteLine(
     page,
     fonts,
     sanitizeText(labelOf(run, "privacy"), allowNoto),
@@ -541,11 +543,59 @@ export function buildNotePdf(
   doc.setProducer("DocoPDF");
   doc.setCreationDate(new Date());
 
-  return { pages: doc.getPageCount() };
+  return { pages: pageCount };
+}
+
+/**
+ * The note painter — same split-run recipe as drawSplitLine but against a
+ * CreatePage under construction (the fresh-note half of the pack).
+ */
+function drawNoteLine(
+  page: CreatePage,
+  fonts: RenderFonts,
+  text: string,
+  x: number,
+  y: number,
+  size: number,
+  opts: { bold?: boolean; color?: StampRgb; rotate?: number } = {}
+): void {
+  const color = opts.color ?? COL_TEXT;
+  const theta = ((opts.rotate ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  let cx = x;
+  let cy = y;
+  for (const run of splitTextRuns(text)) {
+    const deva = runIsDeva(fonts, run.deva);
+    const face = deva ? ({ ttf: fonts.deva! } as const) : ({ font: fonts.base } as const);
+    page.drawText({
+      x: cx,
+      y: cy,
+      text: run.text,
+      size,
+      ...face,
+      color,
+      ...(opts.rotate !== undefined ? { rotate: opts.rotate } : {}),
+    });
+    if (opts.bold) {
+      page.drawText({
+        x: cx + 0.3 * (cos + sin),
+        y: cy + 0.3 * (sin - cos),
+        text: run.text,
+        size,
+        ...face,
+        color,
+        ...(opts.rotate !== undefined ? { rotate: opts.rotate } : {}),
+      });
+    }
+    const w = runWidth(fonts, run.text, run.deva, size);
+    cx += w * cos;
+    cy += w * sin;
+  }
 }
 
 /* ------------------------------------------------------------------ */
-/* The signing pack (on-device zip — fflate, no server)                  */
+/* The signing pack (on-device zip — fflate, no server)                 */
 /* ------------------------------------------------------------------ */
 
 export interface PackEntry {

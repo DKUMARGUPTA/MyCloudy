@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P6-v-a COMPLETE (pdf-to-X extractor style enrichment onto the own engine — ONE shared font-style-map replaced 4 drifted pdf-lib walks, −793 lines) — 100 tools LIVE (0 disabled), Vercel LIVE, battery 109/109 (2× this session), extractor smokes 566/566. Remaining pdf-lib importers: **30 files** (P6-w crypto 7 → P6-x fonts/OCR 8 → P6-y e-invoice 5 → P6-z misc 8 → P6-v-b pdfa 1 → P6-END type-only).
+> **Updated:** P6-w-a COMPLETE (crypto family round 1 — the production signer trio ported onto the own engine: digital-signature render+worker, request-signature render+worker + note PDF on CreateContext, sign-pdf PNG flatten; NEW engine seam `StampContext.createSignatureField`; ORPHANED P9 prototype `tools/pki-common/` (6 files) + smoke-p9-f6a DELETED) — 100 tools LIVE (0 disabled), Vercel LIVE. Remaining pdf-lib importers: **23 files** (P6-w-b lock 1 → P6-x fonts/OCR 8 → P6-y e-invoice 5 → P6-z misc 8 → P6-v-b pdfa 1 → P6-END type-only).
 
 ---
 
@@ -13,7 +13,7 @@
 |---|---|
 | Registry | **100 tools — SAB LIVE ✅** (verified brace-aware count; e-invoice family included) |
 | **LIVE tools** | **100** ✅ (registry `enabled: true`, 0 disabled) |
-| Own PDF engine (P6) | **P6-a..v(a) COMPLETE** — 46 families pdf-lib-free; **30 runtime files** bache (P6-w crypto → P6-x fonts/OCR → P6-y e-invoice → P6-z misc → P6-v-b pdfa → P6-END trim) |
+| Own PDF engine (P6) | **P6-a..w(a) COMPLETE** — 50 families pdf-lib-free; **23 runtime files** bache (P6-w-b lock → P6-x fonts/OCR → P6-y e-invoice → P6-z misc → P6-v-b pdfa → P6-END trim) |
 | Master plan | **MASTER-PLAN-1** worklog mein recorded (P6-t..z → P7 → LAUNCH-OPS → P10 → P11) + discipline contract (worklog+memory+push+Vercel per phase; battery on EXACT commit tree) |
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |
 | Static pages (PRD §9) | **LIVE** — about/contact/privacy/terms wired end-to-end (footer + `#/page/<id>` + i18n 166×2) |
@@ -49,9 +49,11 @@ python3 scripts/dev-daemon.py
 
 ## ⏳ KYA PENDING HAI (priority order)
 
-### 1. P6-w+ — Own engine migration ka bacha hua hissa (**30 pdf-lib importer files** — P6-v-a ne 4 extractors ke style-enrichment shared module mein port kiye; pdf-to-pdfa = P6-v-b alag round)
-- **NEXT (fresh-scan decision):** P6-w crypto family (sign-pdf, digital-signature×2, pki-common/pdfsign, request-signature×2, lock-common/security — 7 files, highest-risk, oracle-probe mandatory) YA P6-v-b pdf-to-pdfa (mega-port: XMP+ICC+font-substitution) → P6-x font users (8 files) → P6-y e-invoice workers (5 files; tools ALREADY LIVE) → P6-z misc (8 files) → P6-END (embed-image type-only + pdf-finisher audit — cantoo import GONE, verify)
-- Engine seams available: rewriteDocument (preserve-numbers whole-doc + ObjStm) · decodeStreamBytes (Flate/LZW/A85/AHx/RLE + predictors) · organize/stamp/create contexts. pdf-lib = DEV-TIME ORACLE only (smokes mein cross-verify)
+### 1. P6-w-b+ — Own engine migration ka bacha hua hissa (**23 pdf-lib importer files** — P6-w-a ne signer trio port kiya + pki-common prototype deleted; pdf-to-pdfa = P6-v-b alag round)
+- **P6-w-b (NEXT):** tools/lock-common/security.ts — lock/unlock AES-256 V5/R6 + AES-128 V4 ka OWN-ENGINE encryption writer (key derivation, R6 hashing, /Encrypt dict, per-object keys) — crypto family ka aakhri file
+- **Phir:** P6-x font users (8: translate-pdf, ocr-pdf, ocr/text-layer, ocr/worker, passport-photo, redact-pdf, scan-pdf, summarize-pdf/surface) → P6-y e-invoice workers (5; tools ALREADY LIVE) → P6-z misc (8: bookmark×2, compare, rasterize, repair/model, stamp-common/worker-lib [delete if orphaned], web-optimize×2) → P6-v-b pdf-to-pdfa (mega-port: XMP+ICC model.ts mein LIVE) → P6-END (embed-image type-only + pdf-finisher audit)
+- Engine seams available: rewriteDocument (preserve-numbers whole-doc + ObjStm) · decodeStreamBytes (Flate/LZW/A85/AHx/RLE + predictors) · organize/stamp/create contexts · **createSignatureField (P6-w-a)**. pdf-lib = DEV-TIME ORACLE only (smokes mein cross-verify)
+- P6-w-a NOTES: engine hstr = UPPERCASE hex; ByteRange sentinel 1111111111×4 + all-zero Contents gap byte-surgeon-safe; /T hex-form decoders verify tool mein fix hue (decodeSigFieldText); sig widgets appearance-free (no MK/BS/AP), formFields machinery SE BAHAR (NeedAppearances guard honest)
 
 ### 2. P7 — Quality moat
 - a11y-name smoke (har interactive element ka accessible name)
