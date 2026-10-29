@@ -56,6 +56,8 @@ export { CreateContext, type CreateImage, type CreateImageOptions, type CreateLi
 export { ComposeContext, pageHasContents, type ComposedForm, type PageFormEmbed, pageFormEmbed } from "./compose";
 export {
   StampContext,
+  pdfInfoText,
+  pdfInfoDate,
   type StampForm,
   type StampFormOptions,
   type StampImage,

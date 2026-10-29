@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P6-t COMPLETE (page-size + crop own-engine; MASTER-PLAN-1 phase map recorded) — 110 tools LIVE, Vercel LIVE, battery 109/109 (smoke-lock pre-existing fail fixed). Remaining pdf-lib importers: 36 files.
+> **Updated:** P6-u COMPLETE (create-fillable-pdf-form render+worker onto the own engine — the AcroForm AUTHORING family is done: builder P6-o + reader P6-p + renderer P6-u) — 100 tools LIVE (0 disabled), Vercel LIVE, battery 109/109, fillable smoke 156/156. Engine now: /MaxLen, /AA {C,F,K} JS actions, /CO calc order, builder NeedAppearances, authored Info (StampContext seam). lstr writer bug FIXED (pdf-lib paren-nesting parity). Remaining pdf-lib importers: ~34 files.
 
 ---
 
@@ -13,7 +13,7 @@
 |---|---|
 | Registry | **100 tools — SAB LIVE ✅** (verified brace-aware count; e-invoice family included) |
 | **LIVE tools** | **100** ✅ (registry `enabled: true`, 0 disabled) |
-| Own PDF engine (P6) | **P6-a..t COMPLETE** — 41 families pdf-lib-free; **36 runtime files** abhi bhi pdf-lib import karte hain (P6-u queue: fillable render → extractors → crypto → fonts → e-invoice → misc) |
+| Own PDF engine (P6) | **P6-a..u COMPLETE** — 42 families pdf-lib-free; **~34 runtime files** abhi bhi pdf-lib import karte hain (P6-v queue: pdf-to-X extractors → crypto → fonts/OCR → e-invoice workers → misc tail) |
 | Master plan | **MASTER-PLAN-1** worklog mein recorded (P6-t..z → P7 → LAUNCH-OPS → P10 → P11) + discipline contract (worklog+memory+push+Vercel per phase; battery on EXACT commit tree) |
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |
 | Static pages (PRD §9) | **LIVE** — about/contact/privacy/terms wired end-to-end (footer + `#/page/<id>` + i18n 166×2) |
@@ -49,8 +49,8 @@ python3 scripts/dev-daemon.py
 
 ## ⏳ KYA PENDING HAI (priority order)
 
-### 1. P6-u+ — Own engine migration ka bacha hua hissa (**36 pdf-lib importer files** — P6-t ne page-size+crop khatam kiye)
-- **NEXT (MASTER-PLAN-1 order):** P6-u create-fillable-pdf-form render+worker → P6-v pdf-to-X extractors (word/odt/html/markdown/pdfa on decodeStreamBytes) → P6-w crypto family (sign/digital-sig/pki/request-sig/lock) → P6-x font users (translate CJK/Arabic, ocr text-layer GlyphLessFont, passport, scan, redact) → P6-y e-invoice family + 5 tools ENABLE → P6-z misc (compare, stamp-common, rasterize, request-signature, web-optimize, bookmark, repair)
+### 1. P6-v+ — Own engine migration ka bacha hua hissa (**~34 pdf-lib importer files** — P6-u ne fillable render khatam kiya; AcroForm authoring family COMPLETE)
+- **NEXT (MASTER-PLAN-1 order):** P6-v pdf-to-X extractors (word/odt/html/markdown/pdfa on decodeStreamBytes) → P6-w crypto family (sign/digital-sig/pki/request-sig/lock) → P6-x font users (translate CJK/Arabic, ocr text-layer GlyphLessFont, passport, scan, redact) → P6-y e-invoice workers (NOTE: tools ALREADY enabled+LIVE — sirf pdf-lib imports port karne hain) → P6-z misc (compare, stamp-common, rasterize, request-signature, web-optimize, bookmark, repair)
 - Engine seams available: rewriteDocument (preserve-numbers whole-doc + ObjStm) · decodeStreamBytes (Flate/LZW/A85/AHx/RLE + predictors) · organize/stamp/create contexts. pdf-lib = DEV-TIME ORACLE only (smokes mein cross-verify)
 
 ### 2. P7 — Quality moat

@@ -41,6 +41,7 @@ import {
   asDict,
   asNum,
   cloneDict,
+  hstr,
   lstr,
   newDict,
   num,
@@ -236,7 +237,21 @@ export interface StampTextField {
   enableMultiline(): StampTextField;
   enableRequired(): StampTextField;
   setText(text: string): StampTextField;
+  /** pdf-lib setMaxLength — /MaxLen on the field dict (P6-u, the
+   * create-fillable route). */
+  setMaxLength(n: number): StampTextField;
+  /** Merge-set the /AA {C,F,K} JavaScript action entries (ISO 32000-1
+   * §12.6.4 — the AFNumber/AFDate format+keystroke scripts and the
+   * calculation /C scripts; provided keys replace, others ride
+   * through — P6-u). */
+  setAdditionalActions(entries: {
+    C?: string;
+    F?: string;
+    K?: string;
+  }): StampTextField;
   addToSlot(slot: number, rect: StampFieldRect): void;
+  /** @internal — the field's output object number (the /CO wiring). */
+  readonly fieldNum: number;
 }
 
 export interface StampCheckBox {
@@ -409,6 +424,8 @@ export class StampContext {
   private readonly slotAnnotsOverrides = new Map<number, PdfObj[] | null>();
   /** P6-p: after dropSourceAcroForm(), write() emits no catalog /AcroForm. */
   private acroDropped = false;
+  /** P6-u: the authored OUTPUT /Info dict (create-fillable route). */
+  private infoOverride: (PdfObj & { k: "dict" }) | null = null;
   /**
    * P6-p: burn-appearance XObject registrations — resourceKey cacheKey →
    * the target object (a SOURCE ref, remapped by the writer's BFS, or a
@@ -1132,6 +1149,7 @@ export class StampContext {
   createTextField(name: string): StampTextField {
     const entry = this.newFormField("text", name);
     const handle: StampTextField = {
+      fieldNum: entry.num,
       enableMultiline: () => {
         entry.multiline = true;
         return handle;
@@ -1142,6 +1160,24 @@ export class StampContext {
       },
       setText: (text: string) => {
         entry.value = text;
+        return handle;
+      },
+      setMaxLength: (n: number) => {
+        const len = Math.round(n);
+        if (!Number.isFinite(len) || len < 0) {
+          throw new PdfError("corrupt", "setMaxLength: value must be >= 0");
+        }
+        entry.dict.m.set("MaxLen", num(len));
+        return handle;
+      },
+      setAdditionalActions: (entries) => {
+        const existing = entry.dict.m.get("AA");
+        const aa =
+          existing && existing.k === "dict" ? existing : newDict([]);
+        if (entries.C !== undefined) aa.m.set("C", jsActionDict(entries.C));
+        if (entries.F !== undefined) aa.m.set("F", jsActionDict(entries.F));
+        if (entries.K !== undefined) aa.m.set("K", jsActionDict(entries.K));
+        entry.dict.m.set("AA", aa);
         return handle;
       },
       addToSlot: (slot: number, rect: StampFieldRect) => {
@@ -1489,15 +1525,50 @@ export class StampContext {
   }
 
   /**
-   * /NeedAppearances true on the source /AcroForm — the honest fallback when
-   * a value could not be rendered into an appearance (the viewer regenerates).
+   * /NeedAppearances true — P6-u: on the BUILDER's own /AcroForm when
+   * fields were authored through it (create-fillable); else on the SOURCE
+   * /AcroForm (the fill worker's honest fallback — the viewer regenerates).
    */
   setNeedAppearances(): void {
+    if (this.acroFormDict !== null) {
+      this.acroFormDict.m.set("NeedAppearances", { k: "bool", b: true });
+      return;
+    }
     const acro = this.sourceAcroForm();
     if (!acro) {
       throw new PdfError("corrupt", "setNeedAppearances: no source AcroForm");
     }
     acro.m.set("NeedAppearances", { k: "bool", b: true });
+  }
+
+  /**
+   * P6-u: append a field to the AcroForm /CO calculation-order array
+   * (ISO 32000-1 §12.6.4 — the create-fillable calc wiring; topological
+   * order is the CALLER's job, compileRules already topo-sorts).
+   */
+  addCalculationField(field: StampTextField): void {
+    if (this.acroFormDict === null) {
+      throw new PdfError(
+        "corrupt",
+        "addCalculationField: no form fields were created on this context",
+      );
+    }
+    let co = this.acroFormDict.m.get("CO");
+    if (!co || co.k !== "arr") {
+      co = { k: "arr", items: [] };
+      this.acroFormDict.m.set("CO", co);
+    }
+    co.items.push(newref(field.fieldNum));
+  }
+
+  /**
+   * P6-u: author the OUTPUT /Info dict (the create-fillable route). The
+   * stamp writer otherwise emits NO Info — the copyPages-class contract.
+   * Values arrive PRE-ENCODED (pdfInfoText / pdfInfoDate); array order =
+   * insertion order (pdf-lib's call-order Info parity).
+   */
+  setInfo(entries: Array<[string, PdfObj]>): void {
+    this.infoOverride = newDict(entries);
   }
 
   /**
@@ -2598,7 +2669,7 @@ export class StampContext {
       this.source.doc.version,
       onPage,
       this.synthetics,
-      undefined,
+      this.infoOverride ?? undefined,
       catalogExtras,
     );
   }
@@ -2961,6 +3032,59 @@ function pdfTextBytes(text: string): Uint8Array {
     out[3 + i * 2] = c & 0xff;
   }
   return out;
+}
+
+/* ─── P6-u: Info-value + JavaScript-action encodings (pdf-lib parity) ──── */
+
+/**
+ * pdf-lib PDFHexString.fromText — the Info-dict TEXT value form (UTF-16BE
+ * bytes + the FEFF BOM, uppercase hex on the wire). Callers pass the
+ * result to {@link StampContext.setInfo}.
+ */
+export function pdfInfoText(text: string): PdfObj {
+  return { k: "hstr", b: pdfTextBytes(text) };
+}
+
+/**
+ * pdf-lib PDFString.fromDate — the Info-dict DATE value form (literal
+ * `D:YYYYMMDDHHmmSSZ`, UTC calendar fields, `Z` or ±HH'mm').
+ */
+export function pdfInfoDate(d: Date): PdfObj {
+  const p2 = (n: number): string => String(n).padStart(2, "0");
+  let tz = "Z";
+  const offset = d.getTimezoneOffset();
+  if (offset !== 0) {
+    const sign = offset < 0 ? "+" : "-";
+    const hours = Math.trunc(Math.abs(offset) / 60);
+    const minutes = Math.abs(offset) % 60;
+    tz = `${sign}${p2(hours)}'${p2(minutes)}'`;
+  }
+  return lstr(
+    LATIN1(
+      `D:${d.getUTCFullYear()}${p2(d.getUTCMonth() + 1)}${p2(d.getUTCDate())}` +
+        `${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}${p2(d.getUTCSeconds())}${tz}`,
+    ),
+  );
+}
+
+/**
+ * pdf-lib PDFString.of — the literal-string /JS bodies of JavaScript
+ * actions (ISO 32000-1 §12.6.4.2). The bytes arrive RAW: the engine's
+ * lstr serializer performs the `\`/`(`/`)` escaping at write time, so no
+ * escaping happens here (the create-fillable scripts are pure ASCII —
+ * the PDFDocEncoding pass-through is total).
+ */
+function pdfLiteralString(text: string): PdfObj {
+  return lstr(LATIN1(text));
+}
+
+/** ISO 32000-1 §12.6.4.2 — one /Type /Action /S /JavaScript /JS dict. */
+function jsActionDict(js: string): PdfObj {
+  return newDict([
+    ["Type", { k: "name", v: "Action" }],
+    ["S", { k: "name", v: "JavaScript" }],
+    ["JS", pdfLiteralString(js)],
+  ]);
 }
 
 /* ─── pdf-lib text layout (api/text/layout.js, byte-exact) ───────────── */

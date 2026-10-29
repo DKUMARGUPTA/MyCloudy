@@ -20,8 +20,10 @@
  *     (radio height growth is an explicit vector), tampered payloads
  *     (unknown kinds, NaN/off-page geometry, name dedupe, >10 pages,
  *     garbage JSON → blank doc).
- *  6. PDF (render.ts): drives the worker's EXACT build code with the
- *     self-hosted Noto font read from disk — order-form template (10
+ *  6. PDF (render.ts, OWN engine P6-u): drives the worker's EXACT build
+ *     code (buildFormPdf — one StampContext write over an engine-authored
+ *     blank scaffold) with the self-hosted Noto font read from disk, then
+ *     verifies through STRICT pdf-lib reload — order-form template (10
  *     fields, /AA /C JS exact, /CO topological order, AFNumber/AFDate
  *     actions, required flags, multiline, maxLength), leave template
  *     (dropdown options), event template (radio group export values),
@@ -35,7 +37,6 @@
 import "regenerator-runtime/runtime";
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
-import fontkit from "@pdf-lib/fontkit";
 import {
   PDFArray,
   PDFBool,
@@ -83,7 +84,7 @@ import {
   AF_DATE_FORMAT,
   AF_NUMBER_FORMAT,
   AF_NUMBER_KEYSTROKE,
-  drawFormPdf,
+  buildFormPdf,
 } from "../tools/create-fillable-pdf-form/render";
 import { instantiateTemplate, templateById } from "../tools/create-fillable-pdf-form/templates";
 
@@ -505,11 +506,7 @@ const fontBytes = new Uint8Array(
 );
 
 async function build(doc0: FormDoc): Promise<PDFDocument> {
-  const doc = await PDFDocument.create();
-  doc.registerFontkit(fontkit);
-  const font = await doc.embedFont(fontBytes, { subset: true });
-  drawFormPdf(doc, font, doc0);
-  const bytes = await doc.save();
+  const { bytes } = buildFormPdf(doc0, fontBytes);
   ok(Buffer.from(bytes.subarray(0, 5)).toString() === "%PDF-", "saved bytes start with %PDF-");
   return await PDFDocument.load(bytes, { updateMetadata: false });
 }
@@ -721,13 +718,7 @@ function contentBytes(page: { node: { Contents: () => unknown } }): Uint8Array {
       },
     ],
   });
-  const bytes0 = await (async (): Promise<Uint8Array> => {
-    const doc = await PDFDocument.create();
-    doc.registerFontkit(fontkit);
-    const font = await doc.embedFont(fontBytes, { subset: true });
-    drawFormPdf(doc, font, doc4);
-    return await doc.save();
-  })();
+  const { bytes: bytes0 } = buildFormPdf(doc4, fontBytes);
   const raw = Buffer.from(bytes0).toString("latin1");
   const loaded = await PDFDocument.load(bytes0, { updateMetadata: false });
   // Font program assert at the PARSE level (dictionaries can live inside
@@ -759,7 +750,16 @@ function contentBytes(page: { node: { Contents: () => unknown } }): Uint8Array {
   eq(loaded.getForm().getFields().length, 1, "hindi: 1 field");
   eq(loaded.getTitle(), "हिंदी फ़ॉर्म", "hindi: document title");
   const page = loaded.getPage(0);
-  const ops = inflateSync(contentBytes(page)).toString("latin1");
+  // Own-engine P6-u: content streams ride UNCOMPRESSED (classic-xref
+  // honest scope) — inflate when zlib, else read raw. Either way the
+  // text-showing ops must be present and substantial.
+  const pageBytes = contentBytes(page);
+  let ops: string;
+  try {
+    ops = inflateSync(pageBytes).toString("latin1");
+  } catch {
+    ops = Buffer.from(pageBytes).toString("latin1");
+  }
   ok(ops.includes("Tj"), "hindi: content stream carries text-showing ops");
   ok(ops.length > 200, "hindi: content stream is substantial (statics drawn)");
 }

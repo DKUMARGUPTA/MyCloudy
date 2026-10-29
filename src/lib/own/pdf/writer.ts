@@ -129,13 +129,20 @@ function serialize(
       sink.text(pdfStringToHex(obj.b));
       return;
     case "lstr": {
-      // Literal (parenthesized) string — Info dates (P6-l). The bytes we
-      // put here are ASCII-safe (digits, ':', 'Z', '+', '-', `'`), so the
-      // escape arm only fires for hostile input.
+      // Literal (parenthesized) string — Info dates (P6-l), /JS action
+      // bodies (P6-u). PARITY NOTE: pdf-lib's PDFString deliberately does
+      // NOT escape parens ("The PDF spec allows parens to appear directly
+      // within a literal string" — §7.3.4.2 balanced nesting), and its
+      // parser/tokenizer reads them back nested — asString() returns the
+      // raw value either way. We mirror that byte-for-byte: only the
+      // BACKSLASH is escaped (plus non-printables → octal); parens ride
+      // raw. Existing lstr payloads (D: dates, /DA strings) carry no
+      // parens at all — this arm only matters for the JavaScript bodies,
+      // whose grammar guarantees balanced parens.
       sink.text("(");
       for (let i = 0; i < obj.b.length; i++) {
         const c = obj.b[i]!;
-        if (c === 0x28 || c === 0x29 || c === 0x5c) sink.text("\\");
+        if (c === 0x5c) sink.text("\\");
         if (c >= 0x20 && c <= 0x7e) sink.text(String.fromCharCode(c));
         else sink.text(`\\${c.toString(8).padStart(3, "0")}`);
       }
