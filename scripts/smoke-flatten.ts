@@ -406,18 +406,19 @@ async function main(): Promise<void> {
   const fixture = await buildFixture();
   await writeFile("download/qa-p41-flatten-fixture.pdf", fixture.bytes);
 
-  // --- 2. flatten + report -------------------------------------------
-  const report = flattenDocument(fixture.doc);
+  // --- 2. flatten + report (OWN engine; pdf-lib is the fixture author) ---
+  const { report, bytes: flat } = flattenDocument(fixture.bytes);
   eq(report.pages, 1, "report: single page");
   eq(report.fieldCount, 1, "report: one form field found");
   assert(report.annotationsBurned === 5, `report: 5 annotations burned (got ${report.annotationsBurned})`);
-  // Skipped: no-/AP (B), hidden (D) — plus the dangling widget ref pdf-lib's
-  // form flatten leaves behind (object deleted, ref still listed; harmless
-  // because /Annots is deleted afterwards). The no-/BBox appearance (C) is
-  // NOT skipped anymore: it burns through pdf.js's unit-box fallback.
-  assert(report.annotationsSkipped === 3, `report: 3 annotations skipped (got ${report.annotationsSkipped})`);
+  // Skipped: no-/AP (B) + hidden (D). The OWN engine's form pass FILTERS
+  // every widget + field ref out of /Annots before the annotation pass runs,
+  // so there is no dangling widget ref to skip (the pdf-lib path left the
+  // deleted object's ref listed — counted as its third skip). The no-/BBox
+  // appearance (C) is NOT skipped: it burns through pdf.js's unit-box
+  // fallback.
+  assert(report.annotationsSkipped === 2, `report: 2 annotations skipped (got ${report.annotationsSkipped})`);
 
-  const flat = await fixture.doc.save();
   await writeFile("download/qa-p41-flatten-output.pdf", flat);
 
   // --- 3. structural verification on a fresh reload ------------------
@@ -432,6 +433,10 @@ async function main(): Promise<void> {
     page.node.get(PDFName.of("Annots")) === undefined,
     "structural: no raw /Annots key either"
   );
+  assert(
+    reloaded.catalog.get(PDFName.of("AcroForm")) === undefined,
+    "structural: OWN engine drops the catalog /AcroForm entirely"
+  );
   eq(
     reloaded.getForm().getFields().length,
     0,
@@ -440,21 +445,16 @@ async function main(): Promise<void> {
 
   const resources = page.node.Resources();
   const xoDict = resources?.lookupMaybe(PDFName.of("XObject"), PDFDict);
-  // Only the engine's FxFlatten registrations are counted: pdf-lib's own
-  // PDFForm.flatten() legitimately registers its widget-burn XObject under
-  // "FlatWidget…" in the same dict (PDF 32000-1 §7.8.3: any number of
-  // XObjects may live in /Resources — extra entries are legal), so the
-  // check must scope itself to the names this engine creates, exactly as
-  // its message says.
+  // The OWN engine registers every burn target under Fx<n> (resourceKey's
+  // collision-free allocation): the 5 annotation appearances PLUS the
+  // flattened field's widget appearance all ride the same bucket.
   const fxKeys =
     xoDict === undefined
       ? []
-      : xoDict
-          .keys()
-          .filter((k) => k.asString().startsWith("/FxFlatten"));
+      : xoDict.keys().filter((k) => /^\/Fx\d+$/.test(k.asString()));
   assert(
-    xoDict !== undefined && fxKeys.length === 5,
-    `structural: 5 FxFlatten XObjects registered in page resources (got ${fxKeys.length} of ${xoDict?.keys().length ?? 0}: ${fxKeys.map((k) => k.asString()).join(", ")})`
+    xoDict !== undefined && fxKeys.length === 6,
+    `structural: 6 Fx<n> XObjects registered in page resources (got ${fxKeys.length} of ${xoDict?.keys().length ?? 0}: ${fxKeys.map((k) => k.asString()).join(", ")})`
   );
   let resolvedXObjects = 0;
   for (const key of fxKeys) {
@@ -468,8 +468,8 @@ async function main(): Promise<void> {
     }
   }
   assert(
-    resolvedXObjects === 5,
-    `structural: all 5 registered names resolve to appearance XObjects (got ${resolvedXObjects})`
+    resolvedXObjects === 6,
+    `structural: all 6 registered names resolve to appearance XObjects (got ${resolvedXObjects})`
   );
 
   // The burn operators live in the LAST content stream.
@@ -502,10 +502,10 @@ async function main(): Promise<void> {
     "structural: flipped stamp placed at its annotation rect"
   );
   const doCount = (contentText.match(/ Do\n/g) ?? []).length;
-  assert(doCount === 5, `structural: 5 Do operators in the burn stream (got ${doCount})`);
+  assert(doCount === 6, `structural: 6 Do operators in the burn stream — the widget burn + 5 annotation burns ride ONE appended stream (got ${doCount})`);
   assert(
-    /\/FxFlatten[^\s]+ Do/.test(contentText),
-    "structural: XObject name is an FxFlatten key"
+    /\/Fx\d+ Do/.test(contentText),
+    "structural: XObject name is an Fx<n> key"
   );
 
   // --- 4. visual parity (pdf.js before vs after) ----------------------
@@ -556,7 +556,8 @@ async function main(): Promise<void> {
   // --- 5. already-flat + error paths ------------------------------
   const plain = await PDFDocument.create();
   plain.addPage([300, 300]);
-  const plainReport = flattenDocument(plain);
+  const plainBytes = await plain.save();
+  const { report: plainReport } = flattenDocument(plainBytes);
   assert(
     plainReport.nothingToDo === true,
     "already-flat: report.nothingToDo (normal usage, no throw)"
@@ -569,9 +570,10 @@ async function main(): Promise<void> {
     "annotated fixture: report.nothingToDo false (work was done)"
   );
 
-  // Widget with a DIRECT /N appearance (not an indirect ref) — pdf-lib's
-  // flatten cannot extract the appearance ref (after a save+reload the
-  // field is clean, so updateFieldAppearances does not regenerate it).
+  // Widget with a DIRECT /N appearance (not an indirect ref) — the OWN
+  // engine's burnApTarget CLONES direct streams into source-anchored
+  // synthetics, so what pdf-lib could not extract (its flatten threw
+  // FlattenFormsError) now burns cleanly. A behavior UPGRADE locked here.
   const trickyBytes = await (async () => {
     const d = await PDFDocument.create();
     const p = d.addPage([400, 400]);
@@ -591,31 +593,34 @@ async function main(): Promise<void> {
     );
     return re.save();
   })();
-  try {
-    const re = await PDFDocument.load(trickyBytes, { updateMetadata: false });
-    flattenDocument(re);
-    fail("error: unflattenable form must throw");
-  } catch (error) {
-    assert(
-      error instanceof FlattenFormsError,
-      `error: direct /N widget throws FlattenFormsError (got ${String(error)})`
+  {
+    const { report: trickyReport, bytes: trickyFlat } =
+      flattenDocument(trickyBytes);
+    eq(trickyReport.fieldCount, 1, "direct-/N: field counted");
+    const trickyReload = await PDFDocument.load(trickyFlat, {
+      updateMetadata: false,
+    });
+    eq(
+      trickyReload.getForm().getFields().length,
+      0,
+      "direct-/N: flattened (OWN engine clones the direct stream — no more FlattenFormsError)"
     );
     eq(
-      classifyFlattenError(error),
-      "flatten.errorFormsFailed",
-      "error: classification → flatten.errorFormsFailed"
+      trickyReload.getPages()[0].node.Annots(),
+      undefined,
+      "direct-/N: /Annots removed"
     );
   }
 
-  // Encrypted input → the worker's tool.errorEncrypted classification.
+  // Encrypted input → the typed refusal maps to tool.errorEncrypted.
   const { PDFDocument: CantooDoc } = await import("@cantoo/pdf-lib");
   const encDoc = await CantooDoc.create();
   encDoc.addPage([300, 300]);
   encDoc.encrypt({ userPassword: "secret", algorithm: "AES-256" });
   const encrypted = await encDoc.save({ useObjectStreams: false });
   try {
-    await PDFDocument.load(encrypted, { updateMetadata: false });
-    fail("error: stock pdf-lib must refuse encrypted input");
+    flattenDocument(encrypted);
+    fail("error: engine must refuse encrypted input");
   } catch (error) {
     eq(
       classifyFlattenError(error),
@@ -642,8 +647,8 @@ async function main(): Promise<void> {
     p2.node.addAnnot(d.context.register(annot));
     return d.save();
   })();
-  const multi = await PDFDocument.load(multiBytes, { updateMetadata: false });
-  const multiReport = flattenDocument(multi);
+  const { report: multiReport, bytes: multiFlat } = flattenDocument(multiBytes);
+  const multi = await PDFDocument.load(multiFlat, { updateMetadata: false });
   eq(
     multi.getPages()[0].node.Annots(),
     undefined,

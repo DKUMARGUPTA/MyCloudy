@@ -1,26 +1,22 @@
 import {
-  PDFBool,
-  PDFCheckBox,
-  PDFDocument,
-  PDFDropdown,
-  PDFOptionList,
-  PDFName,
-  PDFRadioGroup,
-  PDFTextField,
-} from "pdf-lib";
-
+  PdfError,
+  StampContext,
+  WinAnsiError,
+  type AcroFieldInfo,
+  type StampTtfFont,
+} from "@/lib/own/pdf";
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
 import { fileBaseName } from "../stamp-common/layout";
-import { loadStampFonts } from "../stamp-common/worker-lib";
-import { isWinAnsiText } from "./scan";
+import { loadDevanagariBytes } from "../stamp-common/deva";
 
 /**
  * Fill out PDF forms worker (PRD §8.2): applies the entered values to the
- * AcroForm fields with pdf-lib and optionally flattens the form — fully
- * on-device, zero network. Values arrive as flat option keys:
+ * AcroForm fields on OUR engine (P6-p — StampContext.setSource* + the
+ * write-time appearance regeneration), optionally flattening the form —
+ * fully on-device, zero network. Values arrive as flat option keys:
  *
  *   "f:<fileId>::<fully qualified field name>" -> string (text/radio/
  *   dropdown/optionlist, multi-select joined with "\n") | boolean
@@ -31,14 +27,13 @@ import { isWinAnsiText } from "./scan";
  * fields were already disabled in the UI, so they never send values.
  * Untouched fields keep whatever the file already had.
  *
- * Appearance strategy (the subtle part): doc.save() regenerates the
- * appearance streams of dirty fields with the form's DEFAULT font
- * (Helvetica, WinAnsi) — which THROWS for e.g. Hindi answers and would
- * kill the whole run. Non-WinAnsi text fields are therefore re-rendered
- * FIRST with the embedded self-hosted Devanagari subset (the exact
- * pipeline the stamp tools use). If anything still can't be encoded, the
- * run falls back to NeedAppearances + save without regeneration: the
- * values are always in the file, honest readers render them.
+ * Appearance strategy (the subtle part): the write-time regeneration uses
+ * the form's DEFAULT font (Helvetica, WinAnsi) — which CANNOT render e.g.
+ * Hindi answers. Non-WinAnsi text fields are therefore re-set with the
+ * embedded self-hosted Devanagari subset (the exact pipeline the stamp
+ * tools use). When even that fails (offline first-run edge), the run
+ * falls back to /NeedAppearances: the values ARE in the file, honest
+ * readers regenerate the appearances with their own font handling.
  */
 
 function post(response: WorkerResponse): void {
@@ -55,16 +50,15 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 8, stage: "reading" });
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const doc = await PDFDocument.load(bytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
+  const ctx = StampContext.load(bytes); // typed encrypted/corrupt refusal
 
-  const form = doc.getForm();
-  const byName = new Map(form.getFields().map((f) => [f.getName(), f]));
+  const fields = ctx.readSourceFields();
+  const byName = new Map(fields.map((f) => [f.name, f]));
   const fkey = typeof options.fkey === "string" ? options.fkey : "";
   const prefix = `f:${fkey}::`;
-  const nonWinAnsiFields: PDFTextField[] = [];
+  /** Fields whose text needs the Devanagari route (re-set with the TTF). */
+  const nonWinAnsi: Array<{ field: AcroFieldInfo; text: string }> = [];
+  let needAppearances = false;
 
   post({ type: "progress", runId, pct: 40, stage: "processing" });
   for (const [key, value] of Object.entries(options)) {
@@ -72,27 +66,39 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const field = byName.get(key.slice(prefix.length));
     if (!field) continue;
     try {
-      if (field instanceof PDFOptionList) {
+      if (field.kind === "optionlist") {
         if (typeof value === "string" && value !== "") {
           const parts = value.split("\n").filter((part) => part !== "");
-          if (parts.length > 0) field.select(parts);
+          if (parts.length > 0) ctx.setSourceChoice(field, parts);
         }
-      } else if (field instanceof PDFDropdown) {
-        if (typeof value === "string" && value !== "") field.select(value);
-      } else if (field instanceof PDFRadioGroup) {
-        if (typeof value === "string" && value !== "") field.select(value);
-      } else if (field instanceof PDFCheckBox) {
+      } else if (field.kind === "dropdown") {
+        if (typeof value === "string" && value !== "") {
+          ctx.setSourceChoice(field, [value]);
+        }
+      } else if (field.kind === "radio") {
+        if (typeof value === "string" && value !== "") {
+          ctx.setSourceRadio(field, value);
+        }
+      } else if (field.kind === "checkbox") {
         if (typeof value === "boolean") {
-          if (value) field.check();
-          else field.uncheck();
+          ctx.setSourceCheckbox(field, value);
         }
-      } else if (field instanceof PDFTextField) {
+      } else if (field.kind === "text") {
         if (typeof value === "string") {
-          const max = field.getMaxLength();
+          const max = field.maxLength;
           const text =
-            typeof max === "number" && max >= 0 ? value.slice(0, max) : value;
-          field.setText(text);
-          if (!isWinAnsiText(text)) nonWinAnsiFields.push(field);
+            max !== null && max >= 0 ? value.slice(0, max) : value;
+          try {
+            ctx.setSourceTextField(field, text);
+          } catch (error) {
+            // WinAnsiError: /V IS already written (the engine contract) —
+            // queue for the Devanagari second pass below.
+            if (error instanceof WinAnsiError) {
+              nonWinAnsi.push({ field, text });
+            } else {
+              throw error;
+            }
+          }
         }
       }
     } catch {
@@ -101,25 +107,36 @@ async function run(request: WorkerRunRequest): Promise<void> {
     }
   }
 
-  // Non-WinAnsi answers (e.g. Hindi): re-render those text fields with
-  // the embedded self-hosted Devanagari subset BEFORE save() tries the
-  // default-font regeneration (which would throw). Same pipeline as the
-  // stamp tools — fetched from this origin, subset-embedded, never uploaded.
-  if (nonWinAnsiFields.length > 0) {
+  // Non-WinAnsi answers (e.g. Hindi): re-set those text fields with the
+  // embedded self-hosted Devanagari subset so the write-time appearance
+  // regeneration shapes them properly. Same pipeline as the stamp tools —
+  // fetched from this origin, subset-embedded, never uploaded.
+  if (nonWinAnsi.length > 0) {
     post({ type: "progress", runId, pct: 70, stage: "processing" });
+    let deva: StampTtfFont | null = null;
     try {
-      const fonts = await loadStampFonts(doc, true);
-      const deva = fonts.fontFor("devanagari");
-      for (const field of nonWinAnsiFields) {
+      deva = ctx.embedTtf(await loadDevanagariBytes());
+    } catch {
+      // Font fetch/embed failed (offline first-run edge) — the values are
+      // already in the file; flag NeedAppearances for honest viewers.
+      needAppearances = true;
+    }
+    if (deva !== null) {
+      for (const { field, text } of nonWinAnsi) {
         try {
-          field.defaultUpdateAppearances(deva);
+          ctx.setSourceTextField(field, text, deva);
         } catch {
-          // Individual render failures fall through to the save() path.
+          // Individual render failures fall through to NeedAppearances.
+          needAppearances = true;
         }
       }
+    }
+  }
+  if (needAppearances) {
+    try {
+      ctx.setNeedAppearances();
     } catch {
-      // Font fetch/embed failed (offline first-run edge) — the save()
-      // fallback below handles it via NeedAppearances.
+      // No AcroForm at all — nothing more we can honestly do.
     }
   }
 
@@ -130,31 +147,14 @@ async function run(request: WorkerRunRequest): Promise<void> {
   if (options.flatten === true) {
     post({ type: "progress", runId, pct: 82, stage: "processing" });
     try {
-      form.flatten();
+      ctx.flattenSourceForm();
     } catch {
       // Keep the unflattened result — values are already applied.
     }
   }
 
   post({ type: "progress", runId, pct: 92, stage: "saving" });
-  let saved: Uint8Array;
-  try {
-    saved = await doc.save({ useObjectStreams: true });
-  } catch {
-    // Regeneration with the form's default font still fails (exotic
-    // scripts, damaged fields): store the values (they ARE in the file),
-    // flag NeedAppearances and save WITHOUT regeneration — real PDF
-    // readers then render the values with their own font handling.
-    try {
-      form.acroForm.dict.set(PDFName.of("NeedAppearances"), PDFBool.True);
-    } catch {
-      // Very damaged AcroForm — nothing more we can honestly do.
-    }
-    saved = await doc.save({
-      useObjectStreams: true,
-      updateFieldAppearances: false,
-    });
-  }
+  const saved = ctx.write();
 
   const outputs = [
     {
@@ -169,7 +169,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     type: "result",
     runId,
     outputs,
-    detail: { files: 1, pages: doc.getPageCount() },
+    detail: { files: 1, pages: ctx.pageCount },
   });
 }
 
@@ -177,6 +177,14 @@ self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
   const data = event.data;
   if (data?.type !== "run") return;
   run(data).catch((error: unknown) => {
+    if (error instanceof PdfError) {
+      post({
+        type: "error",
+        runId: data.runId,
+        code: error.code === "encrypted" ? "tool.errorEncrypted" : "tool.errorCorrupt",
+      });
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     const code = /password|encrypt/i.test(message)
       ? "tool.errorEncrypted"

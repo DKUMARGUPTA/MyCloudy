@@ -39,6 +39,7 @@ import {
   type PdfObj,
   arr,
   asDict,
+  asNum,
   cloneDict,
   lstr,
   newDict,
@@ -50,8 +51,21 @@ import { PdfError, resolve, type ParsedPdf } from "./parser";
 import {
   encodeWinAnsiHex,
   measureStdText,
+  winAnsiEncodable,
   type StampFontKey,
 } from "./stamp-fonts";
+import {
+  type AcroFieldInfo,
+  type AcroWidgetInfo,
+  type Affine,
+  type Quad,
+  composeAppearanceTransform,
+  parseDaColorOp,
+  parseDaFontSize,
+  readDaString,
+  readAcroFormFields,
+  WinAnsiError,
+} from "./acroform";
 import { decodePng, flateImageBytes, parseJpeg } from "./images";
 import { ParsedTtfFont, TtfSubsetter } from "./font-ttf";
 import { shapeText } from "./shape-deva";
@@ -243,6 +257,45 @@ export interface StampRadioGroup {
   addOptionToSlot(slot: number, option: string, rect: StampFieldRect): void;
 }
 
+/* ─── P6-p: source-AcroForm read/fill/flatten (the AcroForm consumer) ────── */
+
+/** A queued write-time materialization against the LIVE source field graph. */
+type SourceUpdateAction =
+  | { kind: "text"; text: string; ttf?: StampTtfFont }
+  | { kind: "checkbox"; checked: boolean }
+  | { kind: "radio"; value: string }
+  | { kind: "dropdown"; value: string }
+  | { kind: "optionlist"; values: string[] };
+
+interface PendingSourceUpdate {
+  info: AcroFieldInfo;
+  action: SourceUpdateAction;
+}
+
+/**
+ * A color read off a source dict — pdf-lib componentsToColor + setFillingColor/
+ * setStrokingColor parity: gray (1 comp), rgb (3) or cmyk (4), each carrying
+ * its serialized fill and stroke ops.
+ */
+interface ChromeColor {
+  fill: string;
+  stroke: string;
+}
+
+/** Widget chrome read off a SOURCE widget dict (pdf-lib providers). */
+interface WidgetChrome {
+  /** |x2−x1| of /Rect — the AP stream BBox dims. */
+  width: number;
+  height: number;
+  borderWidth: number;
+  /** /MK /BC — undefined stays undefined (text providers); buttons default to black at the use site. */
+  borderColor?: ChromeColor;
+  /** /MK /BG. */
+  background?: ChromeColor;
+  /** /MK /R reduced to 0/90/180/270. */
+  rotation: number;
+}
+
 /** One form field under construction (P6-o — internal bookkeeping). */
 interface StampFormField {
   num: number;
@@ -347,6 +400,21 @@ export class StampContext {
   /** P6-o-b: passthrough /AcroForm number (null = none; undefined = unresolved). */
   private sourceAcroPassthroughNum: number | null | undefined = undefined;
   private formFontNum: number | null = null;
+  /** P6-p: write-time AP materializations keyed by the field dict's Map. */
+  private readonly pendingSourceUpdates = new Map<
+    Map<string, PdfObj>,
+    PendingSourceUpdate
+  >();
+  /** P6-p: per-slot /Annots overrides (null = delete; presence = installed). */
+  private readonly slotAnnotsOverrides = new Map<number, PdfObj[] | null>();
+  /** P6-p: after dropSourceAcroForm(), write() emits no catalog /AcroForm. */
+  private acroDropped = false;
+  /**
+   * P6-p: burn-appearance XObject registrations — resourceKey cacheKey →
+   * the target object (a SOURCE ref, remapped by the writer's BFS, or a
+   * newref for engine-authored appearance streams).
+   */
+  private readonly burnXObjects = new Map<string, PdfObj>();
   private readonly fonts = new Map<StampFontKey, FontEntry>();
   private readonly images = new Map<StampImage, ImageEntry>();
   /** Embedded page forms (P6-j), by their unique handle. */
@@ -1408,6 +1476,859 @@ export class StampContext {
     return this.formFontNum;
   }
 
+  /* ─── P6-p: the source-AcroForm consumer (fill + flatten) ────────────────── */
+
+  /**
+   * Every terminal field of the SOURCE document's /AcroForm — pdf-lib
+   * PDFForm.getFields() parity (kinds, names, values, options, widgets,
+   * pages). The returned dicts are LIVE: the setters below mutate them in
+   * place and write() serializes the mutated graph.
+   */
+  readSourceFields(): AcroFieldInfo[] {
+    return readAcroFormFields(this.source.doc);
+  }
+
+  /**
+   * /NeedAppearances true on the source /AcroForm — the honest fallback when
+   * a value could not be rendered into an appearance (the viewer regenerates).
+   */
+  setNeedAppearances(): void {
+    const acro = this.sourceAcroForm();
+    if (!acro) {
+      throw new PdfError("corrupt", "setNeedAppearances: no source AcroForm");
+    }
+    acro.m.set("NeedAppearances", { k: "bool", b: true });
+  }
+
+  /**
+   * Set a text field's value (pdf-lib PDFTextField.setText): /V as a UTF-16
+   * hex string + a write-time appearance regeneration with the widget chrome
+   * and the /DA font size/color. Without `ttf` the regeneration font is
+   * Helvetica/WinAnsi — WinAnsiError is thrown (with /V ALREADY written, the
+   * documented contract) when `text` cannot be encoded; the caller then
+   * re-runs with the embedded Devanagari TTF or falls back to
+   * setNeedAppearances().
+   */
+  setSourceTextField(field: AcroFieldInfo, text: string, ttf?: StampTtfFont): void {
+    if (field.kind !== "text") {
+      throw new PdfError("corrupt", `field "${field.name}" is not a text field`);
+    }
+    const max = field.maxLength;
+    if (max !== null && max >= 0 && text.length > max) {
+      throw new PdfError(
+        "corrupt",
+        `field "${field.name}" overflows its /MaxLen ${max}`,
+      );
+    }
+    field.dict.m.set("V", { k: "hstr", b: pdfTextBytes(text) });
+    // WinAnsi-ness is checked on the LINES the layout will encode (pdf-lib
+    // splits multiline text before showText — line breaks never reach the
+    // encoder, so they must not fail the check either).
+    if (!ttf) {
+      for (const line of lineSplitPdf(cleanTextPdf(text))) {
+        if (!winAnsiEncodable(line)) {
+          throw new WinAnsiError(field.name, line);
+        }
+      }
+    }
+    this.pendingSourceUpdates.set(field.dict.m, {
+      info: field,
+      action: { kind: "text", text, ttf },
+    });
+  }
+
+  /**
+   * Check/uncheck a checkbox (pdf-lib PDFCheckBox.check/uncheck): /V = the
+   * on-state name (or "Off") + every widget /AS synced, then a write-time
+   * 4-state appearance regeneration (pdf-lib's providers redraw checkbox
+   * APs on dirty fields at save).
+   */
+  setSourceCheckbox(field: AcroFieldInfo, checked: boolean): void {
+    if (field.kind !== "checkbox") {
+      throw new PdfError("corrupt", `field "${field.name}" is not a checkbox`);
+    }
+    const onValue = field.widgets[0]?.onValue ?? "Yes";
+    const state = checked ? onValue : "Off";
+    field.dict.m.set("V", { k: "name", v: state });
+    for (const widget of field.widgets) {
+      widget.dict.m.set("AS", { k: "name", v: state });
+    }
+    this.pendingSourceUpdates.set(field.dict.m, {
+      info: field,
+      action: { kind: "checkbox", checked },
+    });
+  }
+
+  /**
+   * Select a radio option (pdf-lib PDFRadioGroup.select): the option maps to
+   * its WIDGET's on-state name (pdf-lib's addWidgetWithOpt names on-states
+   * by the /Opt index — "0", "1"… — while real-world forms may use genuine
+   * state names), /V + every widget /AS sync to it, and the write-time pass
+   * regenerates each widget's on/off appearances.
+   */
+  setSourceRadio(field: AcroFieldInfo, value: string): void {
+    if (field.kind !== "radio") {
+      throw new PdfError("corrupt", `field "${field.name}" is not a radio group`);
+    }
+    const idx = field.options.indexOf(value);
+    let onState: string | undefined;
+    if (idx >= 0 && field.widgets[idx]?.onValue !== undefined) {
+      onState = field.widgets[idx]!.onValue;
+    } else if (field.widgets.some((w) => w.onValue === value)) {
+      onState = value; // exotic forms: the option IS the state name
+    }
+    if (onState === undefined) {
+      throw new PdfError(
+        "corrupt",
+        `radio group "${field.name}" has no option "${value}"`,
+      );
+    }
+    field.dict.m.set("V", { k: "name", v: onState });
+    for (const widget of field.widgets) {
+      const state = widget.onValue === onState ? onState : "Off";
+      widget.dict.m.set("AS", { k: "name", v: state });
+    }
+    this.pendingSourceUpdates.set(field.dict.m, {
+      info: field,
+      action: { kind: "radio", value },
+    });
+  }
+
+  /**
+   * Select dropdown/optionlist values (pdf-lib PDFDropdown/PDFOptionList
+   * .select): /V single string or array (multi), /I sorted indices when
+   * multiple (pdf-lib updateSelectedIndices), MultiSelect flag for >1
+   * (enableMultiselect), and the Edit flag when a dropdown receives a value
+   * outside its /Opt (pdf-lib enableEditing — the API layer sets it before
+   * the core's valuesAreValid guard would throw).
+   */
+  setSourceChoice(field: AcroFieldInfo, values: string[]): void {
+    if (field.kind !== "dropdown" && field.kind !== "optionlist") {
+      throw new PdfError(
+        "corrupt",
+        `field "${field.name}" is not a choice field`,
+      );
+    }
+    if (field.kind === "optionlist") {
+      for (const value of values) {
+        if (!field.options.includes(value)) {
+          throw new PdfError(
+            "corrupt",
+            `optionlist "${field.name}" has no option "${value}"`,
+          );
+        }
+      }
+    }
+    let ff = asNum(field.dict.m.get("Ff")) ?? 0;
+    if (values.length > 1) ff |= 1 << 21; // MultiSelect (pdf-lib enableMultiselect)
+    if (field.kind === "dropdown" && values.some(v => !field.options.includes(v))) {
+      ff |= 1 << 18; // Edit (pdf-lib enableEditing)
+    }
+    if (ff !== 0) field.dict.m.set("Ff", num(ff));
+    if (values.length === 0) {
+      field.dict.m.delete("V");
+      field.dict.m.delete("I");
+    } else if (values.length === 1) {
+      field.dict.m.set("V", { k: "hstr", b: pdfTextBytes(values[0]!) });
+      field.dict.m.delete("I");
+    } else {
+      field.dict.m.set(
+        "V",
+        {
+          k: "arr",
+          items: values.map((v) => ({ k: "hstr" as const, b: pdfTextBytes(v) })),
+        },
+      );
+      // pdf-lib updateSelectedIndices: sorted /Opt indices of the selection.
+      const indices = values
+        .map((v) => field.options.indexOf(v))
+        .sort((a, b) => a - b);
+      field.dict.m.set(
+        "I",
+        { k: "arr", items: indices.map((i) => num(i)) },
+      );
+    }
+    this.pendingSourceUpdates.set(field.dict.m, {
+      info: field,
+      action:
+        field.kind === "dropdown"
+          ? { kind: "dropdown", value: values[0] ?? "" }
+          : { kind: "optionlist", values },
+    });
+  }
+
+  /**
+   * Flatten the form (pdf-lib PDFForm.flatten): materialize pending
+   * appearances, burn every widget's current /AP /N into the page content
+   * (`q <translate> cm 1 0 0 1 0 0 cm 1 0 0 1 0 0 cm /Fx<n> Do Q` —
+   * pdf-lib's rotateInPlace(0) burn), remove every widget + field ref from
+   * the pages' /Annots, and drop the catalog /AcroForm entirely (nothing
+   * interactive remains — cleaner than pdf-lib's leftover empty /Fields).
+   * Returns the field count (0 = nothing to do).
+   * Throws typed "corrupt" when a widget's appearance cannot be resolved
+   * (pdf-lib's findWidgetAppearanceRef error → the tool's forms-failed i18n).
+   */
+  flattenSourceForm(): number {
+    this.finalizeSourceUpdates();
+    const fields = readAcroFormFields(this.source.doc);
+    if (fields.length === 0) return 0;
+    const dropNums = new Set<number>();
+    for (const field of fields) {
+      if (field.fieldNum !== null) dropNums.add(field.fieldNum);
+      for (const widget of field.widgets) {
+        const target = this.resolveWidgetBurnAp(field, widget);
+        const token = this.burnTokenFor(target);
+        for (const slot of this.widgetBurnSlots(widget)) {
+          const key = this.resourceKey(slot, "XObject", token, "Fx");
+          this.burnXObjects.set(`${slot}:XObject:${token}`, target);
+          this.pushOps(
+            slot,
+            [
+              "q",
+              `1 0 0 1 ${pdfNumToString(widget.rect.x)} ${pdfNumToString(widget.rect.y)} cm`,
+              "1 0 0 1 0 0 cm",
+              "1 0 0 1 0 0 cm",
+              `/${key} Do`,
+              "Q",
+            ].join("\n"),
+            false,
+          );
+        }
+        if (widget.srcNum !== null) dropNums.add(widget.srcNum);
+      }
+    }
+    for (let slot = 0; slot < this.slotCount; slot += 1) {
+      const pageDict = this.source.pages[this.slotSrc(slot)]!.dict;
+      const annots = resolve(this.source.doc, pageDict.get("Annots"));
+      if (!annots || annots.k !== "arr") continue;
+      const kept = annots.items.filter(
+        (it) => !(it.k === "ref" && dropNums.has(it.num)),
+      );
+      this.slotAnnotsOverrides.set(slot, kept);
+    }
+    this.dropSourceAcroForm();
+    return fields.length;
+  }
+
+  /**
+   * Burn annotation appearances into the page content (the legacy flatten
+   * tool's pass 2): each remaining annotation's /AP /N XObject is drawn
+   * with the pdf.js getTransformMatrix placement (composeAppearanceTransform
+   * — BBox-after-/Matrix scaled onto /Rect), the burn rides as a NEW front
+   * content stream, and the slot's /Annots is deleted (or reduced to widget
+   * refs when `keepWidgets` — the annotations-only scope keeps the form
+   * interactive). Hidden/no-view annotations and widgets are skipped;
+   * a missing /BBox falls back to the pdf.js unit box [0 0 1 1] AND is
+   * synthesized onto the stream so the burned `Do` clips like the viewer.
+   */
+  burnSourceAnnotations(options?: {
+    slots?: number[] | null;
+    keepWidgets?: boolean;
+    onSlot?: (done: number, total: number) => void;
+  }): { burned: number; skipped: number } {
+    this.finalizeSourceUpdates();
+    const slots = options?.slots ?? null;
+    const keepWidgets = options?.keepWidgets === true;
+    const selected = slots === null ? null : new Set(slots);
+    const total = selected === null ? this.slotCount : selected.size;
+    let done = 0;
+    let burned = 0;
+    let skipped = 0;
+    for (let slot = 0; slot < this.slotCount; slot += 1) {
+      if (selected !== null && !selected.has(slot)) continue;
+      const r = this.burnSlotAnnotations(slot, keepWidgets);
+      burned += r.burned;
+      skipped += r.skipped;
+      done += 1;
+      options?.onSlot?.(done, total);
+    }
+    return { burned, skipped };
+  }
+
+  /** Remove the catalog /AcroForm (flatten's final "nothing interactive"). */
+  dropSourceAcroForm(): void {
+    this.acroDropped = true;
+  }
+
+  /** One slot's annotation burn (see burnSourceAnnotations). */
+  private burnSlotAnnotations(
+    slot: number,
+    keepWidgets: boolean,
+  ): { burned: number; skipped: number } {
+    const doc = this.source.doc;
+    const pageDict = this.source.pages[this.slotSrc(slot)]!.dict;
+    // The EFFECTIVE annots: a flatten-installed override (widgets already
+    // filtered / the entry deleted) replaces the source array for this walk
+    // too — otherwise the burn would re-count widgets the form pass removed.
+    const override = this.slotAnnotsOverrides.get(slot);
+    const annots: PdfObj[] | null =
+      override === null
+        ? []
+        : override !== undefined
+          ? override
+          : (() => {
+              const annotsVal = resolve(doc, pageDict.get("Annots"));
+              return annotsVal && annotsVal.k === "arr" ? annotsVal.items : null;
+            })();
+    if (annots === null) return { burned: 0, skipped: 0 };
+    let burned = 0;
+    let skipped = 0;
+    const widgetKeep: PdfObj[] = [];
+    const ops: string[] = [];
+    for (const entry of annots) {
+      const obj = resolve(doc, entry);
+      const m = obj && (obj.k === "dict" || obj.k === "stream") ? obj.m : undefined;
+      if (!m) {
+        skipped += 1;
+        continue;
+      }
+      const flags = asNum(m.get("F")) ?? 0;
+      if ((flags & 2) !== 0 || (flags & 32) !== 0) {
+        // Hidden / no-view annotations render nothing.
+        skipped += 1;
+        continue;
+      }
+      const subVal = m.get("Subtype");
+      const isWidget =
+        (subVal && subVal.k === "name" ? subVal.v : undefined) === "Widget" ||
+        m.has("FT") ||
+        m.has("Parent");
+      if (isWidget) {
+        if (keepWidgets && entry.k === "ref") widgetKeep.push(entry);
+        skipped += 1;
+        continue;
+      }
+      const apVal = m.get("AP");
+      const ap = apVal ? resolve(doc, apVal) : undefined;
+      const apMap = ap && (ap.k === "dict" || ap.k === "stream") ? ap.m : undefined;
+      if (!apMap) {
+        skipped += 1;
+        continue;
+      }
+      const nRaw = apMap.get("N");
+      const nResolved = nRaw ? resolve(doc, nRaw) : undefined;
+      let chosenRaw: PdfObj | undefined;
+      if (nResolved && nResolved.k === "dict") {
+        // State map: the annotation's /AS selects the entry, else the first.
+        const asVal = m.get("AS");
+        if (asVal && asVal.k === "name") {
+          const hit = nResolved.m.get(asVal.v);
+          chosenRaw = hit !== undefined ? hit : [...nResolved.m.values()][0];
+        } else {
+          chosenRaw = [...nResolved.m.values()][0];
+        }
+      } else {
+        chosenRaw = nRaw;
+      }
+      const target = this.burnApTarget(doc, chosenRaw);
+      if (!target) {
+        skipped += 1;
+        continue;
+      }
+      // BBox (pdf.js unit-box fallback) + Matrix off the appearance stream.
+      const streamObj = resolve(doc, chosenRaw);
+      const streamMap =
+        streamObj && streamObj.k === "stream" ? streamObj.m : undefined;
+      if (!streamMap) {
+        skipped += 1;
+        continue;
+      }
+      let bbox = readQuadOf(doc, streamMap, "BBox");
+      if (bbox === null) {
+        bbox = [0, 0, 1, 1];
+        streamMap.set("BBox", arr(num(0), num(0), num(1), num(1)));
+      }
+      const rect = readQuadOf(doc, m, "Rect");
+      if (rect === null) {
+        skipped += 1;
+        continue;
+      }
+      const matrix = readAffineOf(doc, streamMap, "Matrix");
+      const cm = composeAppearanceTransform(rect, bbox, matrix);
+      const token = this.burnTokenFor(target);
+      const key = this.resourceKey(slot, "XObject", token, "Fx");
+      this.burnXObjects.set(`${slot}:XObject:${token}`, target);
+      ops.push(
+        "q",
+        `${pdfNumToString(cm[0])} ${pdfNumToString(cm[1])} ${pdfNumToString(cm[2])} ${pdfNumToString(cm[3])} ${pdfNumToString(cm[4])} ${pdfNumToString(cm[5])} cm`,
+        `/${key} Do`,
+        "Q",
+      );
+      burned += 1;
+    }
+    if (ops.length > 0) this.pushOps(slot, ops.join("\n"), false);
+    this.slotAnnotsOverrides.set(
+      slot,
+      keepWidgets && widgetKeep.length > 0 ? widgetKeep : null,
+    );
+    return { burned, skipped };
+  }
+
+  /**
+   * The burn target of a widget's current /AP /N (pdf-lib
+   * findWidgetAppearanceRef): the state-map entry named by the FIELD's /V,
+   * falling back to "Off", else the first entry — or the direct stream.
+   * Returns a SOURCE ref / newref, or undefined when unresolvable.
+   */
+  private resolveWidgetBurnAp(
+    field: AcroFieldInfo,
+    widget: AcroWidgetInfo,
+  ): PdfObj {
+    const doc = this.source.doc;
+    const apVal = widget.dict.m.get("AP");
+    const ap = apVal ? resolve(doc, apVal) : undefined;
+    const apMap = ap && (ap.k === "dict" || ap.k === "stream") ? ap.m : undefined;
+    if (!apMap) {
+      throw new PdfError(
+        "corrupt",
+        `flatten: field "${field.name}" widget has no /AP`,
+      );
+    }
+    const nRaw = apMap.get("N");
+    if (!nRaw) {
+      throw new PdfError(
+        "corrupt",
+        `flatten: field "${field.name}" widget has no /AP /N`,
+      );
+    }
+    const nResolved = resolve(doc, nRaw);
+    if (nResolved && nResolved.k === "dict") {
+      let chosenRaw: PdfObj | undefined;
+      const v = field.dict.m.get("V");
+      if (v && v.k === "name") {
+        const hit = nResolved.m.get(v.v);
+        chosenRaw = hit !== undefined ? hit : nResolved.m.get("Off");
+      } else {
+        chosenRaw = nResolved.m.get("Off");
+      }
+      if (chosenRaw === undefined) {
+        for (const [, value] of nResolved.m) {
+          chosenRaw = value;
+          break;
+        }
+      }
+      const target = this.burnApTarget(doc, chosenRaw);
+      if (!target) {
+        throw new PdfError(
+          "corrupt",
+          `flatten: field "${field.name}" appearance state is not a stream`,
+        );
+      }
+      return target;
+    }
+    const target = this.burnApTarget(doc, nRaw);
+    if (!target) {
+      throw new PdfError(
+        "corrupt",
+        `flatten: field "${field.name}" has no appearance stream`,
+      );
+    }
+    return target;
+  }
+
+  /**
+   * A raw /AP entry → a burn target: refs pass through, direct streams are
+   * cloned into SOURCE-ANCHORED synthetics (their /Resources refs remap
+   * through the writer's BFS), anything else is unresolvable.
+   */
+  private burnApTarget(doc: ParsedPdf, raw: PdfObj | undefined): PdfObj | undefined {
+    if (!raw) return undefined;
+    if (raw.k === "ref" || raw.k === "newref") return raw;
+    const resolved = resolve(doc, raw);
+    if (resolved && resolved.k === "stream") {
+      const num = this.reserve();
+      this.synthetics.push({ sourceDoc: doc, obj: resolved });
+      return newref(num);
+    }
+    return undefined;
+  }
+
+  /** Stable resource token for a burn target. */
+  private burnTokenFor(target: PdfObj): string {
+    if (target.k === "ref" || target.k === "newref") {
+      return target.k === "ref" ? `src${target.num}` : `syn${target.num}`;
+    }
+    return "syn0";
+  }
+
+  /**
+   * The slots a widget burns onto: its /P page (matched against the source
+   * page refs), else the page whose /Annots carries the widget's ref, else
+   * every slot showing that source page — [] when unlocatable (pdf-lib's
+   * findWidgetPage throws there; we skip such orphans honestly).
+   */
+  private widgetBurnSlots(widget: AcroWidgetInfo): number[] {
+    const doc = this.source.doc;
+    let pageIdx = -1;
+    const p = widget.dict.m.get("P");
+    if (p && p.k === "ref") {
+      pageIdx = this.source.pages.findIndex((pg) => pg.ref.num === p.num);
+    }
+    if (pageIdx < 0 && widget.srcNum !== null) {
+      for (let i = 0; i < this.source.pages.length; i += 1) {
+        const annots = resolve(doc, this.source.pages[i]!.dict.get("Annots"));
+        if (
+          annots &&
+          annots.k === "arr" &&
+          annots.items.some((it) => it.k === "ref" && it.num === widget.srcNum)
+        ) {
+          pageIdx = i;
+          break;
+        }
+      }
+    }
+    if (pageIdx < 0) return [];
+    const slots: number[] = [];
+    for (let s = 0; s < this.slotCount; s += 1) {
+      if (this.slotSrc(s) === pageIdx) slots.push(s);
+    }
+    return slots;
+  }
+
+  /**
+   * Materialize the queued source-field updates (write() and the burn passes
+   * both call this — idempotent: the queue drains). Every pending field gets
+   * fresh appearance streams per widget with the SOURCE chrome read off the
+   * widget dict (/MK /BC /BG, /BS /W, /MK /R) and the /DA size/color rules
+   * (widget DA first, then field DA — pdf-lib's provider order).
+   */
+  private finalizeSourceUpdates(): void {
+    if (this.pendingSourceUpdates.size === 0) return;
+    const pendings = [...this.pendingSourceUpdates.values()];
+    this.pendingSourceUpdates.clear();
+    for (const pending of pendings) {
+      for (const widget of pending.info.widgets) {
+        const chrome = this.readWidgetChrome(widget);
+        if (chrome === null) continue; // unreadable rect → source AP stays
+        if (pending.action.kind === "checkbox" || pending.action.kind === "radio") {
+          this.regenerateButtonWidgetAp(pending.info, widget, chrome);
+        } else {
+          this.regenerateTextWidgetAp(pending.info, widget, chrome, pending.action);
+        }
+      }
+    }
+  }
+
+  /** Widget chrome off a SOURCE widget dict — null on an unusable /Rect. */
+  private readWidgetChrome(widget: AcroWidgetInfo): WidgetChrome | null {
+    const doc = this.source.doc;
+    const m = widget.dict.m;
+    const rect = readQuadOf(doc, m, "Rect");
+    if (rect === null) return null;
+    const width = Math.abs(rect[2] - rect[0]);
+    const height = Math.abs(rect[3] - rect[1]);
+    if (width <= 0 || height <= 0) return null;
+    const bsVal = m.get("BS");
+    const bs = bsVal ? resolve(doc, bsVal) : undefined;
+    const bsMap = bs && (bs.k === "dict" || bs.k === "stream") ? bs.m : undefined;
+    const borderWidth = asNum(bsMap?.get("W")) ?? 0;
+    const mkVal = m.get("MK");
+    const mk = mkVal ? resolve(doc, mkVal) : undefined;
+    const mkMap = mk && (mk.k === "dict" || mk.k === "stream") ? mk.m : undefined;
+    const rotationRaw = asNum(mkMap?.get("R")) ?? 0;
+    const rotation =
+      rotationRaw === 90 ? 90 : rotationRaw === 180 ? 180 : rotationRaw === 270 ? 270 : 0;
+    return {
+      width,
+      height,
+      borderWidth,
+      borderColor: mkColor(mkMap?.get("BC"), doc),
+      background: mkColor(mkMap?.get("BG"), doc),
+      rotation,
+    };
+  }
+
+  /**
+   * Regenerate one widget's /AP as the pdf-lib text-field provider shape
+   * (rotateInPlace + drawTextField): conditional chrome (bg fill / border
+   * stroke, painted B/f/S — the rectangle always draws its path), the clip
+   * box, /Tx BMC-marked text lines with the /DA size (or the computeFontSize
+   * loop), the /DA color, and the DA rewrite (widget DA when it carried a
+   * color or size, else the field's — pdf-lib updateDefaultAppearance).
+   */
+  private regenerateTextWidgetAp(
+    info: AcroFieldInfo,
+    widget: AcroWidgetInfo,
+    chrome: WidgetChrome,
+    action: SourceUpdateAction & { kind: "text" | "dropdown" | "optionlist" },
+  ): void {
+    const doc = this.source.doc;
+    const widgetM = widget.dict.m;
+    const fieldM = info.dict.m;
+    const ttf = action.kind === "text" ? action.ttf : undefined;
+
+    const widgetDa = readDaString(widgetM, doc);
+    const fieldDa = readDaString(fieldM, doc);
+    const widgetFontSize = parseDaFontSize(widgetDa);
+    const fieldFontSize = parseDaFontSize(fieldDa);
+    const widgetColorOp = parseDaColorOp(widgetDa);
+    const fieldColorOp = parseDaColorOp(fieldDa);
+
+    const text =
+      action.kind === "text"
+        ? action.text
+        : action.kind === "dropdown"
+          ? action.value
+          : action.values.join("\n");
+    const multiline = info.kind === "text" && info.multiline;
+    const q = asNum(fieldM.get("Q")) ?? 0;
+    const align = q === 1 ? 1 : q === 2 ? 2 : 0;
+
+    const [rotW, rotH] = adjustDimsForRotation(chrome.width, chrome.height, chrome.rotation);
+    const bw = chrome.borderWidth;
+    const padding = 1;
+    const bounds = {
+      x: bw + padding,
+      y: bw + padding,
+      width: rotW - (bw + padding) * 2,
+      height: rotH - (bw + padding) * 2,
+    };
+    const font: LayoutFont = ttf
+      ? {
+        widthOf: (t, s) => ttf!.measure(t, s),
+        heightAt: (s) => ttf!.heightAtSize(s),
+        heightAtNoDesc: (s) => ttf!.heightAtSize(s, { descender: false }),
+      }
+      : {
+        widthOf: (t, s) => measureStdText(t, "helvetica", s),
+        heightAt: (s) => (s * (HELV_ASCENT + HELV_DESCENT)) / 1000,
+        heightAtNoDesc: (s) => (s * HELV_ASCENT) / 1000,
+      };
+    const explicitSize = widgetFontSize ?? fieldFontSize;
+    const layout = multiline
+      ? layoutMultilineGen(text, bounds, font, explicitSize, align)
+      : layoutSinglelineGen(text, bounds, font, explicitSize, align);
+
+    const textColorOp = widgetColorOp ?? fieldColorOp ?? "0 0 0 rg";
+    const fontName = ttf
+      ? (this.ttf?.font.postscriptName || "Font")
+      : "Helvetica";
+    // pdf-lib updateDefaultAppearance: the WIDGET DA is rewritten when it
+    // carried a color or size, else the FIELD's (providers' rule).
+    const daTarget =
+      widgetColorOp !== undefined || widgetFontSize !== undefined ? widgetM : fieldM;
+    daTarget.set(
+      "DA",
+      lstr(LATIN1(`${textColorOp}\n/${fontName} ${pdfNumToString(layout.fontSize)} Tf`)),
+    );
+
+    const ops: string[] = [
+      ...rotateInPlaceOps(chrome.rotation, chrome.width, chrome.height),
+      "q",
+      // drawRectangle chrome (unconditional path; paint by color presence).
+      "q",
+    ];
+    if (chrome.background) ops.push(chrome.background.fill);
+    if (chrome.borderColor) ops.push(chrome.borderColor.stroke);
+    ops.push(
+      `${pdfNumToString(bw)} w`,
+      "[] 0 d",
+      `1 0 0 1 ${pdfNumToString(bw / 2)} ${pdfNumToString(bw / 2)} cm`,
+      "1 0 0 1 0 0 cm",
+      "1 0 0 1 0 0 cm",
+      "0 0 m",
+      `0 ${pdfNumToString(rotH - bw)} l`,
+      `${pdfNumToString(rotW - bw)} ${pdfNumToString(rotH - bw)} l`,
+      `${pdfNumToString(rotW - bw)} 0 l`,
+      "h",
+    );
+    if (chrome.background && bw > 0) ops.push("B");
+    else if (chrome.background) ops.push("f");
+    else if (chrome.borderColor) ops.push("S");
+    else ops.push("h");
+    ops.push("Q");
+    // The clip box (drawTextField clippingArea).
+    const clipX = bw + padding;
+    const clipY = bw + padding;
+    const clipW = (rotW - bw) - (bw / 2 + padding) * 2;
+    const clipH = (rotH - bw) - (bw / 2 + padding) * 2;
+    ops.push(
+      `${pdfNumToString(clipX)} ${pdfNumToString(clipY)} m`,
+      `${pdfNumToString(clipX)} ${pdfNumToString(clipY + clipH)} l`,
+      `${pdfNumToString(clipX + clipW)} ${pdfNumToString(clipY + clipH)} l`,
+      `${pdfNumToString(clipX + clipW)} ${pdfNumToString(clipY)} l`,
+      "h",
+      "W",
+      "n",
+      "/Tx BMC",
+      "q",
+      "BT",
+      textColorOp,
+      `/${fontName} ${pdfNumToString(layout.fontSize)} Tf`,
+    );
+    for (const line of layout.lines) {
+      ops.push(`1 0 0 1 ${pdfNumToString(line.x)} ${pdfNumToString(line.y)} Tm`);
+      const hex = ttf
+        ? ttf.encodeHex(line.text)
+        : encodeWinAnsiHex(line.text, "helvetica").toUpperCase();
+      ops.push(`<${hex}> Tj`);
+    }
+    ops.push("ET", "Q", "EMC", "Q");
+
+    const fontObj: PdfObj = ttf
+      ? newref(this.ttf!.type0Num)
+      : newref(this.ensureFormFont());
+    this.installWidgetNormalAp(
+      widget,
+      ops,
+      newDict([["Font", newDict([[fontName, fontObj]])]]),
+      chrome.width,
+      chrome.height,
+    );
+  }
+
+  /**
+   * Regenerate one widget's /AP as the pdf-lib button providers (checkbox /
+   * radio): the 4-state shape (N/D × on/off) with the source chrome, the
+   * down-state background darkened ×0.8, the mark colored by the /DA color
+   * (widget DA first, then field DA, else black), and the DA rewrite with
+   * the dummy font (pdf-lib updateDefaultAppearance without a font).
+   */
+  private regenerateButtonWidgetAp(
+    info: AcroFieldInfo,
+    widget: AcroWidgetInfo,
+    chrome: WidgetChrome,
+  ): void {
+    const doc = this.source.doc;
+    const widgetM = widget.dict.m;
+    const fieldM = info.dict.m;
+    const isRadio = info.kind === "radio";
+    const onValue = isRadio
+      ? (widget.onValue ?? "On")
+      : (info.widgets[0]?.onValue ?? "Yes");
+
+    const widgetDa = readDaString(widgetM, doc);
+    const fieldDa = readDaString(fieldM, doc);
+    const widgetColorOp = parseDaColorOp(widgetDa);
+    const markColorOp = widgetColorOp ?? parseDaColorOp(fieldDa) ?? "0 0 0 rg";
+    const borderColor = chrome.borderColor ?? { fill: "0 0 0 rg", stroke: "0 0 0 RG" };
+    const bgDown = chrome.background
+      ? mkColorScaled(chrome.background, 0.8)
+      : undefined;
+
+    // pdf-lib button providers ALWAYS rewrite the DA (widget's when it had
+    // a color, else the field's), with the dummy font + size 0.
+    const daTarget = widgetColorOp !== undefined ? widgetM : fieldM;
+    daTarget.set("DA", lstr(LATIN1(`${markColorOp}\n/dummy__noop 0 Tf`)));
+
+    const [rotW, rotH] = adjustDimsForRotation(chrome.width, chrome.height, chrome.rotation);
+    const bw = chrome.borderWidth;
+    const inner = { width: rotW - bw, height: rotH - bw };
+    const outlineScale = Math.min(inner.width, inner.height) / 2;
+    const cx = rotW / 2;
+    const cy = rotH / 2;
+
+    const stateStreams: Array<PdfObj & { k: "stream" }> = [];
+    const stateNums: number[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const stateNum = this.reserve();
+      stateNums.push(stateNum);
+      const stream: PdfObj & { k: "stream" } = {
+        k: "stream",
+        m: new Map<string, PdfObj>([
+          ["BBox", arr(num(0), num(0), num(chrome.width), num(chrome.height))],
+          ["Matrix", arr(num(1), num(0), num(0), num(1), num(0), num(0))],
+          ["Type", { k: "name", v: "XObject" }],
+          ["Subtype", { k: "name", v: "Form" }],
+          ["Resources", newDict([])],
+          ["Length", num(0)],
+        ]),
+        raw: new Uint8Array(0),
+      };
+      this.synthetics.push(stream);
+      stateStreams.push(stream);
+    }
+    for (let i = 0; i < 4; i += 1) {
+      const down = i >= 2; // [N-on, N-off, D-on, D-off]
+      const on = i % 2 === 0;
+      const bg = down ? (bgDown ?? chrome.background) : chrome.background;
+      const ops: string[] = [...rotateInPlaceOps(chrome.rotation, chrome.width, chrome.height)];
+      // drawCheckBox / drawRadioButton = drawRectangle/drawEllipse chrome +
+      // the mark (on states only).
+      if (isRadio) {
+        ops.push(...ellipseChromeOps(cx, cy, outlineScale, bg, borderColor, bw));
+      } else {
+        ops.push("q");
+        if (bg) ops.push(bg.fill);
+        ops.push(
+          borderColor.stroke,
+          `${pdfNumToString(bw)} w`,
+          "[] 0 d",
+          `1 0 0 1 ${pdfNumToString(bw / 2)} ${pdfNumToString(bw / 2)} cm`,
+          "1 0 0 1 0 0 cm",
+          "1 0 0 1 0 0 cm",
+          "0 0 m",
+          `0 ${pdfNumToString(inner.height)} l`,
+          `${pdfNumToString(inner.width)} ${pdfNumToString(inner.height)} l`,
+          `${pdfNumToString(inner.width)} 0 l`,
+          "h",
+        );
+        if (bg && bw > 0) ops.push("B");
+        else if (bg) ops.push("f");
+        else ops.push("S");
+        ops.push("Q");
+      }
+      if (on) {
+        if (isRadio) {
+          ops.push(...dotOpsColored(cx, cy, outlineScale * 0.45, markColorOp));
+        } else {
+          ops.push(...checkMarkOpsColored(inner.width, inner.height, markColorOp));
+        }
+      }
+      const raw = ENC.encode(ops.join("\n"));
+      stateStreams[i]!.raw = raw;
+      stateStreams[i]!.m.set("Length", num(raw.length));
+    }
+    widgetM.set(
+      "AP",
+      newDict([
+        [
+          "N",
+          newDict([
+            [onValue, newref(stateNums[0]!)],
+            ["Off", newref(stateNums[1]!)],
+          ]),
+        ],
+        [
+          "D",
+          newDict([
+            [onValue, newref(stateNums[2]!)],
+            ["Off", newref(stateNums[3]!)],
+          ]),
+        ],
+      ]),
+    );
+  }
+
+  /**
+   * Install a freshly-built single-stream /AP /N onto a source widget —
+   * pdf-lib's updateWidgetAppearances REPLACES the whole /AP (never mutates
+   * the old streams, which may be shared between widgets).
+   */
+  private installWidgetNormalAp(
+    widget: AcroWidgetInfo,
+    ops: string[],
+    resources: PdfObj,
+    width: number,
+    height: number,
+  ): void {
+    const raw = ENC.encode(ops.join("\n"));
+    const streamNum = this.reserve();
+    this.synthetics.push({
+      k: "stream",
+      m: new Map<string, PdfObj>([
+        ["BBox", arr(num(0), num(0), num(width), num(height))],
+        ["Matrix", arr(num(1), num(0), num(0), num(1), num(0), num(0))],
+        ["Type", { k: "name", v: "XObject" }],
+        ["Subtype", { k: "name", v: "Form" }],
+        ["Resources", resources],
+        ["Length", num(raw.length)],
+      ]),
+      raw,
+    });
+    widget.dict.m.set("AP", newDict([["N", newref(streamNum)]]));
+  }
+
   /** pdf-lib drawTextField on a widget — the exact probed op sequence. */
   private fillTextAppearance(
     stream: PdfObj & { k: "stream" },
@@ -1597,6 +2518,7 @@ export class StampContext {
     this.finalizeLayers();
     this.finalizeTtfs();
     this.finalizeFormAppearances();
+    this.finalizeSourceUpdates();
     const count = this.slotCount;
     const pages: WritePage[] = [];
     for (let slot = 0; slot < count; slot += 1) {
@@ -1625,6 +2547,15 @@ export class StampContext {
         // /Resources: resolve (inherited-or-own) → clone → merge our entries.
         dict.set("Resources", this.mergedResources(slot));
       }
+      // P6-p: per-slot /Annots overrides (flatten/burn) — null deletes the
+      // entry entirely, an array REPLACES it (the kept widget refs); the
+      // appended annots below still ride on top of either.
+      const annotsOverride = this.slotAnnotsOverrides.get(slot);
+      if (annotsOverride === null) {
+        dict.delete("Annots");
+      } else if (annotsOverride !== undefined) {
+        dict.set("Annots", { k: "arr", items: annotsOverride });
+      }
       // P6-o: appended annots ride AFTER the source's own /Annots.
       const annots = this.slotAnnots.get(slot);
       if (annots !== undefined && annots.length > 0) {
@@ -1649,6 +2580,9 @@ export class StampContext {
     let catalogExtras: Array<[string, PdfObj]> | undefined;
     if (this.acroFormNum !== null) {
       catalogExtras = [["AcroForm", newref(this.acroFormNum)]];
+    } else if (this.acroDropped) {
+      // P6-p: flattenSourceForm()/dropSourceAcroForm() — nothing
+      // interactive remains, NO /AcroForm rides the output catalog.
     } else {
       // P6-o-b (edit-pdf): a SOURCE /AcroForm also rides when no fields
       // were created — pdf-lib's load+save parity (reordering or stamping
@@ -1832,15 +2766,35 @@ export class StampContext {
         const num = this.numForToken(category, token);
         if (num !== undefined) allocs.push([localName, num]);
       }
-      if (allocs.length === 0) continue;
+      if (allocs.length === 0 && !(category === "XObject" && this.hasBurnXObjects(pageIndex))) {
+        continue;
+      }
       const bucketBase = asDict(merged.get(category));
       const bucket = bucketBase
         ? new Map<string, PdfObj>(bucketBase)
         : new Map<string, PdfObj>();
       for (const [localName, num] of allocs) bucket.set(localName, newref(num));
+      // P6-p: burn-appearance XObjects — SOURCE refs (the writer's BFS
+      // remaps them) or newrefs for engine-authored appearance streams.
+      if (category === "XObject") {
+        for (const [cacheKey, target] of this.burnXObjects) {
+          if (!cacheKey.startsWith(`${prefix}XObject:`)) continue;
+          const localName = this.localKeys.get(cacheKey);
+          if (localName !== undefined) bucket.set(localName, target);
+        }
+      }
       merged.set(category, { k: "dict", m: bucket });
     }
     return { k: "dict", m: merged };
+  }
+
+  /** True when any burn-appearance XObject is registered for a slot. */
+  private hasBurnXObjects(pageIndex: number): boolean {
+    const prefix = `${pageIndex}:XObject:`;
+    for (const key of this.burnXObjects.keys()) {
+      if (key.startsWith(prefix)) return true;
+    }
+    return false;
   }
 
   private numForToken(category: string, token: string): number | undefined {
@@ -2248,6 +3202,320 @@ function checkMarkOps(width: number, height: number): string[] {
     "S",
     "Q",
   ];
+}
+
+/* ─── P6-p helpers: source-widget reads + provider shapes ─────────────────── */
+
+/** Read a 4-number array entry (resolving refs) — /Rect / /BBox. */
+function readQuadOf(
+  doc: ParsedPdf,
+  m: Map<string, PdfObj>,
+  key: string,
+): Quad | null {
+  const val = m.get(key);
+  const resolved = val ? resolve(doc, val) : undefined;
+  if (!resolved || resolved.k !== "arr" || resolved.items.length < 4) return null;
+  const out: number[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    const n = asNum(resolved.items[i]);
+    if (n === undefined || !Number.isFinite(n)) return null;
+    out.push(n);
+  }
+  return [out[0]!, out[1]!, out[2]!, out[3]!];
+}
+
+/** Read a 6-number array entry (resolving refs) — the appearance /Matrix. */
+function readAffineOf(
+  doc: ParsedPdf,
+  m: Map<string, PdfObj>,
+  key: string,
+): Affine | null {
+  const val = m.get(key);
+  const resolved = val ? resolve(doc, val) : undefined;
+  if (!resolved || resolved.k !== "arr" || resolved.items.length < 6) return null;
+  const out: number[] = [];
+  for (let i = 0; i < 6; i += 1) {
+    const n = asNum(resolved.items[i]);
+    if (n === undefined || !Number.isFinite(n)) return null;
+    out.push(n);
+  }
+  return [out[0]!, out[1]!, out[2]!, out[3]!, out[4]!, out[5]!];
+}
+
+/**
+ * A /MK /BC or /BG color array → the fill + stroke ops — pdf-lib
+ * componentsToColor + setFillingColor/setStrokingColor: gray (1), rgb (3),
+ * cmyk (4); anything else is undefined.
+ */
+function mkColor(raw: PdfObj | undefined, doc: ParsedPdf): ChromeColor | undefined {
+  if (!raw) return undefined;
+  const resolved = resolve(doc, raw);
+  if (!resolved || resolved.k !== "arr") return undefined;
+  const n: number[] = [];
+  for (const item of resolved.items) {
+    const v = asNum(item);
+    if (v === undefined || !Number.isFinite(v)) return undefined;
+    n.push(v);
+  }
+  const s = (v: number): string => pdfNumToString(Math.min(1, Math.max(0, v)));
+  if (n.length === 1) {
+    return { fill: `${s(n[0]!)} g`, stroke: `${s(n[0]!)} G` };
+  }
+  if (n.length === 3) {
+    const c = n.map(s);
+    return { fill: `${c[0]} ${c[1]} ${c[2]} rg`, stroke: `${c[0]} ${c[1]} ${c[2]} RG` };
+  }
+  if (n.length === 4) {
+    const c = n.map(s);
+    return { fill: `${c[0]} ${c[1]} ${c[2]} ${c[3]} k`, stroke: `${c[0]} ${c[1]} ${c[2]} ${c[3]} K` };
+  }
+  return undefined;
+}
+
+/** A chrome color scaled by `factor` (the ×0.8 down-state background). */
+function mkColorScaled(color: ChromeColor, factor: number): ChromeColor {
+  const scaleOp = (op: string): string =>
+    op.replace(/(\d*\.\d+|\d+)/g, (m2) => pdfNumToString(Number(m2) * factor));
+  return { fill: scaleOp(color.fill), stroke: scaleOp(color.stroke) };
+}
+
+/** A fill op converted to its stroke flavor ("0 0 0 rg" → "0 0 0 RG"). */
+function fillOpToStrokeOp(op: string): string {
+  if (/g$/.test(op)) return `${op.slice(0, -1)}G`;
+  if (/rg$/.test(op)) return `${op.slice(0, -2)}RG`;
+  if (/k$/.test(op)) return `${op.slice(0, -1)}K`;
+  return op;
+}
+
+/** pdf-lib rotations.adjustDimsForRotation: 90/270 swap the box dims. */
+function adjustDimsForRotation(
+  width: number,
+  height: number,
+  rotation: number,
+): [number, number] {
+  if (rotation === 90 || rotation === 270) return [height, width];
+  return [width, height];
+}
+
+/** pdf-lib operations.rotateInPlace — the appearance-stream leading cm pair. */
+function rotateInPlaceOps(rotation: number, width: number, height: number): string[] {
+  switch (rotation) {
+    case 90:
+      return [
+        `1 0 0 1 ${pdfNumToString(width)} 0 cm`,
+        "0 1 -1 0 0 0 cm",
+      ];
+    case 180:
+      return [
+        `1 0 0 1 ${pdfNumToString(width)} ${pdfNumToString(height)} cm`,
+        "-1 0 0 -1 0 0 cm",
+      ];
+    case 270:
+      return [
+        `1 0 0 1 0 ${pdfNumToString(height)} cm`,
+        "0 -1 1 0 0 0 cm",
+      ];
+    default:
+      return ["1 0 0 1 0 0 cm", "1 0 0 1 0 0 cm"];
+  }
+}
+
+/* ─── P6-p layout: the pdf-lib text providers over ANY font ──────────────── */
+
+/** The measure surface the generic layouts run on (helv or an embedded TTF). */
+interface LayoutFont {
+  widthOf(text: string, size: number): number;
+  /** heightAtSize WITH the descender (computeFontSize + multiline line height). */
+  heightAt(size: number): number;
+  /** heightAtSize WITHOUT the descender (single-line vertical centering). */
+  heightAtNoDesc(size: number): number;
+}
+
+/** pdf-lib computeFontSize — the 4→500 shrink loop, font-parameterized. */
+function computeFontSizeGen(
+  lines: string[],
+  bounds: { width: number; height: number },
+  font: LayoutFont,
+  multiline: boolean,
+): number {
+  let fontSize = 4;
+  while (fontSize < 500) {
+    let linesUsed = 0;
+    for (const line of lines) {
+      linesUsed += 1;
+      const words = line.split(" ");
+      let spaceInLineRemaining = bounds.width;
+      for (let idx = 0; idx < words.length; idx += 1) {
+        const isLastWord = idx === words.length - 1;
+        const word = isLastWord ? words[idx]! : `${words[idx]} `;
+        const widthOfWord = font.widthOf(word, fontSize);
+        spaceInLineRemaining -= widthOfWord;
+        if (spaceInLineRemaining <= 0) {
+          linesUsed += 1;
+          spaceInLineRemaining = bounds.width - widthOfWord;
+        }
+      }
+    }
+    if (!multiline && linesUsed > lines.length) return fontSize - 1;
+    const height = font.heightAt(fontSize);
+    const lineHeight = height + height * 0.2;
+    const totalHeight = lineHeight * linesUsed;
+    if (totalHeight > Math.abs(bounds.height)) return fontSize - 1;
+    fontSize += 1;
+  }
+  return fontSize;
+}
+
+/** The x offset of a line under /Q alignment (0 left, 1 center, 2 right). */
+function alignOffset(lineWidth: number, boundsWidth: number, align: number): number {
+  if (align === 1) return (boundsWidth - lineWidth) / 2;
+  if (align === 2) return boundsWidth - lineWidth;
+  return 0;
+}
+
+/** pdf-lib layoutSinglelineText over any font + /Q alignment. */
+function layoutSinglelineGen(
+  text: string,
+  bounds: { x: number; y: number; width: number; height: number },
+  font: LayoutFont,
+  fontSize: number | undefined,
+  align: number,
+): { fontSize: number; lines: Array<{ text: string; x: number; y: number }> } {
+  const line = mergeLinesPdf(cleanTextPdf(text));
+  const size =
+    fontSize !== undefined && fontSize > 0
+      ? fontSize
+      : computeFontSizeGen([line], bounds, font, false);
+  const width = font.widthOf(line, size);
+  const height = font.heightAtNoDesc(size);
+  const y = bounds.y + (bounds.height / 2 - height / 2);
+  return {
+    fontSize: size,
+    lines: [{ text: line, x: bounds.x + alignOffset(width, bounds.width, align), y }],
+  };
+}
+
+/** pdf-lib layoutMultilineText over any font + /Q alignment. */
+function layoutMultilineGen(
+  text: string,
+  bounds: { x: number; y: number; width: number; height: number },
+  font: LayoutFont,
+  fontSize: number | undefined,
+  align: number,
+): { fontSize: number; lines: Array<{ text: string; x: number; y: number }> } {
+  const rawLines = lineSplitPdf(cleanTextPdf(text));
+  const size =
+    fontSize !== undefined && fontSize > 0
+      ? fontSize
+      : computeFontSizeGen(rawLines, bounds, font, true);
+  const height = font.heightAt(size);
+  const lineHeight = height + height * 0.2;
+  const lines: Array<{ text: string; x: number; y: number }> = [];
+  let y = bounds.y + bounds.height;
+  for (const raw of rawLines) {
+    let prevRemainder: string | undefined = raw;
+    while (prevRemainder !== undefined) {
+      // splitOutLines — back off to the last whitespace boundary that fits.
+      let lastWhitespaceIdx = prevRemainder.length;
+      let line = prevRemainder;
+      let width = font.widthOf(line, size);
+      let remainder: string | undefined;
+      while (lastWhitespaceIdx > 0) {
+        line = prevRemainder.substring(0, lastWhitespaceIdx);
+        width = font.widthOf(line, size);
+        if (width < bounds.width) {
+          remainder = prevRemainder.substring(lastWhitespaceIdx) || undefined;
+          break;
+        }
+        lastWhitespaceIdx = lastIndexOfWhitespace(prevRemainder.substring(0, lastWhitespaceIdx)) ?? 0;
+      }
+      if (lastWhitespaceIdx === 0) {
+        line = prevRemainder;
+        width = font.widthOf(line, size);
+        remainder = undefined;
+      }
+      y -= lineHeight;
+      lines.push({
+        text: line,
+        x: bounds.x + alignOffset(width, bounds.width, align),
+        y,
+      });
+      prevRemainder = remainder?.trim();
+    }
+  }
+  return { fontSize: size, lines };
+}
+
+/** The radio outline inside a regenerated button state (P6-o ellipseOps,
+ * chrome-colored — pdf-lib drawRadioButton's drawEllipse half). */
+function ellipseChromeOps(
+  cx: number,
+  cy: number,
+  scale: number,
+  bg: ChromeColor | undefined,
+  borderColor: ChromeColor,
+  borderWidth: number,
+): string[] {
+  const x = cx - scale;
+  const y = cy - scale;
+  const ox = scale * KAPPA;
+  const oy = scale * KAPPA;
+  const xe = x + scale * 2;
+  const ye = y + scale * 2;
+  const xm = x + scale;
+  const ym = y + scale;
+  return [
+    "q",
+    ...(bg ? [bg.fill] : []),
+    borderColor.stroke,
+    `${pdfNumToString(borderWidth)} w`,
+    "[] 0 d",
+    "q",
+    `${pdfNumToString(x)} ${pdfNumToString(ym)} m`,
+    `${pdfNumToString(x)} ${pdfNumToString(ym - oy)} ${pdfNumToString(xm - ox)} ${pdfNumToString(y)} ${pdfNumToString(xm)} ${pdfNumToString(y)} c`,
+    `${pdfNumToString(xm + ox)} ${pdfNumToString(y)} ${pdfNumToString(xe)} ${pdfNumToString(ym - oy)} ${pdfNumToString(xe)} ${pdfNumToString(ym)} c`,
+    `${pdfNumToString(xe)} ${pdfNumToString(ym + oy)} ${pdfNumToString(xm + ox)} ${pdfNumToString(ye)} ${pdfNumToString(xm)} ${pdfNumToString(ye)} c`,
+    `${pdfNumToString(xm - ox)} ${pdfNumToString(ye)} ${pdfNumToString(x)} ${pdfNumToString(ym + oy)} ${pdfNumToString(x)} ${pdfNumToString(ym)} c`,
+    "Q",
+    bg && borderWidth > 0 ? "B" : bg ? "f" : "S",
+    "Q",
+  ];
+}
+
+/** The radio dot with the /DA mark color (P6-o dotOps, colored). */
+function dotOpsColored(cx: number, cy: number, scale: number, fillOp: string): string[] {
+  const x = cx - scale;
+  const y = cy - scale;
+  const ox = scale * KAPPA;
+  const oy = scale * KAPPA;
+  const xe = x + scale * 2;
+  const ye = y + scale * 2;
+  const xm = x + scale;
+  const ym = y + scale;
+  return [
+    "q",
+    fillOp,
+    "0 w",
+    "[] 0 d",
+    "q",
+    `${pdfNumToString(x)} ${pdfNumToString(ym)} m`,
+    `${pdfNumToString(x)} ${pdfNumToString(ym - oy)} ${pdfNumToString(xm - ox)} ${pdfNumToString(y)} ${pdfNumToString(xm)} ${pdfNumToString(y)} c`,
+    `${pdfNumToString(xm + ox)} ${pdfNumToString(y)} ${pdfNumToString(xe)} ${pdfNumToString(ym - oy)} ${pdfNumToString(xe)} ${pdfNumToString(ym)} c`,
+    `${pdfNumToString(xe)} ${pdfNumToString(ym + oy)} ${pdfNumToString(xm + ox)} ${pdfNumToString(ye)} ${pdfNumToString(xm)} ${pdfNumToString(ye)} c`,
+    `${pdfNumToString(xm - ox)} ${pdfNumToString(ye)} ${pdfNumToString(x)} ${pdfNumToString(ym + oy)} ${pdfNumToString(x)} ${pdfNumToString(ym)} c`,
+    "Q",
+    "f",
+    "Q",
+  ];
+}
+
+/** The check mark with the /DA mark color (P6-o checkMarkOps, colored). */
+function checkMarkOpsColored(width: number, height: number, fillOp: string): string[] {
+  const strokeOp = fillOpToStrokeOp(fillOp);
+  const ops = checkMarkOps(width, height);
+  const idx = ops.indexOf("0 0 0 RG");
+  if (idx >= 0) ops[idx] = strokeOp;
+  return ops;
 }
 
 const BASE_FONT_NAME: Record<StampFontKey, string> = {

@@ -536,10 +536,24 @@ class ParserImpl {
 
   /** value, then optional "stream … endstream" when the value is a dict. */
   private parseStreamObject(lex: Lexer): PdfObj {
-    const value = this.parseValueFrom(lex);
+    return this.maybeInlineStream(lex, this.parseValueFrom(lex));
+  }
+
+  /**
+   * A dict value followed by an inline "stream … endstream" body — DIRECT
+   * streams inside object dicts/arrays (technically illegal per spec
+   * §7.3.8.1, but pdf-lib writes them for unregistered form XObjects and
+   * pdf.js reads them; the flatten fixtures carry exactly that shape).
+   * Uses the LEXER's buffer — correct in ObjStm-member contexts too.
+   */
+  private maybeInlineStream(lex: Lexer, value: PdfObj): PdfObj {
     if (value.k !== "dict") return value;
+    const save = lex.pos;
     lex.skipWsAndComments();
-    if (!matchWord(this.data, lex.pos, "stream")) return value;
+    if (!matchWord(lex.data, lex.pos, "stream")) {
+      lex.pos = save;
+      return value;
+    }
     lex.pos += 6;
     const length = this.resolveLength(value.m);
     const raw = lex.readStreamBody(length);
@@ -637,7 +651,7 @@ class ParserImpl {
           const inner = lex.readToken();
           if (inner.t === "closeArr") return { k: "arr", items };
           if (inner.t === "eof") throw new PdfSyntaxError("unterminated array", lex.pos);
-          items.push(this.parseValueFrom(lex, inner));
+          items.push(this.maybeInlineStream(lex, this.parseValueFrom(lex, inner)));
         }
       }
       case "openDict": {
@@ -649,7 +663,7 @@ class ParserImpl {
           if (keyTok.t !== "name") {
             throw new PdfSyntaxError("dict key must be a name", lex.pos);
           }
-          m.set(keyTok.v, this.parseValueFrom(lex));
+          m.set(keyTok.v, this.maybeInlineStream(lex, this.parseValueFrom(lex)));
         }
       }
       case "kw":

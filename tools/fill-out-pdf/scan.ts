@@ -1,21 +1,19 @@
 import {
-  PDFCheckBox,
-  PDFDocument,
-  PDFDropdown,
-  PDFOptionList,
-  PDFRadioGroup,
-  PDFTextField,
-  PDFWidgetAnnotation,
-} from "pdf-lib";
+  listPages,
+  parsePdf,
+  readAcroFormFields,
+  type AcroFieldInfo,
+} from "@/lib/own/pdf";
 
 /**
  * Fill out PDF forms — scan module (PRD §8.2 "Fill out": "Existing form
  * fields highlight; Tab navigation; checkbox/radio/dropdown").
  *
- * Pure pdf-lib read of the AcroForm: enumerates every terminal field with
- * its kind, current value, flags, options and widget rectangles (user
- * space, y up). Runs on the main thread against the file bytes — read
- * only, nothing is ever uploaded (mode D tool).
+ * P6-p: OUR engine's AcroForm reader (src/lib/own/pdf/acroform.ts — the
+ * pdf-lib PDFForm.getFields() parity walk) replaces the pdf-lib read: the
+ * same kinds, names, values, flags, options and widget rectangles, now from
+ * the own parser (sync, zero pdf-lib). Runs on the main thread against the
+ * file bytes — read only, nothing is ever uploaded (mode D tool).
  */
 
 export type FillFieldKind =
@@ -58,19 +56,6 @@ export interface FormScan {
   fields: FillFieldScan[];
 }
 
-function normRect(rect: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}): { x: number; y: number; w: number; h: number } {
-  const w = Math.abs(rect.width);
-  const h = Math.abs(rect.height);
-  const x = rect.width >= 0 ? rect.x : rect.x - w;
-  const y = rect.height >= 0 ? rect.y : rect.y - h;
-  return { x, y, w, h };
-}
-
 function lastSegment(name: string): string {
   const parts = name.split(".");
   return parts[parts.length - 1] || name;
@@ -82,7 +67,7 @@ const WINANSI_PUNCT = "€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜
 /**
  * True when Helvetica (WinAnsi) can encode every character — the check the
  * worker uses to decide which filled text fields need the embedded
- * Devanagari font before doc.save() regenerates appearances.
+ * Devanagari font before the save-time appearance regeneration runs.
  */
 export function isWinAnsiText(text: string): boolean {
   for (const ch of text) {
@@ -95,120 +80,89 @@ export function isWinAnsiText(text: string): boolean {
   return true;
 }
 
-/** Scan the AcroForm of a PDF (throws on encrypted files — honest error). */
-export async function scanFormFields(
-  bytes: Uint8Array | ArrayBuffer
-): Promise<FormScan> {
-  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  const doc = await PDFDocument.load(data, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
-
-  const pages = doc.getPages();
-  const pageByRef = new Map<string, number>();
-  pages.forEach((page, index) => {
-    pageByRef.set(page.ref.toString(), index);
-  });
-
-  const widgetPage = (widget: PDFWidgetAnnotation): number => {
-    const p = widget.P();
-    if (p) {
-      const found = pageByRef.get(p.toString());
-      if (found !== undefined) return found;
-    }
-    // Widgets without /P: resolve the annotation's own ref and look it up
-    // among the pages' /Annots arrays (rare, but honest coverage).
-    const ref = doc.context.getObjectRef(widget.dict);
-    if (ref) {
-      const found = pageByRef.get(ref.toString());
-      if (found !== undefined) return found;
-    }
-    return 0;
+/** One AcroFieldInfo → the surface's field shape (skip non-fillable kinds). */
+function toScanField(field: AcroFieldInfo): FillFieldScan | null {
+  if (field.name === "") return null; // unnamed fields cannot be addressed
+  const widgets = field.widgets.map((widget) => ({
+    page: widget.page,
+    rect: { x: widget.rect.x, y: widget.rect.y, w: widget.rect.w, h: widget.rect.h },
+  }));
+  const base = {
+    name: field.name,
+    label: lastSegment(field.name),
+    widgets,
+    readOnly: field.readOnly,
+    required: field.required,
   };
-
-  const fields: FillFieldScan[] = [];
-  for (const field of doc.getForm().getFields()) {
-    const name = field.getName();
-    if (name === "") continue;
-    const widgets = field.acroField
-      .getWidgets()
-      .map((widget) => ({
-        page: widgetPage(widget),
-        rect: normRect(widget.getRectangle()),
-      }));
-    const base = {
-      name,
-      label: lastSegment(name),
-      widgets,
-      readOnly: field.isReadOnly(),
-      required: field.isRequired(),
-    };
-    // Most-specific instanceof first (optionlist before dropdown).
-    if (field instanceof PDFOptionList) {
-      const selected = field.getSelected();
-      fields.push({
+  switch (field.kind) {
+    case "text":
+      return {
         ...base,
-        kind: "optionlist",
-        multiline: false,
-        maxLength: null,
-        value: selected[0] ?? null,
-        selected,
-        options: field.getOptions(),
-      });
-    } else if (field instanceof PDFDropdown) {
-      const selected = field.getSelected();
-      fields.push({
-        ...base,
-        kind: "dropdown",
-        multiline: false,
-        maxLength: null,
-        value: selected[0] ?? null,
-        selected,
-        options: field.getOptions(),
-      });
-    } else if (field instanceof PDFRadioGroup) {
-      const selected = field.getSelected() ?? null;
-      fields.push({
-        ...base,
-        kind: "radio",
-        multiline: false,
-        maxLength: null,
-        value: selected,
-        selected: selected !== null ? [selected] : [],
-        options: field.getOptions(),
-      });
-    } else if (field instanceof PDFCheckBox) {
-      fields.push({
+        kind: "text",
+        multiline: field.multiline,
+        maxLength: field.maxLength !== null && field.maxLength >= 0 ? field.maxLength : null,
+        value: field.value,
+        selected: [],
+        options: [],
+      };
+    case "checkbox":
+      return {
         ...base,
         kind: "checkbox",
         multiline: false,
         maxLength: null,
-        value: field.isChecked(),
+        value: field.value === true,
         selected: [],
         options: [],
-      });
-    } else if (field instanceof PDFTextField) {
-      const max = field.getMaxLength();
-      fields.push({
+      };
+    case "radio":
+      return {
         ...base,
-        kind: "text",
-        multiline: field.isMultiline(),
-        maxLength: typeof max === "number" && max >= 0 ? max : null,
-        value: field.getText() ?? null,
-        selected: [],
-        options: [],
-      });
-    }
-    // Signature fields and pushbuttons are skipped — nothing to fill.
+        kind: "radio",
+        multiline: false,
+        maxLength: null,
+        value: field.value,
+        selected: field.value !== null ? [field.value as string] : [],
+        options: field.options,
+      };
+    case "dropdown":
+    case "optionlist":
+      return {
+        ...base,
+        kind: field.kind,
+        multiline: false,
+        maxLength: null,
+        value: field.value,
+        selected: field.selected,
+        options: field.options,
+      };
+    default:
+      // Signature fields and pushbuttons are skipped — nothing to fill.
+      return null;
   }
+}
 
+/**
+ * Scan the AcroForm of a PDF (throws on unreadable/encrypted files — the
+ * surface maps any failure to its honest "form could not be read" state).
+ */
+export async function scanFormFields(
+  bytes: Uint8Array | ArrayBuffer
+): Promise<FormScan> {
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const doc = parsePdf(data); // typed encrypted/corrupt errors
+  const fields: FillFieldScan[] = [];
+  for (const field of readAcroFormFields(doc)) {
+    const scanField = toScanField(field);
+    if (scanField !== null) fields.push(scanField);
+  }
+  const pages = listPages(doc);
   return {
     pageCount: pages.length,
     pages: pages.map((page) => ({
-      rotation: ((page.getRotation().angle % 360) + 360) % 360,
-      width: page.getWidth(),
-      height: page.getHeight(),
+      rotation: page.rotate,
+      width: page.mediaBox[2] - page.mediaBox[0],
+      height: page.mediaBox[3] - page.mediaBox[1],
     })),
     fields,
   };

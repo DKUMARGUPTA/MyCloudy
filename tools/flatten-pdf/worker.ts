@@ -1,6 +1,5 @@
-import { PDFDocument } from "pdf-lib";
-
 import type { OptionValues } from "@/lib/tools/config-types";
+import { StampContext } from "@/lib/own/pdf";
 import {
   parsePageSpec,
   type WorkerRunRequest,
@@ -19,11 +18,11 @@ import {
  * Options read (exact ids, matching tools/flatten-pdf/config.ts):
  *   scope  "both" (forms + annotations, default) | "forms" | "annotations"
  *   pages  page-range spec for the ANNOTATION pass (default "all") — the
- *          forms pass is document-wide in pdf-lib (the hint says so)
+ *          forms pass is document-wide (the hint says so)
  *
- * The engine (engine.ts) is the same pure pdf-lib pipeline the smoke locks;
- * this wrapper only adds IO, progress and typed error codes for the UI's
- * i18n toasts. Never touches the network.
+ * P6-p: the engine (engine.ts) is OUR pdf-lib-free pipeline (StampContext
+ * burn passes); this wrapper only adds IO, progress and typed error codes
+ * for the UI's i18n toasts. Never touches the network.
  *
  * A document with nothing to flatten SUCCEEDS: the input bytes are
  * passed through untouched (no re-save churn) and the result detail
@@ -52,6 +51,10 @@ function readScope(options: OptionValues): FlattenScope {
 async function run(request: WorkerRunRequest): Promise<void> {
   const { runId, options, files } = request;
   const file = files[0];
+  if (!file) {
+    post({ type: "error", runId, code: "tool.errorGeneric" });
+    return;
+  }
   const scope = readScope(options);
   const runAnnotations = scope !== "forms-only";
 
@@ -63,14 +66,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
   });
 
   const bytes = new Uint8Array(await file.arrayBuffer());
-  let doc: PDFDocument;
+
+  // ONE typed parse drives everything: encrypted files refuse with the
+  // honest error code, anything else unreadable is corrupt — and the page
+  // count for the range spec comes off the same parse.
+  let ctx: StampContext;
   try {
-    // Same guards as merge-pdf: encrypted files fail load with an
-    // /encrypt/ message, anything else unreadable is corrupt.
-    doc = await PDFDocument.load(bytes, {
-      ignoreEncryption: false,
-      updateMetadata: false,
-    });
+    ctx = StampContext.load(bytes);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     post({
@@ -88,7 +90,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   if (runAnnotations) {
     const trimmed = String(options.pages ?? "all").trim();
     if (trimmed !== "" && trimmed.toLowerCase() !== "all") {
-      annotationPages = parsePageSpec(trimmed, doc.getPageCount());
+      annotationPages = parsePageSpec(trimmed, ctx.pageCount);
       if (annotationPages === null) {
         post({
           type: "error",
@@ -109,19 +111,23 @@ async function run(request: WorkerRunRequest): Promise<void> {
   });
 
   try {
-    const report = flattenDocument(doc, {
-      scope,
-      annotationPages,
-      onAnnotationPage: (done, total) => {
-        post({
-          type: "progress",
-          runId,
-          pct: Math.min(88, 10 + Math.round((75 * done) / Math.max(1, total))),
-          stage: "processing",
-          detail: { page: done, pages: Math.max(1, total) },
-        });
+    const { report, bytes: saved } = flattenDocument(
+      bytes,
+      {
+        scope,
+        annotationPages,
+        onAnnotationPage: (done, total) => {
+          post({
+            type: "progress",
+            runId,
+            pct: Math.min(88, 10 + Math.round((75 * done) / Math.max(1, total))),
+            stage: "processing",
+            detail: { page: done, pages: Math.max(1, total) },
+          });
+        },
       },
-    });
+      ctx,
+    );
 
     post({
       type: "progress",
@@ -133,40 +139,24 @@ async function run(request: WorkerRunRequest): Promise<void> {
     // Already flat — normal usage, not an error: hand the ORIGINAL bytes
     // back untouched (byte-identical, zero re-save churn) and flag the
     // honest "nothing to flatten" chip on the result card.
-    if (report.nothingToDo) {
-      post({
-        type: "result",
-        runId,
-        outputs: [
-          {
-            name: `${safeBaseName(file.name)}-flattened.pdf`,
-            mime: "application/pdf",
-            blob: new Blob([bytes as unknown as BlobPart], {
-              type: "application/pdf",
-            }),
-          },
-        ],
-        detail: { files: 1, pages: report.pages, nothingFlattened: true },
-      });
-      return;
-    }
-
-    const saved = await doc.save({ useObjectStreams: true });
-    const outputName = `${safeBaseName(file.name)}-flattened.pdf`;
-
+    const outputBytes = report.nothingToDo ? bytes : saved;
     post({
       type: "result",
       runId,
       outputs: [
         {
-          name: outputName,
+          name: `${safeBaseName(file.name)}-flattened.pdf`,
           mime: "application/pdf",
-          blob: new Blob([saved as unknown as BlobPart], {
+          blob: new Blob([outputBytes as unknown as BlobPart], {
             type: "application/pdf",
           }),
         },
       ],
-      detail: { files: 1, pages: report.pages },
+      detail: {
+        files: 1,
+        pages: report.pages,
+        ...(report.nothingToDo ? { nothingFlattened: true } : {}),
+      },
     });
   } catch (error) {
     if (error instanceof FlattenFormsError) {
@@ -179,12 +169,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
       return;
     }
     // Anything else is unexpected: generic copy + short technical detail
-    // (no file names — pdf-lib messages never contain them).
+    // (no file names — engine messages never contain them).
     const message = error instanceof Error ? error.message : String(error);
     post({
       type: "error",
       runId,
-      code: "tool.errorGeneric",
+      code: /encrypt/i.test(message) ? "tool.errorEncrypted" : "tool.errorGeneric",
       detail: message.slice(0, 200),
     });
   }

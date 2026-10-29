@@ -33,6 +33,24 @@ export {
   type OrganizeProgress,
   type PlanEntry,
 } from "./ops";
+export {
+  readAcroFormFields,
+  decodeTextString,
+  WinAnsiError,
+  parseDaColorOp,
+  parseDaFontSize,
+  readDaString,
+  applyAffine,
+  composeAffine,
+  axialAlignedBounds,
+  composeAppearanceTransform,
+  IDENTITY_AFFINE,
+  type AcroFieldInfo,
+  type AcroFieldKind,
+  type AcroWidgetInfo,
+  type Affine,
+  type Quad,
+} from "./acroform";
 export { writeDocument, type WritePage, type WriteProgress, type WriteSynthetic } from "./writer";
 export { CreateContext, type CreateImage, type CreateImageOptions, type CreateLineOptions, type CreatePage, type CreateRectOptions, type CreateTextOptions, type CreateEllipseOptions, type CreateRoundedRectOptions } from "./create";
 export { ComposeContext, type ComposedForm, type PageFormEmbed, pageFormEmbed } from "./compose";

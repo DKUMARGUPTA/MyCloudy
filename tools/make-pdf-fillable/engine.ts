@@ -1,12 +1,9 @@
 import {
   PdfError,
   StampContext,
-  asDict,
-  latin1,
   parsePdf,
-  resolve,
+  readAcroFormFields,
   type ParsedPdf,
-  type PdfObj,
 } from "@/lib/own/pdf";
 
 /**
@@ -332,98 +329,23 @@ export interface BuildOptions {
 }
 
 /**
- * PDF text-string decode: UTF-16BE with the FEFF BOM, else
- * PDFDocEncoding≈latin1 — the engine's decodePdfText pattern (see
- * StampContext.getTitle).
- */
-function decodeTextString(b: Uint8Array): string {
-  if (b.length >= 2 && b[0] === 0xfe && b[1] === 0xff) {
-    let out = "";
-    for (let i = 2; i + 1 < b.length; i += 2) {
-      out += String.fromCharCode((b[i]! << 8) | b[i + 1]!);
-    }
-    return out;
-  }
-  return latin1(b, 0, b.length);
-}
-
-/** One /AcroForm field-tree node, /T resolved to its partial name. */
-function walkFieldNames(
-  doc: ParsedPdf,
-  obj: PdfObj | undefined,
-  parentName: string,
-  visit: (fqn: string) => void,
-  depth: number,
-): void {
-  const dict = obj ? asDict(obj) : undefined;
-  if (!dict || depth > 64) return;
-  const tObj = dict.get("T");
-  const partial =
-    tObj && (tObj.k === "str" || tObj.k === "hstr" || tObj.k === "lstr")
-      ? decodeTextString(tObj.b)
-      : "";
-  const fqn = parentName ? `${parentName}.${partial}` : partial;
-  // pdf-lib classifies non-terminals by /Kids CONTAINING kids WITH /T
-  // (widgets never carry /T) — those recurse, terminals are visited.
-  const kidsVal = resolve(doc, dict.get("Kids"));
-  const kids = kidsVal && kidsVal.k === "arr" ? kidsVal.items : undefined;
-  let nonTerminal = false;
-  if (kids) {
-    for (const kid of kids) {
-      const kidDict = asDict(resolve(doc, kid));
-      if (kidDict !== undefined && kidDict.has("T")) {
-        nonTerminal = true;
-        break;
-      }
-    }
-  }
-  if (nonTerminal) {
-    for (const kid of kids!) {
-      walkFieldNames(doc, resolve(doc, kid), fqn, visit, depth + 1);
-    }
-    return;
-  }
-  visit(fqn);
-}
-
-/**
- * The existing-field names a build must dedupe against — the parity of
- * pdf-lib's form.getFields().map(f => f.getName()): the catalog /AcroForm
- * /Fields tree (indirect /Fields and /Kids resolved), terminal fields'
- * fully-qualified names. No /AcroForm → an empty set.
+ * The existing-field names a build must dedupe against — the P6-p AcroForm
+ * reader (pdf-lib PDFForm.getFields() parity: the catalog /AcroForm
+ * /Fields tree, terminal fields' fully-qualified names; terminals with an
+ * unrecognizable /FT are skipped exactly like pdf-lib's getFields()).
+ * No /AcroForm → an empty set.
  */
 function existingFieldNames(doc: ParsedPdf): Set<string> {
   const names = new Set<string>();
-  const root = resolve(doc, doc.trailer.get("Root"));
-  const rootDict = root ? asDict(root) : undefined;
-  const acroForm = resolve(doc, rootDict?.get("AcroForm"));
-  const acroDict = acroForm ? asDict(acroForm) : undefined;
-  const fields = resolve(doc, acroDict?.get("Fields"));
-  if (!fields || fields.k !== "arr") return names;
-  for (const field of fields.items) {
-    walkFieldNames(doc, resolve(doc, field), "", (fqn) => names.add(fqn), 0);
-  }
+  for (const field of readAcroFormFields(doc)) names.add(field.name);
   return names;
 }
 
 /** Count existing AcroForm fields (honest "already has N" surface copy). */
 export async function countExistingFields(bytes: Uint8Array): Promise<number> {
-  const doc = parsePdf(bytes);
   try {
-    let count = 0;
-    const root = resolve(doc, doc.trailer.get("Root"));
-    const rootDict = root ? asDict(root) : undefined;
-    const acroForm = resolve(doc, rootDict?.get("AcroForm"));
-    const acroDict = acroForm ? asDict(acroForm) : undefined;
-    const fields = resolve(doc, acroDict?.get("Fields"));
-    if (fields && fields.k === "arr") {
-      for (const field of fields.items) {
-        walkFieldNames(doc, resolve(doc, field), "", () => {
-          count += 1;
-        }, 0);
-      }
-    }
-    return count;
+    const doc = parsePdf(bytes);
+    return readAcroFormFields(doc).length;
   } catch {
     return 0;
   }

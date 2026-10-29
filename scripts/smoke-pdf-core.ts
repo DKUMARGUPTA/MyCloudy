@@ -71,8 +71,11 @@ import {
   encodeWinAnsiHex,
   winAnsiEncodable,
   ParsedTtfFont,
+  readAcroFormFields,
   shapeText,
+  WinAnsiError,
   type StampTtfFont,
+  type AcroFieldInfo,
   type ParsedPdf,
   type PdfObj,
   type PdfPageInfo,
@@ -883,6 +886,9 @@ async function main(): Promise<void> {
 
   console.log("== 22. Edit-surface engine (P6-o): shapes + slots + annots + AcroForm ==");
   await section22();
+
+  console.log("== 23. Source-AcroForm consumer (P6-p): reader edges + fill + burn scopes ==");
+  await section23();
 
   // Artifacts for manual inspection (VLM/pdfjs follow-ups).
   const outAll = organizePdf(fixB, [
@@ -3297,6 +3303,309 @@ function firstValue(lex: Lexer): import("../src/lib/own/pdf/objects").PdfObj {
   const obj = doc.getObject(1);
   if (!obj) throw new Error("harness object missing");
   return obj;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ * SECTION 23 — the P6-p source-AcroForm consumer: READER edge cases
+ * (Ff bit positions, inheritable /FT, merged field-widgets, /Annots
+ * page fallback, unknown /FT skips, radio index→option mapping), the
+ * SET+write semantics (DA rewrite priority, MK /R rotation ops, dropdown
+ * Edit flag, optionlist /I), and the burn scopes (annotations-only
+ * keepWidgets, flatten + appended-annot composition).
+ * ══════════════════════════════════════════════════════════════════════ */
+async function section23(): Promise<void> {
+  /** latin1 of a whole byte array (the lexer helper is (data, from, to)). */
+  const latin1All = (b: Uint8Array): string => latin1(b, 0, b.length);
+
+  /* ── 23.1 reader edges ─────────────────────────────────────────────── */
+  {
+    const doc = await PDFDocument.create();
+    const page1 = doc.addPage([300, 300]);
+    doc.addPage([300, 300]);
+    const form = doc.getForm();
+
+    // readOnly + required — the Ff BIT POSITIONS (readOnly = 1, required = 2;
+    // the regression this section locks: they are NOT 2/4).
+    const ro = form.createTextField("flags.ro");
+    ro.enableReadOnly();
+    ro.enableRequired();
+    ro.addToPage(page1, { x: 20, y: 260, width: 200, height: 16 });
+
+    // Deep hierarchy + /FT moved UP to the parent (inheritable /FT).
+    const deep = form.createTextField("a.b.c.deep");
+    deep.addToPage(doc.getPage(1), { x: 20, y: 260, width: 200, height: 16 });
+
+    // Unknown /FT → skipped by the reader (pdf-lib getFields parity).
+    const weird = form.createTextField("weird.kind");
+    weird.addToPage(page1, { x: 20, y: 220, width: 200, height: 16 });
+
+    // MERGED field-widget: the field dict IS its own widget (no /Kids).
+    const merged = form.createTextField("merged.one");
+    const mergedBytes0 = await doc.save({ useObjectStreams: false });
+
+    // Hand-surgery stage (pdf-lib raw context): move /FT up, break the
+    // weird field's /FT, weld the merged widget-half, strip a /P.
+    const doc2 = await PDFDocument.load(mergedBytes0, { updateMetadata: false });
+    const form2 = doc2.getForm();
+    const deepField = form2.getTextField("a.b.c.deep");
+    const parent = deepField.acroField.getParent();
+    if (parent) {
+      parent.dict.set(PDFName.of("FT"), PDFName.of("Tx"));
+      deepField.acroField.dict.delete(PDFName.of("FT"));
+    }
+    const weirdField = form2.getTextField("weird.kind");
+    weirdField.acroField.dict.set(PDFName.of("FT"), PDFName.of("Zork"));
+    // merged: no addToPage — weld the widget half onto the field dict.
+    const mergedField = form2.getTextField("merged.one");
+    mergedField.acroField.dict.set(PDFName.of("Rect"), doc2.context.obj([20, 180, 220, 198]));
+    mergedField.acroField.dict.set(PDFName.of("Subtype"), PDFName.of("Widget"));
+    mergedField.acroField.dict.set(PDFName.of("F"), doc2.context.obj(4));
+    doc2.getPage(0).node.addAnnot(mergedField.ref);
+    // deep: strip the widget's /P → the /Annots scan must find its page.
+    const deepWidget = deepField.acroField.getWidgets()[0]!;
+    deepWidget.dict.delete(PDFName.of("P"));
+    const bytes = await doc2.save({ useObjectStreams: false });
+
+    const parsed = parsePdf(bytes);
+    const fields = readAcroFormFields(parsed);
+    const byName = new Map(fields.map((f) => [f.name, f]));
+
+    ok(fields.length === 3, `23.1 reader: unknown /FT skipped (3 of 4, got ${fields.length})`);
+    const roF = byName.get("flags.ro")!;
+    ok(roF.readOnly === true, "23.1 Ff: readOnly = bit 1 (value 1)");
+    ok(roF.required === true, "23.1 Ff: required = bit 2 (value 2)");
+    const deepF = byName.get("a.b.c.deep")!;
+    ok(deepF.kind === "text", "23.1 inheritable /FT through the parent chain");
+    ok(deepF.widgets[0]!.page === 1, "23.1 widget page via the /Annots scan (no /P)");
+    const mergedF = byName.get("merged.one")!;
+    ok(mergedF.widgets.length === 1, "23.1 merged field-widget (no /Kids) = own widget");
+    eq(mergedF.widgets[0]!.rect, { x: 20, y: 180, w: 200, h: 18 }, "23.1 merged widget rect");
+    ok(mergedF.widgets[0]!.page === 0, "23.1 merged widget page via /Annots");
+
+    // pdf-lib ORACLE cross-check on the SAME bytes.
+    const libDoc = await PDFDocument.load(bytes, { updateMetadata: false });
+    const libNames = libDoc.getForm().getFields().map((f) => f.getName()).sort();
+    eq(
+      fields.map((f) => f.name).sort(),
+      libNames,
+      "23.1 field-name parity with the pdf-lib oracle",
+    );
+  }
+
+  /* ── 23.2 radio index→option mapping (the addWidgetWithOpt quirk) ──── */
+  {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([300, 300]);
+    const form = doc.getForm();
+    const rg = form.createRadioGroup("pick.one");
+    rg.addOptionToPage("Alpha", page, { x: 20, y: 260, width: 14, height: 14 });
+    rg.addOptionToPage("Beta", page, { x: 20, y: 230, width: 14, height: 14 });
+    rg.select("Beta");
+    const bytes = await doc.save({ useObjectStreams: false });
+
+    const ours = readAcroFormFields(parsePdf(bytes));
+    const radio = ours.find((f) => f.name === "pick.one")!;
+    ok(radio.value === "Beta", `23.2 radio /V index maps to the /Opt label (got ${String(radio.value)})`);
+    eq(radio.options, ["Alpha", "Beta"], "23.2 radio options from /Opt");
+
+    // The SET path: option label → the widget's on-state INDEX name.
+    const ctx = StampContext.load(bytes);
+    const fields2 = ctx.readSourceFields();
+    ctx.setSourceRadio(fields2.find((f) => f.name === "pick.one")!, "Alpha");
+    const out = ctx.write();
+    const libDoc = await PDFDocument.load(out, { updateMetadata: false });
+    ok(
+      libDoc.getForm().getRadioGroup("pick.one").getSelected() === "Alpha",
+      "23.2 setSourceRadio round-trips through the oracle",
+    );
+  }
+
+  /* ── 23.3 fill semantics: DA priority, MK rotation, Edit flag, /I ────── */
+  {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([300, 300]);
+    const form = doc.getForm();
+
+    // Widget carries its OWN DA (color) — the DA rewrite must hit the WIDGET.
+    const tf = form.createTextField("da.widget");
+    tf.addToPage(page, { x: 20, y: 260, width: 200, height: 18 });
+    // Field-DA field (no widget DA) — the rewrite must hit the FIELD.
+    const tf2 = form.createTextField("da.field");
+    tf2.addToPage(page, { x: 20, y: 220, width: 200, height: 18 });
+    // Custom dropdown value (outside /Opt) + optionlist multi-select.
+    const dd = form.createDropdown("dd.custom");
+    dd.addOptions(["One", "Two"]);
+    dd.addToPage(page, { x: 20, y: 180, width: 160, height: 18 });
+    const ol = form.createOptionList("ol.multi");
+    ol.addOptions(["a", "b", "c", "d"]);
+    ol.addToPage(page, { x: 20, y: 120, width: 160, height: 60 });
+    const bytes = await doc.save({ useObjectStreams: false });
+
+    // Weld a widget-level DA onto tf's widget (pdf-lib keeps DA on fields).
+    // context.obj(string) makes a PDFName — DA must be a PDFString.
+    const { PDFString } = await import("pdf-lib");
+    const doc2 = await PDFDocument.load(bytes, { updateMetadata: false });
+    const tfWidget = doc2.getForm().getTextField("da.widget").acroField.getWidgets()[0]!;
+    tfWidget.dict.set(
+      PDFName.of("DA"),
+      PDFString.of("0 1 0 rg /Helv 9 Tf"),
+    );
+    // Rotated widget: MK /R 90 on tf2's widget.
+    const tf2Widget = doc2.getForm().getTextField("da.field").acroField.getWidgets()[0]!;
+    tf2Widget.dict.set(PDFName.of("MK"), doc2.context.obj({ R: 90 }));
+    const bytes2 = await doc2.save({ useObjectStreams: false });
+
+    const ctx = StampContext.load(bytes2);
+    const fields = new Map(ctx.readSourceFields().map((f) => [f.name, f]));
+    ctx.setSourceTextField(fields.get("da.widget")!, "hello widget");
+    ctx.setSourceTextField(fields.get("da.field")!, "hello field");
+    ctx.setSourceChoice(fields.get("dd.custom")!, ["Three"]);
+    ctx.setSourceChoice(fields.get("ol.multi")!, ["d", "b"]);
+    const out = ctx.write();
+
+    const parsed = parsePdf(out);
+    const outFields = readAcroFormFields(parsed);
+    const byName = new Map(outFields.map((f) => [f.name, f]));
+
+    // DA rewrite priority: the WIDGET's DA (it carried a color) vs the FIELD's.
+    const daWidgetInfo = byName.get("da.widget")!;
+    const widgetDa = daWidgetInfo.widgets[0]!.dict.m.get("DA");
+    const widgetDaText =
+      widgetDa && "b" in widgetDa ? latin1All((widgetDa as { b: Uint8Array }).b) : "";
+    ok(
+      /^0 1 0 rg\n\/Helvetica \d+(\.\d+)? Tf$/.test(widgetDaText),
+      `23.3 widget-DA rewrite wins when the widget carried a color ("${widgetDaText}")`,
+    );
+    const fieldDa = byName.get("da.field")!.dict.m.get("DA");
+    const fieldDaText =
+      fieldDa && "b" in fieldDa ? latin1All((fieldDa as { b: Uint8Array }).b) : "";
+    ok(
+      /Helvetica \d+(\.\d+)? Tf/.test(fieldDaText),
+      `23.3 field-DA rewritten when the widget had none ("${fieldDaText}")`,
+    );
+
+    // Rotated widget: the regenerated AP opens with the rotateInPlace(90) pair.
+    const rotWidget = byName.get("da.field")!.widgets[0]!;
+    const apVal = rotWidget.dict.m.get("AP");
+    const ap = apVal ? resolve(parsed, apVal) : undefined;
+    if (ap && ap.k === "dict") {
+      const n = resolve(parsed, ap.m.get("N"));
+      if (n && n.k === "stream") {
+        const body = latin1All(n.raw);
+        ok(
+          body.startsWith("1 0 0 1 201 0 cm\n0 1 -1 0 0 0 cm"),
+          `23.3 MK /R 90 → rotateInPlace(90) ops — translate by the widget /Rect width 201 (got "${body.slice(0, 40).replace(/\n/g, "⏎")}")`,
+        );
+      } else {
+        ok(false, "23.3 rotated widget /AP /N is a stream");
+      }
+    } else {
+      ok(false, "23.3 rotated widget has /AP");
+    }
+
+    // Dropdown custom value → Edit flag (bit 19 = 262144) + the value.
+    const ddOut = byName.get("dd.custom")!;
+    const ff = asNum(ddOut.dict.m.get("Ff")) ?? 0;
+    ok(
+      (ff & (1 << 18)) !== 0,
+      `23.3 dropdown custom value sets the Edit flag (Ff ${ff})`,
+    );
+    ok(ddOut.value === "Three", "23.3 dropdown custom value stored");
+
+    // Optionlist multi-select: /V array + sorted /I indices + MultiSelect flag.
+    const olOut = byName.get("ol.multi")!;
+    eq(olOut.selected, ["d", "b"], "23.3 optionlist multi-select /V array");
+    const olFf = asNum(olOut.dict.m.get("Ff")) ?? 0;
+    ok((olFf & (1 << 21)) !== 0, "23.3 optionlist MultiSelect flag set");
+    const iVal = olOut.dict.m.get("I");
+    const iItems =
+      iVal && iVal.k === "arr"
+        ? iVal.items.map((it) => (it.k === "num" ? it.n : -1))
+        : [];
+    eq(iItems, [1, 3], "23.3 optionlist /I sorted indices");
+  }
+
+  /* ── 23.4 burn scopes: annotations-only keepWidgets + composition ──── */
+  {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([300, 300]);
+    const form = doc.getForm();
+    const tf = form.createTextField("keep.me");
+    tf.addToPage(page, { x: 20, y: 260, width: 200, height: 18 });
+    // A burnable non-widget annotation (direct /N stream clone path).
+    const ctx0 = doc.context;
+    const streamDict = ctx0.obj({
+      Type: "XObject",
+      Subtype: "Form",
+      BBox: [0, 0, 50, 20],
+      Resources: {},
+    });
+    const { PDFRawStream } = await import("pdf-lib");
+    const ap = PDFRawStream.of(
+      streamDict as never,
+      new TextEncoder().encode("1 0 0 rg 0 0 50 20 re f"),
+    );
+    const annot = ctx0.obj({
+      Type: "Annot",
+      Subtype: "Square",
+      Rect: [20, 200, 120, 220],
+      F: 4,
+      AP: { N: ap },
+    });
+    page.node.addAnnot(ctx0.register(annot));
+    const bytes = await doc.save({ useObjectStreams: false });
+
+    // annotations-only scope: the form SURVIVES, the Square burns, /Annots
+    // keeps exactly the widget ref.
+    const ctx = StampContext.load(bytes);
+    const r = ctx.burnSourceAnnotations({ keepWidgets: true });
+    const out = ctx.write();
+    ok(r.burned === 1 && r.skipped === 1, `23.4 annotations-only: 1 burned + 1 widget kept (got ${r.burned}/${r.skipped})`);
+    const parsed = parsePdf(out);
+    const outFields = readAcroFormFields(parsed);
+    ok(outFields.length === 1, "23.4 annotations-only: the form SURVIVES (field readable)");
+    const outPage = listPages(parsed)[0]!;
+    const annotsOut = resolve(parsed, outPage.dict.get("Annots"));
+    const annotCount =
+      annotsOut && annotsOut.k === "arr" ? annotsOut.items.length : 0;
+    ok(annotsOut !== undefined && annotCount === 1, `23.4 /Annots = the widget ref only (${annotCount})`);
+    // The burn stream carries the Do op + the form widget AP untouched.
+    const libDoc = await PDFDocument.load(out, { updateMetadata: false });
+    ok(
+      libDoc.getForm().getTextField("keep.me") !== undefined,
+      "23.4 oracle: the field still works after the annotations-only burn",
+    );
+
+    // Full scope on the SAME fixture: everything interactive dies, and an
+    // appended annot (edit-pdf's appendAnnot) still rides on top.
+    const ctx2 = StampContext.load(bytes);
+    const fields2 = ctx2.readSourceFields();
+    ctx2.setSourceTextField(fields2.find((f) => f.name === "keep.me")!, "burned value");
+    ctx2.flattenSourceForm();
+    const r2 = ctx2.burnSourceAnnotations({});
+    ctx2.appendAnnot(
+      0,
+      (() => {
+        const d = new Map<string, PdfObj>();
+        return { k: "dict", m: d };
+      })(),
+    );
+    const out2 = ctx2.write();
+    ok(r2.burned === 1 && r2.skipped === 0, `23.4 full scope: 1 annot burned, no skips (got ${r2.burned}/${r2.skipped})`);
+    const parsed2 = parsePdf(out2);
+    ok(
+      readAcroFormFields(parsed2).length === 0,
+      "23.4 full scope: no fields remain",
+    );
+    const outPage2 = listPages(parsed2)[0]!;
+    ok(outPage2.dict.get("Annots") !== undefined, "23.4 appended annot still rides after the flatten's override");
+    const annots2 = resolve(parsed2, outPage2.dict.get("Annots"));
+    ok(
+      annots2 !== undefined && annots2.k === "arr" && annots2.items.length === 1,
+      "23.4 /Annots = exactly the appended annot",
+    );
+  }
 }
 
 main().catch((err) => {

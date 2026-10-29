@@ -21,6 +21,7 @@ import { writeFile } from "node:fs/promises";
 import {
   PDFBool,
   PDFCheckBox,
+  PDFDict,
   PDFDocument,
   PDFDropdown,
   PDFName,
@@ -30,11 +31,11 @@ import {
   StandardFonts,
 } from "pdf-lib";
 import {
-  isWinAnsiText,
-  scanFormFields,
-  userRectToDisplay,
-  displaySize,
-} from "../tools/fill-out-pdf/scan";
+  StampContext,
+  WinAnsiError,
+  readAcroFormFields,
+} from "../src/lib/own/pdf";
+import { isWinAnsiText, scanFormFields, userRectToDisplay, displaySize } from "../tools/fill-out-pdf/scan";
 import {
   type FdfEntry,
   FdfParseError,
@@ -169,34 +170,28 @@ async function main(): Promise<void> {
   const pincode = byName.get("applicant.pincode");
   eq(pincode?.maxLength, 6, "maxLength scanned");
 
-  // --- 2. Worker application (simulated: same engine code) --------------
-  // Re-load, apply the same kinds of edits the worker performs.
-  const doc2 = await PDFDocument.load(bytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
-  const form2 = doc2.getForm();
-  const f2 = (n: string) => form2.getField(n);
+  // --- 2. Worker application (OWN engine — the worker's exact code path) ---
+  const ctx = StampContext.load(bytes); // typed encrypted/corrupt refusal
+  const byNameCtx = new Map(ctx.readSourceFields().map((f) => [f.name, f]));
 
-  (f2("applicant.name") as PDFTextField).setText("Arjun Mehta");
-  // maxLength fields THROW on overflow in pdf-lib — the worker pre-truncates
-  // (verify the throw, then mirror the worker's slice).
+  ctx.setSourceTextField(byNameCtx.get("applicant.name")!, "Arjun Mehta");
+  // maxLength fields THROW on overflow (pdf-lib parity) — the worker
+  // pre-truncates; verify the throw, then mirror the worker's slice.
   let threw = false;
   try {
-    (f2("applicant.pincode") as PDFTextField).setText("1100019999");
+    ctx.setSourceTextField(byNameCtx.get("applicant.pincode")!, "1100019999");
   } catch {
     threw = true;
   }
-  assert(threw, "pdf-lib throws on maxLength overflow (worker must truncate)");
-  (f2("applicant.pincode") as PDFTextField).setText("110001".slice(0, 6));
-  const agree2 = f2("consent.agree") as PDFCheckBox;
-  agree2.check();
-  (f2("address.city") as PDFDropdown).select("Jaipur");
-  (f2("personal.gender") as PDFRadioGroup).select("Male");
-  (f2("skills.languages") as PDFOptionList).select(["Hindi", "Tamil"]);
+  assert(threw, "engine throws on maxLength overflow (worker must truncate)");
+  ctx.setSourceTextField(byNameCtx.get("applicant.pincode")!, "110001".slice(0, 6));
+  ctx.setSourceCheckbox(byNameCtx.get("consent.agree")!, true);
+  ctx.setSourceChoice(byNameCtx.get("address.city")!, ["Jaipur"]);
+  ctx.setSourceRadio(byNameCtx.get("personal.gender")!, "Male");
+  ctx.setSourceChoice(byNameCtx.get("skills.languages")!, ["Hindi", "Tamil"]);
   // locked.total untouched (read-only, UI disables it)
 
-  const saved2 = await doc2.save();
+  const saved2 = ctx.write();
   const reread = await PDFDocument.load(saved2, { updateMetadata: false });
   const f3 = reread.getForm();
   eq((f3.getField("applicant.name") as PDFTextField).getText(), "Arjun Mehta", "text value round-trips");
@@ -211,45 +206,50 @@ async function main(): Promise<void> {
   );
   eq((f3.getField("locked.total") as PDFTextField).getText(), "Rs 1,250", "untouched field keeps its value");
 
-  // --- 2b. Non-WinAnsi (Hindi) value + save appearance strategy ----------
-  // setText stores the raw value and NEVER throws for encoding — but
-  // doc.save() regenerates dirty appearances with WinAnsi Helvetica and
-  // WOULD throw. The worker detects non-WinAnsi text (isWinAnsiText) and
-  // re-renders those fields with the Devanagari font; if that also fails
-  // it falls back to NeedAppearances + save(updateFieldAppearances:false).
-  // Here: verify the detection + the last-resort fallback round-trip.
+  // --- 2b. Non-WinAnsi (Hindi) value + the engine's honest contract ------
+  // setSourceTextField writes /V FIRST, then throws WinAnsiError when the
+  // Helvetica regeneration cannot encode the text (the engine contract the
+  // worker catches) — a BETTER seam than pdf-lib's save()-time throw: the
+  // value is ALWAYS already in the file. The worker re-sets with the
+  // embedded Devanagari TTF; if that fetch fails it falls back to
+  // /NeedAppearances (the viewer regenerates). Both paths round-trip here.
   assert(!isWinAnsiText("अर्जुन मेहता"), "isWinAnsiText flags Hindi");
   assert(!isWinAnsiText("₹1,250"), "isWinAnsiText flags the rupee sign");
   assert(isWinAnsiText("Arjun Mehta, 42nd Cross — Mumbai 400001! €125"),
     "isWinAnsiText accepts WinAnsi Latin + punctuation");
 
-  const docH = await PDFDocument.load(bytes, { updateMetadata: false });
-  const nameField = docH.getForm().getField("applicant.name") as PDFTextField;
-  nameField.setText("अर्जुन मेहता"); // never throws for encoding
-  let saveThrew = false;
+  const ctxH = StampContext.load(bytes);
+  const fieldsH = new Map(ctxH.readSourceFields().map((f) => [f.name, f]));
+  let winThrew: WinAnsiError | null = null;
   try {
-    await docH.save(); // default-font regeneration throws WinAnsi
-  } catch {
-    saveThrew = true;
+    ctxH.setSourceTextField(fieldsH.get("applicant.name")!, "अर्जुन मेहता");
+  } catch (error) {
+    if (error instanceof WinAnsiError) winThrew = error;
   }
-  assert(saveThrew, "save() with default fonts throws for Hindi (worker must pre-render)");
-  const formH = docH.getForm();
-  try {
-    formH.acroForm.dict.set(PDFName.of("NeedAppearances"), PDFBool.True);
-  } catch {
-    /* simulated fallback guard */
-  }
-  const savedH = await docH.save({ updateFieldAppearances: false });
+  assert(winThrew !== null, "setSourceTextField throws WinAnsiError for Hindi (worker re-sets with the TTF)");
+  // The contract: /V IS already written when the throw happens.
+  const nameAfterThrow = readAcroFormFields(ctxH.doc).find((f) => f.name === "applicant.name")!;
+  eq(nameAfterThrow.value, "अर्जुन मेहता", "WinAnsiError contract: /V already written");
+  // The NeedAppearances fallback (font fetch failed): write as-is.
+  ctxH.setNeedAppearances();
+  const savedH = ctxH.write();
   const rereadH = await PDFDocument.load(savedH, { updateMetadata: false });
   eq(
     (rereadH.getForm().getField("applicant.name") as PDFTextField).getText(),
     "अर्जुन मेहता",
     "Hindi value round-trips via the NeedAppearances fallback"
   );
+  assert(
+    rereadH.catalog.lookupMaybe(PDFName.of("AcroForm"), PDFDict)
+      ?.lookupMaybe(PDFName.of("NeedAppearances"), PDFBool) !== undefined,
+    "NeedAppearances flagged true on the AcroForm"
+  );
 
-  // --- 3. Flatten -------------------------------------------------------
-  await reread.getForm().flatten();
-  const savedFlat = await reread.save();
+  // --- 3. Flatten (OWN engine) ------------------------------------------
+  const ctxFlat = StampContext.load(saved2);
+  const flatCount = ctxFlat.flattenSourceForm();
+  eq(flatCount, 10, "flatten: all 10 fields baked");
+  const savedFlat = ctxFlat.write();
   const flat = await PDFDocument.load(savedFlat, { updateMetadata: false });
   eq(flat.getForm().getFields().length, 0, "flattened form has no fields left");
   eq(flat.getPageCount(), 2, "page count preserved after flatten");
@@ -450,23 +450,19 @@ async function main(): Promise<void> {
   // --- 5c. Full round-trip: export → fresh load → apply → save → read ---
   // The surface's own import applies the same per-kind writes the worker
   // performs; prove the exported answers land in a re-saved PDF.
-  const doc3 = await PDFDocument.load(bytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
-  const form3 = doc3.getForm();
-  const byName3 = new Map(form3.getFields().map((f) => [f.getName(), f]));
+  const ctx3 = StampContext.load(bytes);
+  const byName3 = new Map(ctx3.readSourceFields().map((f) => [f.name, f]));
   for (const apply of matchFdfEntries(entries, freshScan.fields).applies) {
     const field = byName3.get(apply.name);
     if (!field) continue;
-    if (field instanceof PDFTextField) field.setText(String(apply.value));
-    else if (field instanceof PDFCheckBox && apply.value === true) field.check();
-    else if (field instanceof PDFDropdown && typeof apply.value === "string")
-      field.select(apply.value);
-    else if (field instanceof PDFRadioGroup && typeof apply.value === "string")
-      field.select(apply.value);
+    if (field.kind === "text") ctx3.setSourceTextField(field, String(apply.value));
+    else if (field.kind === "checkbox" && apply.value === true) ctx3.setSourceCheckbox(field, true);
+    else if (field.kind === "dropdown" && typeof apply.value === "string")
+      ctx3.setSourceChoice(field, [apply.value]);
+    else if (field.kind === "radio" && typeof apply.value === "string")
+      ctx3.setSourceRadio(field, apply.value);
   }
-  const saved3 = await doc3.save({ updateFieldAppearances: false });
+  const saved3 = ctx3.write();
   const reread3 = await PDFDocument.load(saved3, { updateMetadata: false });
   const f4 = reread3.getForm();
   eq(
