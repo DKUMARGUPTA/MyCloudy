@@ -47,7 +47,13 @@ import {
   PDFString,
   type PDFRef,
 } from "pdf-lib";
-import { applyDocInfoEdits, stripAllMetadata } from "../tools/meta-common/worker-lib";
+import {
+  applyDocInfoEdits,
+  infoDict,
+  loadMetaDoc,
+  saveMetaDoc,
+  stripAllMetadata,
+} from "../tools/meta-common/worker-lib";
 import type { WorkerRunRequest, WorkerResponse } from "../src/lib/workers/protocol";
 
 function fail(message: string): never {
@@ -151,12 +157,13 @@ async function main(): Promise<void> {
     "comma keywords round-trip verbatim"
   );
 
-  /* ---- 3. STRIP ALL via the REAL worker-lib --------------------------- */
-  const report = stripAllMetadata(doc, true);
+  /* ---- 3. STRIP ALL via the REAL worker-lib (OWN engine, P6-s) --------- */
+  const meta = loadMetaDoc(bytes);
+  const report = stripAllMetadata(meta, true);
   eq(report.removedFields.length, 9, "strip report counts Info entries (incl. dates + custom)");
   assert(report.removedXmp, "strip report: xmp removed");
 
-  const stripped = await doc.save();
+  const stripped = saveMetaDoc(meta);
   await writeFile("download/qa-p39-stripped.pdf", stripped);
   // Raw bytes first: the saved trailer must not carry /Info at all. (The
   // getters below lazily RE-CREATE an empty Info dict — pdf-lib's
@@ -193,8 +200,8 @@ async function main(): Promise<void> {
   eq(check.getModificationDate(), undefined, "stripped mod date gone");
 
   /* ---- 4. PARTIAL EDIT via the REAL applyDocInfoEdits ---------------- */
-  const doc2 = await PDFDocument.load(bytes, { updateMetadata: false });
-  applyDocInfoEdits(doc2, {
+  const meta2 = loadMetaDoc(bytes);
+  applyDocInfoEdits(meta2, {
     title: "New Title",
     author: "Arjun",
     subject: "", // remove
@@ -206,7 +213,7 @@ async function main(): Promise<void> {
     stripXmp: false,
     stripCustom: false,
   });
-  const partial = await doc2.save();
+  const partial = saveMetaDoc(meta2);
   const check2 = await PDFDocument.load(partial, { updateMetadata: false });
   eq(check2.getTitle(), "New Title", "partial: new title");
   eq(check2.getAuthor(), "Arjun", "partial: new author");
@@ -241,8 +248,8 @@ async function main(): Promise<void> {
   );
 
   /* ---- 5. EMPTY INFO CLEANUP (everything removed) --------------------- */
-  const doc3 = await PDFDocument.load(bytes, { updateMetadata: false });
-  applyDocInfoEdits(doc3, {
+  const meta3 = loadMetaDoc(bytes);
+  applyDocInfoEdits(meta3, {
     title: "",
     author: "",
     subject: "",
@@ -254,7 +261,7 @@ async function main(): Promise<void> {
     stripXmp: true,
     stripCustom: true,
   });
-  const emptied = await doc3.save();
+  const emptied = saveMetaDoc(meta3);
   const check3 = await PDFDocument.load(emptied, { updateMetadata: false });
   eq(
     check3.context.trailerInfo.Info,
@@ -269,9 +276,20 @@ async function main(): Promise<void> {
   eq(check3.getPageCount(), 1, "empty info: pages intact");
   // (cleanup already verified above)
   /* ---- 6. updateMetadata:false keeps pdf-lib's own stamp out --------- */
-  const doc4 = await PDFDocument.load(bytes, { updateMetadata: false });
-  doc4.setTitle("Only Title");
-  const saved4 = await doc4.save();
+  const meta4 = loadMetaDoc(bytes);
+  applyDocInfoEdits(meta4, {
+    title: "Only Title",
+    author: undefined,
+    subject: undefined,
+    keywords: undefined,
+    creator: undefined,
+    producer: undefined,
+    creationMode: "keep",
+    modMode: "keep",
+    stripXmp: false,
+    stripCustom: false,
+  });
+  const saved4 = saveMetaDoc(meta4);
   const check4 = await PDFDocument.load(saved4, { updateMetadata: false });
   eq(check4.getProducer(), "LibreOffice 7.6", "producer not overwritten");
   eq(check4.getTitle(), "Only Title", "title written");
@@ -340,8 +358,8 @@ async function main(): Promise<void> {
   );
 
   const deepBytes = await deep.save();
-  const deepDoc = await PDFDocument.load(deepBytes, { updateMetadata: false });
-  const deepReport = stripAllMetadata(deepDoc, true);
+  const deepMeta = loadMetaDoc(deepBytes);
+  const deepReport = stripAllMetadata(deepMeta, true);
   eq(deepReport.removedPieceInfo, 2, "deep strip: both pages' PieceInfo counted (direct + indirect)");
   eq(deepReport.removedPageMetadata, 1, "deep strip: page metadata stream counted");
   eq(deepReport.removedAnnotationDates, 3, "deep strip: 3 annotation /M dates counted (control skipped)");
@@ -352,7 +370,7 @@ async function main(): Promise<void> {
     "deep strip: page-level XMP is NOT misreported as catalog XMP (fixture has none)"
   );
 
-  const deepSaved = await deepDoc.save();
+  const deepSaved = saveMetaDoc(deepMeta);
   const deepCheck = await PDFDocument.load(deepSaved, { updateMetadata: false });
   eq(deepCheck.getPageCount(), 2, "deep strip: pages intact");
   for (const [pi, page] of deepCheck.getPages().entries()) {
@@ -398,21 +416,16 @@ async function main(): Promise<void> {
   const cleanDoc = await PDFDocument.create({ updateMetadata: false });
   cleanDoc.addPage([200, 200]);
   const cleanBytes = await cleanDoc.save();
-  const cleanCheck = await PDFDocument.load(cleanBytes, { updateMetadata: false });
-  const cleanReport = stripAllMetadata(cleanCheck, true);
+  const cleanReport = stripAllMetadata(loadMetaDoc(cleanBytes), true);
   eq(cleanReport.removedPieceInfo, 0, "clean file: 0 PieceInfo");
   eq(cleanReport.removedPageMetadata, 0, "clean file: 0 page metadata");
   eq(cleanReport.removedAnnotationDates, 0, "clean file: 0 annotation dates");
   eq(cleanReport.removedXmp, false, "clean file: no XMP claim");
 
   /* ---- 8. stripCustom SCOPE (slash-shape regression) --------------- */
-  const scopeDoc = await PDFDocument.load(bytes, { updateMetadata: false });
-  const scopeInfo = scopeDoc.context.lookup(
-    scopeDoc.context.trailerInfo.Info as never,
-    PDFDict
-  );
-  scopeInfo.set(PDFName.of("Trapped"), PDFName.of("False"));
-  applyDocInfoEdits(scopeDoc, {
+  const scopeMeta = loadMetaDoc(bytes);
+  infoDict(scopeMeta)?.set("Trapped", { k: "name", v: "False" });
+  applyDocInfoEdits(scopeMeta, {
     title: undefined,
     author: undefined,
     subject: undefined,
@@ -424,7 +437,7 @@ async function main(): Promise<void> {
     stripXmp: false,
     stripCustom: true,
   });
-  const scopeSaved = await scopeDoc.save();
+  const scopeSaved = saveMetaDoc(scopeMeta);
   const scopeCheck = await PDFDocument.load(scopeSaved, { updateMetadata: false });
   eq(scopeCheck.getTitle(), "Quarterly Report", "stripCustom keeps standard Title");
   eq(scopeCheck.getProducer(), "LibreOffice 7.6", "stripCustom keeps standard Producer");

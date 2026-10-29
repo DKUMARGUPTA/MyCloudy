@@ -1,20 +1,22 @@
-import { PDFDocument } from "pdf-lib";
-
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
 import { fileBaseName } from "../stamp-common/layout";
 import { RM_IDS } from "../meta-common/meta";
-import { stripAllMetadata } from "../meta-common/worker-lib";
+import {
+  loadMetaDoc,
+  saveMetaDoc,
+  stripAllMetadata,
+} from "../meta-common/worker-lib";
 
 /**
  * Remove PDF metadata worker (PRD §8.3): strips the whole Info dictionary,
  * (optionally) the XMP /Metadata stream AND the page-level extras — every
  * page's /PieceInfo, its own /Metadata stream, every annotation's /M
- * modification date — with pdf-lib, on-device, zero network. Every strip
- * is object-level (the objects are dropped from the file, not just
- * blanked); the honest per-category counts ride the result detail.
+ * modification date — on the OWN engine (P6-s), on-device, zero network.
+ * Every strip is object-level (the objects are dropped from the file, not
+ * just blanked); the honest per-category counts ride the result detail.
  * Smoke-locked in scripts/smoke-metadata.ts.
  */
 
@@ -33,19 +35,14 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 8, stage: "reading" });
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const doc = await PDFDocument.load(bytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
-  const pageCount = doc.getPageCount();
+  const meta = loadMetaDoc(bytes); // typed encrypted/corrupt throws
+  const pageCount = meta.pageCount;
 
   post({ type: "progress", runId, pct: 35, stage: "processing" });
-  // Snapshot BEFORE stripping — pdf-lib's getters lazily re-create an empty
-  // Info dict, so the count must be read first (see smoke test #3).
-  const report = stripAllMetadata(doc, alsoXmp);
+  const report = stripAllMetadata(meta, alsoXmp);
 
   post({ type: "progress", runId, pct: 90, stage: "saving" });
-  const saved = await doc.save({ useObjectStreams: true });
+  const saved = saveMetaDoc(meta);
   const outputs = [
     {
       name: `${fileBaseName(file.name)}-clean.pdf`,

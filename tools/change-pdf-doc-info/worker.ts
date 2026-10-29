@@ -1,19 +1,20 @@
-import { PDFDocument } from "pdf-lib";
-
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
 import { fileBaseName } from "../stamp-common/layout";
 import { resolveDocInfoEdits } from "../meta-common/meta";
-import { applyDocInfoEdits } from "../meta-common/worker-lib";
+import {
+  applyDocInfoEdits,
+  loadMetaDoc,
+  saveMetaDoc,
+} from "../meta-common/worker-lib";
 
 /**
  * Change document information worker (PRD §8.2): applies the form edits to
- * the Info dict with pdf-lib — on-device, zero network. `updateMetadata:
- * false` keeps pdf-lib from stamping its own Producer/ModDate so every
- * field is exactly what the user chose (smoke-locked, see
- * scripts/smoke-metadata.ts).
+ * the Info dict on the OWN engine (P6-s) — on-device, zero network. Nothing
+ * stamps its own Producer/ModDate, so every field is exactly what the user
+ * chose (smoke-locked, see scripts/smoke-metadata.ts).
  */
 
 function post(response: WorkerResponse): void {
@@ -31,16 +32,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 8, stage: "reading" });
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const doc = await PDFDocument.load(bytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
+  const meta = loadMetaDoc(bytes); // typed encrypted/corrupt throws
 
   post({ type: "progress", runId, pct: 40, stage: "processing" });
-  applyDocInfoEdits(doc, edits);
+  applyDocInfoEdits(meta, edits);
 
   post({ type: "progress", runId, pct: 92, stage: "saving" });
-  const saved = await doc.save({ useObjectStreams: true });
+  const saved = saveMetaDoc(meta);
   const outputs = [
     {
       name: `${fileBaseName(file.name)}-edited.pdf`,
@@ -54,7 +52,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     type: "result",
     runId,
     outputs,
-    detail: { files: 1, pages: doc.getPageCount() },
+    detail: { files: 1, pages: meta.pageCount },
   });
 }
 

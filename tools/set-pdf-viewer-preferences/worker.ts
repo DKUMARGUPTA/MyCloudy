@@ -1,19 +1,30 @@
-import { NonFullScreenPageMode, PDFDocument, PDFName } from "pdf-lib";
-
 import type { OptionValues } from "@/lib/tools/config-types";
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
+import {
+  PdfError,
+  arr,
+  listPages,
+  name,
+  num,
+  parsePdf,
+  ref,
+  rewriteDocument,
+  type ParsedPdf,
+  type PdfObj,
+} from "@/lib/own/pdf";
 import { hasExistingSignature } from "../digital-signature/model";
 import { fileBaseName } from "../stamp-common/layout";
 
 /**
  * Set viewer preferences — device-only worker (PRD §8.5 "Viewer
  * preferences": initial page layout, zoom, window title show, hide
- * toolbars, fullscreen).
+ * toolbars, fullscreen) — OWN ENGINE (P6-s).
  *
- * Everything is written with pdf-lib into the document catalog:
+ * Everything is written into the document catalog (mutated on the parsed
+ * graph, re-serialized by the preserve-numbers rewriter):
  *   PageLayout (how pages arrange) + PageMode (side panel / fullscreen)
  *   + the ViewerPreferences dict (toolbar/menubar/window UI/title/
  *   sizing) + an OpenAction destination (opening page + zoom).
@@ -50,9 +61,9 @@ const PAGE_MODES = [
 ] as const;
 
 const EXIT_FS_MODES = [
-  NonFullScreenPageMode.UseNone,
-  NonFullScreenPageMode.UseThumbs,
-  NonFullScreenPageMode.UseOutlines,
+  "UseNone",
+  "UseThumbs",
+  "UseOutlines",
 ] as const;
 
 const ZOOMS = ["50", "75", "100", "125", "150", "200", "fitPage", "fitWidth"] as const;
@@ -88,8 +99,32 @@ function pickTriState(options: OptionValues, id: string): boolean | null {
   return null;
 }
 
+/** The catalog's dict map (null when the trailer /Root is unusable). */
+function catalogMap(doc: ParsedPdf): Map<string, PdfObj> | null {
+  const root = doc.trailer.get("Root");
+  if (!root || root.k !== "ref") return null;
+  const catalog = doc.getObject(root.num);
+  if (!catalog || (catalog.k !== "dict" && catalog.k !== "stream")) return null;
+  return catalog.m;
+}
+
+/** The live ViewerPreferences map, created (direct in the catalog) if absent. */
+function viewerPreferencesMap(doc: ParsedPdf): Map<string, PdfObj> | null {
+  const catalog = catalogMap(doc);
+  if (catalog === null) return null;
+  const existing = catalog.get("ViewerPreferences");
+  if (existing !== undefined) {
+    const obj = existing.k === "ref" ? doc.getObject(existing.num) : existing;
+    if (obj && (obj.k === "dict" || obj.k === "stream")) return obj.m;
+    // A malformed entry is replaced (tri-state edits still apply).
+  }
+  const fresh: PdfObj & { k: "dict" } = { k: "dict", m: new Map() };
+  catalog.set("ViewerPreferences", fresh);
+  return fresh.m;
+}
+
 function applyViewerPreferences(
-  doc: PDFDocument,
+  doc: ParsedPdf,
   options: OptionValues,
   pageMode: PageMode | null
 ): void {
@@ -107,21 +142,23 @@ function applyViewerPreferences(
   const hasChoice = booleans.some((value) => value !== null);
   if (!hasChoice && pageMode !== "FullScreen") return;
 
-  const vp = doc.catalog.getOrCreateViewerPreferences();
-  if (booleans[0] !== null) vp.setDisplayDocTitle(booleans[0]);
-  if (booleans[1] !== null) vp.setHideToolbar(booleans[1]);
-  if (booleans[2] !== null) vp.setHideMenubar(booleans[2]);
-  if (booleans[3] !== null) vp.setHideWindowUI(booleans[3]);
-  if (booleans[4] !== null) vp.setFitWindow(booleans[4]);
-  if (booleans[5] !== null) vp.setCenterWindow(booleans[5]);
+  const vp = viewerPreferencesMap(doc);
+  if (vp === null) return;
+  const setBool = (value: boolean | null, key: string): void => {
+    if (value !== null) vp.set(key, { k: "bool", b: value });
+  };
+  setBool(booleans[0], "DisplayDocTitle");
+  setBool(booleans[1], "HideToolbar");
+  setBool(booleans[2], "HideMenubar");
+  setBool(booleans[3], "HideWindowUI");
+  setBool(booleans[4], "FitWindow");
+  setBool(booleans[5], "CenterWindow");
 
   // Fullscreen needs a plan for what shows once the user LEAVES it —
   // otherwise readers fall back to whatever they feel like.
   if (pageMode === "FullScreen") {
     const exit = pickString(options, "exitFsMode", EXIT_FS_MODES);
-    vp.setNonFullScreenPageMode(
-      (exit as NonFullScreenPageMode | null) ?? NonFullScreenPageMode.UseNone
-    );
+    vp.set("NonFullScreenPageMode", name(exit ?? "UseNone"));
   }
 }
 
@@ -132,29 +169,31 @@ function applyViewerPreferences(
  * any of these (including "keep" zoom — null zoom, page jump only).
  */
 function applyOpenAction(
-  doc: PDFDocument,
+  doc: ParsedPdf,
   zoom: Zoom | null,
   startPage: number
 ): void {
   if (zoom === null && startPage <= 1) return;
 
-  const pageCount = doc.getPageCount();
-  if (pageCount < 1) return;
-  const pageIndex = Math.min(Math.max(1, Math.floor(startPage)), pageCount) - 1;
-  const pageRef = doc.getPage(pageIndex).ref;
-  const ctx = doc.context;
+  const pages = listPages(doc);
+  if (pages.length < 1) return;
+  const pageIndex =
+    Math.min(Math.max(1, Math.floor(startPage)), pages.length) - 1;
+  const pageRef = ref(pages[pageIndex]!.ref.num, 0);
 
-  let destination;
+  const nullObj: PdfObj = { k: "null" };
+  let destination: PdfObj;
   if (zoom === "fitPage") {
-    destination = ctx.obj([pageRef, PDFName.of("Fit")]);
+    destination = arr(pageRef, name("Fit"));
   } else if (zoom === "fitWidth") {
-    destination = ctx.obj([pageRef, PDFName.of("FitH"), null]);
+    destination = arr(pageRef, name("FitH"), nullObj);
   } else {
-    const factor = zoom === null ? null : Number(zoom) / 100;
-    destination = ctx.obj([pageRef, PDFName.of("XYZ"), null, null, factor]);
+    const factor = zoom === null ? nullObj : num(Number(zoom) / 100);
+    destination = arr(pageRef, name("XYZ"), nullObj, nullObj, factor);
   }
 
-  doc.catalog.set(PDFName.of("OpenAction"), destination);
+  const catalog = catalogMap(doc);
+  catalog?.set("OpenAction", destination);
 }
 
 async function run(request: WorkerRunRequest): Promise<void> {
@@ -177,23 +216,26 @@ async function run(request: WorkerRunRequest): Promise<void> {
     post({ type: "error", runId, code: "tool.errorAlreadySigned" });
     return;
   }
-  const doc = await PDFDocument.load(bytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
+  let doc: ParsedPdf;
+  try {
+    doc = parsePdf(bytes);
+  } catch (error: unknown) {
+    if (error instanceof PdfError && error.code === "encrypted") {
+      post({ type: "error", runId, code: "tool.errorEncrypted" });
+      return;
+    }
+    throw error;
+  }
 
   post({ type: "progress", runId, pct: 45, stage: "processing" });
-  if (layout !== null) {
-    doc.catalog.set(PDFName.of("PageLayout"), PDFName.of(layout));
-  }
-  if (pageMode !== null) {
-    doc.catalog.set(PDFName.of("PageMode"), PDFName.of(pageMode));
-  }
+  const catalog = catalogMap(doc);
+  if (layout !== null) catalog?.set("PageLayout", name(layout));
+  if (pageMode !== null) catalog?.set("PageMode", name(pageMode));
   applyViewerPreferences(doc, options, pageMode);
   applyOpenAction(doc, zoom, startPage);
 
   post({ type: "progress", runId, pct: 88, stage: "saving" });
-  const saved = await doc.save({ useObjectStreams: true });
+  const saved = rewriteDocument(doc, { objectStreams: true });
   const outputs = [
     {
       name: `${fileBaseName(file.name)}-viewersettings.pdf`,
@@ -207,7 +249,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     type: "result",
     runId,
     outputs,
-    detail: { files: 1, pages: doc.getPageCount() },
+    detail: { files: 1, pages: listPages(doc).length },
   });
 }
 

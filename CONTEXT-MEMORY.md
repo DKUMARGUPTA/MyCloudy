@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P6-r COMPLETE (compress family own-engine) — 100 tools LIVE, Vercel LIVE, battery 109/109. Remaining pdf-lib importers: 39.
+> **Updated:** P6-r + P6-s COMPLETE (compress + meta family own-engine) — 100 tools LIVE, Vercel LIVE, battery 109/109. Remaining pdf-lib importers: ~33.
 
 ---
 
@@ -13,7 +13,7 @@
 |---|---|
 | Registry | **100 tools — SAB LIVE ✅** (verified brace-aware count; e-invoice family included) |
 | **LIVE tools** | **100** ✅ (registry `enabled: true`, 0 disabled) |
-| Own PDF engine (P6) | **P6-a..r COMPLETE** — 36 families pdf-lib-free; **39 runtime files** abhi bhi pdf-lib import karte hain (P6-s+ queue) |
+| Own PDF engine (P6) | **P6-a..s COMPLETE** — 39 families pdf-lib-free; **~33 runtime files** abhi bhi pdf-lib import karte hain (P6-t+ queue) |
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |
 | Static pages (PRD §9) | **LIVE** — about/contact/privacy/terms wired end-to-end (footer + `#/page/<id>` + i18n 166×2) |
 | Server | Next.js 16.1.3, port 3000 (daemon: `python3 scripts/dev-daemon.py`), dev.log clean |
@@ -48,14 +48,14 @@ python3 scripts/dev-daemon.py
 
 ## ⏳ KYA PENDING HAI (priority order)
 
-### 1. P6-s+ — Own engine migration ka bacha hua hissa (**39 pdf-lib importer files**)
-- **QUICK WINS (rewriteDocument seam — naya port P6-r se ready):** remove-pdf-metadata, set-pdf-viewer-preferences, change-pdf-doc-info, change-pdf-page-size, crop-pdf, meta-common
+### 1. P6-t+ — Own engine migration ka bacha hua hissa (**~33 pdf-lib importer files**)
+- **NEXT QUICK WINS (rewriteDocument seam proven P6-r/s se):** change-pdf-page-size, crop-pdf, bookmark-pdf (page/catalog surgery)
 - **create-fillable-pdf-form** — render.ts + worker.ts (last big form authoring surface)
 - **pdf-to-X extractors** — pdf-to-word, pdf-to-odt, pdf-to-html, pdf-to-markdown, pdf-to-pdfa (decodeStreamBytes seam)
 - **crypto family** — sign-pdf, digital-signature, pki-common/pdfsign, verify-pdf-signatures (RC4/AES wiring baad mein)
 - **font users** — translate-pdf worker (CJK/Arabic embed), ocr family (text-layer GlyphLessFont), passport-photo, scan-pdf, redact-pdf
 - **e-invoice family** — create-electronic-invoice (facturx-attach/cii-build), xml-invoice-to-pdf (worker/render)
-- **misc** — compare-pdf, stamp-common/worker-lib, rasterize-pdf, request-signature, web-optimize-pdf (engine+worker), repair-pdf/model, bookmark-pdf
+- **misc** — compare-pdf, stamp-common/worker-lib, rasterize-pdf, request-signature, web-optimize-pdf (engine+worker), repair-pdf/model
 - Engine seams available: rewriteDocument (preserve-numbers whole-doc + ObjStm) · decodeStreamBytes (Flate/LZW/A85/AHx/RLE + predictors) · organize/stamp/create contexts. pdf-lib = DEV-TIME ORACLE only (smokes mein cross-verify)
 
 ### 2. P7 — Quality moat
@@ -105,7 +105,8 @@ Transactional output allocator · invisible waiting window · progress morph · 
 
 ## 📝 Recent Rounds (detail = worklog.md)
 
-- **P6-r (ye wali):** compress family OWN ENGINE pe — streams.ts (Flate/LZW/A85/AHx/RLE+predictors, 8/8 oracle parity) + rewrite.ts (preserve-numbers whole-doc rewriter + Flate'd ObjStm — 70,869 B vs pdf-lib 71,334, oracle ko BEAT kiya) + engine/workers port + dedupe/strip own-side + dead recompress files deleted. 2 engine bugs pakde (ObjStm pair-offset + xref self-row) — oracle probing ne bachaya. Smokes 44+19+43 rewired green; battery 109/109; E2E: 2.9MB→115KB dedupe chip byte-verified, to-size 1.5MB→78KB honest rung chip, mobile + Hindi + 0 console errors.
+- **P6-s (ye wali):** meta family OWN ENGINE pe — rewrite.ts infoOverride + meta-common full port (Info edits/strip/report byte-format oracle parity) + 3 workers. smoke-metadata rewired ALL PASS, smoke-viewer-prefs 53/53 ZERO rewire, battery 109/109, E2E viewer-prefs golden path byte-verified (TwoColumnLeft + XYZ 1.5 OpenAction).
+- **P6-r:** compress family OWN ENGINE pe — streams.ts (Flate/LZW/A85/AHx/RLE+predictors, 8/8 oracle parity) + rewrite.ts (preserve-numbers whole-doc rewriter + Flate'd ObjStm — 70,869 B vs pdf-lib 71,334, oracle ko BEAT kiya) + engine/workers port + dedupe/strip own-side + dead recompress files deleted. 2 engine bugs pakde (ObjStm pair-offset + xref self-row) — oracle probing ne bachaya. Smokes 44+19+43 rewired green; battery 109/109; E2E: 2.9MB→115KB dedupe chip byte-verified, to-size 1.5MB→78KB honest rung chip, mobile + Hindi + 0 console errors. compress family OWN ENGINE pe — streams.ts (Flate/LZW/A85/AHx/RLE+predictors, 8/8 oracle parity) + rewrite.ts (preserve-numbers whole-doc rewriter + Flate'd ObjStm — 70,869 B vs pdf-lib 71,334, oracle ko BEAT kiya) + engine/workers port + dedupe/strip own-side + dead recompress files deleted. 2 engine bugs pakde (ObjStm pair-offset + xref self-row) — oracle probing ne bachaya. Smokes 44+19+43 rewired green; battery 109/109; E2E: 2.9MB→115KB dedupe chip byte-verified, to-size 1.5MB→78KB honest rung chip, mobile + Hindi + 0 console errors.
 - **FIX-ALL-1 (5ffccc4/aa9e33b/b217071):** disk rollback recovery + battery 109/109 (16 known failures root-caused: pki .pem fixtures gitignore ne khae the + 15 stale duplicate smokes deleted) + registry truth correction (brace-aware count — e-invoice was ALREADY live, 100/100).
 - **STATE-SYNC (f03ad0f):** Token recovery audit → push verified → CONTEXT-MEMORY stale-se-current → cron recreate.
 - **P6-q (d9030a3):** Vercel build unblocked (tsc 0) + Prisma completion (BugReport + User.role) + **Phase-6 static pages LIVE** (about/contact/privacy/terms wired end-to-end) + stale-tree removal (~30 dead files).

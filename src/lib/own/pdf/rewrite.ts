@@ -41,6 +41,13 @@ export interface RewriteOptions {
   objectStreams?: boolean;
   /** Omit the trailer /Info (metadata strip). */
   dropInfo?: boolean;
+  /**
+   * Install a brand-new Info dict (P6-s): writes the object at its given
+   * number and points trailer /Info at it. Wins over dropInfo; the number
+   * must be ABOVE every existing object number (container numbering in
+   * the ObjStm path accounts for it via the object table).
+   */
+  infoOverride?: { num: number; obj: PdfObj };
   /** Extra trailer pairs (serialized inline; refs keep their numbers). */
   extraTrailer?: Array<[string, PdfObj]>;
   /** (done, total) — coarse progress for the worker's progress bar. */
@@ -108,15 +115,26 @@ interface TrailerRefs {
   id: PdfObj | undefined;
 }
 
-function readTrailer(doc: ParsedPdf, dropInfo: boolean): TrailerRefs {
+function readTrailer(
+  doc: ParsedPdf,
+  dropInfo: boolean,
+  infoOverride?: { num: number; obj: PdfObj },
+): TrailerRefs {
   const root = dget({ k: "dict", m: doc.trailer }, "Root");
   if (!root || root.k !== "ref") {
     throw new PdfError("corrupt", "trailer has no /Root");
   }
-  const info = dget({ k: "dict", m: doc.trailer }, "Info");
-  const infoNum = !dropInfo && info && info.k === "ref" ? info.num : null;
+  let infoNum: number | null = null;
+  if (infoOverride !== undefined) infoNum = infoOverride.num;
+  else if (!dropInfo) infoNum = infoRefNum(doc);
   const id = dget({ k: "dict", m: doc.trailer }, "ID");
   return { rootNum: root.num, infoNum, id: id && id.k === "arr" ? id : undefined };
+}
+
+/** The trailer /Info object number, when the doc carries one. */
+function infoRefNum(doc: ParsedPdf): number | null {
+  const info = dget({ k: "dict", m: doc.trailer }, "Info");
+  return info && info.k === "ref" ? info.num : null;
 }
 
 /**
@@ -128,6 +146,9 @@ export function collectRewriteObjects(
   opts: RewriteOptions,
 ): Map<number, PdfObj> {
   const out = new Map<number, PdfObj>();
+  if (opts.infoOverride !== undefined) {
+    out.set(opts.infoOverride.num, opts.infoOverride.obj);
+  }
   for (const [num, entry] of doc.entries) {
     if (entry.type === 0) continue;
     if (opts.deletions?.has(num)) continue;
@@ -182,7 +203,7 @@ function writeClassic(
   objects: Map<number, PdfObj>,
   opts: RewriteOptions,
 ): Uint8Array {
-  const trailer = readTrailer(doc, opts.dropInfo === true);
+  const trailer = readTrailer(doc, opts.dropInfo === true, opts.infoOverride);
   const sink = new Sink();
   sink.text(`%PDF-${versionString(doc, "1.4")}\n`);
   sink.bytes(Uint8Array.from([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
@@ -224,7 +245,7 @@ function writeObjStm(
   objects: Map<number, PdfObj>,
   opts: RewriteOptions,
 ): Uint8Array {
-  const trailer = readTrailer(doc, opts.dropInfo === true);
+  const trailer = readTrailer(doc, opts.dropInfo === true, opts.infoOverride);
   const sink = new Sink();
   sink.text(`%PDF-${versionString(doc, "1.5")}\n`);
   sink.bytes(Uint8Array.from([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
