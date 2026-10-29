@@ -1,15 +1,4 @@
 import {
-  decodePDFRawStream,
-  PDFArray,
-  PDFDict,
-  PDFDocument,
-  PDFName,
-  PDFRawStream,
-  PDFRef,
-  PDFStream,
-} from "pdf-lib";
-
-import {
   parsePageSpec,
   type WorkerRunRequest,
   type WorkerResponse,
@@ -18,6 +7,14 @@ import {
   loadPdfjsInWorker,
   workerDocumentShim,
 } from "../pdfjs-common/worker-lib";
+// P6-v: the style enrichment lives on the OWN engine now (one shared port
+// for all four pdf-to-X extractors — parsePdf + listPages + our own stream
+// decoders under the same correlation semantics).
+import { buildFontStyleMap } from "../pdfjs-common/font-style-map";
+
+// Re-exported for the smoke, which drives the same enrichment on real
+// fixtures through the worker's own surface.
+export { buildFontStyleMap };
 import {
   buildMarkdown,
   coerceRunOptions,
@@ -70,202 +67,12 @@ function post(response: WorkerResponse): void {
   self.postMessage(response);
 }
 
-/** BaseFont names that read as bold / italic. */
-const BOLD_BASEFONT_RE = /(bold|black|heavy|demi|semib)/i;
-const ITALIC_BASEFONT_RE = /(italic|oblique|kursiv)/i;
-
 interface RawTextItem {
   str?: unknown;
   transform?: unknown;
   width?: unknown;
   fontName?: unknown;
 }
-
-/* ------------------------------------------------------------------ */
-/* Style enrichment (pdf.js id → PDF font table)                        */
-/* ------------------------------------------------------------------ */
-
-/** Decoded text of one PDF name ("/Helvetica-Bold" → "Helvetica-Bold"). */
-function pdfNameText(name: PDFName): string {
-  const raw = name.asString().replace(/^\//, "");
-  // #HH escapes per the PDF name rules (rare, but cheap to honour).
-  return raw.replace(/#([0-9A-Fa-f]{2})/g, (_m, hex: string) =>
-    String.fromCharCode(Number.parseInt(hex, 16))
-  );
-}
-
-/** The /Font resource dict for a page, walking inherited resources. */
-function fontResourcesFor(
-  doc: PDFDocument,
-  node: PDFDict | undefined
-): PDFDict | undefined {
-  let current: PDFDict | undefined = node;
-  for (let depth = 0; current !== undefined && depth < 8; depth += 1) {
-    const res = current.lookupMaybe(PDFName.of("Resources"), PDFDict);
-    if (res) {
-      const fonts = res.lookupMaybe(PDFName.of("Font"), PDFDict);
-      if (fonts) return fonts;
-    }
-    const parent = current.get(PDFName.of("Parent"));
-    current =
-      parent instanceof PDFRef ? doc.context.lookupMaybe(parent, PDFDict) : undefined;
-  }
-  return undefined;
-}
-
-/** Distinct /Font resource keys in first-Tf-use order (content stream). */
-function tfOrderForPage(doc: PDFDocument, node: PDFDict): string[] {
-  const contents = node.get(PDFName.of("Contents"));
-  const resolved =
-    contents instanceof PDFRef ? doc.context.lookup(contents) : contents;
-  const chunks: Uint8Array[] = [];
-  const push = (value: unknown): void => {
-    if (value instanceof PDFRawStream) {
-      chunks.push(decodePDFRawStream(value).decode());
-    }
-  };
-  if (resolved instanceof PDFRawStream) {
-    push(resolved);
-  } else if (resolved instanceof PDFArray) {
-    for (let i = 0; i < resolved.size(); i += 1) {
-      push(
-        doc.context.lookupMaybe(resolved.get(i) as PDFRef, PDFStream)
-      );
-    }
-  }
-  if (chunks.length === 0) return [];
-
-  const text = new TextDecoder("latin1").decode(concat(chunks));
-  const keys: string[] = [];
-  const re = /\/([A-Za-z0-9#+.\-]+)\s+[-\d.]+\s+Tf/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
-    if (!keys.includes(match[1] as string)) keys.push(match[1] as string);
-  }
-  return keys;
-}
-
-function concat(chunks: readonly Uint8Array[]): Uint8Array {
-  let total = 0;
-  for (const chunk of chunks) total += chunk.length;
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return out;
-}
-
-/** The font dict's BaseFont, Type0-aware (descendant's name). */
-function baseFontName(doc: PDFDocument, value: unknown): string {
-  const dict = value instanceof PDFRef
-    ? doc.context.lookupMaybe(value, PDFDict)
-    : value instanceof PDFDict
-      ? value
-      : undefined;
-  if (!dict) return "";
-  const baseFont = dict.get(PDFName.of("BaseFont"));
-  if (baseFont instanceof PDFName) return pdfNameText(baseFont);
-  // Type0 wrapped fonts keep the real face in the descendant's name.
-  const descendant = dict.get(PDFName.of("DescendantFonts"));
-  if (descendant instanceof PDFArray && descendant.size() > 0) {
-    const child = descendant.get(0);
-    const childDict = child instanceof PDFRef
-      ? doc.context.lookupMaybe(child, PDFDict)
-      : child instanceof PDFDict
-        ? child
-        : undefined;
-    const childName = childDict?.get(PDFName.of("BaseFont"));
-    if (childName instanceof PDFName) return pdfNameText(childName);
-  }
-  return "";
-}
-
-/**
- * Maps pdf.js internal font ids → {bold, italic} for the whole document,
- * by correlating each selected page's distinct ids (item order) with that
- * page's distinct Tf-used resource keys (content-stream order).
- * `pageIndexes` holds each entry's ORIGINAL 0-based pdf.js page index —
- * page ranges keep the correlation true (a subset's pages[] entry is NOT
- * pdf page entry; the smoke proves this with a two-font mini fixture).
- * Exported for the smoke, which drives the same enrichment on real
- * fixtures.
- */
-export async function buildFontStyleMap(
-  bytes: Uint8Array,
-  pageIndexes: readonly number[],
-  pages: readonly PdfTextItemInput[][]
-): Promise<Map<string, MdFontStyle>> {
-  const result = new Map<string, MdFontStyle>();
-  let pdf: PDFDocument;
-  try {
-    pdf = await PDFDocument.load(bytes, {
-      ignoreEncryption: true,
-      updateMetadata: false,
-      throwOnInvalidObject: false,
-    });
-  } catch {
-    return result; // unreadable structure → no styles, honest degradation
-  }
-  try {
-    const pageCount = Math.min(pages.length, pdf.getPageCount());
-    for (let entry = 0; entry < pageCount; entry += 1) {
-      const pageIndex = pageIndexes[entry] ?? entry;
-      if (pageIndex < 0 || pageIndex >= pdf.getPageCount()) continue;
-
-      // Distinct pdf.js font ids on this page, in first-appearance order.
-      const ids: string[] = [];
-      for (const item of pages[entry]) {
-        const fn = typeof item?.fontName === "string" ? item.fontName : "";
-        if (fn.length > 0 && !ids.includes(fn)) ids.push(fn);
-      }
-      if (ids.length === 0) continue;
-
-      const node = pdf.getPage(pageIndex).node;
-      const keys = tfOrderForPage(pdf, node);
-      const fonts = fontResourcesFor(pdf, node);
-      if (!fonts) continue;
-      // pdf.js assigns one id per distinct FONT OBJECT, while pdf-lib
-      // writes a fresh resource key per drawText call — dedupe the keys
-      // by the object they resolve to (first key per object wins) so
-      // both sides count the same things before correlating.
-      const seenRefs = new Set<string>();
-      const seenDicts = new WeakSet<PDFDict>();
-      const distinctKeys: string[] = [];
-      for (const key of keys) {
-        const value = fonts.get(PDFName.of(key));
-        if (value === undefined) continue; // dangling key
-        if (value instanceof PDFRef) {
-          const objectId = value.toString();
-          if (seenRefs.has(objectId)) continue;
-          seenRefs.add(objectId);
-        } else if (value instanceof PDFDict) {
-          if (seenDicts.has(value)) continue;
-          seenDicts.add(value);
-        } else {
-          continue; // not a font dict/ref — skip, honest
-        }
-        distinctKeys.push(key);
-      }
-      if (distinctKeys.length !== ids.length) {
-        continue; // mismatch (forms / weird streams) → skip, stay honest
-      }
-      for (let i = 0; i < ids.length; i += 1) {
-        const value = fonts.get(PDFName.of(distinctKeys[i] as string));
-        const name = value === undefined ? "" : baseFontName(pdf, value);
-        result.set(ids[i] as string, {
-          bold: BOLD_BASEFONT_RE.test(name),
-          italic: ITALIC_BASEFONT_RE.test(name),
-        });
-      }
-    }
-  } catch {
-    // Any surprise mid-walk keeps whatever was resolved so far.
-  }
-  return result;
-}
-
 /* ------------------------------------------------------------------ */
 /* Link annotations (pdf.js display intent)                              */
 /* ------------------------------------------------------------------ */
