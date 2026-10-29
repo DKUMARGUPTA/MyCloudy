@@ -1,26 +1,20 @@
-import {
-  PDFArray,
-  PDFName,
-  PDFRawStream,
-  decodePDFRawStream,
-} from "pdf-lib";
-
+import { decodeStreamBytes } from "@/lib/own/pdf";
 import {
   grayscaleImageData,
-  indexedBaseComponents,
-  indexedPalette,
   targetSize,
   type ImageCandidate,
-  type PaletteInfo,
 } from "../compress-pdf/engine";
 
 /**
  * Shared impure image-recompression helpers (compress-pdf +
- * compress-pdf-to-size). Everything canvas-touching lives here so both
- * workers stream through the identical decode → scale → re-encode path.
+ * compress-pdf-to-size) — OWN-engine port (P6-r). Everything
+ * canvas-touching lives here so both workers stream through the identical
+ * decode → scale → re-encode path.
  *
- * Kept verbatim in behaviour to the code that used to live inside
- * compress-pdf/worker.ts (P3.12) — extracted in P3.20 for reuse.
+ * Stream decoding rides the engine's pure decodeStreamBytes (Flate/LZW/
+ * A85/AHx/RLE + predictors); DCTDecode images decode via the browser's
+ * native JPEG decoder. Every replacement is size-guarded: unless the
+ * re-encode clearly wins (≥2%), null comes back and the original stays.
  */
 
 /** CMYK → RGB, naive (no ink-limit management) — fine for preview photos. */
@@ -39,18 +33,18 @@ export function cmykToRgb(
 
 /**
  * Interprets losslessly-decoded raw pixel bytes (per the candidate's
- * strategy) as an ImageData. `paletteOverride` carries a stream-backed
- * /Indexed palette the engine could not read inline.
+ * strategy) as an ImageData. The /Indexed palette is resolved eagerly at
+ * candidate-collection time (inline or stream-backed — the own engine
+ * decodes both purely), so no worker-side palette fallback remains.
  */
 export function rawPixelsToImageData(
   candidate: ImageCandidate,
-  pixels: Uint8Array,
-  paletteOverride?: PaletteInfo | null
+  pixels: Uint8Array
 ): ImageData | null {
   const { width, height, strategy, components } = candidate;
 
   if (strategy === "indexed") {
-    const info = paletteOverride ?? indexedPalette(candidate.stream.dict);
+    const info = candidate.palette ?? null;
     if (!info || info.palette.length === 0) return null;
     const { baseComponents, palette } = info;
     const data = new Uint8ClampedArray(width * height * 4);
@@ -114,29 +108,11 @@ export function rawPixelsToImageData(
   return new ImageData(data, width, height);
 }
 
-/** /Indexed lookup palette stored as a (possibly filtered) stream. */
-export function streamPalette(candidate: ImageCandidate): PaletteInfo | null {
-  const colorSpace = candidate.stream.dict.lookup(PDFName.of("ColorSpace"));
-  if (!(colorSpace instanceof PDFArray) || colorSpace.size() < 4) return null;
-  const base = colorSpace.lookup(1);
-  if (!(base instanceof PDFName)) return null;
-  const baseComponents = indexedBaseComponents(base);
-  if (baseComponents === null) return null;
-  const lookup = colorSpace.lookup(3);
-  if (lookup instanceof PDFRawStream) {
-    try {
-      const palette = decodePDFRawStream(lookup).decode();
-      if (palette.length > 0) return { baseComponents, palette };
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
 /**
  * Full pipeline for one image candidate → replacement JPEG bytes, or null
- * to keep the original (decode failure / no size gain).
+ * to keep the original (decode failure / no size gain). Indexed
+ * candidates carry their pre-resolved palette; resolvable here too when
+ * the caller passes the parsed doc (to-size ladder re-collects).
  */
 export async function recompressCandidate(
   candidate: ImageCandidate,
@@ -149,21 +125,13 @@ export async function recompressCandidate(
   try {
     if (candidate.strategy === "jpeg") {
       source = await createImageBitmap(
-        new Blob([candidate.stream.contents as BlobPart], {
+        new Blob([candidate.stream.raw as BlobPart], {
           type: "image/jpeg",
         })
       );
     } else {
-      const pixels = decodePDFRawStream(candidate.stream).decode();
-      let imageData = rawPixelsToImageData(candidate, pixels);
-      if (imageData === null && candidate.strategy === "indexed") {
-        // The palette may live in a stream — resolve it and retry.
-        imageData = rawPixelsToImageData(
-          candidate,
-          pixels,
-          streamPalette(candidate)
-        );
-      }
+      const pixels = decodeStreamBytes(candidate.stream.raw, candidate.stream.m);
+      const imageData = rawPixelsToImageData(candidate, pixels);
       if (imageData === null) return null;
       const full = new OffscreenCanvas(candidate.width, candidate.height);
       const fullCtx = full.getContext("2d");

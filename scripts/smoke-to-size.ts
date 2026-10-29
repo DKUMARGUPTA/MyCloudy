@@ -1,5 +1,5 @@
 /**
- * Compress-to-target-size smoke (P3.20).
+ * Compress-to-target-size smoke (P3.20) — OWN-ENGINE EDITION (P6-r).
  *
  * Fixture: download/qa-p312-fixture.pdf (1.5 MB — text pages + big JPEG
  * photo + Flate RGB + alpha PNG, from the compress-pdf QA round).
@@ -14,15 +14,20 @@
  *   3. Measurement-loop rehearsal ON THE REAL FIXTURE (bun can't touch
  *      canvases, so the loop runs with raw-byte injection instead of
  *      canvas re-encodes): collectImageCandidates finds the 3 photos,
- *      replaceImageStream swaps the big photo with tiny JPEG bytes, and
- *      doc.save() lands under a 100 KB budget — proving the exact
- *      measure/decide path the worker drives in the browser.
+ *      imageReplacement swaps the big photo for tiny JPEG bytes through
+ *      rewriteDocument, and the output lands under a 100 KB budget —
+ *      proving the exact measure/decide path the worker drives in the
+ *      browser.
  *
  * Run: bun scripts/smoke-to-size.ts
  */
 import { readFile } from "node:fs/promises";
-import { PDFDocument, PDFName, PDFRawStream } from "pdf-lib";
 
+import {
+  listPages,
+  parsePdf,
+  rewriteDocument,
+} from "../src/lib/own/pdf";
 import {
   IMAGE_LADDER,
   RASTER_LADDER,
@@ -32,7 +37,7 @@ import {
 } from "../tools/compress-pdf-to-size/engine";
 import {
   collectImageCandidates,
-  replaceImageStream,
+  imageReplacement,
 } from "../tools/compress-pdf/engine";
 
 let passed = 0;
@@ -106,9 +111,9 @@ async function main(): Promise<void> {
   /* ---------- 3. Fixture rehearsal of the measure loop ---------- */
   console.log("\nfixture measure-loop rehearsal (qa-p312-fixture.pdf)");
   const fixture = await readFile("download/qa-p312-fixture.pdf");
-  const doc = await PDFDocument.load(fixture, { updateMetadata: false });
-  const pages = doc.getPageCount();
+  const doc = parsePdf(fixture);
   const candidates = collectImageCandidates(doc);
+  const pages = listPages(doc).length;
   check(
     "fixture has 3 compressible photos",
     candidates.length === 3,
@@ -116,7 +121,7 @@ async function main(): Promise<void> {
   );
 
   const target = 100 * 1024;
-  const baseline = await doc.save({ useObjectStreams: true });
+  const baseline = rewriteDocument(doc, { objectStreams: true });
   check(
     "structural pass alone stays over 100 KB",
     baseline.length > target,
@@ -148,8 +153,11 @@ async function main(): Promise<void> {
   const big = candidates.reduce((a, b) =>
     a.sourceBytes >= b.sourceBytes ? a : b
   );
-  replaceImageStream(doc.context, big, tinyJpeg, 16, 16);
-  const shrunk = await doc.save({ useObjectStreams: true });
+  const [bigNum, replacement] = imageReplacement(big, tinyJpeg, 16, 16);
+  const shrunk = rewriteDocument(doc, {
+    replacements: new Map([[bigNum, replacement]]),
+    objectStreams: true,
+  });
   check(
     "one replacement lands the fixture under 100 KB",
     shrunk.length <= target,
@@ -158,14 +166,21 @@ async function main(): Promise<void> {
   check(
     "replaced dict is DCTDecode RGB 16×16",
     (() => {
-      const stream = doc.context.lookup(big.ref);
-      if (!(stream instanceof PDFRawStream)) return false;
-      const dict = stream.dict;
+      const round = parsePdf(shrunk);
+      const stream = round.getObject(big.num);
+      if (!stream || stream.k !== "stream") return false;
+      const m = stream.m;
+      const str = (v: unknown): string | undefined =>
+        v && typeof v === "object" && "v" in (v as object)
+          ? String((v as { v: unknown }).v)
+          : v && typeof v === "object" && "n" in (v as object)
+            ? String((v as { n: unknown }).n)
+            : undefined;
       return (
-        dict.get(PDFName.of("Filter"))?.toString() === "/DCTDecode" &&
-        dict.get(PDFName.of("ColorSpace"))?.toString() === "/DeviceRGB" &&
-        dict.get(PDFName.of("Width"))?.toString() === "16" &&
-        dict.get(PDFName.of("Height"))?.toString() === "16"
+        str(m.get("Filter")) === "DCTDecode" &&
+        str(m.get("ColorSpace")) === "DeviceRGB" &&
+        str(m.get("Width")) === "16" &&
+        str(m.get("Height")) === "16"
       );
     })()
   );

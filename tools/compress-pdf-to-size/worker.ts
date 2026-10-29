@@ -1,19 +1,25 @@
-import { PDFDocument } from "pdf-lib";
-
 import {
   type RunDetail,
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
 import {
+  PdfError,
+  CreateContext,
+  listPages,
+  parsePdf,
+  rewriteDocument,
+  type PdfObj,
+} from "@/lib/own/pdf";
+import {
   loadPdfjsInWorker,
   workerDocumentShim,
 } from "../pdfjs-common/worker-lib";
 import { fileBaseName } from "../stamp-common/layout";
-import { stripAllMetadata } from "../meta-common/worker-lib";
 import {
   collectImageCandidates,
-  replaceImageStream,
+  imageReplacement,
+  stripAllMetadataOwn,
 } from "../compress-pdf/engine";
 import {
   committedJpegBlob,
@@ -26,20 +32,21 @@ import {
 } from "./engine";
 
 /**
- * Compress-to-target-size worker (PRD §7.5, device mode) — "Iterative
- * compress": walk a deterministic ladder from least to most damage and
- * stop at the first attempt whose output fits the byte budget.
+ * Compress-to-target-size worker (PRD §7.5, device mode) — OWN ENGINE
+ * (P6-r). "Iterative compress": walk a deterministic ladder from least to
+ * most damage and stop at the first attempt whose output fits the byte
+ * budget.
  *
  *   0. Input already fits → handed back untouched, zero risk.
- *   1. Structural pass: pdf-lib object streams + metadata strip.
- *      (Text/photos untouched.)
+ *   1. Structural pass: object streams + metadata strip (the engine's
+ *      preserve-numbers rewriter). (Text/photos untouched.)
  *   2. IMAGE_LADDER: re-encode embedded photos step by step (quality ↓,
  *      pixel cap ↓, grayscale at the end) — text, fonts and vector art
  *      stay untouched, so selectable text stays selectable. The per-image
  *      ≥2% size guard means each step can only shrink further.
  *   3. RASTER_LADDER: whole pages rasterized via pdf.js (render → JPEG
- *      with the canvas-commit guard) into a fresh PDF. Last resort for
- *      font/vector-heavy files; text becomes an image.
+ *      with the canvas-commit guard) into a fresh engine-authored PDF.
+ *      Last resort for font/vector-heavy files; text becomes an image.
  *
  * If even the floor misses the budget, the SMALLEST attempt wins and the
  * result reports targetHit: false (an honest chip, never a lie).
@@ -117,12 +124,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     // files still pass through, just without the count).
     let pageCountPassthrough = 0;
     try {
-      pageCountPassthrough = (
-        await PDFDocument.load(bytes, {
-          ignoreEncryption: true,
-          updateMetadata: false,
-        })
-      ).getPageCount();
+      pageCountPassthrough = listPages(parsePdf(bytes)).length;
     } catch {
       /* the bytes are returned untouched either way */
     }
@@ -148,23 +150,30 @@ async function run(request: WorkerRunRequest): Promise<void> {
   /* -------- 1. Structural pass: object streams + metadata strip. -------- */
   let pageCount = 0;
   let optimized: Uint8Array;
-  let ladderDoc: Awaited<ReturnType<typeof PDFDocument.load>>;
+  let stripDeletions = new Set<number>();
+  let stripDropInfo = false;
   try {
-    ladderDoc = await PDFDocument.load(bytes, {
-      ignoreEncryption: false,
-      updateMetadata: false,
+    const doc = parsePdf(bytes);
+    pageCount = listPages(doc).length;
+    const strip = stripAllMetadataOwn(doc);
+    stripDeletions = strip.deletions;
+    stripDropInfo = strip.dropInfo;
+    optimized = rewriteDocument(doc, {
+      deletions: strip.deletions,
+      dropInfo: strip.dropInfo,
+      objectStreams: true,
     });
-    pageCount = ladderDoc.getPageCount();
-    stripAllMetadata(ladderDoc, true);
-    optimized = await ladderDoc.save({ useObjectStreams: true });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     post({
       type: "error",
       runId,
-      code: /password|encrypt/i.test(message)
-        ? "tool.errorEncrypted"
-        : "tool.errorCorrupt",
+      code:
+        error instanceof PdfError && error.code === "encrypted"
+          ? "tool.errorEncrypted"
+          : /password|encrypt/i.test(message)
+            ? "tool.errorEncrypted"
+            : "tool.errorCorrupt",
     });
     return;
   }
@@ -221,6 +230,18 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   /* -------- 2. Image ladder (text stays selectable). -------- */
+  // ONE parse drives every rung: replacements accumulate so each step
+  // re-encodes the ALREADY re-encoded photos (compounding — exactly the
+  // pdf-lib flow, minus the pdf-lib).
+  let ladderDoc: ReturnType<typeof parsePdf>;
+  try {
+    ladderDoc = parsePdf(bytes);
+  } catch {
+    // Unreachable: the structural pass above parsed the same bytes.
+    finish(bestBytes);
+    return;
+  }
+  const replacements = new Map<number, PdfObj>();
   // Pessimistic unit total for the progress bar: every ladder step is
   // walked against every image + (later) every page.
   const imageCount = collectImageCandidates(ladderDoc).length;
@@ -236,7 +257,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   if (imageCount > 0) {
     for (let step = 0; step < IMAGE_LADDER.length; step += 1) {
       const params = IMAGE_LADDER[step];
-      const candidates = collectImageCandidates(ladderDoc);
+      const candidates = collectImageCandidates(ladderDoc, replacements);
       for (let i = 0; i < candidates.length; i += 1) {
         const result = await recompressCandidate(
           candidates[i],
@@ -245,13 +266,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
           params.grayscale
         );
         if (result) {
-          replaceImageStream(
-            ladderDoc.context,
+          const [num, replacement] = imageReplacement(
             candidates[i],
             result.bytes,
             result.width,
             result.height
           );
+          replacements.set(num, replacement);
         }
         doneUnits += 1;
         post({
@@ -262,7 +283,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
           detail: { page: i + 1, pages: candidates.length },
         });
       }
-      const saved = await ladderDoc.save({ useObjectStreams: true });
+      const saved = rewriteDocument(ladderDoc, {
+        replacements,
+        deletions: stripDeletions,
+        dropInfo: stripDropInfo,
+        objectStreams: true,
+      });
       if (saved.length < bestBytes.length) {
         bestBytes = saved;
         bestStage = "images";
@@ -291,15 +317,15 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   for (let step = 0; step < RASTER_LADDER.length; step += 1) {
     const params = RASTER_LADDER[step];
-    const outDoc = await PDFDocument.create();
+    const outCtx = CreateContext.create();
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
       const raster = await rasterizePage(renderDoc, pageNumber, params.dpi);
       // JPEG bytes only count once the accelerated canvas has committed
       // (see committedJpegBlob — the P3.19 blank-snapshot race).
       const jpegBlob = await committedJpegBlob(raster.canvas, params.quality);
       const jpegBytes = new Uint8Array(await jpegBlob.arrayBuffer());
-      const embedded = await outDoc.embedJpg(jpegBytes);
-      const page = outDoc.addPage([raster.widthPt, raster.heightPt]);
+      const embedded = outCtx.embedJpeg(jpegBytes);
+      const page = outCtx.addPage(raster.widthPt, raster.heightPt);
       page.drawImage(embedded, {
         x: 0,
         y: 0,
@@ -315,7 +341,10 @@ async function run(request: WorkerRunRequest): Promise<void> {
         detail: { page: pageNumber, pages: pageCount },
       });
     }
-    const saved = await outDoc.save({ useObjectStreams: true });
+    // Fresh raster docs ride the rewriter's object-stream packing so the
+    // ladder compares like-for-like sizes (pdf-lib save(objstm) parity).
+    const fresh = outCtx.write();
+    const saved = rewriteDocument(parsePdf(fresh), { objectStreams: true });
     if (saved.length < bestBytes.length) {
       bestBytes = saved;
       bestStage = "raster";

@@ -200,6 +200,18 @@ function serialize(
 export type WriteProgress = (fraction: number, page: number) => void;
 
 /**
+ * Serialize ONE object with PRESERVED reference numbering (P6-r) — the
+ * rewriter's object form: refs emit as their own `N 0 R`, exactly what a
+ * whole-document round-trip (compress family) needs. Byte-identical to
+ * how the same object serializes inside writeDocument's classic path.
+ */
+export function serializePreserve(obj: PdfObj): Uint8Array {
+  const sink = new ByteSink();
+  serialize(sink, obj, (_doc, r) => r.num, undefined);
+  return sink.toUint8Array();
+}
+
+/**
  * Build the output document. Deterministic numbering:
  *   1 = catalog, 2 = /Pages tree, then each page dict (and each blank
  *   page's content stream) in plan order, then the caller's synthetics

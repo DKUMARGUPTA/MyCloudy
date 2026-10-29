@@ -1,27 +1,33 @@
-import { PDFDocument } from "pdf-lib";
-
 import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
+import {
+  PdfError,
+  listPages,
+  parsePdf,
+  rewriteDocument,
+  type ParsedPdf,
+  type PdfObj,
+} from "@/lib/own/pdf";
 import { fileBaseName } from "../stamp-common/layout";
-import { stripAllMetadata } from "../meta-common/worker-lib";
 import {
   collectImageCandidates,
   dedupeImageXObjects,
-  replaceImageStream,
+  imageReplacement,
   resolveParams,
+  stripAllMetadataOwn,
 } from "./engine";
 import { recompressCandidate } from "../compress-common/recompress";
 
 /**
- * Compress PDF worker (PRD §7.5, device mode).
+ * Compress PDF worker (PRD §7.5, device mode) — OWN ENGINE (P6-r).
  *
  * Re-encodes embedded photos as JPEG (quality + max pixel size), keeps
  * text/fonts/vector art untouched — selectable text stays selectable.
  * DCTDecode images decode via the browser's native JPEG decoder
- * (createImageBitmap); Flate/LZW/… images decode via pdf-lib's
- * decodePDFRawStream and are interpreted by colorspace into an ImageData.
+ * (createImageBitmap); Flate/LZW/… images decode via the engine's pure
+ * decodeStreamBytes and are interpreted by colorspace into an ImageData.
  * Every replacement is size-guarded: unless the re-encoded JPEG is clearly
  * smaller, the original stream is kept — output can only shrink per
  * image, never regress.
@@ -34,9 +40,9 @@ import { recompressCandidate } from "../compress-common/recompress";
  * The merge is verified byte-for-byte (signature + full compare) and
  * counted honestly in the result detail (dedupedImages/dedupeBytesSaved).
  *
- * The impure decode/re-encode machinery lives in
- * ../compress-common/recompress.ts (shared with compress-pdf-to-size,
- * extracted verbatim in P3.20).
+ * Saving rides the engine's preserve-numbers rewriter with object
+ * streams (pdf-lib `save({useObjectStreams: true})` parity — catalog,
+ * names and every untouched object survive byte-comparable).
  *
  * Device-only: the File arrives by structured clone, the PDF Blob goes
  * back — nothing touches the network.
@@ -44,6 +50,41 @@ import { recompressCandidate } from "../compress-common/recompress";
 
 function post(response: WorkerResponse): void {
   self.postMessage(response);
+}
+
+/**
+ * The structural load: encrypted files refuse with the honest code,
+ * everything unreadable is corrupt. R6-b: the toast NAMES the file that
+ * stopped the run (merge-pdf standard) — both refusals carry the name.
+ */
+function loadDocument(
+  bytes: Uint8Array,
+  runId: number,
+  name: string,
+): ParsedPdf | null {
+  try {
+    return parsePdf(bytes);
+  } catch (error: unknown) {
+    if (error instanceof PdfError && error.code === "encrypted") {
+      post({
+        type: "error",
+        runId,
+        code: "tool.errorEncrypted",
+        detail: name,
+      });
+      return null;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    post({
+      type: "error",
+      runId,
+      code: /password|encrypt/i.test(message)
+        ? "tool.errorEncrypted"
+        : "tool.errorCorrupt",
+      detail: name,
+    });
+    return null;
+  }
 }
 
 async function run(request: WorkerRunRequest): Promise<void> {
@@ -65,49 +106,9 @@ async function run(request: WorkerRunRequest): Promise<void> {
     });
 
     const bytes = new Uint8Array(await file.arrayBuffer());
-    // R6-b honesty (merge-pdf/pagegrid standard): with up to 5 files in the
-    // batch, the encrypted/corrupt toast must NAME the file that stopped the
-    // run. Structural probe first (pdf-lib ignoreEncryption load +
-    // isEncrypted — never a raw-bytes "/Encrypt" sniff), then the plain load
-    // for corrupts; both refusals carry the file name in detail.
-    let probe: PDFDocument | null = null;
-    try {
-      probe = await PDFDocument.load(bytes, {
-        ignoreEncryption: true,
-        updateMetadata: false,
-      });
-    } catch {
-      // Not parseable at all — the plain load below keeps producing the
-      // honest corrupt error for this file.
-    }
-    if (probe?.isEncrypted) {
-      post({
-        type: "error",
-        runId,
-        code: "tool.errorEncrypted",
-        detail: file.name,
-      });
-      return;
-    }
-    let doc: PDFDocument;
-    try {
-      doc = await PDFDocument.load(bytes, {
-        ignoreEncryption: false,
-        updateMetadata: false,
-      });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      post({
-        type: "error",
-        runId,
-        code: /password|encrypt/i.test(message)
-          ? "tool.errorEncrypted"
-          : "tool.errorCorrupt",
-        detail: file.name,
-      });
-      return;
-    }
-    totalPages += doc.getPageCount();
+    const doc = loadDocument(bytes, runId, file.name);
+    if (doc === null) return;
+    totalPages += listPages(doc).length;
 
     // R4-b: merge byte-identical image XObjects FIRST — every reference
     // then shares one object, and unique photos re-encode exactly once.
@@ -116,6 +117,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
     dedupeBytesSaved += dedupe.bytesSaved;
 
     const candidates = collectImageCandidates(doc);
+    const replacements = new Map<number, PdfObj>();
+    const deletions = new Set<number>(dedupe.deletions);
 
     for (let i = 0; i < candidates.length; i += 1) {
       const candidate = candidates[i];
@@ -126,13 +129,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
         params.grayscale
       );
       if (result) {
-        replaceImageStream(
-          doc.context,
+        const [num, replacement] = imageReplacement(
           candidate,
           result.bytes,
           result.width,
           result.height
         );
+        replacements.set(num, replacement);
       }
       post({
         type: "progress",
@@ -145,7 +148,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
       });
     }
 
-    if (params.stripMetadata) stripAllMetadata(doc, true);
+    let dropInfo = false;
+    if (params.stripMetadata) {
+      const strip = stripAllMetadataOwn(doc);
+      for (const num of strip.deletions) deletions.add(num);
+      dropInfo = strip.dropInfo;
+    }
 
     post({
       type: "progress",
@@ -153,7 +161,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
       pct: Math.round(((fileIndex + 0.94) / files.length) * 100),
       stage: "saving",
     });
-    const saved = await doc.save({ useObjectStreams: true });
+    const saved = rewriteDocument(doc, {
+      replacements,
+      deletions,
+      dropInfo,
+      objectStreams: true,
+    });
     outputs.push({
       name: `${fileBaseName(file.name)}-compressed.pdf`,
       mime: "application/pdf",

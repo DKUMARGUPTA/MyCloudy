@@ -1,37 +1,27 @@
 import {
-  PDFArray,
-  PDFDict,
-  PDFHexString,
-  PDFName,
-  PDFNumber,
-  PDFRawStream,
-  PDFString,
-  type PDFContext,
-  type PDFDocument,
-  type PDFRef,
-} from "pdf-lib";
-
-// PDFRef is also used as a value (instanceof checks) — alias for clarity.
-const isRef = (obj: unknown): obj is PDFRef =>
-  typeof obj === "object" && obj !== null && "objectNumber" in obj;
+  asName,
+  asNum,
+  decodeStreamBytes,
+  listPages,
+  type ParsedPdf,
+  type PdfObj,
+} from "@/lib/own/pdf";
 
 /**
- * Compress PDF engine (PRD §7.5, device mode).
+ * Compress PDF engine (PRD §7.5, device mode) — OWN-engine port (P6-r).
  *
  * Strategy: the file's embedded PHOTOS are re-encoded as JPEG at a chosen
  * quality + max pixel size; text, fonts and vector art are untouched, so
  * selectable text stays selectable. Stream replacement is object-level:
- * each image XObject's indirect object is swapped for a new PDFRawStream
- * (DCTDecode) with updated /Width /Height /ColorSpace — the page content
- * stream's cm matrix stretches the image into the same drawn box, so
- * dimension changes are safe.
+ * each image XObject's indirect object is swapped for a replacement
+ * (DCTDecode) stream with updated /Width /Height /ColorSpace — the page
+ * content stream's cm matrix stretches the image into the same drawn box,
+ * so dimension changes are safe.
  *
  * This module is the PURE part (no canvas/browser APIs) so scripts can
- * unit-probe it under bun:
- *   - preset → params resolution + clamping
- *   - image discovery + decode-strategy classification
- *   - replacement dict building
- * The worker owns the impure decode/encode (OffscreenCanvas etc.).
+ * unit-probe it under bun. The worker owns the impure decode/encode
+ * (OffscreenCanvas etc.); saving happens through the engine's
+ * preserve-numbers whole-document rewriter (rewriteDocument).
  */
 
 export interface CompressParams {
@@ -90,8 +80,10 @@ export type ImageStrategy =
   | "skip"; // anything we can't decode losslessly enough to re-encode
 
 export interface ImageCandidate {
-  ref: PDFRef;
-  stream: PDFRawStream;
+  /** Source object number (the replacement maps onto it). */
+  num: number;
+  /** The stream object — `raw` is the ORIGINAL compressed body. */
+  stream: PdfObj & { k: "stream" };
   width: number;
   height: number;
   strategy: ImageStrategy;
@@ -99,31 +91,51 @@ export interface ImageCandidate {
   components: number;
   /** Original compressed stream size (bytes). */
   sourceBytes: number;
+  /** /Indexed images only: palette resolved at collection time. */
+  palette?: PaletteInfo | null;
 }
 
 const DECODABLE_FILTERS = new Set([
-  PDFName.of("FlateDecode"),
-  PDFName.of("LZWDecode"),
-  PDFName.of("ASCII85Decode"),
-  PDFName.of("ASCIIHexDecode"),
-  PDFName.of("RunLengthDecode"),
+  "FlateDecode",
+  "LZWDecode",
+  "ASCII85Decode",
+  "ASCIIHexDecode",
+  "RunLengthDecode",
 ]);
-const DCT = PDFName.of("DCTDecode");
 
-function dictNumber(dict: PDFDict, key: string): number | null {
-  const value = dict.lookup(PDFName.of(key));
-  return value instanceof PDFNumber ? value.asNumber() : null;
+/** Resolve refs through the doc when a dict value is indirect. */
+function resolveDirect(
+  doc: ParsedPdf | null,
+  v: PdfObj | undefined,
+): PdfObj | undefined {
+  if (!v) return undefined;
+  if (v.k === "ref" && doc !== null) return doc.getObject(v.num);
+  return v;
 }
 
-/** Resolved /Filter chain as pooled names (empty when none). */
-function filterNames(dict: PDFDict): PDFName[] {
-  const filter = dict.lookup(PDFName.of("Filter"));
-  if (filter instanceof PDFName) return [filter];
-  if (filter instanceof PDFArray) {
-    const names: PDFName[] = [];
-    for (let i = 0; i < filter.size(); i += 1) {
-      const item = filter.lookup(i);
-      if (item instanceof PDFName) names.push(item);
+/** Dict number read with indirect /Width-style resolution. */
+function dictNumber(
+  doc: ParsedPdf | null,
+  m: Map<string, PdfObj>,
+  key: string
+): number | null {
+  const v = resolveDirect(doc, m.get(key));
+  const n = v && v.k === "num" ? v.n : null;
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
+/** Resolved /Filter chain as names (empty when none/malformed). */
+function filterNames(
+  doc: ParsedPdf | null,
+  m: Map<string, PdfObj>
+): string[] {
+  const filter = resolveDirect(doc, m.get("Filter"));
+  if (filter && filter.k === "name") return [filter.v];
+  if (filter && filter.k === "arr") {
+    const names: string[] = [];
+    for (const item of filter.items) {
+      const v = resolveDirect(doc, item);
+      if (v && v.k === "name") names.push(v.v);
       else return []; // unknown filter object — bail
     }
     return names;
@@ -136,99 +148,156 @@ function filterNames(dict: PDFDict): PDFName[] {
  * pre-excluded by the caller (they are listed in `protectedRefs`) — their
  * colorspaces are meaningful to their parent image, not to us.
  */
-export function classifyImage(
-  dict: PDFDict,
-  stream: PDFRawStream
-): ImageStrategy {
-  if (dictNumber(dict, "ImageMask") === 1) return "skip";
+export function classifyImage(m: Map<string, PdfObj>): ImageStrategy {
+  if (dictNumber(null, m, "ImageMask") === 1) return "skip";
 
-  const filters = filterNames(dict);
+  const filters = filterNames(null, m);
   if (filters.length === 0) return "skip";
-  if (filters.length === 1 && filters[0] === DCT) {
+  if (filters.length === 1 && filters[0] === "DCTDecode") {
     return "jpeg";
   }
-  if (filters.includes(DCT)) return "skip"; // e.g. Flate(DCT(...)) — rare, skip
+  if (filters.includes("DCTDecode")) return "skip"; // e.g. Flate(DCT(...)) — rare, skip
   if (!filters.every((f) => DECODABLE_FILTERS.has(f))) {
     return "skip"; // JPX / CCITT / JBIG2 …
   }
 
   // Losslessly-decoded pixels: interpret the colorspace.
-  const bpc = dictNumber(dict, "BitsPerComponent") ?? 8;
+  const bpc = dictNumber(null, m, "BitsPerComponent") ?? 8;
   if (bpc !== 8) return "skip"; // 1/2/4-bit handled only via Indexed below
 
-  const colorSpace = dict.lookup(PDFName.of("ColorSpace"));
-  if (colorSpace instanceof PDFName) {
-    const cs = colorSpace;
-    if (
-      cs === PDFName.of("DeviceGray") ||
-      cs === PDFName.of("CalGray")
-    )
-      return "raw-gray";
-    if (
-      cs === PDFName.of("DeviceRGB") ||
-      cs === PDFName.of("CalRGB")
-    )
-      return "raw-rgb";
-    if (cs === PDFName.of("DeviceCMYK")) return "raw-cmyk";
+  const colorSpace = m.get("ColorSpace");
+  if (colorSpace && colorSpace.k === "name") {
+    const cs = colorSpace.v;
+    if (cs === "DeviceGray" || cs === "CalGray") return "raw-gray";
+    if (cs === "DeviceRGB" || cs === "CalRGB") return "raw-rgb";
+    if (cs === "DeviceCMYK") return "raw-cmyk";
     return "skip"; // Lab, Separation, …
   }
-  if (colorSpace instanceof PDFArray) {
-    const family = colorSpace.lookup(0);
-    if (family instanceof PDFName) {
-      if (family === PDFName.of("Indexed")) return "indexed";
-      if (
-        family === PDFName.of("ICCBased") ||
-        family === PDFName.of("CalRGB") ||
-        family === PDFName.of("CalGray")
-      ) {
-        const n = colorSpace.lookup(1);
-        if (n instanceof PDFNumber) {
-          if (n.asNumber() === 1) return "raw-gray";
-          if (n.asNumber() === 3) return "raw-rgb";
-          if (n.asNumber() === 4) return "raw-cmyk";
-        }
-        return "skip";
-      }
+  if (colorSpace && colorSpace.k === "arr" && colorSpace.items.length > 0) {
+    const family = colorSpace.items[0]!;
+    const fam = family.k === "name" ? family.v : "";
+    if (fam === "Indexed") return "indexed";
+    if (fam === "ICCBased" || fam === "CalRGB" || fam === "CalGray") {
+      const n = colorSpace.items[1];
+      const nn = n && n.k === "num" ? n.n : null;
+      if (nn === 1) return "raw-gray";
+      if (nn === 3) return "raw-rgb";
+      if (nn === 4) return "raw-cmyk";
+      return "skip";
     }
   }
   return "skip";
 }
 
+/** Component count for a /Indexed base colorspace name (null = unsupported). */
+export function indexedBaseComponents(base: string): number | null {
+  if (base === "DeviceGray" || base === "CalGray") return 1;
+  if (base === "DeviceRGB" || base === "CalRGB") return 3;
+  if (base === "DeviceCMYK") return 4;
+  return null;
+}
+
+export interface PaletteInfo {
+  baseComponents: number;
+  palette: Uint8Array;
+}
+
+/**
+ * Palette lookup for /Indexed images: resolves [/Indexed base hival lookup]
+ * to a base-component count + a flat palette. Handles BOTH inline strings
+ * and stream-backed lookups (our pure decodeStreamBytes — no worker
+ * round-trip needed, unlike the pdf-lib split).
+ */
+export function indexedPalette(
+  doc: ParsedPdf,
+  m: Map<string, PdfObj>
+): PaletteInfo | null {
+  const colorSpace = m.get("ColorSpace");
+  if (!colorSpace || colorSpace.k !== "arr" || colorSpace.items.length < 4) {
+    return null;
+  }
+  const base = resolveDirect(doc, colorSpace.items[1]);
+  if (!base || base.k !== "name") return null;
+  const baseComponents = indexedBaseComponents(base.v);
+  if (baseComponents === null) return null;
+  const lookup = resolveDirect(doc, colorSpace.items[3]);
+  if (!lookup) return null;
+  if (lookup.k === "str" || lookup.k === "hstr" || lookup.k === "lstr") {
+    if (lookup.b.length === 0) return null;
+    return { baseComponents, palette: lookup.b };
+  }
+  if (lookup.k === "stream") {
+    try {
+      const palette = decodeStreamBytes(lookup.raw, lookup.m);
+      if (palette.length > 0) return { baseComponents, palette };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** The image objects of a document (used by candidates + dedupe). */
+export function* walkImageStreams(
+  doc: ParsedPdf,
+  replacements?: Map<number, PdfObj> | null
+): Generator<{ num: number; obj: PdfObj & { k: "stream" } }> {
+  for (const [num, entry] of doc.entries) {
+    if (entry.type === 0) continue;
+    let obj: PdfObj | undefined;
+    const replacement = replacements?.get(num);
+    if (replacement !== undefined) {
+      obj = replacement;
+    } else {
+      const parsed = doc.getObject(num);
+      if (!parsed) continue;
+      // Source ObjStm/XRef containers are structural, never content.
+      const t = asName(parsed.k === "stream" ? parsed.m.get("Type") : undefined);
+      if (t === "ObjStm" || t === "XRef") continue;
+      obj = parsed;
+    }
+    if (!obj || obj.k !== "stream") continue;
+    const subtype = resolveDirect(doc, obj.m.get("Subtype"));
+    if (!subtype || subtype.k !== "name" || subtype.v !== "Image") continue;
+    yield { num, obj };
+  }
+}
+
 /**
  * Collects compressible image XObjects from the whole document — every
- * indirect object that is a stream with /Subtype /Image — excluding the
- * /SMask + /Mask objects referenced by other images (their bytes are alpha
- * data whose colorspace belongs to the parent — re-encoding them as
- * lossy RGB JPEG would corrupt the parent's transparency).
+ * object that is a stream with /Subtype /Image — excluding the /SMask +
+ * /Mask objects referenced by other images (their bytes are alpha data
+ * whose colorspace belongs to the parent — re-encoding them as lossy RGB
+ * JPEG would corrupt the parent's transparency).
+ *
+ * `replacements` is consulted first: the to-size ladder re-collects
+ * candidates after each rung so later rungs re-encode the ALREADY
+ * re-encoded JPEGs (compounding, exactly like the pdf-lib flow).
  */
-export function collectImageCandidates(doc: PDFDocument): ImageCandidate[] {
-  const context = doc.context;
-  const protectedRefs = new Set<string>();
+export function collectImageCandidates(
+  doc: ParsedPdf,
+  replacements?: Map<number, PdfObj> | null
+): ImageCandidate[] {
+  const protectedRefs = new Set<number>();
 
   // Pass 1: find every image object + remember the alpha-mask ones.
-  const images: { ref: PDFRef; stream: PDFRawStream; dict: PDFDict }[] = [];
-  for (const [ref, obj] of context.enumerateIndirectObjects()) {
-    if (!(obj instanceof PDFRawStream)) continue;
-    const dict = obj.dict;
-    const subtype = dict.lookup(PDFName.of("Subtype"));
-    if (!(subtype instanceof PDFName) || subtype !== PDFName.of("Image")) {
-      continue;
-    }
-    images.push({ ref, stream: obj, dict });
+  const images: { num: number; obj: PdfObj & { k: "stream" } }[] = [];
+  for (const { num, obj } of walkImageStreams(doc, replacements)) {
+    images.push({ num, obj });
     for (const key of ["SMask", "Mask"]) {
-      const mask = dict.get(PDFName.of(key));
-      if (isRef(mask)) protectedRefs.add(`$${mask.objectNumber}`);
+      const mask = obj.m.get(key);
+      if (mask && mask.k === "ref") protectedRefs.add(mask.num);
     }
   }
 
   // Pass 2: classify (drop alpha-mask objects).
   const candidates: ImageCandidate[] = [];
-  for (const { ref, stream, dict } of images) {
-    if (protectedRefs.has(`$${ref.objectNumber}`)) continue;
-    const width = dictNumber(dict, "Width");
-    const height = dictNumber(dict, "Height");
+  for (const { num, obj } of images) {
+    if (protectedRefs.has(num)) continue;
+    const width = dictNumber(doc, obj.m, "Width");
+    const height = dictNumber(doc, obj.m, "Height");
     if (!width || !height || width < 8 || height < 8) continue; // bullets, dots
-    const strategy = classifyImage(dict, stream);
+    const strategy = classifyImage(obj.m);
     if (strategy === "skip") continue;
     const components =
       strategy === "raw-gray"
@@ -239,48 +308,53 @@ export function collectImageCandidates(doc: PDFDocument): ImageCandidate[] {
             ? 1 // expanded via palette before use
             : 3;
     candidates.push({
-      ref,
-      stream,
+      num,
+      stream: obj,
       width,
       height,
       strategy,
       components,
-      sourceBytes: stream.contents.length,
+      sourceBytes: obj.raw.length,
+      // /Indexed palettes resolve EAGERLY (pure decode — inline strings and
+      // stream-backed lookups both) so the worker's canvas path stays simple.
+      palette: strategy === "indexed" ? indexedPalette(doc, obj.m) : undefined,
     });
   }
   return candidates;
 }
 
 /**
- * Builds the replacement image stream dict for a re-encoded JPEG and
- * assigns it to the original ref. Keys carried over: /SMask, /Mask, /Name
- * (legacy viewers) and /Interpolate (viewer smoothing).
+ * Builds the replacement image stream object for a re-encoded JPEG — the
+ * entry that goes into rewriteDocument's replacements map. Keys carried
+ * over: /SMask, /Mask, /Name (legacy viewers) and /Interpolate (viewer
+ * smoothing).
  */
-export function replaceImageStream(
-  context: PDFContext,
+export function imageReplacement(
   candidate: ImageCandidate,
   jpegBytes: Uint8Array,
   newWidth: number,
-  newHeight: number
-): void {
-  const old = candidate.stream.dict;
-  const dict = PDFDict.withContext(context);
-  dict.set(PDFName.of("Type"), PDFName.of("XObject"));
-  dict.set(PDFName.of("Subtype"), PDFName.of("Image"));
-  dict.set(PDFName.of("Width"), PDFNumber.of(newWidth));
-  dict.set(PDFName.of("Height"), PDFNumber.of(newHeight));
-  // The canvas JPEG encoder always emits 3-component YCbCr; the alpha
-  // channel (if any) lives in the preserved /SMask, so this is always RGB.
-  // (Grayscale luminance is still stored as 3 identical channels — safe
-  // and universally supported; a true 1-component encoder isn't available.)
-  dict.set(PDFName.of("ColorSpace"), PDFName.of("DeviceRGB"));
-  dict.set(PDFName.of("BitsPerComponent"), PDFNumber.of(8));
-  dict.set(PDFName.of("Filter"), PDFName.of("DCTDecode"));
+  newHeight: number,
+  components: 1 | 3 = 3
+): [number, PdfObj & { k: "stream" }] {
+  const old = candidate.stream.m;
+  const m = new Map<string, PdfObj>();
+  m.set("Type", { k: "name", v: "XObject" });
+  m.set("Subtype", { k: "name", v: "Image" });
+  m.set("Width", { k: "num", n: newWidth });
+  m.set("Height", { k: "num", n: newHeight });
+  // The canvas JPEG encoder emits 3-component YCbCr; a true 1-component
+  // encoder (the gray plane) writes DeviceGray.
+  m.set(
+    "ColorSpace",
+    { k: "name", v: components === 1 ? "DeviceGray" : "DeviceRGB" }
+  );
+  m.set("BitsPerComponent", { k: "num", n: 8 });
+  m.set("Filter", { k: "name", v: "DCTDecode" });
   for (const key of ["SMask", "Mask", "Name", "Interpolate"]) {
-    const carried = old.get(PDFName.of(key));
-    if (carried !== undefined) dict.set(PDFName.of(key), carried);
+    const carried = old.get(key);
+    if (carried !== undefined) m.set(key, carried);
   }
-  context.assign(candidate.ref, PDFRawStream.of(dict, jpegBytes));
+  return [candidate.num, { k: "stream", m, raw: jpegBytes }];
 }
 
 /**
@@ -313,48 +387,6 @@ export function grayscaleImageData(data: Uint8ClampedArray): void {
   }
 }
 
-/** Component count for a /Indexed base colorspace name (null = unsupported). */
-export function indexedBaseComponents(base: PDFName): number | null {
-  if (base === PDFName.of("DeviceGray") || base === PDFName.of("CalGray"))
-    return 1;
-  if (base === PDFName.of("DeviceRGB") || base === PDFName.of("CalRGB"))
-    return 3;
-  if (base === PDFName.of("DeviceCMYK")) return 4;
-  return null;
-}
-
-export interface PaletteInfo {
-  baseComponents: number;
-  palette: Uint8Array;
-}
-
-/**
- * Palette lookup for /Indexed images: resolves [/Indexed base hival lookup]
- * to a base-component count + a flat palette. Returns null when the palette
- * is stored as a stream (the worker resolves that case) or the base
- * colorspace is unsupported.
- */
-export function indexedPalette(
-  dict: PDFDict
-): PaletteInfo | null {
-  const colorSpace = dict.lookup(PDFName.of("ColorSpace"));
-  if (!(colorSpace instanceof PDFArray) || colorSpace.size() < 4) return null;
-  const base = colorSpace.lookup(1);
-  if (!(base instanceof PDFName)) return null;
-  const baseComponents = indexedBaseComponents(base);
-  if (baseComponents === null) return null;
-  const lookup = colorSpace.lookup(3);
-  // Parsed PDFs carry string lookups as PDFHexString; literal-built ones
-  // as PDFString — both expose asBytes().
-  if (lookup instanceof PDFString || lookup instanceof PDFHexString) {
-    return {
-      baseComponents,
-      palette: new Uint8Array(lookup.asBytes()),
-    };
-  }
-  return null; // stream-backed palettes are handled by the worker
-}
-
 /* ------------------------------------------------------------------ */
 /* Duplicate image dedupe (R4-b)                                       */
 /* ------------------------------------------------------------------ */
@@ -369,44 +401,44 @@ export interface DedupeResult {
   bytesSaved: number;
   /** Object number of the shared keeper per removed duplicate (debug/tests). */
   keeperOf: Map<number, number>;
+  /** Object numbers to omit from the rewrite (the removed duplicates). */
+  deletions: Set<number>;
 }
 
 /** Canonical signature of a value tree, refs rendered as "R:num:gen". */
-function signatureOf(value: unknown): string {
-  if (value instanceof PDFName) return value.asString();
-  if (value instanceof PDFNumber) return `#${value.asNumber()}`;
-  if (value instanceof PDFString || value instanceof PDFHexString) {
-    const bytes = value.asBytes();
-    let hex = "";
-    for (let i = 0; i < bytes.length; i += 1) {
-      hex += bytes[i].toString(16).padStart(2, "0");
+function signatureOf(value: PdfObj): string {
+  switch (value.k) {
+    case "name":
+      return `/${value.v}`;
+    case "num":
+      return `#${value.n}`;
+    case "str":
+    case "hstr":
+    case "lstr": {
+      let hex = "";
+      for (let i = 0; i < value.b.length; i += 1) {
+        hex += value.b[i]!.toString(16).padStart(2, "0");
+      }
+      return `(${hex})`;
     }
-    return `(${hex})`;
-  }
-  if (value instanceof PDFArray) {
-    const parts: string[] = [];
-    for (let i = 0; i < value.size(); i += 1) {
-      parts.push(signatureOf(value.get(i)));
+    case "arr":
+      return `[${value.items.map(signatureOf).join(",")}]`;
+    case "dict":
+    case "stream": {
+      const entries = [...value.m.entries()].sort((a, b) =>
+        a[0] < b[0] ? -1 : 1
+      );
+      return `<<${entries.map(([key, inner]) => `/${key}=${signatureOf(inner)}`).join(",")}>>`;
     }
-    return `[${parts.join(",")}]`;
+    case "ref":
+      return `R:${value.num}:${value.gen}`;
+    case "bool":
+      return value.b ? "true" : "false";
+    case "null":
+      return "null";
+    case "newref":
+      return `N:${value.num}`;
   }
-  if (value instanceof PDFDict) {
-    // NB: PDFName.asString() carries the leading "/" — sort+render the
-    // ENTRIES directly; re-deriving keys via PDFName.of(keyAsString)
-    // would look up the wrong (slash-prefixed) pool entry and render
-    // every value undefined (the smoke's SMask guard caught exactly that).
-    const entries = [...value.entries()].sort((a, b) =>
-      a[0].asString() < b[0].asString() ? -1 : 1
-    );
-    const parts = entries.map(
-      ([key, inner]) => `${key.asString()}=${signatureOf(inner)}`
-    );
-    return `<<${parts.join(",")}>>`;
-  }
-  if (isRef(value)) {
-    return `R:${value.objectNumber}:${value.generationNumber ?? 0}`;
-  }
-  return String(value);
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
@@ -418,50 +450,51 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
- * Deep-walks every indirect object and rewrites PDFRef values that point
- * at a removed duplicate onto the keeper's ref. PDFDict/PDFArray values
- * are the only place a PDFRef can legally live; a visited set guards the
- * cyclic shapes a real page tree can have.
+ * Deep-walks every in-use object and rewrites ref values that point at a
+ * removed duplicate onto the keeper's ref. Values live in dict/array
+ * slots; a visited set guards cyclic page-tree shapes.
  */
-function retargetRefs(doc: PDFDocument, keeperOf: Map<PDFRef, PDFRef>): void {
-  const visitedDicts = new Set<PDFDict>();
-  const visitedArrays = new Set<PDFArray>();
+function retargetRefs(
+  doc: ParsedPdf,
+  replacements: Map<number, PdfObj> | null | undefined,
+  keeperOf: Map<number, number>
+): void {
+  const seen = new Set<unknown>();
 
-  const walk = (value: unknown): void => {
-    if (isRef(value)) return; // leaf — rewriting happens in the parent
-    if (value instanceof PDFDict) {
-      if (visitedDicts.has(value)) return;
-      visitedDicts.add(value);
-      for (const [key, inner] of value.entries()) {
-        if (isRef(inner) && keeperOf.has(inner)) {
-          value.set(key, keeperOf.get(inner)!);
+  const walkValue = (value: PdfObj, replace: (next: PdfObj) => void): void => {
+    if (value.k === "ref") return; // leaf — rewriting happens in the parent
+    if (value.k === "dict" || value.k === "stream" || value.k === "arr") {
+      if (seen.has(value)) return;
+      seen.add(value);
+    }
+    if (value.k === "dict" || value.k === "stream") {
+      for (const [key, inner] of value.m) {
+        if (inner.k === "ref" && keeperOf.has(inner.num)) {
+          value.m.set(key, { k: "ref", num: keeperOf.get(inner.num)!, gen: 0 });
         } else {
-          walk(inner);
+          walkValue(inner, () => undefined);
         }
       }
       return;
     }
-    if (value instanceof PDFArray) {
-      if (visitedArrays.has(value)) return;
-      visitedArrays.add(value);
-      for (let i = 0; i < value.size(); i += 1) {
-        const inner = value.get(i);
-        if (isRef(inner) && keeperOf.has(inner)) {
-          value.set(i, keeperOf.get(inner)!);
+    if (value.k === "arr") {
+      for (let i = 0; i < value.items.length; i += 1) {
+        const inner = value.items[i]!;
+        if (inner.k === "ref" && keeperOf.has(inner.num)) {
+          value.items[i] = { k: "ref", num: keeperOf.get(inner.num)!, gen: 0 };
         } else {
-          walk(inner);
+          walkValue(inner, () => undefined);
         }
       }
     }
   };
 
-  for (const [, obj] of doc.context.enumerateIndirectObjects()) {
-    if (obj instanceof PDFDict) walk(obj);
-    else if (obj instanceof PDFArray) walk(obj);
-    else if (typeof obj === "object" && obj !== null && "dict" in obj) {
-      // Stream objects (raw streams, content streams, …) — walk the dict.
-      walk((obj as unknown as { dict: unknown }).dict);
-    }
+  for (const [num, entry] of doc.entries) {
+    if (entry.type === 0) continue;
+    const replacement = replacements?.get(num);
+    const obj = replacement !== undefined ? replacement : doc.getObject(num);
+    if (!obj) continue;
+    walkValue(obj, () => undefined);
   }
 }
 
@@ -470,82 +503,169 @@ function retargetRefs(doc: PDFDocument, keeperOf: Map<PDFRef, PDFRef>): void {
  *
  * Files that stamp the same logo/photo on every page (letterheads,
  * watermarks, form scans) embed one copy PER PAGE; the bytes are identical
- * and all but the first copy are pure waste. Detection: group image
- * streams by a canonical dict signature (every entry except /Length,
- * with refs kept distinct so images never share a foreign /SMask) + raw
- * stream length, then CONFIRM with a full byte compare — a hash alone
- * never merges. Groups with a single member are untouched; the keeper is
- * the lowest object number; duplicates are deleted after every reference
- * in the document was retargeted onto the keeper.
+ * and all but the first copy are pure waste. Detection: group image streams
+ * by a canonical dict signature (every entry except /Length, with refs
+ * kept distinct so images never share a foreign /SMask) + raw stream
+ * length, then CONFIRM with a full byte compare — a hash alone never
+ * merges. Groups with a single member are untouched; the keeper is the
+ * lowest object number; duplicates are omitted from the rewrite after
+ * every reference was retargeted onto the keeper.
  *
  * Runs on ANY image XObject — including ones the JPEG re-encode must skip
  * (masks, odd colorspaces) — so dedupe is orthogonal to re-encoding, and
  * running it FIRST means unique images re-encode exactly once.
  */
-export function dedupeImageXObjects(doc: PDFDocument): DedupeResult {
-  const context = doc.context;
-  const images: { ref: PDFRef; stream: PDFRawStream; signature: string }[] = [];
-  for (const [ref, obj] of context.enumerateIndirectObjects()) {
-    if (!(obj instanceof PDFRawStream)) continue;
-    const dict = obj.dict;
-    const subtype = dict.lookup(PDFName.of("Subtype"));
-    if (!(subtype instanceof PDFName) || subtype !== PDFName.of("Image")) {
-      continue;
-    }
-    // /Length is stream-machinery (it equals contents.length); everything
-    // else in the dict must agree before two images are merge candidates.
-    const shadow = PDFDict.withContext(context);
-    for (const [key, value] of dict.entries()) {
-      if (key === PDFName.of("Length")) continue;
+export function dedupeImageXObjects(
+  doc: ParsedPdf,
+  replacements?: Map<number, PdfObj> | null
+): DedupeResult {
+  const images: { num: number; obj: PdfObj & { k: "stream" }; signature: string }[] =
+    [];
+  for (const { num, obj } of walkImageStreams(doc, replacements)) {
+    // /Length is stream-machinery (it equals raw.length); everything else
+    // in the dict must agree before two images are merge candidates.
+    const shadow = new Map<string, PdfObj>();
+    for (const [key, value] of obj.m) {
+      if (key === "Length") continue;
       shadow.set(key, value);
     }
-    images.push({ ref, stream: obj, signature: signatureOf(shadow) });
+    images.push({ num, obj, signature: signatureOf({ k: "dict", m: shadow }) });
   }
 
   const groups = new Map<string, typeof images>();
   for (const image of images) {
-    const key = `${image.signature}#${image.stream.contents.length}`;
+    const key = `${image.signature}#${image.obj.raw.length}`;
     const bucket = groups.get(key);
     if (bucket) bucket.push(image);
     else groups.set(key, [image]);
   }
 
-  const keeperOf = new Map<PDFRef, PDFRef>();
+  const keeperOf = new Map<number, number>();
   let bytesSaved = 0;
   let mergedGroups = 0;
   for (const bucket of groups.values()) {
     if (bucket.length < 2) continue; // cap safety: only ≥2 identical copies
-    bucket.sort((a, b) => a.ref.objectNumber - b.ref.objectNumber);
-    const keeper = bucket[0];
+    bucket.sort((a, b) => a.num - b.num);
+    const keeper = bucket[0]!;
     let mergedAny = false;
     for (let i = 1; i < bucket.length; i += 1) {
-      const dup = bucket[i];
+      const dup = bucket[i]!;
       // The signature is necessary but not sufficient — compare the raw
       // bytes so no hash/length collision can ever corrupt a document.
-      if (!bytesEqual(keeper.stream.contents, dup.stream.contents)) continue;
-      keeperOf.set(dup.ref, keeper.ref);
-      bytesSaved += dup.stream.contents.length;
+      if (!bytesEqual(keeper.obj.raw, dup.obj.raw)) continue;
+      keeperOf.set(dup.num, keeper.num);
+      bytesSaved += dup.obj.raw.length;
       mergedAny = true;
     }
     if (mergedAny) mergedGroups += 1;
   }
   if (keeperOf.size === 0) {
-    return { mergedCount: 0, mergedGroups: 0, bytesSaved: 0, keeperOf: new Map() };
+    return {
+      mergedCount: 0,
+      mergedGroups: 0,
+      bytesSaved: 0,
+      keeperOf: new Map(),
+      deletions: new Set(),
+    };
   }
 
-  retargetRefs(doc, keeperOf);
-  for (const dup of keeperOf.keys()) {
-    context.delete(dup);
-  }
-
-  const keeperOfNums = new Map<number, number>();
-  for (const [dup, keeper] of keeperOf) {
-    keeperOfNums.set(dup.objectNumber, keeper.objectNumber);
-  }
+  retargetRefs(doc, replacements, keeperOf);
+  const deletions = new Set(keeperOf.keys());
   return {
     mergedCount: keeperOf.size,
     mergedGroups,
     bytesSaved,
-    keeperOf: keeperOfNums,
+    keeperOf,
+    deletions,
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Metadata strip (own engine; the meta-common port lands later)       */
+/* ------------------------------------------------------------------ */
+
+export interface StripReport {
+  /** Raw Info-dict keys that were present and removed (e.g. "Title"). */
+  removedFields: string[];
+  removedXmp: boolean;
+  /** Pages whose /PieceInfo dictionary was removed (private app data). */
+  removedPieceInfo: number;
+  removedPageMetadata: number;
+  /** Annotation /M timestamps removed. */
+  removedAnnotationDates: number;
+  /** Object numbers to omit from the rewrite (Info, XMP, page-level). */
+  deletions: Set<number>;
+  /** The trailer /Info must be dropped too. */
+  dropInfo: boolean;
+}
+
+/**
+ * stripAllMetadata(doc, true) on the own engine — Info + catalog XMP +
+ * page-level /PieceInfo //Metadata + annotation /M dates. Mutates the
+ * parsed graphs; the deletions feed rewriteDocument.
+ */
+export function stripAllMetadataOwn(doc: ParsedPdf): StripReport {
+  const report: StripReport = {
+    removedFields: [],
+    removedXmp: false,
+    removedPieceInfo: 0,
+    removedPageMetadata: 0,
+    removedAnnotationDates: 0,
+    deletions: new Set(),
+    dropInfo: false,
+  };
+
+  // Info dict (trailer /Info ref).
+  const info = doc.trailer.get("Info");
+  if (info && info.k === "ref") {
+    const infoObj = doc.getObject(info.num);
+    if (infoObj && (infoObj.k === "dict" || infoObj.k === "stream")) {
+      for (const [key] of infoObj.m) report.removedFields.push(key);
+    }
+    report.deletions.add(info.num);
+    report.dropInfo = true;
+  }
+
+  // Catalog /Metadata (the XMP stream object).
+  const root = doc.trailer.get("Root");
+  if (root && root.k === "ref") {
+    const catalog = doc.getObject(root.num);
+    if (catalog && (catalog.k === "dict" || catalog.k === "stream")) {
+      const meta = catalog.m.get("Metadata");
+      if (meta !== undefined) {
+        if (meta.k === "ref") report.deletions.add(meta.num);
+        catalog.m.delete("Metadata");
+        report.removedXmp = true;
+      }
+    }
+  }
+
+  // Page level: /PieceInfo, /Metadata, annotation /M timestamps.
+  for (const page of listPages(doc)) {
+    const dropRefKey = (key: string): boolean => {
+      const value = page.dict.get(key);
+      if (value === undefined) return false;
+      if (value.k === "ref") report.deletions.add(value.num);
+      page.dict.delete(key);
+      return true;
+    };
+    if (dropRefKey("PieceInfo")) report.removedPieceInfo += 1;
+    if (dropRefKey("Metadata")) report.removedPageMetadata += 1;
+    const annots = page.dict.get("Annots");
+    if (annots && annots.k === "arr") {
+      for (const entry of annots.items) {
+        const annot = resolveDirect(doc, entry);
+        if (annot && (annot.k === "dict" || annot.k === "stream")) {
+          if (annot.m.has("M")) {
+            annot.m.delete("M");
+            report.removedAnnotationDates += 1;
+          }
+        }
+      }
+    }
+  }
+
+  return report;
+}
+
+export { asNum };

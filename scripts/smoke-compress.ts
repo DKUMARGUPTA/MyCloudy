@@ -1,19 +1,21 @@
 /**
- * Compress PDF fixture + PURE-ENGINE smoke (P3.12).
+ * Compress PDF fixture + PURE-ENGINE smoke (P3.12) — OWN-ENGINE EDITION (P6-r).
  *
  * Part 1 (needs PIL, run once): generate the source photos
  *   download/qa-p312-photo.jpg    2200x1500 noisy gradient  (DCTDecode)
  *   download/qa-p312-flat.png     1400x1000 flat RGB        (FlateDecode RGB)
  *   download/qa-p312-alpha.png    900x700  with alpha       (Flate + SMask)
- * Part 2 (bun): assemble download/qa-p312-fixture.pdf with pdf-lib —
+ *   download/qa-p312-gray.png     600x400 grayscale         (FlateDecode gray)
+ * Part 2 (bun): assemble download/qa-p312-fixture.pdf with pdf-lib (the
+ *   DEV-TIME ORACLE — fixtures only; runtime is 100% our engine):
  *   page 1: selectable text + the big JPEG photo
  *   page 2: selectable text + the flat PNG (Flate RGB)
  *   page 3: selectable text + the alpha PNG (Flate RGB + SMask)
  *   page 4: text only (nothing to compress)
  * Part 3: PURE ENGINE checks (no canvas):
  *   - resolveParams preset/custom clamping
- *   - image discovery + decode-strategy classification
- *   - replacement dict building
+ *   - image discovery + decode-strategy classification (own object model)
+ *   - replacement dict building + rewriteDocument round-trips
  *   - R4-b: dedupeImageXObjects — byte-identical duplicate image
  *     XObjects merge onto ONE shared object (references retargeted,
  *     honest counts), signature/byte-compare guards keep distinct and
@@ -34,11 +36,16 @@ import {
   PDFString,
 } from "pdf-lib";
 import {
+  parsePdf,
+  rewriteDocument,
+  type PdfObj,
+} from "../src/lib/own/pdf";
+import {
   classifyImage,
   collectImageCandidates,
   dedupeImageXObjects,
+  imageReplacement,
   indexedPalette,
-  replaceImageStream,
   resolveParams,
   targetSize,
   grayscaleImageData,
@@ -59,6 +66,19 @@ function check(label: string, ok: boolean, extra = ""): void {
     failed += 1;
     console.log(`  ✗ FAIL: ${label}${extra ? ` — ${extra}` : ""}`);
   }
+}
+
+/** Own-engine dict literal: {k:"name",v} | {k:"num",n} | nested arrays. */
+function ownDict(
+  entries: Record<string, PdfObj | number | string>
+): Map<string, PdfObj> {
+  const m = new Map<string, PdfObj>();
+  for (const [key, value] of Object.entries(entries)) {
+    if (typeof value === "number") m.set(key, { k: "num", n: value });
+    else if (typeof value === "string") m.set(key, { k: "name", v: value });
+    else m.set(key, value);
+  }
+  return m;
 }
 
 async function main(): Promise<void> {
@@ -111,7 +131,7 @@ async function main(): Promise<void> {
   await writeFile("download/qa-p312-fixture.pdf", fixture);
   console.log(`fixture: download/qa-p312-fixture.pdf (${fixture.length} bytes)`);
 
-  /* ---------- Part 3: pure engine checks ---------- */
+  /* ---------- Part 3: pure engine checks (OWN) ---------- */
   console.log("\nresolveParams:");
   const rec = resolveParams({ preset: "recommended" });
   check(
@@ -137,9 +157,9 @@ async function main(): Promise<void> {
   );
   check("custom flags pass through", custom.grayscale && custom.stripMetadata);
 
-  console.log("\ncollectImageCandidates:");
-  const reloaded = await PDFDocument.load(fixture, { updateMetadata: false });
-  const candidates = collectImageCandidates(reloaded);
+  console.log("\ncollectImageCandidates (own engine):");
+  const own = parsePdf(fixture);
+  const candidates = collectImageCandidates(own);
   check("found 3 images (photo, flat, alpha)", candidates.length === 3,
     `got ${candidates.length}`);
   const strategies = candidates
@@ -161,28 +181,29 @@ async function main(): Promise<void> {
     candidates.some((c) => c.strategy === "raw-rgb" && c.width === 900)
   );
 
-  // The SMask gray image (obj 17, 900x700 DeviceGray) must NOT be among the
+  // The SMask gray image (900x700 DeviceGray) must NOT be among the
   // candidates — its bytes are the alpha channel of the RGB image.
-  const grayRefs: string[] = [];
-  for (const [ref, obj] of reloaded.context.enumerateIndirectObjects()) {
-    if (obj instanceof PDFRawStream) {
-      const st = obj.dict.lookup(PDFName.of("Subtype"));
-      const cs = obj.dict.lookup(PDFName.of("ColorSpace"));
-      if (
-        st instanceof PDFName &&
-        st === PDFName.of("Image") &&
-        cs instanceof PDFName &&
-        cs === PDFName.of("DeviceGray")
-      ) {
-        grayRefs.push(ref.toString());
-      }
+  // (Object numbers are shared: our parser and pdf-lib read the SAME file.)
+  const grayNums: number[] = [];
+  for (const [num, entry] of own.entries) {
+    if (entry.type === 0) continue;
+    const obj = own.getObject(num);
+    if (
+      obj &&
+      obj.k === "stream" &&
+      obj.m.get("Subtype")?.k === "name" &&
+      (obj.m.get("Subtype") as { v: string }).v === "Image" &&
+      obj.m.get("ColorSpace")?.k === "name" &&
+      (obj.m.get("ColorSpace") as { v: string }).v === "DeviceGray"
+    ) {
+      grayNums.push(num);
     }
   }
   const grayCandidate = candidates.find((c) => c.strategy === "raw-gray");
   check(
     "SMask gray image exists in doc but is excluded from candidates",
-    grayRefs.length === 1 && grayCandidate === undefined,
-    grayRefs.join(",") || "none"
+    grayNums.length === 1 && grayCandidate === undefined,
+    grayNums.join(",") || "none"
   );
 
   console.log("\ntargetSize + grayscale:");
@@ -200,65 +221,77 @@ async function main(): Promise<void> {
     lum[0] === 76 && lum[4] === 150
   );
 
-  console.log("\nclassifyImage skip paths:");
-  // context.obj() converts strings→PDFName, numbers→PDFNumber — the same
-  // shape a parsed document produces.
-  const mkDict = (entries: Record<string, unknown>): PDFDict =>
-    reloaded.context.obj(entries as never) as unknown as PDFDict;
-  const stream = () => PDFRawStream.of(mkDict({}), new Uint8Array(16));
+  console.log("\nclassifyImage skip paths (own dicts):");
   check(
     "JPXDecode → skip",
-    classifyImage(
-      mkDict({ Filter: "JPXDecode", Width: 10, Height: 10, BitsPerComponent: 8 }),
-      stream()
-    ) === "skip"
+    classifyImage(ownDict({ Filter: "JPXDecode", Width: 10, Height: 10, BitsPerComponent: 8 })) === "skip"
   );
   check(
     "ImageMask → skip",
-    classifyImage(
-      mkDict({ ImageMask: 1, Width: 10, Height: 10 }),
-      stream()
-    ) === "skip"
+    classifyImage(ownDict({ ImageMask: 1, Width: 10, Height: 10 })) === "skip"
   );
   check(
     "DeviceCMYK Flate → raw-cmyk",
     classifyImage(
-      mkDict({
+      ownDict({
         Filter: "FlateDecode",
         Width: 10,
         Height: 10,
         BitsPerComponent: 8,
         ColorSpace: "DeviceCMYK",
-      }),
-      stream()
+      })
     ) === "raw-cmyk"
   );
-  // /Indexed arrays carry the palette lookup as PDFString in parsed files —
-  // context.obj would turn a plain string into a PDFName, so build the
-  // array explicitly like the parser does.
-  const idxDict = mkDict({
+  // /Indexed arrays carry the palette lookup as a string in parsed files —
+  // the own parser materializes it as a hex-string object.
+  const idxDict = ownDict({
     Filter: "FlateDecode",
     Width: 10,
     Height: 10,
     BitsPerComponent: 8,
   });
-  const idxArray = PDFArray.withContext(reloaded.context);
-  idxArray.push(PDFName.of("Indexed"));
-  idxArray.push(PDFName.of("DeviceRGB"));
-  idxArray.push(reloaded.context.obj(3));
-  idxArray.push(PDFString.of("\u0001\u0002\u0003\u0004\u0005\u0006"));
-  idxDict.set(PDFName.of("ColorSpace"), idxArray);
+  idxDict.set("ColorSpace", {
+    k: "arr",
+    items: [
+      { k: "name", v: "Indexed" },
+      { k: "name", v: "DeviceRGB" },
+      { k: "num", n: 3 },
+      { k: "hstr", b: Uint8Array.from([1, 2, 3, 4, 5, 6]) },
+    ],
+  });
   check(
     "Indexed → indexed + palette inline",
-    classifyImage(idxDict, stream()) === "indexed" &&
-      indexedPalette(idxDict)?.baseComponents === 3
+    classifyImage(idxDict) === "indexed" &&
+      indexedPalette(own, idxDict)?.baseComponents === 3
+  );
+  const iccDict = ownDict({
+    Filter: "FlateDecode",
+    Width: 10,
+    Height: 10,
+    BitsPerComponent: 8,
+    ColorSpace: {
+      k: "arr",
+      items: [{ k: "name", v: "ICCBased" }, { k: "num", n: 3 }],
+    },
+  });
+  check(
+    "ICCBased N=3 → raw-rgb",
+    classifyImage(iccDict) === "raw-rgb"
   );
 
-  console.log("\nreplaceImageStream:");
+  console.log("\nimageReplacement + rewriteDocument:");
   const target = candidates.find((c) => c.strategy === "jpeg")!;
   const fakeJpeg = new Uint8Array(2000).fill(0xff);
-  replaceImageStream(reloaded.context, target, fakeJpeg, 1600, 1091);
-  const after = reloaded.context.lookup(target.ref);
+  const [targetNum, replacement] = imageReplacement(target, fakeJpeg, 1600, 1091);
+  const replacedBytes = rewriteDocument(own, {
+    replacements: new Map([[targetNum, replacement]]),
+    objectStreams: true,
+  });
+  const afterReload = await PDFDocument.load(replacedBytes, {
+    throwOnInvalidObject: true,
+    updateMetadata: false,
+  });
+  const after = afterReload.context.lookup(PDFRef.of(target.num));
   check(
     "ref now a DCTDecode image 1600x1091 DeviceRGB",
     after instanceof PDFRawStream &&
@@ -268,44 +301,43 @@ async function main(): Promise<void> {
       after.contents.length === 2000
   );
   check(
-    "original refs for other images untouched",
+    "original streams for other images untouched",
     candidates
       .filter((c) => c !== target)
-      .every((c) => c.stream.contents.length > 0)
+      .every((c) => c.stream.raw.length > 0)
   );
 
   const alphaImg = candidates.find((c) => c.width === 900)!;
-  const smaskRef = alphaImg.stream.dict.get(PDFName.of("SMask"));
-  replaceImageStream(reloaded.context, alphaImg, fakeJpeg, 900, 700);
-  const afterAlpha = reloaded.context.lookup(alphaImg.ref) as PDFRawStream;
+  const smaskRef = alphaImg.stream.m.get("SMask");
+  const [, alphaReplacement] = imageReplacement(alphaImg, fakeJpeg, 900, 700);
+  const alphaReplaced = rewriteDocument(own, {
+    replacements: new Map([[alphaImg.num, alphaReplacement]]),
+    objectStreams: true,
+  });
+  const afterAlphaReload = await PDFDocument.load(alphaReplaced, {
+    throwOnInvalidObject: true,
+    updateMetadata: false,
+  });
+  const afterAlpha = afterAlphaReload.context.lookup(
+    PDFRef.of(alphaImg.num)
+  ) as PDFRawStream;
   check(
     "SMask ref carried into the replacement",
-    String(afterAlpha.dict.get(PDFName.of("SMask"))) === String(smaskRef),
-    String(smaskRef)
+    afterAlpha !== undefined &&
+      afterAlpha.dict.get(PDFName.of("SMask")) !== undefined &&
+      afterAlpha.dict.get(PDFName.of("SMask"))!.toString() ===
+        (smaskRef ? `${(smaskRef as { num: number }).num} 0 R` : ""),
+    String(afterAlpha?.dict.get(PDFName.of("SMask")))
   );
 
-  // ICCBased with N=3
-  const iccDict = mkDict({
-    Filter: "FlateDecode",
-    Width: 10,
-    Height: 10,
-    BitsPerComponent: 8,
-    ColorSpace: ["ICCBased", 3],
-  });
+  const round = parsePdf(replacedBytes);
   check(
-    "ICCBased N=3 → raw-rgb",
-    classifyImage(iccDict, stream()) === "raw-rgb"
-  );
-
-  const resaved = await reloaded.save({ useObjectStreams: true });
-  const round = await PDFDocument.load(resaved, { updateMetadata: false });
-  check(
-    "replaced doc reloads with 4 pages + 4 image objects",
-    round.getPageCount() === 4 &&
+    "replaced doc reloads with 4 pages + 3 image candidates",
+    (await PDFDocument.load(replacedBytes, { updateMetadata: false })).getPageCount() === 4 &&
       collectImageCandidates(round).length === 3
   );
 
-  /* ---------- R4-b: dedupeImageXObjects ---------- */
+  /* ---------- R4-b: dedupeImageXObjects (own engine) ---------- */
   console.log("\ndedupeImageXObjects (R4-b):");
 
   /** 30×30 RGB raw pixels, unfiltered → the re-encode must skip it. */
@@ -387,7 +419,9 @@ async function main(): Promise<void> {
     );
     noDupPage.node.setXObject(PDFName.of("Im0"), ndA);
     noDupPage.node.setXObject(PDFName.of("Im1"), ndB);
-    const r0 = dedupeImageXObjects(noDupDoc);
+    const r0 = dedupeImageXObjects(
+      parsePdf(await noDupDoc.save({ useObjectStreams: false }))
+    );
     check(
       "no duplicates → honest zero merge (≥2 rule)",
       r0.mergedCount === 0 && r0.bytesSaved === 0 && r0.mergedGroups === 0,
@@ -395,16 +429,11 @@ async function main(): Promise<void> {
     );
 
     const plain = await buildDupFixture();
-    const plainDoc = await PDFDocument.load(plain.bytes, {
-      updateMetadata: false,
-    });
-    const before = await plainDoc.save({ useObjectStreams: false });
+    const before = plain.bytes.length;
 
-    const doc = await PDFDocument.load(plain.bytes, {
-      updateMetadata: false,
-    });
+    const doc2 = parsePdf(plain.bytes);
     const refs = plain.refs;
-    const result = dedupeImageXObjects(doc);
+    const result = dedupeImageXObjects(doc2);
     check(
       "two byte-identical images → 1 merge, 1 group",
       result.mergedCount === 1 && result.mergedGroups === 1,
@@ -420,36 +449,38 @@ async function main(): Promise<void> {
       result.keeperOf.get(refs[1].objectNumber) === refs[0].objectNumber,
       JSON.stringify([...result.keeperOf.entries()])
     );
+    const savedDedup = rewriteDocument(doc2, {
+      deletions: result.deletions,
+      objectStreams: false,
+    });
+    const reload = await PDFDocument.load(savedDedup, {
+      throwOnInvalidObject: true,
+      updateMetadata: false,
+    });
     check(
       "distinct bytes with the SAME dict signature are NOT merged",
-      doc.context.lookup(refs[2]) instanceof PDFRawStream,
+      reload.context.lookup(refs[2]) instanceof PDFRawStream,
     );
     check(
-      "duplicate object deleted from the context",
-      doc.context.lookup(refs[1]) === undefined,
+      "duplicate object deleted from the output",
+      reload.context.lookup(refs[1]) === undefined,
     );
-    const page = doc.getPages()[0];
+    const page = reload.getPages()[0];
     const im1 = page.node.normalizedEntries().XObject?.get(PDFName.of("Im1"));
     check(
       "page resource /Im1 retargeted onto the keeper",
       im1 instanceof PDFRef && im1.objectNumber === refs[0].objectNumber,
       String(im1)
     );
-
-    const savedDedup = await doc.save({ useObjectStreams: false });
     check(
       "size reduction: deduped save < untouched save",
-      savedDedup.length < before.length,
-      `${savedDedup.length} vs ${before.length}`
+      savedDedup.length < before,
+      `${savedDedup.length} vs ${before}`
     );
-    const reload = await PDFDocument.load(savedDedup, {
-      throwOnInvalidObject: true,
-      updateMetadata: false,
-    });
     check("deduped doc strict-reloads, 1 page", reload.getPageCount() === 1);
     check(
-      "reloaded doc: exactly 2 image objects remain",
-      collectImageCandidates(reload).length === 0 &&
+      "reloaded doc: exactly 2 image objects remain + 0 candidates (skip)",
+      collectImageCandidates(parsePdf(savedDedup)).length === 0 &&
         [...reload.context.enumerateIndirectObjects()].filter(
           ([, o]) =>
             o instanceof PDFRawStream &&
@@ -458,9 +489,7 @@ async function main(): Promise<void> {
     );
 
     // Idempotence: deduping again finds nothing.
-    const again = dedupeImageXObjects(
-      await PDFDocument.load(savedDedup, { updateMetadata: false })
-    );
+    const again = dedupeImageXObjects(parsePdf(savedDedup));
     check("idempotent: second run merges 0", again.mergedCount === 0, showDedupe(again));
 
     // SMask guard: two identical images whose /SMask refs differ must NOT
@@ -479,7 +508,9 @@ async function main(): Promise<void> {
     };
     smaskDoc.context.register(withMask(smaskA));
     smaskDoc.context.register(withMask(smaskB));
-    const smaskResult = dedupeImageXObjects(smaskDoc);
+    const smaskResult = dedupeImageXObjects(
+      parsePdf(await smaskDoc.save({ useObjectStreams: false }))
+    );
     check(
       "SMask-differing twins stay separate (no alpha theft)",
       smaskResult.mergedCount === 0,
@@ -582,19 +613,20 @@ async function main(): Promise<void> {
     {
       // compress-pdf takes up to 5 files, so the encrypted/corrupt toast must
       // NAME the file that stopped the run (merge-pdf standard). The worker
-      // now probes STRUCTURALLY (ignoreEncryption load + isEncrypted) before
-      // the plain load; both refusals post detail = file.name.
+      // probes STRUCTURALLY (own parser: PdfError code "encrypted") and both
+      // refusals carry the file name in detail.
       const workerSrc = await readFile("tools/compress-pdf/worker.ts", "utf8");
       check(
-        "worker: structural isEncrypted probe (pdf-lib ignoreEncryption load)",
-        workerSrc.includes("ignoreEncryption: true") &&
-          workerSrc.includes("probe?.isEncrypted")
+        "worker: structural encrypted probe via the own parser",
+        workerSrc.includes("parsePdf(bytes)") &&
+          workerSrc.includes('error.code === "encrypted"') &&
+          workerSrc.includes('code: "tool.errorEncrypted"')
       );
       check(
         "worker: encrypted + corrupt refusals carry the file name",
         workerSrc.includes('code: "tool.errorEncrypted"') &&
           workerSrc.includes("/password|encrypt/i.test(message)") &&
-          (workerSrc.match(/detail: file\.name/g)?.length ?? 0) === 2
+          (workerSrc.match(/detail: name/g)?.length ?? 0) === 2
       );
 
       const { PDFDocument: CantooDoc } = await import("@cantoo/pdf-lib");
@@ -691,9 +723,7 @@ async function main(): Promise<void> {
     }
     const qaBytes = new Uint8Array(await qaDoc.save({ useObjectStreams: false }));
     await writeFile("public/qa/audit4-dedupe-fixture.pdf", qaBytes);
-    const qaCheck = dedupeImageXObjects(
-      await PDFDocument.load(qaBytes, { updateMetadata: false })
-    );
+    const qaCheck = dedupeImageXObjects(parsePdf(qaBytes));
     check(
       "QA fixture: 2 duplicate DCT photos → merges to 1 shared object",
       qaCheck.mergedCount === 1,

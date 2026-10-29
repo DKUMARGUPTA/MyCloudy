@@ -82,6 +82,21 @@ export {
   type StampFontKey,
 } from "./stamp-fonts";
 export { decodePng, parseJpeg, flateImageBytes, type JpegInfo, type PngImage } from "./images";
+export {
+  decodeStreamBytes,
+  ascii85Decode,
+  runLengthDecode,
+  lzwDecode,
+} from "./streams";
+export {
+  rewriteDocument,
+  collectRewriteObjects,
+  resolveTrailerRef,
+  catalogDict,
+  arrItems,
+  type RewriteOptions,
+} from "./rewrite";
+export { serializePreserve } from "./writer";
 export { ParsedTtfFont, TtfSubsetter } from "./font-ttf";
 export { shapeText, type ShapedGlyph } from "./shape-deva";
 export {
