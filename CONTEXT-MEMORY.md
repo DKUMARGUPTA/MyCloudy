@@ -11,9 +11,8 @@
 
 | Metric | Value |
 |---|---|
-| Registry | **105 tools** (100 LIVE ✅ + 5 built-but-disabled ⏳) |
-| **LIVE tools** | **100** ✅ (registry `enabled: true`) |
-| Pending (built, not enabled) | 5 — e-invoice family: `create-electronic-invoice`, `create-invoice-visually`, `pdf-to-e-invoice`, `validate-e-invoice`, `xml-invoice-to-pdf` (code + smokes exist, enable round baki) |
+| Registry | **100 tools — SAB LIVE ✅** (verified brace-aware count; e-invoice family included) |
+| **LIVE tools** | **100** ✅ (registry `enabled: true`, 0 disabled) |
 | Own PDF engine (P6) | **P6-a..q COMPLETE** — 35 families pdf-lib-free; ~46 runtime files abhi bhi pdf-lib import karte hain (P6-r candidates) |
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |
 | Static pages (PRD §9) | **LIVE** — about/contact/privacy/terms wired end-to-end (footer + `#/page/<id>` + i18n 166×2) |
@@ -71,8 +70,8 @@ python3 scripts/dev-daemon.py
 - **Phase 10: Accounts + Pro** (auth, request-signature Pro gating)
 - **Phase 11: services/worker** (server-side LibreOffice — Filee ka 266-format gap yahi band hota hai)
 
-### 4. e-invoice family ENABLE round
-5 tools built+smoked hain, registry mein `enabled: true` karna + E2E QA + i18n polish baki hai.
+### 4. E-invoice family browser QA
+5 tools LIVE hain (P3-era se) — smokes pass (cei 147 + peinv 170 + xinv 492 + vei 309). Browser E2E spot-check har session mein ek tool pe kar lena chahiye.
 
 ### 5. Ops / infra
 - **Turso migration** (DB-backed API routes ab graceful-degrade pe hain)
