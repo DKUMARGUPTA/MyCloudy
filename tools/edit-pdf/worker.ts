@@ -1,20 +1,21 @@
-import {
-  PDFDocument,
-  StandardFonts,
-  degrees,
-  rgb,
-  type PDFFont,
-  type PDFImage,
-  type PDFPage,
-  type Rotation,
-} from "pdf-lib";
-
 import type { OptionValues } from "@/lib/tools/config-types";
 import type { WorkerRunRequest, WorkerResponse } from "@/lib/workers/protocol";
-import { loadStampFonts } from "../stamp-common/worker-lib";
-import type { StampFontId } from "../stamp-common/layout";
 import {
-  applyPagePlan,
+  PdfError,
+  StampContext,
+  arr as pdfArr,
+  num as pdfNum,
+  stdFontAscent,
+  type StampFontKey,
+  type StampImage,
+  type StampRgb,
+  type StampSlot,
+  type StampTtfFont,
+} from "@/lib/own/pdf";
+import { loadDevanagariBytes } from "../stamp-common/deva";
+import {
+  applySlotSets,
+  planSrc,
   MAX_WORKSPACE_PAGES,
 } from "./page-plan";
 import {
@@ -45,15 +46,15 @@ import {
 /**
  * Edit PDF — export worker (PRD §8.2.1 sub-phase 8.5 "Export").
  *
- * The surface owns every interaction; this worker bakes the final PDF:
- * original document (pdf-lib) + the objects blob ("e:<fileId>" — the
- * redact epoch-key pattern) + image assets riding the run message
- * (config.collectAssets ↔ assetOrder pairing).
+ * The surface owns every interaction; this worker bakes the final PDF on
+ * the OWN engine (P6-o): original document (StampContext) + the objects
+ * blob ("e:<fileId>" — the redact epoch-key pattern) + image assets riding
+ * the run message (config.collectAssets ↔ assetOrder pairing).
  *
  * Object coords are PDF user-space points (y from the bottom) — the same
- * space pdf-lib draws in, so unrotated pages map 1:1. Rotated pages
- * (/Rotate 90/180/270) get rotation-compensated TEXT (drawText rotate =
- * degrees(/Rotate)) so words read upright the way the user typed them;
+ * space the engine draws in, so unrotated pages map 1:1. Rotated pages
+ * (/Rotate 90/180/270) get rotation-compensated TEXT (stampText rotate =
+ * the /Rotate degrees) so words read upright the way the user typed them;
  * everything else (rects, ellipses, lines, freehand) is placed through
  * display-space endpoints mapped point-by-point, which is correct for
  * every rotation because the mapping is an isometry.
@@ -122,31 +123,34 @@ function parseViews(raw: unknown): PageView[] {
     }));
 }
 
-/**
- * R12: the page-plan application lives in page-plan.ts (shared with the
- * smoke script — the exact shipping algorithm is bun-tested); run()
- * decides identity vs surgery using srcs + the truncated flag.
- */
-// (see ./page-plan.ts)
-
 // ---------------------------------------------------------------------------
 // Font resolution (standard 14 + italic variants + self-hosted Devanagari)
 // ---------------------------------------------------------------------------
 
 const DEVA_RE = /[\u0900-\u097F]/;
 
-const ITALIC_MAP: Record<string, StandardFonts> = {
-  helvetica: StandardFonts.HelveticaOblique,
-  "helvetica-b": StandardFonts.HelveticaBoldOblique,
-  times: StandardFonts.TimesRomanItalic,
-  "times-b": StandardFonts.TimesRomanBoldItalic,
-  courier: StandardFonts.CourierOblique,
-  "courier-b": StandardFonts.CourierBoldOblique,
+const ITALIC_MAP: Record<string, StampFontKey> = {
+  helvetica: "helveticaOblique",
+  "helvetica-b": "helveticaBoldOblique",
+  times: "timesItalic",
+  "times-b": "timesBoldItalic",
+  courier: "courierOblique",
+  "courier-b": "courierBoldOblique",
 };
 
-function baseStampFont(o: TextObj): StampFontId {
+function baseStampFont(o: TextObj): StampFontKey | "devanagari" {
   if (o.font === "devanagari" || DEVA_RE.test(o.text)) return "devanagari";
-  return o.bold ? (`${o.font}Bold` as StampFontId) : (o.font as StampFontId);
+  return o.bold ? (`${o.font}Bold` as StampFontKey) : (o.font as StampFontKey);
+}
+
+/** A resolved text font: a standard-14 key or the embedded Devanagari. */
+type FontRef =
+  | { key: StampFontKey; ttf?: undefined }
+  | { key?: undefined; ttf: StampTtfFont };
+
+interface FontBag {
+  base: (id: StampFontKey | "devanagari") => FontRef | null;
+  italic: (id: string) => FontRef | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,18 +199,18 @@ function rotDisp(
 }
 
 /**
- * P8.6 rotation: the (x, y, width, height) pdf-lib draw call for a rect-like
+ * P8.6 rotation: the (x, y, width, height) stamp call for a rect-like
  * object. At rotation 0 this is the object itself (byte-identical legacy
  * path — no rotate option is passed at all); at rotation ≠ 0 the anchor is
- * compensated so pdf-lib's rotate-around-(x,y) turns the rect around its
- * CENTER (model.rotationAnchor math).
+ * compensated so the engine's rotate-around-(x,y) turns the rect around its
+ * CENTER (model.rotationAnchor math — pdf-lib drawRectangle parity).
  */
 function rotatedRectDraw(o: ObjRect, rotation: number): {
   x: number;
   y: number;
   width: number;
   height: number;
-  rotate?: Rotation;
+  rotate?: number;
 } {
   if (rotation % 360 === 0) {
     return { x: o.x, y: o.y, width: o.w, height: o.h };
@@ -217,13 +221,12 @@ function rotatedRectDraw(o: ObjRect, rotation: number): {
     y: anchor.y,
     width: o.w,
     height: o.h,
-    rotate: degrees(rotation),
+    rotate: rotation,
   };
 }
 
-function rgbOf(hex: string) {
-  const { r, g, b } = hexToRgb(hex);
-  return rgb(r, g, b);
+function rgbOf(hex: string): StampRgb {
+  return hexToRgb(hex);
 }
 
 /** Clamps an object rect into the crop box; null when fully outside. */
@@ -241,38 +244,37 @@ function clampToPage(obj: ObjRect, view: PageView): ObjRect | null {
 // ---------------------------------------------------------------------------
 
 interface DrawCtx {
-  page: PDFPage;
+  slot: number;
   view: PageView;
   fonts: FontBag;
-  imageFor: (key: string) => PDFImage | null;
+  /** pdf-lib-free width/height through the resolved font descriptor. */
+  widthOf: (text: string, size: number, ref: FontRef) => number;
+  ascentOf: (size: number, ref: FontRef) => number;
+  ctx: StampContext;
+  imageFor: (key: string) => StampImage | null;
 }
 
-interface FontBag {
-  base: (id: StampFontId) => PDFFont;
-  italic: (id: string) => PDFFont | null;
-}
-
-function drawTextObject(o: TextObj, ctx: DrawCtx): void {
+function drawTextObject(o: TextObj, dc: DrawCtx): void {
   if (o.text.trim().length === 0) return;
-  const font = resolveFont(o, ctx);
+  const ref = resolveFont(o, dc);
+  if (!ref) return;
   const size = o.size;
-  const disp = pdfRectToDisplay(o, ctx.view);
+  const view = dc.view;
+  const disp = pdfRectToDisplay(o, view);
   const pad = TEXT_PAD;
   const availW = Math.max(4, disp.w - 2 * pad);
-  const lines = wrapText(o.text, availW, (s) =>
-    font.widthOfTextAtSize(s, size)
-  );
-  const ascent = font.heightAtSize(size, { descender: false });
+  const lines = wrapText(o.text, availW, (s) => dc.widthOf(s, size, ref));
+  const ascent = dc.ascentOf(size, ref);
   const lh = LINE_HEIGHT * size;
   // P8.6: object rotation adds on top of the /Rotate compensation (the
   // page rotation keeps words upright; the object rotation turns them).
-  const rotate = degrees((ctx.view.rotate || 0) + (o.rotation || 0));
+  const rotate = (view.rotate || 0) + (o.rotation || 0);
 
   if (o.bg !== null) {
     if (o.rotation % 360 === 0) {
-      const rect = clampToPage(o, ctx.view);
+      const rect = clampToPage(o, view);
       if (rect) {
-        ctx.page.drawRectangle({
+        dc.ctx.stampRect(dc.slot, {
           x: rect.x,
           y: rect.y,
           width: rect.w,
@@ -284,7 +286,7 @@ function drawTextObject(o: TextObj, ctx: DrawCtx): void {
     } else {
       // Rotated bg: rotate around the object's user-space center. The
       // visual may extend past the crop box — viewers clip at the MediaBox.
-      ctx.page.drawRectangle({
+      dc.ctx.stampRect(dc.slot, {
         ...rotatedRectDraw(o, o.rotation),
         color: rgbOf(o.bg),
         opacity: o.opacity,
@@ -295,7 +297,7 @@ function drawTextObject(o: TextObj, ctx: DrawCtx): void {
   const color = rgbOf(o.color);
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
-    const lineW = font.widthOfTextAtSize(line, size);
+    const lineW = dc.widthOf(line, size, ref);
     const startX =
       o.align === "center"
         ? disp.x + pad + Math.max(0, (availW - lineW) / 2)
@@ -305,24 +307,25 @@ function drawTextObject(o: TextObj, ctx: DrawCtx): void {
     const baselineY = disp.y + pad + ascent + i * lh;
     // P8.6: rotate the display-space anchor around the object's display
     // center so the text turns around its center, not its corner.
-    const rotatedAnchor = rotDisp(o, ctx.view, { x: startX, y: baselineY });
-    const anchor = displayToPdfPoint(rotatedAnchor.x, rotatedAnchor.y, ctx.view);
-    ctx.page.drawText(line, {
+    const rotatedAnchor = rotDisp(o, view, { x: startX, y: baselineY });
+    const anchor = displayToPdfPoint(rotatedAnchor.x, rotatedAnchor.y, view);
+    dc.ctx.stampText(dc.slot, {
       x: anchor.x,
       y: anchor.y,
+      text: line,
       size,
-      font,
+      ...(ref.ttf ? { ttf: ref.ttf } : { font: ref.key }),
       color,
       opacity: o.opacity,
       rotate,
     });
     if (o.underline && line.length > 0) {
       const uy = baselineY + Math.max(1.2, size * 0.1);
-      const u1 = rotDisp(o, ctx.view, { x: startX, y: uy });
-      const u2 = rotDisp(o, ctx.view, { x: startX + lineW, y: uy });
-      const p1 = displayToPdfPoint(u1.x, u1.y, ctx.view);
-      const p2 = displayToPdfPoint(u2.x, u2.y, ctx.view);
-      ctx.page.drawLine({
+      const u1 = rotDisp(o, view, { x: startX, y: uy });
+      const u2 = rotDisp(o, view, { x: startX + lineW, y: uy });
+      const p1 = displayToPdfPoint(u1.x, u1.y, view);
+      const p2 = displayToPdfPoint(u2.x, u2.y, view);
+      dc.ctx.stampLine(dc.slot, {
         start: p1,
         end: p2,
         thickness: Math.max(0.4, size * 0.045),
@@ -333,25 +336,25 @@ function drawTextObject(o: TextObj, ctx: DrawCtx): void {
   }
 }
 
-function resolveFont(o: TextObj, ctx: DrawCtx): PDFFont {
+function resolveFont(o: TextObj, dc: DrawCtx): FontRef | null {
   const base = baseStampFont(o);
-  if (base === "devanagari") return ctx.fonts.base("devanagari");
+  if (base === "devanagari") return dc.fonts.base("devanagari");
   if (o.italic) {
     const key = o.bold ? `${o.font}-b` : o.font;
-    const italic = ctx.fonts.italic(key);
+    const italic = dc.fonts.italic(key);
     if (italic) return italic;
   }
-  return ctx.fonts.base(base);
+  return dc.fonts.base(base);
 }
 
-function drawImageObject(o: ImageObj, ctx: DrawCtx): void {
-  const image = ctx.imageFor(o.assetKey);
+function drawImageObject(o: ImageObj, dc: DrawCtx): void {
+  const image = dc.imageFor(o.assetKey);
   if (!image) return;
-  // pdf-lib drawImage ignores w/h — explicit width/height only (P4.4 pin).
+  // The engine scales by explicit width/height only (P4.4 pin).
   // P8.6: rotated images draw from the center-compensated anchor
   // (rotation 0 keeps the exact legacy call — byte-identical).
   if (o.rotation % 360 === 0) {
-    ctx.page.drawImage(image, {
+    dc.ctx.stampImage(dc.slot, image, {
       x: o.x,
       y: o.y,
       width: o.w,
@@ -359,23 +362,23 @@ function drawImageObject(o: ImageObj, ctx: DrawCtx): void {
       opacity: o.opacity,
     });
   } else {
-    ctx.page.drawImage(image, {
+    dc.ctx.stampImage(dc.slot, image, {
       ...rotatedRectDraw(o, o.rotation),
       opacity: o.opacity,
     });
   }
 }
 
-function drawShapeObject(o: ShapeObj, ctx: DrawCtx): void {
+function drawShapeObject(o: ShapeObj, dc: DrawCtx): void {
   const stroke = o.stroke !== null ? rgbOf(o.stroke) : undefined;
   const fill = o.fill !== null ? rgbOf(o.fill) : undefined;
   const borderDash = o.dash ? [4, 3] : undefined;
   const rotation = o.rotation || 0;
   if (o.kind === "rect") {
     if (rotation % 360 === 0) {
-      const rect = clampToPage(o, ctx.view);
+      const rect = clampToPage(o, dc.view);
       if (!rect) return;
-      ctx.page.drawRectangle({
+      dc.ctx.stampRect(dc.slot, {
         x: rect.x,
         y: rect.y,
         width: rect.w,
@@ -388,7 +391,7 @@ function drawShapeObject(o: ShapeObj, ctx: DrawCtx): void {
         borderDashArray: stroke !== undefined ? borderDash : undefined,
       });
     } else {
-      ctx.page.drawRectangle({
+      dc.ctx.stampRect(dc.slot, {
         ...rotatedRectDraw(o, rotation),
         color: fill,
         opacity: fill !== undefined ? o.opacity : undefined,
@@ -405,7 +408,7 @@ function drawShapeObject(o: ShapeObj, ctx: DrawCtx): void {
     // disable in the UI; a stray rotation value is simply ignored.
     const cx = o.x + o.w / 2;
     const cy = o.y + o.h / 2;
-    ctx.page.drawEllipse({
+    dc.ctx.stampEllipse(dc.slot, {
       xScale: o.w / 2,
       yScale: o.h / 2,
       x: cx,
@@ -421,17 +424,17 @@ function drawShapeObject(o: ShapeObj, ctx: DrawCtx): void {
   }
   // line / arrow — display endpoints (flip-aware), rotated around the
   // object's display center, then mapped to user space.
-  const disp = pdfRectToDisplay(o, ctx.view);
+  const disp = pdfRectToDisplay(o, dc.view);
   const ends = lineEndpoints(disp, o.flip);
-  const e1 = rotDisp(o, ctx.view, { x: ends.x1, y: ends.y1 });
-  const e2 = rotDisp(o, ctx.view, { x: ends.x2, y: ends.y2 });
-  const p1 = displayToPdfPoint(e1.x, e1.y, ctx.view);
-  const p2 = displayToPdfPoint(e2.x, e2.y, ctx.view);
-  ctx.page.drawLine({
+  const e1 = rotDisp(o, dc.view, { x: ends.x1, y: ends.y1 });
+  const e2 = rotDisp(o, dc.view, { x: ends.x2, y: ends.y2 });
+  const p1 = displayToPdfPoint(e1.x, e1.y, dc.view);
+  const p2 = displayToPdfPoint(e2.x, e2.y, dc.view);
+  dc.ctx.stampLine(dc.slot, {
     start: p1,
     end: p2,
     thickness: o.strokeW,
-    color: stroke ?? rgb(0, 0, 0),
+    color: stroke ?? { r: 0, g: 0, b: 0 },
     opacity: o.opacity,
     dashArray: o.dash ? [4, 3] : undefined,
   });
@@ -447,23 +450,23 @@ function drawShapeObject(o: ShapeObj, ctx: DrawCtx): void {
     for (const sign of [1, -1]) {
       const wx = p2.x - head * (ux * Math.cos(0.45) - sign * uy * Math.sin(0.45));
       const wy = p2.y - head * (uy * Math.cos(0.45) + sign * ux * Math.sin(0.45));
-      ctx.page.drawLine({
+      dc.ctx.stampLine(dc.slot, {
         start: { x: p2.x, y: p2.y },
         end: { x: wx, y: wy },
         thickness: o.strokeW,
-        color: stroke ?? rgb(0, 0, 0),
+        color: stroke ?? { r: 0, g: 0, b: 0 },
         opacity: o.opacity,
       });
     }
   }
 }
 
-function drawFreehand(o: DrawObj, ctx: DrawCtx): void {
+function drawFreehand(o: DrawObj, dc: DrawCtx): void {
   const color = rgbOf(o.stroke);
   for (let i = 1; i < o.pts.length; i += 1) {
-    const a = objPointToPdf(o, ctx.view, o.pts[i - 1][0], o.pts[i - 1][1]);
-    const b = objPointToPdf(o, ctx.view, o.pts[i][0], o.pts[i][1]);
-    ctx.page.drawLine({
+    const a = objPointToPdf(o, dc.view, o.pts[i - 1][0], o.pts[i - 1][1]);
+    const b = objPointToPdf(o, dc.view, o.pts[i][0], o.pts[i][1]);
+    dc.ctx.stampLine(dc.slot, {
       start: a,
       end: b,
       thickness: o.strokeW,
@@ -474,12 +477,12 @@ function drawFreehand(o: DrawObj, ctx: DrawCtx): void {
   }
 }
 
-function drawWhiteout(o: EditorObject, ctx: DrawCtx): void {
+function drawWhiteout(o: EditorObject, dc: DrawCtx): void {
   if (o.kind !== "whiteout") return;
   if (o.rotation % 360 === 0) {
-    const rect = clampToPage(o, ctx.view);
+    const rect = clampToPage(o, dc.view);
     if (!rect) return;
-    ctx.page.drawRectangle({
+    dc.ctx.stampRect(dc.slot, {
       x: rect.x,
       y: rect.y,
       width: rect.w,
@@ -488,7 +491,7 @@ function drawWhiteout(o: EditorObject, ctx: DrawCtx): void {
       opacity: o.opacity,
     });
   } else {
-    ctx.page.drawRectangle({
+    dc.ctx.stampRect(dc.slot, {
       ...rotatedRectDraw(o, o.rotation),
       color: rgbOf(o.fill),
       opacity: o.opacity,
@@ -502,8 +505,8 @@ function drawWhiteout(o: EditorObject, ctx: DrawCtx): void {
 
 /** Widget chrome shared by every field flavour (make-pdf-fillable's
  * light-grey visual language so placed fields read as interactive). */
-const FIELD_BORDER = rgb(0.62, 0.65, 0.7);
-const CHECK_BORDER = rgb(0.45, 0.49, 0.55);
+const FIELD_BORDER: StampRgb = { r: 0.62, g: 0.65, b: 0.7 };
+const CHECK_BORDER: StampRgb = { r: 0.45, g: 0.49, b: 0.55 };
 
 interface FieldCounters {
   added: number;
@@ -513,7 +516,7 @@ interface FieldCounters {
   radios: number;
 }
 
-/** True when pdf-lib's Helvetica appearance stream can encode the string
+/** True when the Helvetica appearance stream can encode the string
  * (Devanagari and friends cannot — honest skip, field still created). */
 function winAnsiSafe(s: string): boolean {
   for (const ch of s) {
@@ -527,14 +530,12 @@ function winAnsiSafe(s: string): boolean {
  * that share one name become a single group (one circle each). */
 function addFieldObjects(
   objects: EditorObject[],
-  pages: PDFPage[],
-  doc: PDFDocument,
+  ctx: StampContext,
   counters: FieldCounters
 ): void {
-  const form = doc.getForm();
   const taken = new Set<string>();
-  for (const existing of form.getFields()) {
-    taken.add(existing.getName());
+  for (const slotNum of sourceFieldNames(ctx)) {
+    taken.add(slotNum);
   }
   const uniqueName = (base: string): string => {
     let clean = base.replace(/\s+/g, " ").trim().slice(0, 60) || "Field";
@@ -554,19 +555,19 @@ function addFieldObjects(
     return clean;
   };
 
-  const radioGroups = new Map<string, ReturnType<typeof form.createRadioGroup>>();
+  const radioGroups = new Map<string, ReturnType<StampContext["createRadioGroup"]>>();
   let radioFallback = 0;
 
   for (const obj of objects) {
     if (obj.kind !== "field") continue;
-    const page = pages[obj.page];
-    if (!page) continue;
+    const slot = obj.page;
+    if (slot < 0 || slot >= ctx.slotCount) continue;
 
     if (obj.fieldType === "radio") {
       // One group per shared name; every object adds one circle widget.
       let group = radioGroups.get(obj.name);
       if (!group) {
-        group = form.createRadioGroup(uniqueName(obj.name));
+        group = ctx.createRadioGroup(uniqueName(obj.name));
         radioGroups.set(obj.name, group);
         if (obj.required) group.enableRequired();
       }
@@ -576,7 +577,7 @@ function addFieldObjects(
         option = `Option ${radioFallback}`;
       }
       try {
-        group.addOptionToPage(option, page, {
+        group.addOptionToSlot(slot, option, {
           x: obj.x,
           y: obj.y,
           width: obj.w,
@@ -595,11 +596,11 @@ function addFieldObjects(
     const name = uniqueName(obj.name);
     try {
       if (obj.fieldType === "checkbox") {
-        const box = form.createCheckBox(name);
+        const box = ctx.createCheckBox(name);
         if (obj.required) box.enableRequired();
         if (obj.value === FIELD_CHECKED) box.check();
         const size = Math.min(obj.w, obj.h);
-        box.addToPage(page, {
+        box.addToSlot(slot, {
           x: obj.x + (obj.w - size) / 2,
           y: obj.y + (obj.h - size) / 2,
           width: size,
@@ -609,7 +610,7 @@ function addFieldObjects(
         });
         counters.checkboxes += 1;
       } else if (obj.fieldType === "dropdown") {
-        const list = form.createDropdown(name);
+        const list = ctx.createDropdown(name);
         if (obj.required) list.enableRequired();
         for (const option of obj.options) {
           if (!winAnsiSafe(option)) continue;
@@ -626,7 +627,7 @@ function addFieldObjects(
             /* default selection skipped honestly */
           }
         }
-        list.addToPage(page, {
+        list.addToSlot(slot, {
           x: obj.x,
           y: obj.y,
           width: obj.w,
@@ -636,7 +637,7 @@ function addFieldObjects(
         });
         counters.dropdowns += 1;
       } else {
-        const field = form.createTextField(name);
+        const field = ctx.createTextField(name);
         if (obj.fieldType === "multiline") field.enableMultiline();
         if (obj.required) field.enableRequired();
         if (obj.value.length > 0 && winAnsiSafe(obj.value)) {
@@ -646,7 +647,7 @@ function addFieldObjects(
             /* unencodable default — field still created empty */
           }
         }
-        field.addToPage(page, {
+        field.addToSlot(slot, {
           x: obj.x,
           y: obj.y,
           width: obj.w,
@@ -661,6 +662,47 @@ function addFieldObjects(
       /* field creation failed — skip this one honestly */
     }
   }
+}
+
+/** The source document's existing AcroForm field names (the dedupe seed —
+ * pdf-lib's form.getFields().map(getName) on OUR parser). */
+function sourceFieldNames(ctx: StampContext): string[] {
+  const out: string[] = [];
+  const walk = (fieldsVal: unknown): void => {
+    const arr = fieldsVal as { k?: string; items?: unknown[] } | undefined;
+    if (!arr || arr.k !== "arr" || !Array.isArray(arr.items)) return;
+    for (const item of arr.items) {
+      const ref = item as { k?: string; num?: number };
+      if (!ref || ref.k !== "ref" || typeof ref.num !== "number") continue;
+      const field = ctx.doc.getObject(ref.num);
+      if (!field || field.k !== "dict") continue;
+      const t = field.m.get("T");
+      if (t && (t.k === "str" || t.k === "hstr") && t.b.length >= 4) {
+        // UTF-16BE with the FEFF BOM (PDFHexString.fromText form).
+        let name = "";
+        for (let i = 2; i + 1 < t.b.length; i += 2) {
+          name += String.fromCharCode((t.b[i]! << 8) | t.b[i + 1]!);
+        }
+        if (name.length > 0) out.push(name);
+      }
+    }
+  };
+  const rootObj = ctx.doc.trailer.get("Root");
+  const root =
+    rootObj && rootObj.k === "ref" ? ctx.doc.getObject(rootObj.num) : rootObj;
+  if (!root || (root.k !== "dict" && root.k !== "stream")) return out;
+  const afObj = root.k === "dict" ? root.m.get("AcroForm") : undefined;
+  if (!afObj) return out;
+  const af = afObj.k === "ref" ? ctx.doc.getObject(afObj.num) : afObj;
+  if (!af || (af.k !== "dict" && af.k !== "stream")) return out;
+  const fields = af.k === "dict" ? af.m.get("Fields") : undefined;
+  if (fields && fields.k === "ref") {
+    const resolved = ctx.doc.getObject(fields.num);
+    walk(resolved);
+  } else {
+    walk(fields);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -685,27 +727,22 @@ async function run(request: WorkerRunRequest): Promise<void> {
   post({ type: "progress", runId, pct: 4, stage: "reading" });
 
   const data = new Uint8Array(await file.arrayBuffer());
-  let doc: PDFDocument;
+  let ctx: StampContext;
   try {
-    doc = await PDFDocument.load(data, {
-      updateMetadata: false,
-      ignoreEncryption: true,
-    });
+    ctx = StampContext.load(data);
   } catch (error) {
+    if (error instanceof PdfError && error.code === "encrypted") {
+      throw new Error("PDF_PASSWORD");
+    }
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
       /password|encrypt/i.test(message) ? "PDF_PASSWORD" : "PDF_PARSE"
     );
   }
-  // Same guard as annotate-pdf: ignoreEncryption parses encrypted files
-  // without decrypting them — drawing onto still-encrypted streams and
-  // re-saving corrupts the output (pdf-lib never decrypts). The surface
-  // gates the CTA today; keep the worker honest for any future caller.
-  if (doc.isEncrypted) {
-    throw new Error("PDF_PASSWORD");
-  }
-  const originalPages = doc.getPages();
-  const srcCount = originalPages.length;
+  // The engine refuses encrypted files at parse (mixed-encryption outputs
+  // would be unreadable) — the surface gates the CTA today; the typed
+  // refusal above keeps the worker honest for any future caller.
+  const srcCount = ctx.pageCount;
   // R12: stale pre-R12 blobs carry NO src fields — views beyond the source
   // count are junk exactly like the old padded array ignored them, so they
   // truncate to the source count and read as identity. Explicit-src plans
@@ -720,21 +757,21 @@ async function run(request: WorkerRunRequest): Promise<void> {
     src: Math.min(v.src ?? i, Math.max(0, srcCount - 1)),
   }));
 
-  // R12 page ops: identity plans keep today's EXACT path — every original
-  // page, views padded with the first view / the default. Three flavors of
-  // identity: stale/empty blobs, a full-length in-order plan, and the
-  // >500-page truncated workspace (identity prefix + the truncated flag —
-  // without the flag a shorter plan is a TAIL DELETE and gets surgery).
-  // Non-identity plans rebuild the tree in place (see applyPagePlan).
-  let pages = originalPages;
+  // R12 page ops: identity plans keep the identity slot mapping — every
+  // original page, views padded with the first view / the default. Three
+  // flavors of identity: stale/empty blobs, a full-length in-order plan,
+  // and the >500-page truncated workspace (identity prefix + the truncated
+  // flag — without the flag a shorter plan is a TAIL DELETE and gets
+  // surgery). Non-identity plans become the SLOT plan (src duplicates +
+  // removals + reorder — the engine gives every slot its own page dict).
   let views: PageView[];
   const identity =
     planViews.length === 0 ||
     (isIdentityOrder(planViews, srcCount) &&
       (planViews.length === srcCount || blob?.truncated === true));
   if (identity) {
-    views = originalPages.map(
-      (_, i) => planViews[i] ?? planViews[0] ?? {
+    views = Array.from({ length: srcCount }, (_, i) =>
+      planViews[i] ?? planViews[0] ?? {
         x0: 0,
         y0: 0,
         x1: 612,
@@ -750,17 +787,14 @@ async function run(request: WorkerRunRequest): Promise<void> {
       stage: "processing",
       detail: { pages: planViews.length },
     });
-    pages = await applyPagePlan(doc, originalPages, planViews);
     views = planViews;
   }
 
   // R13 page rotation: each slot's view carries the EFFECTIVE rotation
-  // (source /Rotate + the user's offset). Slots that differ from the page
-  // node's current /Rotate get it rewritten — content, annotations and
-  // user-space objects all ride along (the honest editor semantic: rotate
-  // the page, rotate everything on it). The loop is bounded by the plan,
-  // never the padded views: a truncated (>500-page) workspace leaves the
-  // untouched tail's rotation exactly as the document shipped it.
+  // (source /Rotate + the user's offset). Slots that differ from the source
+  // page's current /Rotate get it rewritten via the slot set override —
+  // content, annotations and user-space objects all ride along (the honest
+  // editor semantic: rotate the page, rotate everything on it).
   //
   // TRUST: only slots whose WIRE view carried an explicit quadrant rotate.
   // parseViews defaults absent/garbage rotate to 0 — rewriting /Rotate
@@ -773,14 +807,6 @@ async function run(request: WorkerRunRequest): Promise<void> {
       typeof (v as PageView | undefined)?.rotate === "number" &&
       [0, 90, 180, 270].includes((v as PageView).rotate)
   );
-  const rotSlots = identity ? planViews.length : views.length;
-  for (let i = 0; i < rotSlots && i < pages.length; i += 1) {
-    if (!rotateExplicit[i]) continue;
-    const target = views[i]?.rotate ?? 0;
-    if (target !== pages[i].getRotation().angle) {
-      pages[i].setRotation(degrees(target));
-    }
-  }
 
   // R15 page crop: slots whose WIRE view carried a well-shaped crop get
   // the output page's /CropBox set to it (clamped into the view box + the
@@ -799,36 +825,47 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const cropExplicit = (
     Array.isArray(blob?.pageViews) ? blob.pageViews : []
   ).map((v) => validCropShape((v as PageView | undefined)?.crop) !== undefined);
+  // The SLOT plan: one {src, set} per output slot. Identity runs carry it
+  // too (src = i) so the rotate/crop overrides have a uniform home.
   let croppedCount = 0;
-  for (let i = 0; i < rotSlots && i < pages.length; i += 1) {
-    if (!cropExplicit[i]) continue;
-    const view = views[i];
-    if (!view) continue;
-    const crop = sanitizeCrop(view.crop, view);
-    if (!crop) continue;
-    pages[i].setCropBox(
-      crop.x0,
-      crop.y0,
-      crop.x1 - crop.x0,
-      crop.y1 - crop.y0
+  const slots: StampSlot[] = views.map((v, i) => {
+    // Identity runs keep slot i on SOURCE page i — the padded views are
+    // pure coordinate frames (their carry-over src is NOT page identity;
+    // the R12 truncated-tail lesson). Surgery runs read the plan's src.
+    const src = identity ? i : planSrc(v, i, srcCount);
+    const set = applySlotSets(
+      v,
+      rotateExplicit[i] === true,
+      ctx.pages[src].rotate,
+      cropExplicit[i] === true
     );
-    croppedCount += 1;
-  }
+    if (set !== undefined) {
+      for (const [k] of set) {
+        if (k === "CropBox") {
+          croppedCount += 1;
+          break;
+        }
+      }
+    }
+    return { src, set };
+  });
+  ctx.setSlotPlan(slots);
+  const slotCount = ctx.slotCount;
 
   post({ type: "progress", runId, pct: 12, stage: "processing" });
 
   const knownAssets = new Set(assetOrder);
-  const objects = sanitizeObjects(blob?.objects, pages.length, knownAssets);
+  const objects = sanitizeObjects(blob?.objects, slotCount, knownAssets);
 
   // Image assets (collectAssets order ↔ assetOrder pairing) — pre-embedded
   // below, before drawing starts; drawing reads the cache synchronously.
   const assetIndex = new Map<string, number>();
   assetOrder.forEach((key, i) => assetIndex.set(key, i));
-  const imageCache = new Map<string, PDFImage | null>();
-  const imageFor = (key: string): PDFImage | null =>
+  const imageCache = new Map<string, StampImage | null>();
+  const imageFor = (key: string): StampImage | null =>
     imageCache.get(key) ?? null;
 
-  // Pre-embed every referenced asset (async, once).
+  // Pre-embed every referenced asset (once, SYNC on the own engine).
   const referenced = [
     ...new Set(
       objects
@@ -839,7 +876,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   let embedded = 0;
   for (const key of referenced) {
     const idx = assetIndex.get(key);
-    let image: PDFImage | null = null;
+    let image: StampImage | null = null;
     if (idx !== undefined && assets && idx < assets.length) {
       const asset = assets[idx];
       try {
@@ -847,8 +884,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
         const type = (asset.type || "").toLowerCase();
         image =
           type === "image/jpeg"
-            ? await doc.embedJpg(bytes)
-            : await doc.embedPng(bytes);
+            ? ctx.embedJpeg(bytes)
+            : ctx.embedPng(bytes);
         embedded += 1;
       } catch {
         image = null;
@@ -857,31 +894,39 @@ async function run(request: WorkerRunRequest): Promise<void> {
     imageCache.set(key, image);
   }
 
-  // Fonts: standard base via stamp-common (Devanagari fetch included) +
-  // lazily embedded italic variants.
+  // Fonts: standard base keys (the engine's 12-font bank) + the self-hosted
+  // Devanagari TTF (shaped Type0 subset) + the italic key variants.
   const needDeva = objects.some(
     (o) => o.kind === "text" && baseStampFont(o) === "devanagari"
   );
-  const stamp = await loadStampFonts(doc, needDeva);
-  const italicCache = new Map<string, PDFFont | null>();
+  const deva = needDeva ? ctx.embedTtf(await loadDevanagariBytes()) : null;
+  const italicCache = new Map<string, StampFontKey | null>();
   const fontBag: FontBag = {
-    base: (id) => stamp.fontFor(id),
+    base: (id) =>
+      id === "devanagari"
+        ? deva
+          ? { ttf: deva }
+          : null
+        : { key: id as StampFontKey },
     italic: (id) => {
-      const existing = italicCache.get(id);
-      if (existing || italicCache.has(id)) return existing ?? null;
-      const mapped = ITALIC_MAP[id];
-      let font: PDFFont | null = null;
-      if (mapped) {
-        try {
-          font = doc.embedStandardFont(mapped);
-        } catch {
-          font = null;
-        }
+      if (italicCache.has(id)) {
+        const cached = italicCache.get(id) ?? null;
+        return cached !== null ? { key: cached } : null;
       }
-      italicCache.set(id, font);
-      return font;
+      const mapped: StampFontKey | null =
+        Object.prototype.hasOwnProperty.call(ITALIC_MAP, id)
+          ? ITALIC_MAP[id]!
+          : null;
+      italicCache.set(id, mapped);
+      return mapped !== null ? { key: mapped } : null;
     },
   };
+  const widthOf = (text: string, size: number, ref: FontRef): number =>
+    ref.ttf ? ref.ttf.measure(text, size) : ctx.measure(text, ref.key, size);
+  const ascentOf = (size: number, ref: FontRef): number =>
+    ref.ttf
+      ? ref.ttf.heightAtSize(size, { descender: false })
+      : stdFontAscent(ref.key, size);
 
   post({ type: "progress", runId, pct: 30, stage: "processing" });
 
@@ -891,33 +936,36 @@ async function run(request: WorkerRunRequest): Promise<void> {
   // byte-identical for uncropped slots (effectiveView is ref-stable).
   let drawn = 0;
   const total = Math.max(objects.length, 1);
-  for (let p = 0; p < pages.length; p += 1) {
+  for (let p = 0; p < slotCount; p += 1) {
     const pageObjects = objects.filter((o) => o.page === p);
-    const ctx: DrawCtx = {
-      page: pages[p],
+    const dc: DrawCtx = {
+      slot: p,
       view: effectiveView(views[p]),
       fonts: fontBag,
+      widthOf,
+      ascentOf,
+      ctx,
       imageFor,
     };
     for (const obj of pageObjects) {
       switch (obj.kind) {
         case "text":
-          drawTextObject(obj, ctx);
+          drawTextObject(obj, dc);
           break;
         case "image":
-          drawImageObject(obj, ctx);
+          drawImageObject(obj, dc);
           break;
         case "rect":
         case "ellipse":
         case "line":
         case "arrow":
-          drawShapeObject(obj, ctx);
+          drawShapeObject(obj, dc);
           break;
         case "draw":
-          drawFreehand(obj, ctx);
+          drawFreehand(obj, dc);
           break;
         case "whiteout":
-          drawWhiteout(obj, ctx);
+          drawWhiteout(obj, dc);
           break;
       }
       drawn += 1;
@@ -927,14 +975,14 @@ async function run(request: WorkerRunRequest): Promise<void> {
       runId,
       pct: 30 + Math.min(58, Math.round((58 * drawn) / total)),
       stage: "processing",
-      detail: { page: p + 1, pages: pages.length },
+      detail: { page: p + 1, pages: slotCount },
     });
   }
 
   // Form fields (P8.4) — AcroForm widgets AFTER page content so they sit
   // on top in every reader; array order = tab order (annotation order).
-  // doc.getForm() would CREATE an empty /AcroForm on a field-less run —
-  // gate on actual fields so passthrough stays byte-clean.
+  // The engine only attaches /AcroForm when fields exist — passthrough
+  // stays byte-clean (source forms ride through untouched).
   const counters: FieldCounters = {
     added: 0,
     textFields: 0,
@@ -944,7 +992,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   };
   if (objects.some((o) => o.kind === "field")) {
     try {
-      addFieldObjects(objects, pages, doc, counters);
+      addFieldObjects(objects, ctx, counters);
     } catch {
       /* AcroForm already broken in the source — fields skipped honestly */
     }
@@ -952,7 +1000,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 92, stage: "saving" });
 
-  const saved = await doc.save({ useObjectStreams: true });
+  const saved = ctx.write();
   const outputName = `${safeBaseName(file.name)}-edited.pdf`;
 
   post({
@@ -969,7 +1017,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     ],
     detail: {
       files: 1,
-      pages: pages.length,
+      pages: slotCount,
       objects: drawn,
       images: embedded,
       fields: counters.added,
@@ -988,7 +1036,7 @@ self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
       code = "tool.errorEncrypted";
     } else if (message === "PDF_PARSE") {
       code = "tool.errorCorrupt";
-    } else if (/cannot encode|WinAnsi/i.test(message)) {
+    } else if (/cannot encode|WinAnsi|chars/i.test(message)) {
       code = "editPdf.errorFont";
     }
     post({

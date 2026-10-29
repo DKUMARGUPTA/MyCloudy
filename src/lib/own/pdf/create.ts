@@ -612,6 +612,17 @@ export class CreateContext {
         for (const g of glyphs) totalWidth += g.advanceWidth * entry.scale;
         return totalWidth * (size / 1000);
       },
+      heightAtSize: (size, options) => {
+        // pdf-lib CustomFontEmbedder.heightOfFontAtSize (P6-o — the
+        // StampTtfFont interface contract, shared with the stamp kernel).
+        const yTop = font.ascent * entry.scale;
+        const yBottom = font.descent * entry.scale;
+        let height = yTop - yBottom;
+        if ((options?.descender ?? true) === false) {
+          height -= Math.abs(font.descent * entry.scale) || 0;
+        }
+        return (height / 1000) * size;
+      },
       encodeHex: (text) => {
         const glyphs = shapeText(font, text, entry.session);
         let hex = "";

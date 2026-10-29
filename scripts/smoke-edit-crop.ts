@@ -161,7 +161,9 @@ async function pageText(
       text += latin1(stream.contents);
     }
   }
-  return text;
+  // P6-o: normalize HEX PAYLOADS to uppercase (engine lowercase, pdf-lib
+  // uppercase — operators stay case-sensitive).
+  return text.replace(/<([0-9A-Fa-f\s]+)>/g, (m) => m.toUpperCase());
 }
 
 function hexWord(word: string): string {
@@ -690,9 +692,10 @@ async function main(): Promise<void> {
   );
 
   // worker wiring
+  const pagePlanSrc = readFileSync("tools/edit-pdf/page-plan.ts", "utf8");
   assert(
-    worker.includes("pages[i].setCropBox("),
-    "wiring: worker writes /CropBox per slot"
+    pagePlanSrc.includes('"CropBox"') && worker.includes("applySlotSets"),
+    "wiring: worker writes /CropBox per slot (via the shared page-plan set builder)"
   );
   assert(
     worker.includes("cropExplicit"),

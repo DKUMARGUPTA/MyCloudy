@@ -32,6 +32,7 @@ import {
   rgb,
 } from "pdf-lib";
 import type { PageView } from "../tools/edit-pdf/model";
+import { StampContext } from "../src/lib/own/pdf";
 
 let passed = 0;
 let failed = 0;
@@ -166,7 +167,9 @@ async function pageText(
       text += latin1(stream.contents);
     }
   }
-  return text;
+  // P6-o: normalize HEX PAYLOADS to uppercase (our engine emits lowercase
+  // Tj hex, pdf-lib uppercase — both valid; operators stay case-sensitive).
+  return text.replace(/<([0-9A-Fa-f\s]+)>/g, (m) => m.toUpperCase());
 }
 
 function hexWord(word: string): string {
@@ -412,32 +415,24 @@ async function main(): Promise<void> {
     "draft v2: negative src → null"
   );
 
-  /* ================= Part 3: page-plan surgery (REAL pdf-lib) ===== */
+  /* ================= Part 3: page-plan slots (REAL own engine) ====== */
   const pagePlan = await import("../tools/edit-pdf/page-plan");
 
   const heights = await makeHeightsPdf();
 
   // 3a. reorder [2,0,1,3]
   {
-    const doc = await PDFDocument.load(heights);
-    const originalPages = doc.getPages();
-    const out = await pagePlan.applyPagePlan(
-      doc,
-      originalPages,
-      [view(2), view(0), view(1), view(3)]
+    const ctx = StampContext.load(heights);
+    ctx.setSlotPlan(
+      pagePlan.buildSlotPlan([view(2), view(0), view(1), view(3)], 4),
     );
-    assertEqual(out.length, 4, "plan reorder: output page count");
-    assertEqual(
-      out.map((p) => p.getHeight()),
-      [120, 100, 110, 130],
-      "plan reorder: pages land in the planned order (heights identify)"
-    );
-    const saved = await doc.save();
+    const saved = ctx.write();
     const reloaded = await PDFDocument.load(saved);
+    assertEqual(reloaded.getPageCount(), 4, "plan reorder: output page count");
     assertEqual(
       reloaded.getPages().map((p) => p.getHeight()),
       [120, 100, 110, 130],
-      "plan reorder: saved file keeps the order"
+      "plan reorder: pages land in the planned order (heights identify)"
     );
     assert(
       reloaded.getPages().every((p) => p.getWidth() === 300),
@@ -447,53 +442,43 @@ async function main(): Promise<void> {
 
   // 3b. delete + reorder [3,0] (sources 1,2 dropped)
   {
-    const doc = await PDFDocument.load(heights);
-    const out = await pagePlan.applyPagePlan(doc, doc.getPages(), [
-      view(3),
-      view(0),
-    ]);
-    assertEqual(out.length, 2, "plan delete: page count");
+    const ctx = StampContext.load(heights);
+    ctx.setSlotPlan(pagePlan.buildSlotPlan([view(3), view(0)], 4));
+    const saved = ctx.write();
+    const reloaded = await PDFDocument.load(saved);
+    assertEqual(reloaded.getPageCount(), 2, "plan delete: page count");
     assertEqual(
-      out.map((p) => p.getHeight()),
+      reloaded.getPages().map((p) => p.getHeight()),
       [130, 100],
       "plan delete: only kept sources remain"
     );
-    const saved = await doc.save();
-    const reloaded = await PDFDocument.load(saved);
-    assertEqual(reloaded.getPageCount(), 2, "plan delete: saved count");
   }
 
-  // 3c. duplicate [0,0,0] — distinct nodes, no aliasing
+  // 3c. duplicate [0,0,0] — distinct slots, no aliasing
   {
-    const doc = await PDFDocument.load(heights);
-    const out = await pagePlan.applyPagePlan(doc, doc.getPages(), [
-      view(0),
-      view(0),
-      view(0),
-    ]);
-    assertEqual(out.length, 3, "plan duplicate: page count");
-    assert(
-      out[0] !== out[1] && out[1] !== out[2] && out[0] !== out[2],
-      "plan duplicate: every copy is a DISTINCT page node (no aliasing)"
-    );
-    const saved = await doc.save();
+    const ctx = StampContext.load(heights);
+    ctx.setSlotPlan(pagePlan.buildSlotPlan([view(0), view(0), view(0)], 4));
+    // Stamping through ONE slot must not leak into its siblings — the
+    // no-aliasing proof (stronger than the old node-identity check).
+    ctx.stampText(1, {
+      x: 10,
+      y: 10,
+      text: "MARKER",
+      size: 8,
+      font: "helvetica",
+    });
+    const saved = ctx.write();
     const reloaded = await PDFDocument.load(saved);
-    assertEqual(reloaded.getPageCount(), 3, "plan duplicate: saved count");
+    assertEqual(reloaded.getPageCount(), 3, "plan duplicate: page count");
     assert(
       reloaded.getPages().every((p) => p.getHeight() === 100),
       "plan duplicate: all copies carry the source geometry"
     );
-    // Writing through one copy must not leak into another: draw on copy 1
-    // only, then count SRCPAGE1 occurrences across pages.
-    const font = await reloaded.embedFont(StandardFonts.Helvetica);
-    reloaded.getPages()[1].drawText("MARKER", { x: 10, y: 10, size: 8, font });
-    const resaved = await reloaded.save();
-    const again = await PDFDocument.load(resaved);
     let markerPages = 0;
-    for (const page of again.getPages()) {
+    for (const page of reloaded.getPages()) {
       if ((await pageText(page)).includes(hexWord("MARKER"))) markerPages += 1;
     }
-    assertEqual(markerPages, 1, "plan duplicate: draw lands on ONE page only");
+    assertEqual(markerPages, 1, "plan duplicate: stamp lands on ONE page only");
   }
 
   // 3d. AcroForm survival through a reorder
@@ -509,13 +494,17 @@ async function main(): Promise<void> {
     field.addToPage(p1, { x: 40, y: 80, width: 120, height: 20 });
     const bytes = await doc.save();
 
-    const doc2 = await PDFDocument.load(bytes);
-    const out = await pagePlan.applyPagePlan(doc2, doc2.getPages(), [
-      { src: 1, x0: 0, y0: 0, x1: 300, y1: 200, rotate: 0 },
-      { src: 0, x0: 0, y0: 0, x1: 300, y1: 200, rotate: 0 },
-    ] as PageView[]);
-    assertEqual(out.length, 2, "acroform: reordered count");
-    const saved = await doc2.save();
+    const ctx = StampContext.load(bytes);
+    ctx.setSlotPlan(
+      pagePlan.buildSlotPlan(
+        [
+          { src: 1, x0: 0, y0: 0, x1: 300, y1: 200, rotate: 0 },
+          { src: 0, x0: 0, y0: 0, x1: 300, y1: 200, rotate: 0 },
+        ] as PageView[],
+        2,
+      ),
+    );
+    const saved = ctx.write();
     const reloaded = await PDFDocument.load(saved);
     const fields = reloaded.getForm().getFields();
     assertEqual(fields.length, 1, "acroform: field survives the reorder");
@@ -693,7 +682,7 @@ async function main(): Promise<void> {
 
   assert(
     workerSrc.includes('from "./page-plan"') &&
-      workerSrc.includes("applyPagePlan"),
+      workerSrc.includes("applySlotSets"),
     "wiring: worker uses the shared page-plan module"
   );
   assert(

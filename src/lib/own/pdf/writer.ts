@@ -205,6 +205,10 @@ export type WriteProgress = (fraction: number, page: number) => void;
  *   page's content stream) in plan order, then the caller's synthetics
  *   (3+pages.length…, per the WriteSynthetic contract), then BFS-copied
  *   graphs. `onPage` fires after each plan page's object is serialized.
+ *
+ * P6-o: `catalogExtras` appends entries to the CATALOG dict (e.g. /AcroForm
+ * for the edit-surface form builder). Values may use newref(3+slot…) —
+ * page dicts occupy 3..3+pages.length-1 for all-copy plans.
  */
 export function writeDocument(
   pages: WritePage[],
@@ -212,6 +216,7 @@ export function writeDocument(
   onPage?: WriteProgress,
   synthetics?: WriteSynthetic[],
   info?: PdfObj,
+  catalogExtras?: Array<[string, PdfObj]>,
 ): Uint8Array {
   const map = new Map<string, number>(); // `${docIdx}:${srcNum}` → new num
   const emit: EmitEntry[] = [];
@@ -371,6 +376,11 @@ export function writeDocument(
       ["Pages", { k: "ref", num: pagesTreeNum, gen: 0 }],
     ]),
   };
+  // P6-o: caller-authored catalog entries (e.g. /AcroForm) — appended
+  // AFTER /Pages, exactly one entry each, caller-deduplicated.
+  if (catalogExtras !== undefined) {
+    for (const [key, value] of catalogExtras) catalog.m.set(key, value);
+  }
   const pagesTree: PdfObj = {
     k: "dict",
     m: new Map<string, PdfObj>([

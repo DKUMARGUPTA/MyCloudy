@@ -168,7 +168,9 @@ async function pageText(
       text += latin1(stream.contents);
     }
   }
-  return text;
+  // P6-o: normalize HEX PAYLOADS to uppercase (our engine emits lowercase
+  // Tj hex, pdf-lib uppercase — both valid; operators stay case-sensitive).
+  return text.replace(/<([0-9A-Fa-f\s]+)>/g, (m) => m.toUpperCase());
 }
 
 function hexWord(word: string): string {
@@ -626,13 +628,16 @@ async function main(): Promise<void> {
   );
 
   // Worker wiring
+  const pagePlanSrc = readFileSync("tools/edit-pdf/page-plan.ts", "utf8");
   assert(
-    worker.includes("pages[i].setRotation(degrees(target))"),
-    "wiring: worker writes /Rotate per slot"
+    pagePlanSrc.includes('["Rotate", pdfNum(view.rotate)]') &&
+      worker.includes("applySlotSets"),
+    "wiring: worker writes /Rotate per slot (via the shared page-plan set builder)"
   );
   assert(
-    worker.includes("const rotSlots = identity ? planViews.length : views.length;"),
-    "wiring: the setRotation loop is bounded by the PLAN (truncated tail safe)"
+    worker.includes("identity ? i : planSrc(v, i, srcCount)") &&
+      worker.includes("rotateExplicit[i] === true"),
+    "wiring: the setRotation set is bounded by the PLAN + WIRE-TRUST (truncated tail safe)"
   );
 
   // thumbnails wiring

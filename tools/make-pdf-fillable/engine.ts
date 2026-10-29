@@ -1,9 +1,13 @@
 import {
-  PDFDocument,
-  PDFCheckBox,
-  PDFTextField,
-  rgb,
-} from "pdf-lib";
+  PdfError,
+  StampContext,
+  asDict,
+  latin1,
+  parsePdf,
+  resolve,
+  type ParsedPdf,
+  type PdfObj,
+} from "@/lib/own/pdf";
 
 /**
  * Make PDF fillable — PURE engine (PRD §8.2 "Make fillable": "Auto-detect
@@ -17,9 +21,10 @@ import {
  *     and the PDF-user-space ↔ display-space transforms for all four
  *     /Rotate values (mirroring pdf.js PageViewport's transform table).
  *
- *  2. The pdf-lib AcroForm builder (also bun-runnable): builds the output
- *     document from the final FieldSpec list — text fields (optionally
- *     multiline) and checkboxes with pdf-lib's own form API.
+ *  2. The AcroForm builder (also bun-runnable, OUR OWN engine): builds the
+ *     output document from the final FieldSpec list — text fields
+ *     (optionally multiline) and checkboxes through StampContext's
+ *     pdf-lib-parity form API (verified in smoke-pdf-core §22).
  *
  * The pdf.js-dependent half (walking page operator lists for lines and
  * boxes) lives in detect.ts and runs in the surface's main thread; it only
@@ -311,7 +316,7 @@ export function displayRectToPdf(
 }
 
 // ---------------------------------------------------------------------------
-// pdf-lib AcroForm builder (bun-runnable — the worker is a thin shim)
+// OWN-engine AcroForm builder (bun-runnable — the worker is a thin shim)
 // ---------------------------------------------------------------------------
 
 export interface BuildReport {
@@ -326,13 +331,99 @@ export interface BuildOptions {
   outlinedTextFields: boolean;
 }
 
+/**
+ * PDF text-string decode: UTF-16BE with the FEFF BOM, else
+ * PDFDocEncoding≈latin1 — the engine's decodePdfText pattern (see
+ * StampContext.getTitle).
+ */
+function decodeTextString(b: Uint8Array): string {
+  if (b.length >= 2 && b[0] === 0xfe && b[1] === 0xff) {
+    let out = "";
+    for (let i = 2; i + 1 < b.length; i += 2) {
+      out += String.fromCharCode((b[i]! << 8) | b[i + 1]!);
+    }
+    return out;
+  }
+  return latin1(b, 0, b.length);
+}
+
+/** One /AcroForm field-tree node, /T resolved to its partial name. */
+function walkFieldNames(
+  doc: ParsedPdf,
+  obj: PdfObj | undefined,
+  parentName: string,
+  visit: (fqn: string) => void,
+  depth: number,
+): void {
+  const dict = obj ? asDict(obj) : undefined;
+  if (!dict || depth > 64) return;
+  const tObj = dict.get("T");
+  const partial =
+    tObj && (tObj.k === "str" || tObj.k === "hstr" || tObj.k === "lstr")
+      ? decodeTextString(tObj.b)
+      : "";
+  const fqn = parentName ? `${parentName}.${partial}` : partial;
+  // pdf-lib classifies non-terminals by /Kids CONTAINING kids WITH /T
+  // (widgets never carry /T) — those recurse, terminals are visited.
+  const kidsVal = resolve(doc, dict.get("Kids"));
+  const kids = kidsVal && kidsVal.k === "arr" ? kidsVal.items : undefined;
+  let nonTerminal = false;
+  if (kids) {
+    for (const kid of kids) {
+      const kidDict = asDict(resolve(doc, kid));
+      if (kidDict !== undefined && kidDict.has("T")) {
+        nonTerminal = true;
+        break;
+      }
+    }
+  }
+  if (nonTerminal) {
+    for (const kid of kids!) {
+      walkFieldNames(doc, resolve(doc, kid), fqn, visit, depth + 1);
+    }
+    return;
+  }
+  visit(fqn);
+}
+
+/**
+ * The existing-field names a build must dedupe against — the parity of
+ * pdf-lib's form.getFields().map(f => f.getName()): the catalog /AcroForm
+ * /Fields tree (indirect /Fields and /Kids resolved), terminal fields'
+ * fully-qualified names. No /AcroForm → an empty set.
+ */
+function existingFieldNames(doc: ParsedPdf): Set<string> {
+  const names = new Set<string>();
+  const root = resolve(doc, doc.trailer.get("Root"));
+  const rootDict = root ? asDict(root) : undefined;
+  const acroForm = resolve(doc, rootDict?.get("AcroForm"));
+  const acroDict = acroForm ? asDict(acroForm) : undefined;
+  const fields = resolve(doc, acroDict?.get("Fields"));
+  if (!fields || fields.k !== "arr") return names;
+  for (const field of fields.items) {
+    walkFieldNames(doc, resolve(doc, field), "", (fqn) => names.add(fqn), 0);
+  }
+  return names;
+}
+
 /** Count existing AcroForm fields (honest "already has N" surface copy). */
 export async function countExistingFields(bytes: Uint8Array): Promise<number> {
-  const doc = await PDFDocument.load(bytes, {
-    updateMetadata: false,
-  });
+  const doc = parsePdf(bytes);
   try {
-    return doc.getForm().getFields().length;
+    let count = 0;
+    const root = resolve(doc, doc.trailer.get("Root"));
+    const rootDict = root ? asDict(root) : undefined;
+    const acroForm = resolve(doc, rootDict?.get("AcroForm"));
+    const acroDict = acroForm ? asDict(acroForm) : undefined;
+    const fields = resolve(doc, acroDict?.get("Fields"));
+    if (fields && fields.k === "arr") {
+      for (const field of fields.items) {
+        walkFieldNames(doc, resolve(doc, field), "", () => {
+          count += 1;
+        }, 0);
+      }
+    }
+    return count;
   } catch {
     return 0;
   }
@@ -361,73 +452,86 @@ export function sanitizeSpecs(
 }
 
 /**
- * Add AcroForm fields to the document. PURE pdf-lib — no pdf.js, so the
- * smoke test drives the whole builder end to end.
+ * Add AcroForm fields to the document through OUR OWN engine's
+ * StampContext (pdf-lib-PDFForm parity, §22-verified) — no pdf.js, so
+ * the smoke test drives the whole builder end to end.
  */
 export async function buildFieldPdf(
   bytes: Uint8Array,
   specs: FieldSpec[],
   options: BuildOptions
 ): Promise<{ bytes: Uint8Array; report: BuildReport }> {
-  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
-  const form = doc.getForm();
-  const pages = doc.getPages();
-
-  const taken = new Set<string>();
-  for (const field of form.getFields()) {
-    taken.add(field.getName());
+  let ctx: StampContext;
+  try {
+    ctx = StampContext.load(bytes);
+  } catch (error) {
+    // Route through the worker's UNCHANGED message mapping exactly like
+    // the pdf-lib loader did: an encrypted refusal keeps its own message
+    // (no regex match — the "makeFillable.errorBuild" route pdf-lib's
+    // "is encrypted" text also took); any other parse failure rethrows
+    // as a "Failed to parse" error (→ tool.errorCorrupt).
+    if (error instanceof PdfError && error.code === "encrypted") throw error;
+    throw new Error(
+      `Failed to parse PDF document: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
   }
+
+  const taken = existingFieldNames(ctx.doc);
 
   let textFields = 0;
   let checkboxes = 0;
   for (const spec of specs) {
     if (!spec.enabled) continue;
-    const page = pages[spec.page];
-    if (!page) continue;
+    // The parity of pdf-lib's pages[spec.page] guard: fractional,
+    // negative and out-of-range pages are skipped silently.
+    if (
+      !Number.isInteger(spec.page) ||
+      spec.page < 0 ||
+      spec.page >= ctx.pageCount
+    ) {
+      continue;
+    }
     const name = uniqueName(spec.name, taken);
     if (spec.kind === "checkbox") {
-      const box = form.createCheckBox(name);
       const size = Math.min(spec.w, spec.h);
       // Square checkbox centered in the detected rect.
       const dx = spec.x + (spec.w - size) / 2;
       const dy = spec.y + (spec.h - size) / 2;
-      box.addToPage(page, {
+      ctx.createCheckBox(name).addToSlot(spec.page, {
         x: dx,
         y: dy,
         width: size,
         height: size,
         borderWidth: 1,
-        borderColor: rgb(0.45, 0.49, 0.55),
+        borderColor: { r: 0.45, g: 0.49, b: 0.55 },
       });
       checkboxes += 1;
     } else {
-      const field = form.createTextField(name);
+      const field = ctx.createTextField(name);
       if (spec.kind === "multiline") field.enableMultiline();
-      field.addToPage(page, {
+      field.addToSlot(spec.page, {
         x: spec.x,
         y: spec.y,
         width: spec.w,
         height: spec.h,
         ...(options.outlinedTextFields
-          ? { borderWidth: 1, borderColor: rgb(0.62, 0.65, 0.7) }
+          ? { borderWidth: 1, borderColor: { r: 0.62, g: 0.65, b: 0.7 } }
           : { borderWidth: 0 }),
       });
       textFields += 1;
     }
   }
 
-  const saved = await doc.save({ useObjectStreams: true });
+  const saved = ctx.write();
   return {
     bytes: saved,
     report: {
       fieldsAdded: textFields + checkboxes,
       textFields,
       checkboxes,
-      pages: pages.length,
+      pages: ctx.pageCount,
     },
   };
 }
-
-// Re-export the pdf-lib field classes the worker/surface may typecheck
-// against (single import site for the pdf-lib form API).
-export { PDFCheckBox, PDFTextField };

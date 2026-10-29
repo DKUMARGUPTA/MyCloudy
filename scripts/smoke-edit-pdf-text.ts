@@ -566,14 +566,19 @@ async function main(): Promise<void> {
     contents instanceof PDFArray
       ? contents.asArray().map((r) => page.doc.context.lookup(r) as PDFRawStream)
       : [contents as unknown as PDFRawStream];
-  let text0 = "";
+  // P6-o: normalize HEX PAYLOADS to uppercase (engine lowercase, pdf-lib
+  // uppercase — operators stay case-sensitive).
+  const hexNorm = (t: string): string =>
+    t.replace(/<([0-9A-Fa-f\s]+)>/g, (m) => m.toUpperCase());
+  let text0Raw = "";
   for (const stream of streams) {
     try {
-      text0 += latin1(inflateSync(stream.contents));
+      text0Raw += latin1(inflateSync(stream.contents));
     } catch {
-      text0 += latin1(stream.contents);
+      text0Raw += latin1(stream.contents);
     }
   }
+  const text0 = hexNorm(text0Raw);
 
   const originalHex = hexOf(originalText);
   const retypeHex = hexOf("Retyped words");

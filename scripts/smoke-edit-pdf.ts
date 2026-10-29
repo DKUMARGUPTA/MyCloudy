@@ -383,10 +383,16 @@ async function main(): Promise<void> {
   }
   assert(text0.includes("Tj") || text0.includes("TJ"), "text operators present");
   // pdf-lib writes show-text operands as HEX strings — compare the hex form.
+  // P6-o: hex payloads normalized to uppercase (engine lowercase, pdf-lib
+  // uppercase — both valid; operators stay case-sensitive).
+  const textNorm = text0.replace(
+    /<([0-9A-Fa-f\s]+)>/g,
+    (m) => m.toUpperCase(),
+  );
   const headlineHex = Buffer.from("Edited headline", "latin1")
     .toString("hex")
     .toUpperCase();
-  assert(text0.includes(headlineHex), "bold text content drawn");
+  assert(textNorm.includes(headlineHex), "bold text content drawn");
 
   // Devanagari subset: a Type0 (CID) font in page 0's resources.
   const fontsDict = page0.node

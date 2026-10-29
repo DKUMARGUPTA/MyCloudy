@@ -88,3 +88,25 @@ export function encodeWinAnsiHex(text: string, font: StampFontKey): string {
     .map((c) => c.toString(16).padStart(2, "0"))
     .join("");
 }
+
+/** pdf-lib heightAtSize(size, {descender:false}) — the per-family ascent
+ * (probed live: Helvetica family 718, Times 683, Courier 629 per 1000).
+ * P6-o: the edit-pdf worker's baseline math. */
+const STD_ASCENT: Record<StampFontKey, number> = {
+  helvetica: 718,
+  helveticaBold: 718,
+  helveticaOblique: 718,
+  helveticaBoldOblique: 718,
+  times: 683,
+  timesBold: 683,
+  timesItalic: 683,
+  timesBoldItalic: 683,
+  courier: 629,
+  courierBold: 629,
+  courierOblique: 629,
+  courierBoldOblique: 629,
+};
+
+export function stdFontAscent(font: StampFontKey, size: number): number {
+  return (STD_ASCENT[font] / 1000) * size;
+}

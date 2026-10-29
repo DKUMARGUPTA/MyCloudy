@@ -21,8 +21,8 @@ import {
  * hands the final FieldSpec list through the options blob under
  * "f:<fileId>" (the redact epoch-key pattern — swapped files can never
  * leak another document's fields). This worker only builds: sanitize →
- * pdf-lib AcroForm → save — the entire pipeline is smoke-locked pure code
- * in tools/make-pdf-fillable/engine.ts.
+ * OWN-engine AcroForm (StampContext, P6-o-a) → save — the entire pipeline
+ * is smoke-locked pure code in tools/make-pdf-fillable/engine.ts.
  *
  * Options read (exact ids, matching tools/make-pdf-fillable/config.ts):
  *   fkey     the "f:<fileId>" options key that holds the specs JSON

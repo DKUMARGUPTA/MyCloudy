@@ -528,8 +528,11 @@ async function main(): Promise<void> {
   assert(anchorFound, "byte-audit: 30° rect translate = rotationAnchor math", {
     expected: anchor30,
   });
+  // P6-o: the engine trims cos/sin to 10dp (0.5, not pdf-lib's float64
+  // noise 0.49999999999999994) — rendering-identical, the §20.2-normalized
+  // parity contract. Either form passes.
   assert(
-    /0\.8660254\d* 0\.4999999\d* -0\.4999999\d* 0\.8660254\d* 0 0 cm/.test(
+    /(?:0\.8660254\d* 0\.4999999\d* -0\.4999999\d* 0\.8660254\d*|0\.8660254038 0\.5 -0\.5 0\.8660254038) 0 0 cm/.test(
       content
     ),
     "byte-audit: 30° rotation matrix components in stream"

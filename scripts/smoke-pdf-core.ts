@@ -881,6 +881,9 @@ async function main(): Promise<void> {
   console.log("== 21. Webby-four surfaces (P6-n): rounded rect + dash + insertPage/getPages ==");
   await section21();
 
+  console.log("== 22. Edit-surface engine (P6-o): shapes + slots + annots + AcroForm ==");
+  await section22();
+
   // Artifacts for manual inspection (VLM/pdfjs follow-ups).
   const outAll = organizePdf(fixB, [
     { kind: "page", src: 0 },
@@ -2859,6 +2862,421 @@ async function section21(): Promise<void> {
       refused = true;
     }
     ok(refused, "p6n insert: out-of-range index refuses");
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * SECTION 22 — the P6-o edit-surface engine surfaces: shape stamping
+ * (drawRectangle/drawEllipse/drawLine on LOADED docs), slot plans (src
+ * duplicates + /Rotate//CropBox set overrides), appendAnnot, and the
+ * AcroForm builder (probed live in scripts/dev/probe-p6o-*.ts).
+ * ══════════════════════════════════════════════════════════════════════ */
+async function section22(): Promise<void> {
+  const base = await buildPdfLibFixture(
+    [
+      { w: 612, h: 792, rot: 0 },
+      { w: 612, h: 792, rot: 0 },
+      { w: 612, h: 792, rot: 0 },
+    ],
+    false,
+  );
+
+  /* ── 22.1 shape stamping: operator parity with the pdf-lib oracle on the
+   * SAME loaded document (rect + ellipse + line, all option combos the
+   * edit surface generates — dash, rotate, the merged {ca,CA} gs). */
+  {
+    const libDoc = await PDFDocument.load(base, { updateMetadata: false });
+    const libPage = libDoc.getPage(0);
+    libPage.drawRectangle({
+      x: 100, y: 600, width: 200, height: 40,
+      color: rgb(0.9, 0.95, 1), borderColor: rgb(0.2, 0.4, 0.7),
+      borderWidth: 2, opacity: 0.5, borderOpacity: 0.8,
+      borderDashArray: [4, 3],
+    });
+    libPage.drawRectangle({
+      x: 40, y: 500, width: 120, height: 60,
+      borderColor: rgb(0.5, 0.5, 0.5), borderWidth: 1.5, rotate: degrees(30),
+    });
+    libPage.drawEllipse({
+      x: 200, y: 400, xScale: 60, yScale: 40,
+      color: rgb(1, 0.9, 0.8), borderColor: rgb(0.6, 0.3, 0.1),
+      borderWidth: 1.5, borderDashArray: [2, 2],
+    });
+    libPage.drawLine({
+      start: { x: 60, y: 300 }, end: { x: 300, y: 320 },
+      thickness: 2.5, color: rgb(0.1, 0.2, 0.3),
+      opacity: 0.7, lineCap: 1, dashArray: [5, 4],
+    });
+    const libBytes = await libDoc.save({ useObjectStreams: false });
+
+    const ctx = StampContext.load(base);
+    ctx.stampRect(0, {
+      x: 100, y: 600, width: 200, height: 40,
+      color: { r: 0.9, g: 0.95, b: 1 }, borderColor: { r: 0.2, g: 0.4, b: 0.7 },
+      borderWidth: 2, opacity: 0.5, borderOpacity: 0.8,
+      borderDashArray: [4, 3],
+    });
+    ctx.stampRect(0, {
+      x: 40, y: 500, width: 120, height: 60,
+      borderColor: { r: 0.5, g: 0.5, b: 0.5 }, borderWidth: 1.5, rotate: 30,
+    });
+    ctx.stampEllipse(0, {
+      x: 200, y: 400, xScale: 60, yScale: 40,
+      color: { r: 1, g: 0.9, b: 0.8 }, borderColor: { r: 0.6, g: 0.3, b: 0.1 },
+      borderWidth: 1.5, borderDashArray: [2, 2],
+    });
+    ctx.stampLine(0, {
+      start: { x: 60, y: 300 }, end: { x: 300, y: 320 },
+      thickness: 2.5, color: { r: 0.1, g: 0.2, b: 0.3 },
+      opacity: 0.7, lineCap: 1, dashArray: [5, 4],
+    });
+    const ourBytes = ctx.write();
+
+    const libBack = parsePdf(libBytes);
+    const libPages = listPages(libBack);
+    const ourBack = parsePdf(ourBytes);
+    const ourPages = listPages(ourBack);
+    ok(!ourBack.recovered, "p6o shapes: our output parses clean (no recovery)");
+    const a = normalizeOps(stripIdentityCm(lastEntryOpsText(ourBack, ourPages, 0)));
+    const b = normalizeOps(stripIdentityCm(lastEntryOpsText(libBack, libPages, 0)));
+    ok(a === b, `p6o shapes: rect+ellipse+line op parity vs the oracle — ours="${a.slice(0, 90)}…" theirs="${b.slice(0, 90)}…"`);
+    // The merged {ca,CA} gs object and the line's CA-only gs are verified
+    // directly in the object graph below.
+    let foundPair = false;
+    for (let n = 1; n <= 80 && !foundPair; n += 1) {
+      const obj = ourBack.getObject(n);
+      if (!obj || obj.k !== "dict") continue;
+      const ca = obj.m.get("ca");
+      const CA = obj.m.get("CA");
+      if (
+        ca && ca.k === "num" && ca.n === 0.5 &&
+        CA && CA.k === "num" && CA.n === 0.8
+      ) {
+        foundPair = true;
+      }
+    }
+    ok(foundPair, "p6o shapes: the merged {ca:0.5, CA:0.8} ExtGState emitted");
+    let foundLineCa = false;
+    for (let n = 1; n <= 80 && !foundLineCa; n += 1) {
+      const obj = ourBack.getObject(n);
+      if (!obj || obj.k !== "dict") continue;
+      const ca = obj.m.get("ca");
+      const CA = obj.m.get("CA");
+      if (ca === undefined && CA && CA.k === "num" && CA.n === 0.7) {
+        foundLineCa = true;
+      }
+    }
+    ok(foundLineCa, "p6o shapes: the line gs carries CA ONLY (0.7, no ca)");
+  }
+
+  /* ── 22.2 slot plans: reorder + duplicates + per-slot /Rotate override;
+   * slot-isolated stamps (a stamp on a duplicate must NOT leak to its
+   * sibling slots). */
+  {
+    const ctx = StampContext.load(base);
+    ctx.setSlotPlan([
+      { src: 1 },
+      { src: 0, set: [["Rotate", { k: "num", n: 90 }]] },
+      { src: 1 },
+    ]);
+    ctx.stampText(2, { x: 72, y: 700, text: "dupe stamp", size: 14, font: "helvetica" });
+    const out = ctx.write();
+    const back = parsePdf(out);
+    const pages = listPages(back);
+    ok(pages.length === 3, `p6o slots: 3 output pages (got ${pages.length})`);
+    const rot = pages[1]!.dict.get("Rotate");
+    ok(!!(rot && rot.k === "num" && rot.n === 90), "p6o slots: slot 1 /Rotate 90 override");
+    const rot0 = pages[0]!.dict.get("Rotate");
+    ok(rot0 === undefined || (rot0.k === "num" && rot0.n === 0), "p6o slots: slot 0 keeps no rotation");
+    // Stamp on SLOT 2 only — slot 0 (same src=1) must be clean.
+    const t2 = lastEntryOpsText(back, pages, 2);
+    const t0 = lastEntryOpsText(back, pages, 0);
+    ok(t2.includes("dupe") || /64757065/.test(t2), "p6o slots: the stamp rides slot 2");
+    ok(!t0.includes("dupe"), "p6o slots: slot 0 (the same src) is stamp-free");
+    // Content preserved byte-exactly through surgery (page text survives).
+    const c0 = contentBytesOf(back, pages, 0);
+    ok(c0.length > 0, "p6o slots: content streams survive the slot rebuild");
+  }
+
+  /* ── 22.3 appendAnnot: dictionaries ride the page /Annots; reload + append
+   * again merges with the source's own annots (the annotate-pdf flow). */
+  {
+    const ctx = StampContext.load(base);
+    ctx.appendAnnot(0, {
+      k: "dict",
+      m: new Map<string, PdfObj>([
+        ["Type", { k: "name", v: "Annot" }],
+        ["Subtype", { k: "name", v: "Highlight" }],
+        ["Rect", { k: "arr", items: [{ k: "num", n: 72 }, { k: "num", n: 700 }, { k: "num", n: 240 }, { k: "num", n: 716 }] }],
+        ["QuadPoints", { k: "arr", items: [{ k: "num", n: 72 }, { k: "num", n: 700 }, { k: "num", n: 240 }, { k: "num", n: 700 }, { k: "num", n: 240 }, { k: "num", n: 716 }, { k: "num", n: 72 }, { k: "num", n: 716 }] }],
+        ["C", { k: "arr", items: [{ k: "num", n: 1 }, { k: "num", n: 0.85 }, { k: "num", n: 0.2 }] }],
+        ["F", { k: "num", n: 4 }],
+      ]),
+    });
+    const first = ctx.write();
+    const ctx2 = StampContext.load(first);
+    ctx2.appendAnnot(0, {
+      k: "dict",
+      m: new Map<string, PdfObj>([
+        ["Type", { k: "name", v: "Annot" }],
+        ["Subtype", { k: "name", v: "Text" }],
+        ["Rect", { k: "arr", items: [{ k: "num", n: 500 }, { k: "num", n: 700 }, { k: "num", n: 516 }, { k: "num", n: 716 }] }],
+        ["Contents", { k: "hstr", b: new Uint8Array([0xfe, 0xff, 0x09, 0x28, 0x09, 0x3e, 0x09, 0x2f]) }],
+      ]),
+    });
+    const second = ctx2.write();
+    const back = parsePdf(second);
+    const pages = listPages(back);
+    ok(!back.recovered, "p6o annots: output parses clean");
+    const annots = pages[0]!.dict.get("Annots");
+    ok(!!(annots && annots.k === "arr" && annots.items.length === 2),
+      `p6o annots: reload+append MERGES — 2 annots on page 0 (got ${annots && annots.k === "arr" ? annots.items.length : "none"})`);
+    let sawHighlight = false;
+    let sawNote = false;
+    if (annots && annots.k === "arr") {
+      for (const item of annots.items) {
+        if (item.k !== "ref") continue;
+        const obj = back.getObject(item.num);
+        if (!obj || obj.k !== "dict") continue;
+        const st = obj.m.get("Subtype");
+        if (st && st.k === "name" && st.v === "Highlight") sawHighlight = true;
+        if (st && st.k === "name" && st.v === "Text") sawNote = true;
+      }
+    }
+    ok(sawHighlight, "p6o annots: the reloaded Highlight survived the second pass");
+    ok(sawNote, "p6o annots: the appended Text note rides the /Annots");
+  }
+
+  /* ── 22.4 the AcroForm builder: full object-graph parity with pdf-lib
+   * for the exact call shapes make-pdf-fillable + edit-pdf generate. */
+  {
+    const makeBase = async (): Promise<Uint8Array> =>
+      (await PDFDocument.create()).addPage([612, 792]) instanceof Object
+        ? base
+        : base;
+
+    // ORACLE — pdf-lib.
+    const libDoc = await PDFDocument.load(await makeBase(), { updateMetadata: false });
+    const libPage = libDoc.getPage(0);
+    const libForm = libDoc.getForm();
+    const tf = libForm.createTextField("Full Name");
+    tf.setText("hello world");
+    tf.addToPage(libPage, { x: 100, y: 700, width: 200, height: 20, borderWidth: 1, borderColor: rgb(0.62, 0.65, 0.7) });
+    const tfm = libForm.createTextField("Notes");
+    tfm.enableMultiline();
+    tfm.setText("the quick brown fox\njumps over");
+    tfm.addToPage(libPage, { x: 100, y: 600, width: 200, height: 60, borderWidth: 0 });
+    const cb = libForm.createCheckBox("Agree");
+    cb.check();
+    cb.addToPage(libPage, { x: 100, y: 500, width: 14, height: 14, borderWidth: 1, borderColor: rgb(0.45, 0.49, 0.55) });
+    const dd = libForm.createDropdown("City");
+    dd.addOptions(["Mumbai", "Delhi", "Pune"]);
+    dd.select("Pune");
+    dd.addToPage(libPage, { x: 100, y: 400, width: 150, height: 18, borderWidth: 1, borderColor: rgb(0.62, 0.65, 0.7) });
+    const rg = libForm.createRadioGroup("Size");
+    rg.addOptionToPage("S", libPage, { x: 100, y: 300, width: 14, height: 14, borderWidth: 1, borderColor: rgb(0.45, 0.49, 0.55) });
+    rg.addOptionToPage("L", libPage, { x: 130, y: 300, width: 14, height: 14, borderWidth: 1, borderColor: rgb(0.45, 0.49, 0.55) });
+    const libBytes = await libDoc.save({ useObjectStreams: false });
+
+    // OURS.
+    const ctx = StampContext.load(await makeBase());
+    ctx.createTextField("Full Name")
+      .setText("hello world")
+      .addToSlot(0, { x: 100, y: 700, width: 200, height: 20, borderWidth: 1, borderColor: { r: 0.62, g: 0.65, b: 0.7 } });
+    ctx.createTextField("Notes")
+      .enableMultiline()
+      .setText("the quick brown fox\njumps over")
+      .addToSlot(0, { x: 100, y: 600, width: 200, height: 60, borderWidth: 0 });
+    ctx.createCheckBox("Agree")
+      .check()
+      .addToSlot(0, { x: 100, y: 500, width: 14, height: 14, borderWidth: 1, borderColor: { r: 0.45, g: 0.49, b: 0.55 } });
+    ctx.createDropdown("City")
+      .addOptions("Mumbai", "Delhi", "Pune")
+      .select("Pune")
+      .addToSlot(0, { x: 100, y: 400, width: 150, height: 18, borderWidth: 1, borderColor: { r: 0.62, g: 0.65, b: 0.7 } });
+    const radio = ctx.createRadioGroup("Size");
+    radio.addOptionToSlot(0, "S", { x: 100, y: 300, width: 14, height: 14, borderWidth: 1, borderColor: { r: 0.45, g: 0.49, b: 0.55 } });
+    radio.addOptionToSlot(0, "L", { x: 130, y: 300, width: 14, height: 14, borderWidth: 1, borderColor: { r: 0.45, g: 0.49, b: 0.55 } });
+    const ourBytes = ctx.write();
+
+    const libBack = parsePdf(libBytes);
+    const ourBack = parsePdf(ourBytes);
+    ok(!ourBack.recovered, "p6o forms: our output parses clean");
+
+    /** Collect the form graph: AcroForm → fields → widgets. */
+    interface FieldInfo {
+      t: string;
+      ft: string;
+      da: string;
+      ff: number | undefined;
+      v: string;
+      widgets: Array<{ rect: number[]; mk: string; bs: number; as: string; apKeys: string[]; nOps: string[]; bbox: number[] }>;
+      opt: string[];
+    }
+    const collect = (doc: ParsedPdf): FieldInfo[] => {
+      const root = resolve(doc, doc.trailer.get("Root")!);
+      if (!root || root.k !== "dict") return [];
+      const afRef = root.m.get("AcroForm");
+      if (!afRef || afRef.k !== "ref") return [];
+      const af = resolve(doc, afRef);
+      if (!af || af.k !== "dict") return [];
+      const fields = af.m.get("Fields");
+      if (!fields || fields.k !== "arr") return [];
+      const out: FieldInfo[] = [];
+      for (const f of fields.items) {
+        if (f.k !== "ref") continue;
+        const fd = resolve(doc, f);
+        if (!fd || fd.k !== "dict") continue;
+        const tObj = fd.m.get("T");
+        const t = tObj && (tObj.k === "str" || tObj.k === "hstr")
+          ? new TextDecoder("latin1").decode(tObj.b.slice(2)).replace(/\0/g, "")
+          : "?";
+        const ftObj = fd.m.get("FT");
+        const daObj = fd.m.get("DA");
+        const ffObj = fd.m.get("Ff");
+        const vObj = fd.m.get("V");
+        const optObj = fd.m.get("Opt");
+        const kids = fd.m.get("Kids");
+        const widgets: FieldInfo["widgets"] = [];
+        if (kids && kids.k === "arr") {
+          for (const k of kids.items) {
+            if (k.k !== "ref") continue;
+            const w = resolve(doc, k);
+            if (!w || w.k !== "dict") continue;
+            const rectObj = w.m.get("Rect");
+            const rect = rectObj && rectObj.k === "arr"
+              ? rectObj.items.map((r) => (r.k === "num" ? r.n : NaN))
+              : [];
+            const mkObj = w.m.get("MK");
+            let mk = "";
+            if (mkObj && mkObj.k === "dict") {
+              mk = [...mkObj.m.entries()]
+                .map(([kk, vv]) => {
+                  if (vv.k === "arr") {
+                    return `${kk}:[${vv.items.map((x) => (x.k === "num" ? x.n : "?")).join(",")}]`;
+                  }
+                  return `${kk}:${vv.k === "num" ? vv.n : vv.k === "name" ? vv.v : "?"}`;
+                })
+                .join("|");
+            }
+            const bsObj = w.m.get("BS");
+            const bsW = bsObj && bsObj.k === "dict" && bsObj.m.get("W");
+            const asObj = w.m.get("AS");
+            const apObj = w.m.get("AP");
+            const apKeys: string[] = [];
+            const nOps: string[] = [];
+            let bbox: number[] = [];
+            if (apObj && apObj.k === "dict") {
+              const n = apObj.m.get("N");
+              const walkStates = (states: PdfObj): void => {
+                if (states.k === "ref") {
+                  const s = resolve(doc, states);
+                  if (s && s.k === "stream") {
+                    const bb = s.m.get("BBox");
+                    if (bb && bb.k === "arr") {
+                      bbox = bb.items.map((x) => (x.k === "num" ? x.n : NaN));
+                    }
+                    const bytes = decodeForParser(s.raw, s.m);
+                    nOps.push(normalizeOps(stripIdentityCm(latin1(bytes, 0, bytes.length))));
+                  }
+                } else if (states.k === "dict") {
+                  for (const [kk] of states.m) apKeys.push(kk);
+                  for (const vv of states.m.values()) walkStates(vv);
+                }
+              };
+              if (n) walkStates(n);
+            }
+            widgets.push({
+              rect,
+              mk,
+              bs: bsW && bsW.k === "num" ? bsW.n : -1,
+              as: asObj && asObj.k === "name" ? asObj.v : "",
+              apKeys: apKeys.slice().sort(),
+              nOps,
+              bbox,
+            });
+          }
+        }
+        out.push({
+          t,
+          ft: ftObj && ftObj.k === "name" ? ftObj.v : "?",
+          da: daObj && (daObj.k === "str" || daObj.k === "hstr" || daObj.k === "lstr")
+            ? new TextDecoder("latin1").decode(daObj.b)
+            : "?",
+          ff: ffObj && ffObj.k === "num" ? ffObj.n : undefined,
+          v: vObj
+            ? vObj.k === "name"
+              ? vObj.v
+              : (vObj.k === "str" || vObj.k === "hstr")
+                ? new TextDecoder("latin1").decode(vObj.b.slice(2)).replace(/\0/g, "")
+                : "?"
+            : "",
+          widgets,
+          opt: optObj && optObj.k === "arr"
+            ? optObj.items.map((o) =>
+                o.k === "arr" && o.items[0] && (o.items[0]!.k === "str" || o.items[0]!.k === "hstr")
+                  ? new TextDecoder("latin1").decode(o.items[0]!.b.slice(2)).replace(/\0/g, "")
+                  : o.k === "str" || o.k === "hstr"
+                    ? new TextDecoder("latin1").decode(o.b.slice(2)).replace(/\0/g, "")
+                    : "?",
+              )
+            : [],
+        });
+      }
+      return out;
+    };
+
+    const libFields = collect(libBack);
+    const ourFields = collect(ourBack);
+    eq(libFields.length, ourFields.length, "p6o forms: field count matches the oracle");
+    eq(
+      ourFields.map((f) => `${f.ft}|${f.t}`).sort().join(";"),
+      libFields.map((f) => `${f.ft}|${f.t}`).sort().join(";"),
+      "p6o forms: /FT + /T name parity",
+    );
+    for (const ours of ourFields) {
+      const theirs = libFields.find((f) => f.t === ours.t && f.ft === ours.ft);
+      ok(theirs !== undefined, `p6o forms[${ours.t}]: oracle counterpart exists`);
+      if (!theirs) continue;
+      eq(ours.ff, theirs.ff, `p6o forms[${ours.t}]: /Ff parity`);
+      eq(ours.da, theirs.da, `p6o forms[${ours.t}]: /DA parity (font-size loop incl.)`);
+      eq(ours.v, theirs.v, `p6o forms[${ours.t}]: /V parity`);
+      eq(ours.opt, theirs.opt, `p6o forms[${ours.t}]: /Opt parity`);
+      eq(ours.widgets.length, theirs.widgets.length, `p6o forms[${ours.t}]: widget count`);
+      for (let wi = 0; wi < Math.min(ours.widgets.length, theirs.widgets.length); wi += 1) {
+        const w = ours.widgets[wi]!;
+        const t = theirs.widgets[wi]!;
+        eq(
+          w.rect.map((n) => Math.round(n * 1e6) / 1e6),
+          t.rect.map((n) => Math.round(n * 1e6) / 1e6),
+          `p6o forms[${ours.t}#${wi}]: /Rect (the bw/2 expansion)`,
+        );
+        eq(w.mk, t.mk, `p6o forms[${ours.t}#${wi}]: /MK (BG white, R 0, BC)`);
+        eq(w.bs, t.bs, `p6o forms[${ours.t}#${wi}]: /BS /W`);
+        eq(w.as, t.as, `p6o forms[${ours.t}#${wi}]: /AS`);
+        eq(w.apKeys, t.apKeys, `p6o forms[${ours.t}#${wi}]: /AP state names (Yes/Off or /0,/1)`);
+        eq(
+          w.bbox.map((n) => Math.round(n * 1e6) / 1e6),
+          t.bbox.map((n) => Math.round(n * 1e6) / 1e6),
+          `p6o forms[${ours.t}#${wi}]: AP /BBox`,
+        );
+        eq(w.nOps.length, t.nOps.length, `p6o forms[${ours.t}#${wi}]: AP stream count`);
+        for (let si = 0; si < Math.min(w.nOps.length, t.nOps.length); si += 1) {
+          eq(
+            w.nOps[si],
+            t.nOps[si],
+            `p6o forms[${ours.t}#${wi}]: AP stream ${si} OPERATOR PARITY`,
+          );
+        }
+      }
+    }
+    // The page /Annots carry the widgets; /P back-refs resolve to page dicts.
+    const ourPages = listPages(ourBack);
+    const annots = ourPages[0]!.dict.get("Annots");
+    ok(
+      !!(annots && annots.k === "arr" && annots.items.length === 6),
+      `p6o forms: 6 widgets on the page /Annots (got ${annots && annots.k === "arr" ? annots.items.length : "none"})`,
+    );
   }
 }
 

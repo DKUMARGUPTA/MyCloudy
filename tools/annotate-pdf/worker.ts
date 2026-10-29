@@ -1,12 +1,16 @@
-import {
-  PDFDocument,
-  PDFHexString,
-  PDFString,
-  type PDFObject,
-} from "pdf-lib";
-
 import type { OptionValues } from "@/lib/tools/config-types";
 import type { WorkerRunRequest, WorkerResponse } from "@/lib/workers/protocol";
+import {
+  PdfError,
+  StampContext,
+  arr,
+  hstr,
+  lstr,
+  name,
+  newDict,
+  num,
+  type PdfObj,
+} from "@/lib/own/pdf";
 import {
   NOTE_SIZE,
   hexToRgb,
@@ -23,9 +27,10 @@ import {
  *
  * The surface owns every interaction and sends the annotations blob under
  * "a:<fileId>" (the redact epoch-key pattern). This worker re-opens the
- * original document with pdf-lib and appends REAL annotation objects to
- * the page /Annots arrays — they stay editable/comment-listable in
- * Chrome, Firefox, Acrobat and every standards-compliant reader:
+ * original document with OUR own PDF engine (StampContext — the P6-f
+ * stamp kernel) and appends REAL annotation objects to the page /Annots
+ * arrays — they stay editable/comment-listable in Chrome, Firefox,
+ * Acrobat and every standards-compliant reader:
  *
  *   highlight  → /Subtype /Highlight with /QuadPoints + /IC + /CA
  *   underline  → /Subtype /Underline with /QuadPoints + /C
@@ -34,9 +39,10 @@ import {
  *   note       → /Subtype /Text (sticky note icon) with /Contents
  *
  * QuadPoints use the Acrobat order (BL → BR → TR → TL per quad), the
- * exact geometry real files carry. /Contents rides PDFHexString so Hindi
- * note text survives. Device-only: the File arrives by structured clone
- * and the result Blob goes back the same way. Never touches the network.
+ * exact geometry real files carry. /Contents rides a UTF-16BE hex string
+ * (the pdf-lib PDFHexString.fromText form) so Hindi note text survives.
+ * Device-only: the File arrives by structured clone and the result Blob
+ * goes back the same way. Never touches the network.
  */
 
 function post(response: WorkerResponse): void {
@@ -63,18 +69,31 @@ interface WireBlob {
   annos: unknown;
 }
 
-/** Structural subset of pdf-lib's LiteralObject (obj() input typing). */
-interface AnnoDictLiteral {
-  [key: string]: AnnoDictValue;
+/** PDFHexString.fromText parity — UTF-16BE bytes with the FEFF BOM. */
+function utf16be(text: string): Uint8Array {
+  const out = new Uint8Array(2 + text.length * 2);
+  out[0] = 0xfe;
+  out[1] = 0xff;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.charCodeAt(i);
+    out[2 + i * 2] = c >> 8;
+    out[3 + i * 2] = c & 0xff;
+  }
+  return out;
 }
 
-type AnnoDictValue =
-  | string
-  | number
-  | boolean
-  | PDFObject
-  | AnnoDictValue[]
-  | AnnoDictLiteral;
+/** PDFString.of parity — Latin-1 bytes of the ASCII date strings. */
+function latin1Bytes(text: string): Uint8Array {
+  const out = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i += 1) out[i] = text.charCodeAt(i) & 0xff;
+  return out;
+}
+
+/** numbers[] → a PDF array object. */
+const numArr = (values: number[]): PdfObj => ({
+  k: "arr",
+  items: values.map((v) => num(v)),
+});
 
 function parseBlob(raw: unknown): WireBlob | null {
   if (typeof raw !== "string" || raw.length === 0) return null;
@@ -122,29 +141,22 @@ async function run(request: WorkerRunRequest): Promise<void> {
   post({ type: "progress", runId, pct: 4, stage: "reading" });
 
   const data = new Uint8Array(await file.arrayBuffer());
-  let doc: PDFDocument;
+  let ctx: StampContext;
   try {
-    doc = await PDFDocument.load(data, {
-      updateMetadata: false,
-      ignoreEncryption: true,
-    });
+    ctx = StampContext.load(data);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      /password|encrypt/i.test(message) ? "PDF_PASSWORD" : "PDF_PARSE"
-    );
+    // Our parser REFUSES encrypted sources at load (typed "encrypted") —
+    // the parity of the old ignoreEncryption + isEncrypted refusal:
+    // appending plaintext annotations and re-saving an encrypted file
+    // would emit a mixed-encryption document no reader can open, so the
+    // engine refuses honestly (tool.errorEncrypted → "unlock it first,
+    // then try again"). Everything else is a parse failure.
+    if (error instanceof PdfError && error.code === "encrypted") {
+      throw new Error("PDF_PASSWORD");
+    }
+    throw new Error("PDF_PARSE");
   }
-  // ignoreEncryption parses encrypted files without decrypting anything:
-  // pdf.js opens owner-restricted PDFs transparently, so the surface can
-  // reach this run with an encrypted source. Appending plaintext
-  // annotations and re-saving would emit a mixed-encryption file no
-  // reader can open. pdf-lib cannot decrypt — refuse honestly
-  // (tool.errorEncrypted → "unlock it first, then try again").
-  if (doc.isEncrypted) {
-    throw new Error("PDF_PASSWORD");
-  }
-  const pages = doc.getPages();
-  const annos = sanitizeAnnotations(blob?.annos, pages.length);
+  const annos = sanitizeAnnotations(blob?.annos, ctx.pageCount);
 
   post({ type: "progress", runId, pct: 12, stage: "processing" });
 
@@ -153,35 +165,30 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const total = Math.max(annos.length, 1);
   let done = 0;
 
-  for (let p = 0; p < pages.length; p += 1) {
+  for (let p = 0; p < ctx.pageCount; p += 1) {
     const pageAnnos = annos.filter((a) => a.page === p);
     if (pageAnnos.length === 0) {
       post({
         type: "progress",
         runId,
-        pct: 12 + Math.min(76, Math.round((76 * (p + 1)) / pages.length)),
+        pct: 12 + Math.min(76, Math.round((76 * (p + 1)) / ctx.pageCount)),
         stage: "processing",
-        detail: { page: p + 1, pages: pages.length },
+        detail: { page: p + 1, pages: ctx.pageCount },
       });
       continue;
     }
-    const page = pages[p];
-    let box = { x: 0, y: 0, width: 612, height: 792 };
-    try {
-      const crop = page.getCropBox();
-      box = { x: crop.x, y: crop.y, width: crop.width, height: crop.height };
-    } catch {
-      /* keep the default */
-    }
+    const crop = ctx.pages[p]!.cropBox;
+    const box = {
+      x: crop[0],
+      y: crop[1],
+      width: crop[2] - crop[0],
+      height: crop[3] - crop[1],
+    };
 
     for (const anno of pageAnnos) {
       const dict = annoDict(anno, box);
       if (dict) {
-        // register() stores what it is given — convert the plain literal
-        // through context.obj (names, numbers, nested /BS dict) first.
-        page.node.addAnnot(
-          doc.context.register(doc.context.obj(dict))
-        );
+        ctx.appendAnnot(p, dict);
         if (anno.kind === "note") notes += 1;
         else markups += 1;
       }
@@ -191,14 +198,14 @@ async function run(request: WorkerRunRequest): Promise<void> {
         runId,
         pct: 12 + Math.min(76, Math.round((76 * done) / total)),
         stage: "processing",
-        detail: { page: p + 1, pages: pages.length },
+        detail: { page: p + 1, pages: ctx.pageCount },
       });
     }
   }
 
   post({ type: "progress", runId, pct: 92, stage: "saving" });
 
-  const saved = await doc.save({ useObjectStreams: true });
+  const saved = ctx.write();
   const outputName = `${safeBaseName(file.name)}-annotated.pdf`;
 
   post({
@@ -215,7 +222,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     ],
     detail: {
       files: 1,
-      pages: pages.length,
+      pages: ctx.pageCount,
       annotations: markups,
       notes,
     },
@@ -223,38 +230,43 @@ async function run(request: WorkerRunRequest): Promise<void> {
 }
 
 /**
- * Builds the annotation dictionary for one annotation. `context.obj`
- * maps strings → names, numbers → numbers, arrays → arrays; /Contents
- * rides PDFHexString (UTF-16) so Devanagari note text survives.
+ * Builds the annotation dictionary for one annotation as OUR engine's
+ * object model: strings → names, numbers → numbers, arrays → arrays;
+ * /Contents rides a UTF-16BE hex string (hstr — the pdf-lib
+ * PDFHexString.fromText form) so Devanagari note text survives; the /M
+ * date rides a literal string (lstr — the pdf-lib PDFString.of form).
  */
 function annoDict(
   anno: Annotation,
   box: { x: number; y: number; width: number; height: number }
-): AnnoDictLiteral | null {
+): (PdfObj & { k: "dict" }) | null {
   const { r, g, b } = hexToRgb(anno.color);
-  const date = PDFString.of(pdfDate(anno.at));
+  const date = lstr(latin1Bytes(pdfDate(anno.at)));
 
   if (anno.kind === "note") {
     const n = anno as NoteAnno;
     // Keep the icon inside the page even when clicked near an edge.
     const cx = Math.min(Math.max(n.x, box.x + NOTE_SIZE / 2), box.x + box.width - NOTE_SIZE / 2);
     const cy = Math.min(Math.max(n.y, box.y + NOTE_SIZE / 2), box.y + box.height - NOTE_SIZE / 2);
-    return {
-      Type: "Annot",
-      Subtype: "Text",
-      Rect: [
-        cx - NOTE_SIZE / 2,
-        cy - NOTE_SIZE / 2,
-        cx + NOTE_SIZE / 2,
-        cy + NOTE_SIZE / 2,
+    return newDict([
+      ["Type", name("Annot")],
+      ["Subtype", name("Text")],
+      [
+        "Rect",
+        arr(
+          num(cx - NOTE_SIZE / 2),
+          num(cy - NOTE_SIZE / 2),
+          num(cx + NOTE_SIZE / 2),
+          num(cy + NOTE_SIZE / 2),
+        ),
       ],
-      Contents: PDFHexString.fromText(n.text),
-      Name: "Comment",
-      C: [r, g, b],
-      F: 4,
-      M: date,
-      Open: false,
-    };
+      ["Contents", hstr(utf16be(n.text))],
+      ["Name", name("Comment")],
+      ["C", arr(num(r), num(g), num(b))],
+      ["F", num(4)],
+      ["M", date],
+      ["Open", { k: "bool", b: false }],
+    ]);
   }
 
   const m = anno as MarkupAnno;
@@ -263,46 +275,46 @@ function annoDict(
 
   if (m.fallback) {
     // Scanned page: a translucent filled square (no border).
-    return {
-      Type: "Annot",
-      Subtype: "Square",
-      Rect: rect,
-      IC: [r, g, b],
-      C: [r, g, b],
-      CA: m.opacity,
-      BS: { Type: "Border", W: 0, S: "S" },
-      Border: [0, 0, 0],
-      F: 4,
-      M: date,
-    };
+    return newDict([
+      ["Type", name("Annot")],
+      ["Subtype", name("Square")],
+      ["Rect", numArr(rect)],
+      ["IC", numArr([r, g, b])],
+      ["C", numArr([r, g, b])],
+      ["CA", num(m.opacity)],
+      ["BS", newDict([["Type", name("Border")], ["W", num(0)], ["S", name("S")]])],
+      ["Border", numArr([0, 0, 0])],
+      ["F", num(4)],
+      ["M", date],
+    ]);
   }
 
   if (m.kind === "highlight") {
-    return {
-      Type: "Annot",
-      Subtype: "Highlight",
-      Rect: rect,
-      QuadPoints: quadNumbers(m),
-      C: [r, g, b],
-      IC: [r, g, b],
-      CA: m.opacity,
-      F: 4,
-      M: date,
-      Contents: PDFHexString.fromText(m.text),
-    };
+    return newDict([
+      ["Type", name("Annot")],
+      ["Subtype", name("Highlight")],
+      ["Rect", numArr(rect)],
+      ["QuadPoints", numArr(quadNumbers(m))],
+      ["C", numArr([r, g, b])],
+      ["IC", numArr([r, g, b])],
+      ["CA", num(m.opacity)],
+      ["F", num(4)],
+      ["M", date],
+      ["Contents", hstr(utf16be(m.text))],
+    ]);
   }
 
   // Underline / StrikeOut: full-strength stroke colour along the quads.
-  return {
-    Type: "Annot",
-    Subtype: m.kind === "underline" ? "Underline" : "StrikeOut",
-    Rect: rect,
-    QuadPoints: quadNumbers(m),
-    C: [r, g, b],
-    F: 4,
-    M: date,
-    Contents: PDFHexString.fromText(m.text),
-  };
+  return newDict([
+    ["Type", name("Annot")],
+    ["Subtype", name(m.kind === "underline" ? "Underline" : "StrikeOut")],
+    ["Rect", numArr(rect)],
+    ["QuadPoints", numArr(quadNumbers(m))],
+    ["C", numArr([r, g, b])],
+    ["F", num(4)],
+    ["M", date],
+    ["Contents", hstr(utf16be(m.text))],
+  ]);
 }
 
 self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
