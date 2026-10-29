@@ -21,12 +21,16 @@ model User {
   oauthId      String?
   plan         String    @default("free")
   locale       String    @default("en")
+  role         String    @default("user")
+  tokenVersion Int       @default(0)
+  bannedAt     DateTime?
   createdAt    DateTime  @default(now())
   deletedAt    DateTime?
 
   sessions      Session[]
   subscriptions Subscription[]
   payments      Payment[]
+  bugReports     BugReport[]
 
   @@map("users")
 }
@@ -183,4 +187,26 @@ model SiteSetting {
   updatedAt DateTime @updatedAt
 
   @@map("site_settings")
+}
+
+model BugReport {
+  id         String   @id @default(uuid())
+  title      String
+  message    String
+  category   String
+  severity   String   @default("medium")
+  status     String   @default("new")
+  toolId     String?
+  email      String?
+  browserInfo String?
+  adminNote  String?
+  userId     String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([userId])
+  @@map("bug_reports")
 }

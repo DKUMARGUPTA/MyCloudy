@@ -129,7 +129,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
   // nothingToDo and the run simply proceeds (nothing to burn).
   if (readBool(options, "flattenFirst", false)) {
     try {
-      flattenDocument(doc, { scope: "forms-only" });
+      // flattenDocument works on BYTES (its own parse); the flattened
+      // output becomes the working document for the sign-here boxes.
+      const flattened = flattenDocument(bytes, { scope: "forms-only" });
+      doc = await PDFDocument.load(flattened.bytes, {
+        ignoreEncryption: false,
+        updateMetadata: false,
+      });
     } catch (error) {
       if (error instanceof FlattenFormsError) {
         post({ type: "error", runId, code: "reqsig.errFlatten" });

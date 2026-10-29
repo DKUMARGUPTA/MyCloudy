@@ -143,6 +143,15 @@ export interface ObjRect {
 // PageView + display transforms (pdf.js-mirrored, /Rotate-aware)
 // ---------------------------------------------------------------------------
 
+/**
+ * The load-time page view subset render.ts collects (crop box + rotation).
+ * pdf.js `page.view` / `page.rotate` only — no R12/R13/R15 plan fields.
+ */
+export type PageViewLite = Pick<
+  PageView,
+  "x0" | "y0" | "x1" | "y1" | "rotate"
+>;
+
 export interface PageView {
   /** pdf.js page.view: [x0, y0, x1, y1] of the CROP box, user space. */
   x0: number;

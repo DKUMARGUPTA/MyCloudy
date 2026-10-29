@@ -64,7 +64,7 @@ function devaFontUrl(): string {
 }
 
 /** Fetches the self-hosted Devanagari TTF once per worker lifetime. */
-function loadDevanagariBytes(): Promise<Uint8Array> {
+export function loadDevanagariBytes(): Promise<Uint8Array> {
   if (!devaBytesPromise) {
     devaBytesPromise = fetch(devaFontUrl()).then(async (res) => {
       if (!res.ok) throw new Error("devanagari-font-fetch");

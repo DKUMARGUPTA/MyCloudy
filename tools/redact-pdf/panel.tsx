@@ -5,13 +5,14 @@ import { EyeOff, TriangleAlert } from "lucide-react";
 
 import { useI18n } from "@/components/providers/locale-provider";
 import type { ToolPanelProps } from "@/lib/tools/panel-types";
-import { normalizeMarkPayload, RED_IDS } from "./engine";
+import { parseRedactMarks, type RedactMark } from "./engine";
 
 /**
  * Redact PDF aside panel — read-only summary (the bookmark precedent):
  * the marks live in the surface state, serialize into the shared option
- * values, and this panel reads them back through the same normalizer the
- * worker uses — so the summary can never disagree with the run.
+ * values under per-file "m:<fileId>" keys, and this panel reads them back
+ * through the same parser the worker uses — so the summary can never
+ * disagree with the run.
  *
  * The interactive review list (check/uncheck + delete) lives in the
  * surface's main column where the marks are owned.
@@ -19,14 +20,14 @@ import { normalizeMarkPayload, RED_IDS } from "./engine";
 export function RedactPanel({ files, values }: ToolPanelProps): React.JSX.Element {
   const { t } = useI18n();
 
-  const marks = useMemo(
-    () =>
-      normalizeMarkPayload(
-        values[RED_IDS.marks],
-        files.length > 0 ? Number.MAX_SAFE_INTEGER : 1
-      ),
-    [values, files.length]
-  );
+  const marks = useMemo<RedactMark[]>(() => {
+    const all: RedactMark[] = [];
+    for (const [key, raw] of Object.entries(values)) {
+      if (!key.startsWith("m:")) continue;
+      all.push(...parseRedactMarks(raw));
+    }
+    return all;
+  }, [values]);
 
   const enabledCount = marks.filter((m) => m.enabled).length;
   const affectedPages = new Set(

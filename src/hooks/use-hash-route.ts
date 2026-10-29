@@ -17,11 +17,13 @@ import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
  */
 
 export interface HashRoute {
-  view: "home" | "tools" | "tool";
+  view: "home" | "tools" | "tool" | "page";
   category?: string;
   query?: string;
   /** Enabled tool id for the "#/tool/<id>" view. */
   toolId?: string;
+  /** Static page id (about|contact|privacy|terms) for the "#/page/<id>" view. */
+  pageId?: string;
   /** Anchor id when the hash is a plain "#section" link. */
   anchor?: string;
 }
@@ -45,6 +47,9 @@ export function parseHash(hash: string): HashRoute {
   }
   if (path.startsWith("tool/")) {
     return { view: "tool", toolId: path.slice("tool/".length) };
+  }
+  if (path.startsWith("page/")) {
+    return { view: "page", pageId: path.slice("page/".length) };
   }
   return { view: "home" };
 }
@@ -119,5 +124,7 @@ export const ROUTES = {
   tools: "#/tools",
   category: (categoryId: string) => `#/tools/${categoryId}`,
   tool: (toolId: string) => `#/tool/${toolId}`,
+  /** Static content page (about | contact | privacy | terms). */
+  page: (pageId: string) => `#/page/${pageId}`,
   toolsWithQuery: (query: string) => `#/tools?q=${encodeURIComponent(query)}`,
 } as const;

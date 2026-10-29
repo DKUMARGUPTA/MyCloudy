@@ -253,7 +253,10 @@ export function ContactPage() {
               className="rounded-btn"
             />
             <p className="text-xs text-muted-foreground">
-              {t("contact.messageHint")}
+              {t("contact.messageHint", {
+                count: message.length,
+                max: 5000,
+              })}
             </p>
           </div>
 

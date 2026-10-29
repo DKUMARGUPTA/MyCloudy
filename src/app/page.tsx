@@ -17,6 +17,7 @@ import { Faq } from "@/components/doco/home/faq";
 import { RecentFiles } from "@/components/doco/home/recent-files";
 import { ToolsView } from "@/components/doco/tools/tools-view";
 import { ToolView } from "@/components/doco/tool/tool-view";
+import { StaticPageView } from "@/components/doco/page/static-page";
 import { SearchPalette } from "@/components/doco/search/search-palette";
 import { CookieBanner } from "@/components/doco/cookie-banner";
 import { BottomTabBar } from "@/components/doco/bottom-tab-bar";
@@ -75,6 +76,8 @@ export default function Home() {
           </>
         ) : route.view === "tool" ? (
           <ToolView toolId={route.toolId ?? ""} />
+        ) : route.view === "page" ? (
+          <StaticPageView pageId={route.pageId ?? ""} />
         ) : (
           <ToolsView
             categoryId={route.category}

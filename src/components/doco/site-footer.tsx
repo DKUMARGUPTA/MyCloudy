@@ -14,9 +14,9 @@ import { ROUTES } from "@/hooks/use-hash-route";
 import { cn } from "@/lib/utils";
 
 /**
- * Site footer (PRD §5.2): tagline, trust line, category links, privacy
- * settings (re-opens the consent banner). Company/Legal link columns
- * arrive with the Phase 6 static pages.
+ * Site footer (PRD §5.2): tagline, trust line, category links, company
+ * pages (about/contact/privacy/terms — Phase 6 static pages), privacy
+ * settings (re-opens the consent banner).
  */
 export function SiteFooter() {
   const { t, locale } = useI18n();
@@ -85,6 +85,33 @@ export function SiteFooter() {
               );
             })}
           </ul>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {t("footer.companyLabel")}
+          </p>
+          <nav aria-label={t("footer.companyLabel")}>
+            <ul className="flex flex-wrap gap-x-5 gap-y-1">
+              {(
+                [
+                  ["about", t("footer.linkAbout")],
+                  ["contact", t("footer.linkContact")],
+                  ["privacy", t("footer.linkPrivacy")],
+                  ["terms", t("footer.linkTerms")],
+                ] as const
+              ).map(([id, label]) => (
+                <li key={id}>
+                  <a
+                    href={ROUTES.page(id)}
+                    className="inline-flex min-h-11 items-center rounded-btn text-sm text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  >
+                    {label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
         </div>
 
         <div className="flex flex-col gap-3 border-t border-border pt-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-6">

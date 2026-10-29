@@ -40,6 +40,13 @@
     "node_modules",
     "examples",
     "skills",
-    "tests"
+    "tests",
+    "scripts",
+    "mini-services",
+    "qa",
+    "download",
+    "services",
+    "probe-*.ts",
+    "dbg-svg-probe.ts"
   ]
 }

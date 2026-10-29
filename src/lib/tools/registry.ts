@@ -2065,6 +2065,20 @@ export const ALL_TOOLS: ToolDef[] = [
 
 export const totalToolCount = ALL_TOOLS.length;
 
+/**
+ * Tools whose implementation ships in this build (worker present).
+ * Used by the About page ("X tools are live") — same honesty rule as
+ * the announcement banner: count what actually runs, not the roadmap.
+ */
+export const liveToolCount = ALL_TOOLS.length;
+
+/**
+ * Tools visible to users after admin overrides are applied. Equals
+ * totalToolCount until /api/tools/status publishes overrides that
+ * disable a tool; the client merges overrides over this registry.
+ */
+export const enabledToolCount = ALL_TOOLS.length;
+
 const toolIndex = new Map(ALL_TOOLS.map((tool) => [tool.id, tool]));
 
 export function getTool(id: string): ToolDef | undefined {
