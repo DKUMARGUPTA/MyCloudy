@@ -5574,3 +5574,32 @@ Stage Summary:
 - Registry: 100/100 LIVE (e-invoice included — no enable round needed).
 - LESSON (pin): '*.pem' in gitignore silently ate QA fixtures for weeks — force-add test fixtures or use a non-.pem extension; ALWAYS brace-aware-count registry entries (nested tags break naive regex).
 - NEXT: P6-r (compress family onto own engine) → create-fillable-pdf-form render → pdf-to-X extractors → P7 quality moat → PRD 7-11 (PWA first).
+
+---
+Task ID: P6-r (PLAN — recorded before implementation, house rule)
+Agent: main (Z.ai Code session)
+Task: Scope + plan the compress family migration onto the OWN PDF engine (the top queue item after FIX-ALL-1).
+
+Work Log:
+- INVENTORY (pdf-lib importers in the family, 6 files):
+  * tools/compress-pdf/worker.ts (187 ln) — PDFDocument load/save + copyPages for the passthrough/structural stage.
+  * tools/compress-pdf/engine.ts (551 ln) — candidate walk (image discovery through page /Resources /XObject), image dicts, colorspace reads, stream bytes.
+  * tools/compress-pdf/recompress.ts (203 ln) — the DEEPEST one: PDFArray/PDFName/PDFRawStream/decodePDFRawStream — image stream decode + palette interpretation (gray/RGB/CMYK/Indexed incl. stream-backed palettes), size-guarded re-encode.
+  * tools/compress-pdf/recompress-lib.ts (196 ln) — impure worker-side helpers (canvas decode paths) with pdf-lib types.
+  * tools/compress-common/recompress.ts (228 ln) — the shared impure pipeline that compress-pdf-to-size ALSO rides (same family, port together).
+  * tools/compress-pdf-to-size/worker.ts — PDFDocument load/save + the ladder driving compress-common.
+- WHAT THE OWN ENGINE ALREADY HAS (verified today):
+  * objects.ts: full PdfObj model (dict/arr/name/lstr/hstr/ref/newref, dget/asName/asNum...).
+  * parser.ts: decodeStream supports FlateDecode/ASCIIHex + own inflate (zlib + raw fallback).
+  * images.ts: parseJpeg (DCT probe), decodePng, flateImageBytes.
+  * MISSING for compress: LZW stream decode (exists in tools/tiff-to-pdf reader — LIFT to engine as a stream filter), Indexed-palette-from-stream interpretation, DCTDecode raw passthrough (trivial — no decode), the image-candidate walk over parsed pages (pattern exists in extract-images own-engine port? NO — extract-images still rides pdf.js; write fresh in engine seam), CMYK interpret (keep the naive cmykToRgb as-is).
+- PLAN (one sub-round each, probe → port → smoke → E2E):
+  1. P6-r-a: engine/src additions — streamFilter decode dispatch (Flate/LZW/DCTDecode-passthrough/ASCIIHex/RunLength refusal), indexedPaletteBytes(stream-backed /ColorSpace arrays), a typed ImageCandidate walk over parseForOrganize output. Probes vs pdf-lib decodePDFRawStream on: Flate gray/RGB, LZW (from TIFF-generated fixture), Indexed palette image, CMYK DCT.
+  2. P6-r-b: recompress.ts + recompress-lib.ts port (pure decode/interpret logic first, canvas paths untouched — they're DOM-side).
+  3. P6-r-c: worker.ts + compress-common + compress-pdf-to-size onto the seam (organizeMerge-style parse → per-image replacement plan → write; PDFDocument copyPages → engine organizePdf).
+  4. Smokes: extend scripts/smoke-compress.ts + smoke-compress-to-size.ts with an own-engine parity section (byte-identity where lossless, size-window where lossy, palette/LZW fixtures).
+  5. E2E: agent-browser compress-pdf golden path (photo PDF → 'photos' quality → downloaded bytes carry the re-encoded DCT), compress-to-size 100KB ladder hit.
+- RISK NOTES: the size-guard (≥2% margin keep-original) must stay EXACT; rasterize ladder in to-size must NOT regress (it renders via pdf.js, unaffected). gray-jpeg.ts is already engine-free (own 1-component JPEG encoder).
+
+Stage Summary:
+- Plan recorded. Implementation starts P6-r-a (engine stream filters + palette + candidate walk). pdf-lib stays as the DEV-TIME ORACLE in smokes only.
