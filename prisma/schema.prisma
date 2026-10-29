@@ -176,3 +176,11 @@ model AuditLog {
 
   @@map("audit_log")
 }
+
+model SiteSetting {
+  key       String   @id
+  valueJson String
+  updatedAt DateTime @updatedAt
+
+  @@map("site_settings")
+}
