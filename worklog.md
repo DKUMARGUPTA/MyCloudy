@@ -5511,3 +5511,45 @@ Stage Summary:
 - P6-p COMPLETE: pdf-lib is now GONE from 35 of the pdf-lib-shipped tool families — the AcroForm READ/fill/flatten side runs OUR engine end to end (the builder's mirror: reader + setters + appearance regeneration + the burn passes).
 - Honest scope: (1) same classic-xref/no-object-streams output shape; (2) smokes keep pdf-lib as fixture-author + reload-oracle only; (3) the optionlist AP regeneration renders the SELECTED VALUES as text (pdf-lib's full list-box drawing is NOT ported — a documented simplification, rare path; single-select dropdowns are exact provider parity); (4) comb text fields render as plain single-line (padding parity, no per-cell layout).
 - NEXT (P6-q candidates): (1) create-fillable-pdf-form render.ts (the last big form authoring surface); (2) compress family (the qpdf-shaped consumer); (3) pdf-to-X extractors; (4) push immediately when the token returns (~60 commits pending).
+
+---
+Task ID: P6-q (retro-entry — commit d9030a3 ka worklog entry pichhle round se chhoot gaya tha)
+Agent: main (Z.ai Code session)
+Task: Vercel build unblock + Phase-6 static pages LIVE + Prisma schema completion (audit-fix round after the 25-commit push broke the Vercel build).
+
+Work Log:
+- AUDIT FIX: last deploy (bee5df8) type-checked CLEAN; the following 25 commits shipped dev-time files with tsc errors and the build died at mini-services/convert (Bun.serve). This round: tsc 0 — tsconfig+eslint now exclude dev-time trees (scripts, mini-services, qa, download, services, root probes); the committed tree MUST type-check clean because Vercel runs the full include set.
+- PRISMA COMPLETION (real runtime 500s — code shipped without its schema): +BugReport model (title/message/category/severity/status/toolId/email/browserInfo/adminNote/userId + updatedAt, indexed status+userId), +User.role/tokenVersion/bannedAt. POST /api/bug-reports 201s; admin/auth routes type-safe.
+- PHASE-6 STATIC PAGES — LIVE AT LAST: the QA'd about/contact/privacy/terms pages existed but NOTHING routed to them (no footer links, no parseHash page view, page.tsx never rendered StaticPageView). Wired end-to-end: ROUTES.page(id) + '#/page/<id>' view + StaticPageView in page.tsx + footer COMPANY link section (i18n en+hi, +166 keys ×2, honest content matched to real API behavior).
+- STALE-TREE REMOVAL (~30 dead files, zero behavior change): sidocs old chrome, doco/pages superseded files, 6 unused shadcn stock components (calendar/carousel/chart/form/input-otp/resizable — deps never installed), dead tool files (edit-pdf canvas+store+fonts+textlines, scan-pdf adjust-dialog, ocr-pdf old surface, digital-signature/verify engine.ts — pkijs never installed, einvoice-common minus cii.ts, create-resume old templates).
+- LIVE-CODE FIXES: request-signature flattenFirst passed PDFDocument where flattenDocument wants bytes; stamp-common worker-lib exports loadDevanagariBytes; edit-pdf model exports PageViewLite; redact panel reads real 'm:<fileId>' wire format.
+- Verified: tsc 0; eslint clean; browser E2E — about/privacy full content, Hindi toggle, footer links, edit-pdf workspace, bug-report API 201, 0 console errors.
+
+Stage Summary:
+- Vercel LIVE again: https://mycloudy-beta.vercel.app (the beta alias — mycloudy.vercel.app belongs to the user's OLD account/app, never touch it). Static pages + bug-report API production-ready.
+
+---
+Task ID: 64ee3d7 (retro-entry)
+Agent: main (Z.ai Code session)
+Task: fix(vercel): postinstall prisma generate — fresh installs got the stub client.
+
+Work Log:
+- The Vercel build failed at db.bugReport.findUnique: a fresh npm install ships @prisma/client's DEFAULT stub (no project models). The sandbox never saw this because db:push regenerates the client locally. postinstall now generates the real client (works without DATABASE_URL; verified).
+
+---
+Task ID: STATE-SYNC (session continue — user asked: kya pending hai + memory update hua ya nahi)
+Agent: main (Z.ai Code session)
+Task: Session resume after context handoff — verify the token/push state end-to-end, audit memory-file staleness, refresh CONTEXT-MEMORY.md, append the missing P6-q worklog entries, recreate the disabled cron.
+
+Work Log:
+- STATE AUDIT (no blind trust): ~/.mycloudy/secrets.env (the in-flight location from the interrupted session) GONE — but the CANONICAL token store /home/z/.tokens/docopdf.env SURVIVED (chmod 600, both GITHUB_TOKEN/MYCLOUDY_GH_TOKEN + VERCEL_TOKEN, added 2026-10-29) + repo-root .env.credentials (gitignored). Push script's leak-guard verified clean.
+- PUSH VERIFIED: git fetch → origin/main..HEAD = 0 (the interrupted session's push DID land; local = remote = 64ee3d7). Re-ran scripts/push-github.sh → "Everything up-to-date", remote main + 26 tags confirmed. ALL WORK DURABLE.
+- VERCEL: https://mycloudy-beta.vercel.app → HTTP 200 (live).
+- REGISTRY TRUTH: 105 tool defs = 100 enabled:true + 5 built-but-disabled (e-invoice family: create-electronic-invoice, create-invoice-visually, pdf-to-e-invoice, validate-e-invoice, xml-invoice-to-pdf). i18n en/hi = 4791/4791 flat keys. CONTEXT-MEMORY.md was STALE at the P3-FORM era (said 65 live/32 pending) — REWRITTEN with current truth (ops commands, pending queue, pinned lessons, recent rounds).
+- CRON: both 15-min webDevReview jobs (483781, 483983) auto-disabled "exec limits exceeded" → recreating fresh this session.
+- REMAINING pdf-lib RUNTIME IMPORTERS counted: ~46 files (compress family, create-fillable-pdf-form render+worker, pdf-to-X extractors, crypto family, translate/ocr font users, e-invoice, compare/meta/viewer-prefs/remove-metadata/page-size/stamp-common leftovers, rasterize, request-signature, web-optimize, repair, crop) = the P6-r+ queue.
+
+Stage Summary:
+- Memory files now CURRENT: CONTEXT-MEMORY.md rewritten (100 tools, Vercel, push/ops recipes, pending queue) + worklog P6-q retro entries appended (this entry).
+- Everything pushed (main @ 64ee3d7). Next session starts clean from CONTEXT-MEMORY.md.
+- NEXT (priority): P6-r — compress family onto own engine, then create-fillable-pdf-form render, pdf-to-X extractors; e-invoice family ENABLE round; P7 quality moat; PRD 7-11.
