@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P6-w-a COMPLETE (crypto family round 1 — the production signer trio ported onto the own engine: digital-signature render+worker, request-signature render+worker + note PDF on CreateContext, sign-pdf PNG flatten; NEW engine seam `StampContext.createSignatureField`; ORPHANED P9 prototype `tools/pki-common/` (6 files) + smoke-p9-f6a DELETED) — 100 tools LIVE (0 disabled), Vercel LIVE. Remaining pdf-lib importers: **23 files** (P6-w-b lock 1 → P6-x fonts/OCR 8 → P6-y e-invoice 5 → P6-z misc 8 → P6-v-b pdfa 1 → P6-END type-only).
+> **Updated:** P6-w-a COMPLETE **(⚠ committed LOCAL-ONLY — GitHub PAT lost to the 17:33 sandbox recycle; remote=e518542 P6-v-a, local ahead 2: f4d2374 P6-w-a + cb59074 push-note. RECOVERY FIRST ACTION: fresh PAT → MYCLOUDY_GH_TOKEN=<tok> bash scripts/push-github.sh → Vercel deploy check → phir P6-w-b)** (crypto family round 1 — the production signer trio ported onto the own engine: digital-signature render+worker, request-signature render+worker + note PDF on CreateContext, sign-pdf PNG flatten; NEW engine seam `StampContext.createSignatureField`; ORPHANED P9 prototype `tools/pki-common/` (6 files) + smoke-p9-f6a DELETED) — 100 tools LIVE (0 disabled), Vercel LIVE. Remaining pdf-lib importers: **23 files** (P6-w-b lock 1 → P6-x fonts/OCR 8 → P6-y e-invoice 5 → P6-z misc 8 → P6-v-b pdfa 1 → P6-END type-only).
 
 ---
 
