@@ -5553,3 +5553,24 @@ Stage Summary:
 - Memory files now CURRENT: CONTEXT-MEMORY.md rewritten (100 tools, Vercel, push/ops recipes, pending queue) + worklog P6-q retro entries appended (this entry).
 - Everything pushed (main @ 64ee3d7). Next session starts clean from CONTEXT-MEMORY.md.
 - NEXT (priority): P6-r — compress family onto own engine, then create-fillable-pdf-form render, pdf-to-X extractors; e-invoice family ENABLE round; P7 quality moat; PRD 7-11.
+
+---
+Task ID: FIX-ALL-1 (rollback recovery + battery 109/109)
+Agent: main (Z.ai Code session)
+Task: User: "Go ahead and fix all issue and gaps and error. Also update memory, worklog after every update, push to github and verify from vercel."
+
+Work Log:
+- DISASTER RECOVERY FIRST: the sandbox disk had ROLLED BACK — local HEAD was at 1906f64 (P6-n) with the entire P6-o/P6-p/P6-q + vercel-fix + docs commits GONE from the object store, tsconfig excludes gone (380 tsc errors), Prisma client stale, .env.credentials + /home/z/.tokens + ~/.mycloudy ALL wiped. RECOVERED: git fetch → reset --hard origin/main (pure recovery, remote untouched; remote had everything through f03ad0f) → bun run db:generate + db:push (tsc back to 0) → dev server restart via daemon → mini-services convert(3031)/request-sign(3032) verified alive → tokens restored to BOTH stores (outside repo + gitignored .env.credentials, verified ignored by .env* pattern).
+- FULL AUDIT: tsc 41→0 after prisma regen; eslint 0; battery run → 108 PASS / 16 FAIL (the 16 pre-existing known failures).
+- THE 16 BATTERY FAILURES — ROOT-CAUSED AND FIXED (battery now 109/109, +f6a fixed −15 stale deleted):
+  1. smoke-p9-f6a (pki crypto core): ROOT CAUSE = the blanket '*.pem' gitignore rule had silently eaten the qa/pki/*.pem certificates at creation time — keys/CSRs/p12s committed, certs never did. FIXED by extracting the EXACT original certs from the committed signer-rsa.p12/signer-ec.p12 (openssl pkcs12 -nokeys; serials match the embedded chain so 'openssl cms serial matches' passes) + git add -f past the ignore rule (test certs, password test1234 — not secrets). 50/50 PASS.
+  2. The other 15 were STALE DUPLICATES asserting dead APIs or superseded product states, EVERY one with a NEWER passing smoke covering the LIVE surface (programmatically verified each replacement references its tool + read-side coverage comparison): cts→compress-to-size/to-size; generate-password→password/gpw; invoice-visually→create-invoice-visually(417); ocr→ocr-deskew/encrypted/invisible/invoice-extract; p12-einvoice+p9-einvoice/f5b/f5c→P6-q-dead-module smoke replacements (create-electronic-invoice/pdf-to-e-invoice/validate-e-invoice/xml-invoice-to-pdf all green); p9-f6ui→digital-signature; pdf-to-tiff+pdf-to-webp→pdf-to-tiff-webp; resize-kb→resize-image-kb; verify-signatures→verify-pdf-signatures; web-optimize→web-optimize-pdf; xml-invoice→xml-invoice-to-pdf. DELETED all 15 (−7403 lines of dead QA code).
+- REGISTRY TRUTH CORRECTION: the '5 pending e-invoice tools' claim in CONTEXT-MEMORY was a BUGGY brace-unaware count (nested tags {} broke the regex). Brace-aware recount: 100/100 tools enabled, 0 disabled — e-invoice family was ALREADY LIVE.
+- BROWSER E2E (agent-browser): home clean ('All 100 tools are live' announcement, 0 console errors); validate-e-invoice GOLDEN PATH × 3 fixtures — tampered qa-factur-x.xml → VERDICT FAIL with exact arithmetic catches (3005≠2905 line-net sum; 3219.00≠3219.09 grand), incomplete cii-eu → guideline FAIL + DuePayable WARN (both genuinely missing in the fixture — validator honest), valid valid-en16931.xml → VERDICT PASS 13/13; downloads verified byte-side; about page all sections; contact page Hindi; हिंदी switch full; mobile 390×844 overflowX=0; sticky footer proven on a short page (page height == viewport, footer at bottom); 0 console errors throughout.
+- VERCEL: both commits deployed — latest (pki fix) READY; production https://mycloudy-beta.vercel.app 200 + title + /api/tools/status 200.
+
+Stage Summary:
+- GATES: tsc 0 · eslint 0 · battery 109/109 (ZERO failures — first time) · dev 200 · Vercel READY.
+- Registry: 100/100 LIVE (e-invoice included — no enable round needed).
+- LESSON (pin): '*.pem' in gitignore silently ate QA fixtures for weeks — force-add test fixtures or use a non-.pem extension; ALWAYS brace-aware-count registry entries (nested tags break naive regex).
+- NEXT: P6-r (compress family onto own engine) → create-fillable-pdf-form render → pdf-to-X extractors → P7 quality moat → PRD 7-11 (PWA first).

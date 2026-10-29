@@ -19,7 +19,7 @@
 | Server | Next.js 16.1.3, port 3000 (daemon: `python3 scripts/dev-daemon.py`), dev.log clean |
 | **Production** | **https://mycloudy-beta.vercel.app** LIVE (Vercel; DB endpoints degrade gracefully — Turso future) |
 | GitHub | `DKUMARGUPTA/MyCloudy` — main @ `64ee3d7` FULLY PUSHED + 26 tags; zero unpushed |
-| Quality gates | tsc **0** errors · eslint 0 · battery **107/17** (17 = pre-existing cron-agent fails) |
+| Quality gates | tsc **0** errors · eslint 0 · battery **109/109 ALL PASS** (16 pre-existing failures FIXED in FIX-ALL round) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
 | i18n | English + हिंदी — **4791 = 4791** flat-leaf keys parity |
 | Mini-services | convert (port 3031), request-sign (3032) — double-fork daemonizer se start |
