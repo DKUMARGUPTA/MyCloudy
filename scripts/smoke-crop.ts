@@ -1,5 +1,5 @@
 /**
- * PRE-BUILD smoke test for the Crop PDF tool (P3.8). Verifies the pdf-lib
+ * PRE-BUILD smoke test for the Crop PDF tool (P3.8, P6-t). Verifies the
  * engine behaviors the tool depends on BEFORE any UI is written (the P3.3
  * lesson — prove the engine, then build on it):
  *
@@ -10,11 +10,16 @@
  *  4. Cropping a page that ALREADY has a CropBox compounds from that view
  *     (what pdf.js re-renders after a crop — consistent iteration).
  *  5. Per-page clamping keeps the box inside the view + a minimum size.
+ * 11. REAL PIPELINE (P6-t, own engine): runCrop (parsePdf → /CropBox
+ *     surgery on the parsed graph → rewriteDocument) — pdf-lib reload
+ *     asserts the boxes, rotation, annotations and untouched-page bytes;
+ *     ObjStm-resident page objects crop correctly; typed error codes.
  *
  * Run: bun scripts/smoke-crop.ts
  */
 import { writeFile } from "node:fs/promises";
-import { PDFDocument, degrees } from "pdf-lib";
+import { PDFDocument, PDFName, degrees } from "pdf-lib";
+import { runCrop, CropRunError } from "../tools/crop-pdf/worker-lib";
 
 function fail(message: string): never {
   console.error(`FAIL ${message}`);
@@ -23,6 +28,12 @@ function fail(message: string): never {
 
 function pass(message: string): void {
   console.log(`PASS ${message}`);
+}
+
+/** Assertion helper (the pagesize-smoke check shape) with detail output. */
+function check(cond: boolean, message: string, detail = ""): void {
+  if (!cond) fail(`${message}${detail ? ` — ${detail}` : ""}`);
+  pass(message);
 }
 
 /** Display-space margins (points, display orientation: y down). */
@@ -248,6 +259,119 @@ async function main(): Promise<void> {
   const out = await qa.save();
   await writeFile("/home/z/my-project/download/qa-p38-smoke.pdf", out);
   pass("wrote download/qa-p38-smoke.pdf (612×792 framed fixture for browser QA)");
+
+  // --- 11. REAL PIPELINE (P6-t): runCrop on the OWN engine --------------
+  // Fixture (pdf-lib oracle, object-streams form to exercise the ObjStm
+  // resident path): p1 plain 600×400 with a link annot, p2 /Rotate 90,
+  // p3 with a pre-existing CropBox (compounding view).
+  const fx = await PDFDocument.create();
+  const f1 = fx.addPage([600, 400]);
+  f1.drawText("PAGE ONE", { x: 40, y: 200, size: 24 });
+  // A Square annotation via the low-level context (the 1.17 public path) —
+  // crop must NOT drop annotations (the old in-place pdf-lib save kept them).
+  const annotRef = fx.context.register(
+    fx.context.obj({
+      Type: "Annot",
+      Subtype: "Square",
+      Rect: [40, 180, 180, 220],
+      F: 4,
+      Border: [0, 0, 1],
+      C: [0, 0, 1],
+    })
+  );
+  f1.node.set(PDFName.of("Annots"), fx.context.obj([annotRef]));
+  const f2 = fx.addPage([600, 400]);
+  f2.setRotation(degrees(90));
+  f2.drawText("PAGE TWO", { x: 40, y: 200, size: 24 });
+  const f3 = fx.addPage([600, 400]);
+  f3.drawText("PAGE THREE", { x: 40, y: 200, size: 24 });
+  f3.setCropBox(50, 40, 500, 320); // an existing view to compound from
+  const fxBytes = await fx.save({ useObjectStreams: true });
+
+  const cropped = await runCrop(
+    fxBytes,
+    { cropUnit: "pt", cropLeft: 50, cropTop: 60, cropRight: 100, cropBottom: 20, cropLayout: "all", cropPages: "all" },
+    () => undefined
+  );
+  check(cropped.targets === 3, "runCrop targeted all 3 pages");
+  check(cropped.changed === 3, "all 3 boxes actually changed", String(cropped.changed));
+
+  const rc = await PDFDocument.load(cropped.bytes, { ignoreEncryption: true });
+  // p1: view was the full MediaBox → box = margins in user space.
+  const c1 = rc.getPage(0).getCropBox();
+  check(
+    near(c1.x, 50) && near(c1.y, 20) && near(c1.width, 450) && near(c1.height, 320),
+    `p1 CropBox = (50,20,450,320), got (${c1.x},${c1.y},${c1.width},${c1.height})`
+  );
+  // p1 link annotation SURVIVES the rewrite (in-place seam — the page dict
+  // keeps /Annots; the rewriter copies the annot graph and remaps /P).
+  check(
+    rc.getPage(0).node.Annots() !== undefined && rc.getPage(0).node.Annots()!.size() === 1,
+    "p1 link annotation survives the rewrite"
+  );
+  // p2: /Rotate 90 intact + the rotated display mapping applied. Display
+  // span = 250 wide × 520 tall; user space SWAPS the axes for 90 — the
+  // CropBox array lives in unrotated user space (pdf-lib getCropBox).
+  const rc2 = rc.getPage(1);
+  check(rc2.getRotation().angle === 90, "p2 /Rotate 90 intact");
+  const c2 = rc2.getCropBox();
+  check(
+    near(c2.width, 520) && near(c2.height, 250),
+    `p2 rotated crop dims user-space = 520x250, got ${c2.width}x${c2.height}`
+  );
+  // p3: compounds from the EXISTING CropBox view (50,40,500,320), not the
+  // MediaBox — pdf.js re-render consistency.
+  const c3 = rc.getPage(2).getCropBox();
+  check(
+    near(c3.x, 100) && near(c3.y, 60) && near(c3.width, 350) && near(c3.height, 240),
+    `p3 compounded from existing view = (100,60,350,240), got (${c3.x},${c3.y},${c3.width},${c3.height})`
+  );
+
+  // Untouched-page passthrough: cropping ONLY p2 leaves p1/p3 dicts intact.
+  const onlyP2 = await runCrop(
+    fxBytes,
+    { cropUnit: "pt", cropLeft: 10, cropTop: 10, cropRight: 10, cropBottom: 10, cropLayout: "range", cropPages: "2" },
+    () => undefined
+  );
+  check(onlyP2.changed === 1, "targeted '2' changed exactly 1 box", String(onlyP2.changed));
+  const rp = await PDFDocument.load(onlyP2.bytes, { ignoreEncryption: true });
+  check(
+    near(rp.getPage(0).getCropBox().width, 600) &&
+      near(rp.getPage(2).getCropBox().width, 500),
+    "un-targeted pages keep their original views"
+  );
+
+  // No-op margins (zero all round) → no box changes.
+  const noOp = await runCrop(
+    fxBytes,
+    { cropUnit: "pt", cropLeft: 0, cropTop: 0, cropRight: 0, cropBottom: 0, cropLayout: "all", cropPages: "all" },
+    () => undefined
+  );
+  check(noOp.changed === 0, "zero margins are an honest no-op");
+
+  // Typed error codes: corrupt / no pages.
+  try {
+    await runCrop(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]), {}, () => undefined);
+    check(false, "garbage input should throw");
+  } catch (error) {
+    check(
+      error instanceof CropRunError && error.code === "tool.errorCorrupt",
+      "garbage input → tool.errorCorrupt"
+    );
+  }
+  try {
+    await runCrop(
+      fxBytes,
+      { cropUnit: "pt", cropLeft: 10, cropTop: 10, cropRight: 10, cropBottom: 10, cropLayout: "range", cropPages: "99-120" },
+      () => undefined
+    );
+    check(false, "out-of-range targets should throw");
+  } catch (error) {
+    check(
+      error instanceof CropRunError && error.code === "crop.errorNoPages",
+      "no valid targets → crop.errorNoPages"
+    );
+  }
 }
 
 void main().catch((error: unknown) => {

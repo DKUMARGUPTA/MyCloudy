@@ -20,14 +20,11 @@ import {
   StandardFonts,
 } from "@cantoo/pdf-lib";
 import {
-  PDFDocument as PlainDoc,
-  PDFDict as PlainDict,
-  PDFHexString as PlainHex,
-  PDFName as PlainName,
-  PDFNumber as PlainNum,
-  PDFString as PlainStr,
-} from "pdf-lib";
-import { stripAllMetadata } from "../tools/meta-common/worker-lib";
+  infoDict,
+  loadMetaDoc,
+  saveMetaDoc,
+  stripAllMetadata,
+} from "../tools/meta-common/worker-lib";
 import {
   SecurityError,
   estimateTypedBits,
@@ -388,20 +385,39 @@ console.log("13. custom info preserved");
     `${doc.getTitle()} / ${doc.getAuthor()}`
   );
 
-  // remove-metadata then kills ALL of it (the plain pdf-lib worker path):
-  const plain = await PlainDoc.load(unlocked, { updateMetadata: false });
-  const plainInfo = plain.context.lookup(plain.context.trailerInfo.Info as never, PlainDict);
+  // remove-metadata then kills ALL of it (the OWN-engine worker path —
+  // P6-s ported remove-pdf-metadata to loadMetaDoc/stripAllMetadata/
+  // saveMetaDoc; the smoke drives exactly what ships):
+  const meta = loadMetaDoc(unlocked);
+  const metaInfo = infoDict(meta);
+  // The parser folds hex AND literal strings into "str" bytes — the
+  // IRP value must be the UTF-16BE text (FEFF BOM + "IRP-2026-001").
+  const irpBytes =
+    metaInfo === undefined ? undefined : metaInfo.get("IRP_Number");
+  const irpText = (() => {
+    if (irpBytes === undefined || irpBytes.k !== "str") return "";
+    const b = irpBytes.b;
+    let out = "";
+    for (let i = 2; i + 1 < b.length; i += 2) {
+      out += String.fromCharCode((b[i]! << 8) | b[i + 1]!);
+    }
+    return out;
+  })();
   ok(
-    plainInfo.get(PlainName.of("IRP_Number")) instanceof PlainHex,
-    "pre-strip control: custom key visible to the plain parse"
+    irpBytes?.k === "str" && irpText === "IRP-2026-001",
+    "pre-strip control: custom key visible to the parse",
+    `${irpBytes?.k ?? "missing"} → ${irpText}`
   );
-  const plainReport = stripAllMetadata(plain, true);
+  const plainReport = stripAllMetadata(meta, true);
   ok(
-    plainReport.removedFields.some((f) => f === "/IRP_Number"),
-    "strip report lists the custom key"
+    plainReport.removedFields.some((f) => f === "IRP_Number"),
+    "strip report lists the custom key",
+    plainReport.removedFields.join(",")
   );
-  const stripped = await plain.save();
-  const strippedCheck = await PlainDoc.load(stripped, { updateMetadata: false });
+  const stripped = saveMetaDoc(meta);
+  const strippedCheck = await PDFDocument.load(stripped, {
+    updateMetadata: false,
+  });
   ok(
     strippedCheck.context.trailerInfo.Info === undefined,
     "remove-metadata drops the whole Info dict (custom keys gone)"

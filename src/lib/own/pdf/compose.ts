@@ -126,6 +126,26 @@ interface SheetEntry {
 
 const ENC = new TextEncoder();
 
+/**
+ * True when the page has a usable /Contents entry (P6-t standalone seam).
+ * A legal PDF page may have none — such pages embed as empty cells instead
+ * of failing a run. ComposeContext.hasContents delegates here; the
+ * change-pdf-page-size mixed-write path uses the same verdict.
+ */
+export function pageHasContents(doc: ParsedPdf, page: PdfPageInfo): boolean {
+  const contents = page.dict.get("Contents");
+  if (contents === undefined) return false;
+  const resolved = resolve(doc, contents);
+  if (resolved === undefined || resolved.k === "null") return false;
+  if (resolved.k === "stream") return true;
+  if (resolved.k === "arr") {
+    return resolved.items.some(
+      (item) => resolve(doc, item)?.k === "stream",
+    );
+  }
+  return false;
+}
+
 export class ComposeContext {
   readonly pageCount: number;
   /** Read-only source page facts (boxes/rotation) for placement math. */
@@ -165,17 +185,7 @@ export class ComposeContext {
    * mirroring the pdf-lib worker's up-front hasContents probe).
    */
   hasContents(pageIndex: number): boolean {
-    const contents = this.page(pageIndex).dict.get("Contents");
-    if (contents === undefined) return false;
-    const resolved = resolve(this.source.doc, contents);
-    if (resolved === undefined || resolved.k === "null") return false;
-    if (resolved.k === "stream") return true;
-    if (resolved.k === "arr") {
-      return resolved.items.some(
-        (item) => resolve(this.source.doc, item)?.k === "stream",
-      );
-    }
-    return false;
+    return pageHasContents(this.source.doc, this.page(pageIndex));
   }
 
   /**

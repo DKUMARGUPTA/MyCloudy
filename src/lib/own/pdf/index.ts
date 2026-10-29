@@ -53,7 +53,7 @@ export {
 } from "./acroform";
 export { writeDocument, type WritePage, type WriteProgress, type WriteSynthetic } from "./writer";
 export { CreateContext, type CreateImage, type CreateImageOptions, type CreateLineOptions, type CreatePage, type CreateRectOptions, type CreateTextOptions, type CreateEllipseOptions, type CreateRoundedRectOptions } from "./create";
-export { ComposeContext, type ComposedForm, type PageFormEmbed, pageFormEmbed } from "./compose";
+export { ComposeContext, pageHasContents, type ComposedForm, type PageFormEmbed, pageFormEmbed } from "./compose";
 export {
   StampContext,
   type StampForm,
