@@ -5941,3 +5941,27 @@ Full audit executed on the live tree + 3 infra gaps found & FIXED. ALL GATES GRE
 - **Enterprise tier: ~68%** — foundation strong (privacy-first on-device = compliance-friendly), missing SSO/SAML, audit logs, RBAC depth, API keys, SLA/monitoring, billing
 
 NEXT: user aage ka plan batayenge. Queue unchanged: P7-c → LAUNCH-OPS → P10.
+
+## VERSION-SAVE (2025-10-30 ~05:40, user-requested "is version ko save karo ache se")
+
+**THE AUDITED VERSION IS SAVED DURABLY ON GITHUB**: remote `main` = `cd89b6b` (no-auth `git ls-remote` verified — repo public). Vercel production serves it (HTTP 200, title verified). The commit carries the complete FINAL AUDIT record inside (worklog entry + CONTEXT-MEMORY sync + 15 fixture regenerations).
+
+### Save certificate for cd89b6b (all on this exact tree, this session)
+- `bunx tsc --noEmit` → **0** (re-run at save time ✓) · `bun run lint` → **0** (re-run at save time ✓)
+- Battery **110/110** (ran on code-identical tree pre-commit; only .md files differed after)
+- Runtime pdf-lib importers **0** · Registry 100/100 · i18n 4791=4791
+- E2E: merge golden path + Hindi + mobile 390 + console clean · Vercel 200
+
+### Local tags (ANNOTATED, both → cd89b6b, verified via ^{commit})
+- `checkpoint-100-tools` — follows the checkpoint-N-tools scheme (last was 97)
+- `v1.0.0-rc.1` — release-candidate milestone (final v1.0.0 after launch-ops: domain + analytics)
+- ⚠️ **TAGS NOT PUSHED — token incident below. Recreate-if-lost one-liner**: `git tag -a checkpoint-100-tools cd89b6b -m "100 tools milestone"` / `git tag -a v1.0.0-rc.1 cd89b6b -m "v1.0.0 RC1"`
+
+### ⚠️ INCIDENT: credential files wiped (~05:33, between my successful push at ~05:25 and this save)
+- GONE: `.env.credentials` + `/home/z/.tokens/docopdf.env` (both existed at 05:0x, chmod 600, 133 B)
+- NEW: `/home/z/my-project/.env` (DATABASE_URL only, 50 B, mtime 05:33) — timing correlates with cron job spawn; root cause unknown (sandbox artifact)
+- Shell env of the push session did NOT survive; bash history / /tmp searched — zero recovery. No leak (values were never printed; files simply vanished).
+- **Impact**: cannot push tags / create GitHub Release / push future commits until the user re-supplies the GitHub PAT. Remote is SAFE (everything valuable was pushed BEFORE the wipe).
+- **Lesson pinned**: tokens ki durability sirf user ke chat me hai — jab bhi mile, TURANT pura push ritual + tag push chala do; disk files ko durable mat maano.
+
+NEXT: user se fresh GitHub token lena (tag push + Release create + future pushes) → phir aage ka plan discuss.
