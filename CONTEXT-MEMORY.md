@@ -1,6 +1,7 @@
 # DocoPDF — Context Memory (याद — What happened / What's next)
 
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
+> **⚠️ GOVERNANCE (2025-10-30 se BINDING):** har round pehle `AGENTS.md` + `docs/rules/INDEX.md` padho — 16 rule docs (PRD/Design/Architecture/Folders/Relations/API/Agent/Plan/Steps/Features/Auth/MCP/Integration/Testing/Debugging) ab mandatory hain, contract change = rules doc update SAME commit mein.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
 > **Updated:** **P7-SEO COMPLETE (2025-10-30)** — full SEO layer: real crawlable routes (/tool/<id> ×100, /tools + 10 categories, 4 static, /hi Hindi mirrors via catch-all) with SSR meta (unique title/desc/keywords + canonical + hreflang en/hi + OG/Twitter cards), JSON-LD (SoftwareApplication + FAQPage + Breadcrumb + Organization + WebSite SearchAction), dynamic registry-driven sitemap.ts (116 URLs) + robots.ts, 50 curated keyword-researched tool copies + generator, sharp OG image 1200×630. **FIXED: purana sitemap 404 URLs promise kar raha tha (hash-only app)**. Anchor-links hash-touch fix (tool pages pe skip-link home jump bug). Gates: tsc 0, eslint 0, battery 110/110, E2E clean. **PUSH PENDING (token wiped)**. User docopdf.com attach kar raha hai — sab canonical ready.

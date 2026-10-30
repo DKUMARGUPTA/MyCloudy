@@ -1,82 +1,86 @@
-# MyCloudy (mycloudy.in)
+# DocoPDF (docopdf.com)
 
 *Har PDF kaam, ek jagah. Fast, free, private.*
 
-Online tools website (English + हिंदी) built from the PRD
-(`docs/PRD-v2.md` / `upload/DocoPDF-PRD-v2.docx`). Most tools run **entirely
-in the browser** — files stay on the user's device.
+Production: **https://www.docopdf.com** · Beta: `mycloudy-beta.vercel.app`
+· Repo: `DKUMARGUPTA/MyCloudy` (main → Vercel auto-deploy)
+
+100 live PDF tools (organize · edit · convert-to · convert-from · security ·
+optimize · create · invoices · view), English + हिंदी, files processed
+**on the user's device** (Mode D) unless a job truly needs a server.
+
+## ⚡ Governance — READ FIRST
+
+| File | Purpose |
+|------|---------|
+| [`AGENTS.md`](AGENTS.md) | **Master protocol** — mandatory entry point for every agent/session/update |
+| [`docs/rules/INDEX.md`](docs/rules/INDEX.md) | Catalog of 16 binding rule docs |
+| `docs/rules/01…15` | PRD · Design · Architecture · Folders · Relations · API · Agent · Plan · Steps · Features · Auth · MCP · Integration · Testing · Debugging |
+| [`CONTEXT-MEMORY.md`](CONTEXT-MEMORY.md) | Live short-term memory (session start file) |
+| [`worklog.md`](worklog.md) | Full round-by-round history |
+| [`docs/PRD-v2.md`](docs/PRD-v2.md) | Product requirements (v2.0, canonical) |
+| [`docs/seo/WEBMASTER-GUIDE.md`](docs/seo/WEBMASTER-GUIDE.md) | GSC/Bing/GA4 owner actions |
+
+**Hard rules (short form):** metadata only in DB · no third-party origins
+(CSP `connect-src 'self'`, everything vendored) · i18n en/hi key parity with
+`=N`-only plurals · gates before push (tsc 0, lint 0, smokes, E2E) · push
+after every batch · never rewrite git history · secrets never in repo ·
+JSON error envelopes, no internals leaked · heavy work in Web Workers ·
+rule docs updated with the change they describe.
 
 ## Stack
 
-| Layer     | Choice |
-|-----------|--------|
+| Layer | Choice |
+|-------|--------|
 | Framework | Next.js 16 (App Router) + TypeScript strict + Tailwind CSS 4 |
-| UI        | shadcn/ui (New York) + Lucide icons + custom MyCloudy tokens |
-| Database  | Sandbox: Prisma + SQLite. Production: Turso (libSQL) — metadata only |
-| Files     | User device only: OPFS / IndexedDB / File System Access / Web Share |
-| Fonts     | Self-hosted Inter + Noto Sans Devanagari (`src/fonts/`, `next/font/local`) |
-| Engines (planned) | pdf.js, pdf-lib, qpdf WASM, Tesseract.js, fflate — all self-hosted in `/public` |
-
-**Hard rules** (from the PRD): no third-party CDNs; device-only tools make
-zero network requests with file data (Web Workers only); no AGPL/GPL
-libraries; qpdf WASM handles encrypt/decrypt; every tool is config-driven and
-rendered by a shared ToolShell; all UI strings go through i18n keys (en + hi).
+| UI | shadcn/ui (New York) + Lucide + Framer Motion + custom tokens |
+| PDF engine | **In-house engine** (`src/lib/own`, P6) + pdf.js + qpdf WASM + Tesseract.js + libheif — all self-hosted under `/public`; pdf-lib is a dev-only smoke oracle |
+| Database | Prisma + SQLite (sandbox) → Turso/libSQL (production plan); metadata only |
+| Files | OPFS / IndexedDB / File System Access / Web Share — device only |
+| Fonts | Self-hosted Inter + Noto Sans Devanagari (`src/fonts/`) |
+| Mini-services | `convert` :3031 (office/webpage→PDF) · `request-sign` :3032 (envelopes) — hardened: SSRF guard, per-IP rate limits, size caps, atomic locks |
+| Gateway | Caddy — `?XTransformPort` hard allow-list {3031, 3032} |
 
 ## Local development
 
 ```bash
 bun install
-cp .env.example .env        # DATABASE_URL points at db/custom.db
-bun run db:push             # create/sync the 13 PRD §2.5 tables
-bun run dev                 # http://localhost:3000
+cp .env.example .env        # DATABASE_URL points at db/
+bun run db:push             # create/sync PRD §2.5 tables
+python3 scripts/dev-daemon.py          # dev server :3000 (idempotent)
+python3 scripts/mini-daemon.py convert && python3 scripts/mini-daemon.py request-sign
+bun run lint                # gate 1 · bunx tsc --noEmit  # gate 0
 ```
 
-Useful scripts: `bun run lint`, `bun run db:generate`, `bun run db:push`.
+## Change loop (canonical)
 
-## Project structure
+plan → implement → **gates** (tsc · lint · smokes) → **agent-browser E2E**
+(golden path + regression suite) → worklog + CONTEXT-MEMORY + rules docs →
+push (`scripts/push-github.sh`) → production spot-check.
+Details: `docs/rules/09-EXECUTION-STEPS.md`.
+
+## Project structure (essentials)
 
 ```
-src/app/            routes (only "/" is user-visible in this sandbox)
-src/components/ui/  shadcn/ui primitives (Button, Badge, Dialog, Drawer, Tabs…)
-src/components/doco/  DocoPDF components (Logo, SiteHeader, SiteFooter, Modal,
-                      BottomSheet, EmptyState, ThemeToggle, LanguageSwitch)
-src/i18n/           en.json + hi.json catalogs + translate()
-src/data/           catalog summary (PRD §7 categories + planned tools)
-src/fonts/          self-hosted woff2 (Inter, Noto Sans Devanagari)
-prisma/             schema mirroring PRD §2.5 (metadata only)
-public/             logo.svg (pdf.js/wasm/tessdata arrive in later phases)
-docs/               PRD + future tool specs/runbooks
-services/worker/    placeholder for the Phase-11 Docker worker
-.github/workflows/  CI: lint, typecheck, build
+src/app/             routes: /, /tool/[id] ×100, /tools + categories, /hi/*, /api/*
+src/components/      ui/ (shadcn) + doco/ (DocoPDF wrappers)
+src/lib/             tools registry/router, own PDF engine, seo/, auth, rate-limit
+src/i18n/            en.json + hi.json (key-parity enforced)
+tools/<id>/          one folder per tool: config.ts, surface.tsx, worker.ts, …
+mini-services/       convert (3031), request-sign (3032)
+prisma/ · db/        schema (PRD §2.5) + SQLite files
+scripts/             smoke battery, fixtures, daemons, push-github.sh
+docs/                PRD, rules/, seo/, archives
+services/worker/     reserved for Phase-11 LibreOffice worker
 ```
 
-## Deploying to Vercel + Turso
-
-1. **GitHub**: push this repo; in the production monorepo the app lives at
-   `apps/web` (adjust CI `working-directory` accordingly).
-2. **Turso** (production database):
-   ```bash
-   turso db create docopdf
-   turso db show docopdf --url      # -> TURSO_DATABASE_URL
-   turso db tokens create docopdf   # -> TURSO_AUTH_TOKEN
-   ```
-   Create a **separate** database for dev. Keep tokens in environment
-   variables only (PRD §2.5).
-3. **Vercel**: import the repo, set env vars `TURSO_DATABASE_URL` and
-   `TURSO_AUTH_TOKEN`, deploy. Locales become path-based (`/` = en,
-   `/hi` = Hindi) via next-intl routing at deploy time; the DB layer swaps
-   from Prisma/SQLite to Drizzle/Turso — table and column names already
-   match PRD §2.5 exactly.
-4. **Domain**: point docopdf.com at Vercel; HSTS + CSP headers ship from
-   `next.config.ts`.
-
-## Phase status
+## Phase status (detail: docs/rules/08-PLAN.md)
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 0 | Design tokens (light/dark), self-hosted fonts, i18n en/hi, base components, Prisma schema (PRD §2.5), CSP + security headers, CI, README | ✅ done |
-| 1 | Tool registry, header search (Ctrl+K), All Tools page, category pages, 404/500/offline, SEO | next |
-| 2 | ToolShell engine: OPFS storage, pdf.js thumbnails, worker pool, result page, demo tool | planned |
-| 3+ | Tools one-by-one, qpdf WASM (Protect/Unlock), Sign, static pages + APIs, PWA, editor, advanced tools, accounts, worker | planned |
-
-See `worklog.md` (repo root) for the live handover state.
+| 0–6 | Foundation, 100 tools, own engine migration, editor, statics, PWA | ✅ shipped |
+| 7 | SEO layer + GA4 + GSC + i18n hardening (P7-c VLM battery next) | 🟡 in progress |
+| 8 | Editor family | ✅ complete |
+| 9 | Advanced tools + R19 hardening (5 phases) | ✅ shipped |
+| 10 | Accounts + Pro gating | planned |
+| 11 | services/worker (LibreOffice formats) | planned |
