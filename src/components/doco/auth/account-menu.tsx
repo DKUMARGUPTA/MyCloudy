@@ -1,6 +1,6 @@
 "use client";
 
-import { LogOut, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { LogOut, Settings, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,7 @@ import { useI18n } from "@/components/providers/locale-provider";
 import { useToast } from "@/hooks/use-toast";
 import { track } from "@/lib/analytics/ga4";
 import { logout, openAuthModal, useAuth, type SafeUser } from "@/lib/auth-client";
+import { navigateToHash, ROUTES } from "@/hooks/use-hash-route";
 
 /** Two-letter avatar initials from the name, falling back to the email. */
 function initialsOf(user: SafeUser): string {
@@ -112,6 +113,13 @@ export function AccountMenu() {
           ) : null}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() => navigateToHash(ROUTES.account)}
+          className="min-h-11 cursor-pointer rounded-btn"
+        >
+          <Settings className="size-4" aria-hidden="true" />
+          {t("auth.menuSettings")}
+        </DropdownMenuItem>
         <DropdownMenuItem
           onClick={handleLogout}
           className="min-h-11 cursor-pointer rounded-btn"

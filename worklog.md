@@ -6284,3 +6284,57 @@ tsc 0 · eslint 0 (benign BABEL stamp-fonts note only) · smokes: auth-ui 88/88,
 08-PLAN — Done table +3 rows (rotation 5/5, P3 backlog closed w/ evidence, R25 snapshot), Next list renumbered (Phase-10 → #1 with R25 auth-frontend note). 10-FEATURES — platform features me "Accounts (auth UI)" row. CONTEXT-MEMORY header + recent rounds.
 
 NEXT: Phase-10 continue — Pro gating surface (plan checks against users.plan + request-signature Pro gating + Razorpay/Stripe stubs per PRD §2.5) → account settings page (password change/delete account APIs already live) → Turso → Phase-11 worker.
+
+## R26 — PHASE-10 SLICE 2: ACCOUNT PAGE + PRICING MODAL V2 + BILLING STUB APIs (2025-11-01, "अब aage sabhi pending task, phase, error bug ko fix karo")
+
+**THE ROUND:** Session continuation with lost summary — state reconstructed from project files (AGENTS.md → CONTEXT-MEMORY → worklog → git log; R25 = latest commit). Infra restore FIRST: cron QA job was "Disabled due to exec limits" AGAIN → deleted 488302, recreated 488396 (webDevReview, fixed_rate 900s, priority 1). State verified before build: tsc 0, lint 0, :3000/:3031/:3032 all healthy, git clean. Then 08-PLAN priority #1 executed: Phase-10's missing account surface + billing stubs (R25 shipped auth UI; this round ships everything the signed-in user sees next).
+
+### 1. Billing stub APIs (`src/app/api/billing/`) — 4 routes, house contracts
+- **`src/lib/billing/plans.ts` NEW** — shared Pro catalog (pro_monthly ₹199/$2.49 30d, pro_yearly ₹1,999/$23.99 365d; minor units for Payment rows) + `billingDemoMode()` (BILLING_DEMO=1). Pure data, client-safe.
+- **POST /api/billing/checkout** — gateUser + rate limit (8/10min/IP) + zod plan gate (isProPlanId; bogus → 400). NO providers configured (prod) → honest 503 `{error:"billingNotConfigured"}` (same honesty pattern as aiNotConfigured). BILLING_DEMO=1 → supersedes older pending subs, creates Subscription(pending) + Payment(created, INR minor units), audit "billing.checkout".
+- **POST /api/billing/confirm** — demo-guarded BEFORE gateUser (source-order smoke-locked) → 503 in prod. Validates subscription ownership (404 not_found), pending-only (400 on re-confirm), activates sub (periodEnd = now + plan days) + flips newest created Payment to paid (invoiceNo INV-XXXXXXXX) + users.plan="pro" + fresh session cookie (plan visible immediately) + audit.
+- **POST /api/billing/cancel** — cancels active/pending subs + plan="free" + audit. **GET /api/billing/status** — plan + active/pending sub summary + last-10 payments (billing history, PRD /account/billing).
+- **Schema:** Subscription + Payment gained `createdAt DateTime @default(now())` (billing history needs dates; PRD table pattern) → db:push.
+
+### 2. auth-client extensions
+- `changePassword(current,next)` + `deleteAccount(password)` (local store resets to guest) + `startCheckout/confirmCheckout/cancelPro/fetchBillingStatus` typed wrappers + `BillingErrorCode` union (bad_request/forbidden/not_found/rate_limited/billingNotConfigured/server_error) — all errors map to i18n keys, never raw strings.
+
+### 3. /account view — the account settings page
+- **Routing:** "account" view in HashRoute + parseLegacyHash + parseRouteKey + legacyHashToPath + ROUTES.account + localizedRoutes.account. SSR: `src/app/account/page.tsx` (noindex — private page) + hi catch-all resolvePath ["account"] with Hindi noindex metadata + generateStaticParams row.
+- **`src/components/doco/account/account-page.tsx` NEW** — guest → EmptyState sign-in CTA (PRD: no signup wall, tools never need this page); loading → spinner; signed-in → PageShell (Account badge) with 5 cards: (1) Profile (avatar initials, name, email, member-since localized date, plan + admin badges); (2) Plan & billing (Free → Get Pro CTA; Pro → active-until date + Cancel Pro with confirm modal → toast + refresh); (3) Billing history (payments list ₹/$ formatted, invoice no, Paid/Pending/Failed/Refunded badges, "No payments yet" empty); (4) Security — password change (3 fields, client gates mirror zod: empty→bad_request, <8→weak_password, mismatch→local; error via auth.err.* 1:1; success toast + fields cleared); (5) Danger zone (destructive-bordered card, password-confirm modal, soft delete → toast → history pushState home). GA4: account_view, password_change, account_delete.
+- **Wiring:** app-shell renders `<AccountPage onGetPro={openPro}/>`; account-menu gains Settings item → ROUTES.account; mobile sheet signed-in row became an /account link + separate full-width Log out button; **BottomTabBar gains the Account tab** (4 cols now: Home/Tools/Search/Account; signed-in → navigate /account, guest → openAuthModal) — the PRD §5.1 "Account joins in Phase-10" note finally fulfilled.
+
+### 4. PricingModal v2 — the real Get Pro surface
+- **`src/components/doco/billing/pricing-modal.tsx` NEW** — replaces the R?? "Pro is coming" placeholder modal in app-shell. Free vs Pro cards (grid sm:2), monthly/yearly toggle (Save 17% pro-badge on yearly), prices INR-first + USD alongside (₹199 / $2.49 per month ↔ ₹1,999 / $23.99 per year), feature lists (Free: 97 device tools/unlimited/EN+HI/dark+PWA; Pro: everything + larger server files coming + batch queue coming + early access + email support), pinned promise "Device-only tools stay free forever".
+- **Honest checkout flow:** guest → openAuthModal("signup") (button reads "Create account & get Pro" + guest hint); signed-in free → POST checkout → billingNotConfigured → amber note "Payments aren't live yet — nothing was charged" INSIDE the modal (no fake success); demo mode → confirm → "Welcome to Pro!" toast + modal closes + store refreshes. Pro user → "Pro is active" disabled state.
+- **Body-in-child pattern** (AuthModal house style): PricingBody mounts fresh per open — no setState-in-effect (lint caught the first attempt, refactored).
+
+### 5. i18n (en+hi parity 4915 = 4915)
+- `scripts/merge-r26-billing-i18n.ts` NEW — +77 keys (account.* 41, pricing.* 30, billing.err.* 6, auth.menuSettings) with clobber-refusal + parity guard; **retired the placeholder pro.title/pro.body/pro.action** (tool-shell's help-dialog "Got it" switched to the existing common.gotIt; orphan-key hygiene). tabs.account added (+1 ×2) via follow-up → 4915=4915.
+
+### 6. smoke-billing NEW (125 checks)
+- A: i18n presence en+hi (account 41 + pricing 30 + menuSettings + tabs.account) + Devanagari + {date} interpolation + pro.* retired.
+- B: BillingErrorCode union ↔ billing.err.* parity both locales.
+- C: source wiring — app-shell AccountPage+PricingModal (placeholder gone), account-menu settings item, bottom-tab account tab, router /account, SSR noindex EN+HI, **confirm demo-guards BEFORE gateUser (call-site compare — first attempt matched the import line, fixed)**, checkout rate-limit+zod+503 branch, sitemap excludes /account, tool-shell common.gotIt.
+- D: LIVE API journey on :3000 (own QA account): unauth 401 ×4 → signup 201 + cookie → checkout bogus-plan/malformed 400 ×2 → demo checkout → confirm bogus 404 → real confirm (plan pro + periodEnd + cookie refresh; me → plan pro) → re-confirm 400 → status (active yearly sub + ONE paid payment 199900 paise INR) → cancel (free; sub null; history kept) → password wrong-current 401 → change 200 → new-pw login 200 / old-pw 401 → delete wrong 401 → delete 200 → me null → login refused.
+
+### Gates
+tsc 0 · eslint 0 · smoke-billing **125/125** · auth-ui 88/88 · a11y-names 9/9 · merge 47/47 · request-signature 185/185 · i18n-params 26/26 · parity 4915=4915.
+
+### E2E (agent-browser, 1440 + 390 mobile)
+- **Pricing modal (guest):** Free ₹0-forever + Pro ₹1,999/$23.99-yearly cards render, toggle works, guest CTA reads "Create account & get Pro" + hint + promise line. Screenshot public/qa/r26-pricing-guest.png.
+- **Guest → signup → upgrade:** upgrade click opened the signup modal (pricing stayed underneath); real signup (r26-qa-…@docopdf.test) → pricing modal back with "Upgrade to Pro" → click → **"Welcome to Pro! Thanks for backing DocoPDF." toast** (demo flow end-to-end in-browser).
+- **/account (Pro):** profile (R26 QA, member since, Pro badge) + plan card (Active until 30 Oct 2027 + Cancel Pro) + **billing history ₹1,999 · INV-4D3931FE · Paid** + security form + danger zone. Screenshot r26-account-pro.png.
+- **Account menu:** dropdown shows Account settings + Log out items.
+- **Cancel Pro:** confirm modal ("Cancel Pro?" + keep-tools note) → toast → plan card flips to Free + Get Pro CTA.
+- **Password change:** wrong current → "Wrong email or password." (role=alert); correct → "Password updated." toast + fields cleared. (NOTE: first click after a toast was swallowed by the toast overlay — re-click worked; browser QA lesson, not a code bug.)
+- **Hindi:** /hi/account full Devanagari (खाता सेटिंग्स, सदस्य बने, भुगतान हो गया, संवेदनशील क्षेत्र…) + `<html lang="hi">` (r26-account-hindi.png); Hindi pricing modal full Devanagari (₹199/$2.49 मासिक default after fresh mount).
+- **Mobile 390:** no-overflow + bottom tab bar होम,टूल्स,खोजें,खाता (r26-account-mobile.png).
+- **Delete account:** password modal → "खाता डिलीट हो गया। अलविदा!" toast → redirect home; POST /api/auth/delete 200.
+- **Guest states:** /account → sign-in EmptyState (r26-account-guest.png); खाता tab → login modal.
+- **Regression:** /tool/merge-pdf normal landing; sitemap 0 /account URLs; fresh-session console 0 errors.
+
+### Prod behavior (until owner wires providers)
+`BILLING_DEMO` unset on Vercel → checkout 503 billingNotConfigured → pricing modal shows the honest "Payments aren't live yet" note. Re-enable = set provider keys + replace the demo branch with real Razorpay/Stripe order creation (route contracts + i18n already locked by smoke-billing).
+
+NEXT: Phase-10 continue — real Razorpay/Stripe wiring (owner keys) or account polish (name edit) → Turso → Phase-11 worker.

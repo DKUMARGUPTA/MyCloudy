@@ -19,13 +19,14 @@ Update this file whenever a phase lands.
 | R24 /hi URL-wins + P7-c i18n VLM battery (8 screenshots + 5 VLM checks) | shipped |
 | R25 e-invoice browser QA rotation COMPLETE 5/5 (create-electronic-invoice, xml-invoice-to-pdf, validate-e-invoice, pdf-to-e-invoice Path A+B, +5th spot-check) | shipped |
 | R25 R19 P3 backlog CLOSED with live evidence: handleSign O_EXCL lock (parallel sign race → one 200 + one 409), envelope sweeper (expired + 6h orphan both swept), SDK abort (R21, smoke-ai-config 17/17) | verified |
+| R26 Phase-10 account + billing surface: /account view (profile, plan, billing history, password change, self-delete), PricingModal v2 (Free vs Pro, monthly/yearly, INR+USD), /api/billing stub APIs (checkout/confirm/cancel/status) with honest billingNotConfigured 503 + BILLING_DEMO sandbox mode, bottom-tab Account tab, account-menu settings item; smoke-billing 125/125 | shipped |
 
 ## 🔜 Next (priority order)
 
-1. **Phase-10 Accounts + Pro** — request-signature Pro gating, plan checks
-   against `users.plan`, Razorpay/Stripe stubs per PRD §2.5. R25 shipped the
-   missing auth frontend (AuthModal + account menu + bootstrap wiring);
-   next: Pro gating surface + checkout stubs.
+1. **Phase-10 Accounts + Pro — continue** — R26 shipped the account
+   surface + billing stubs (checkout honest 503 until providers are
+   configured). Remaining: real Razorpay/Stripe wiring (owner keys),
+   account polish (name edit), Turso, then Phase-11.
 2. **Turso production DB** — swap datasource; graceful-degrade already
    proven; keep table names identical.
 3. **Phase-11 services/worker** — server-side LibreOffice (266-format gap,

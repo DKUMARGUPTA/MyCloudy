@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Modal } from "@/components/doco/modal";
 import { SiteHeader } from "@/components/doco/site-header";
 import { SiteFooter } from "@/components/doco/site-footer";
 import { AnnouncementBanner } from "@/components/doco/home/announcement-banner";
@@ -18,6 +16,8 @@ import { RecentFiles } from "@/components/doco/home/recent-files";
 import { ToolsView } from "@/components/doco/tools/tools-view";
 import { ToolView } from "@/components/doco/tool/tool-view";
 import { StaticPageView } from "@/components/doco/page/static-page";
+import { AccountPage } from "@/components/doco/account/account-page";
+import { PricingModal } from "@/components/doco/billing/pricing-modal";
 import { SearchPalette } from "@/components/doco/search/search-palette";
 import { CookieBanner } from "@/components/doco/cookie-banner";
 import { BottomTabBar } from "@/components/doco/bottom-tab-bar";
@@ -244,6 +244,8 @@ export function AppShell({
             <ToolView toolId={route.toolId ?? ""} />
           ) : route.view === "page" ? (
             <StaticPageView pageId={route.pageId ?? ""} />
+          ) : route.view === "account" ? (
+            <AccountPage onGetPro={openPro} />
           ) : (
             <ToolsView categoryId={route.category} query={route.query} />
           )}
@@ -257,24 +259,7 @@ export function AppShell({
         <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
         <AuthModal />
 
-        <Modal
-          open={proOpen}
-          onOpenChange={setProOpen}
-          title={t("pro.title")}
-          footer={
-            <Button
-              type="button"
-              variant="cta"
-              size="touch"
-              className="w-full rounded-btn sm:w-auto"
-              onClick={() => setProOpen(false)}
-            >
-              {t("pro.action")}
-            </Button>
-          }
-        >
-          <p className="text-sm text-muted-foreground">{t("pro.body")}</p>
-        </Modal>
+        <PricingModal open={proOpen} onOpenChange={setProOpen} />
     </div>
     </UrlLocaleContext.Provider>
   );

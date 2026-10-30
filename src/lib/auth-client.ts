@@ -35,6 +35,15 @@ export type AuthErrorCode =
   | "not_found"
   | "server_error";
 
+/** Billing API error codes (R26) — mapped to billing.err.<code> keys. */
+export type BillingErrorCode =
+  | "bad_request"
+  | "forbidden"
+  | "not_found"
+  | "rate_limited"
+  | "billingNotConfigured"
+  | "server_error";
+
 interface AuthState {
   user: SafeUser | null;
   status: "loading" | "ready";
@@ -150,5 +159,144 @@ export async function refreshMe(): Promise<void> {
     set({ user: d.user ?? null, status: "ready" });
   } catch {
     set({ status: "ready" });
+  }
+}
+
+/** POST /api/auth/password — change password (server re-issues the
+ * cookie so this device stays signed in; every other device signs out
+ * via the tokenVersion bump). */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<{ ok: boolean; code?: AuthErrorCode }> {
+  const res = await postJson("/api/auth/password", {
+    currentPassword,
+    newPassword,
+  });
+  if (!res.ok) return { ok: false, code: res.code ?? "server_error" };
+  return { ok: true };
+}
+
+/** POST /api/auth/delete — soft-delete the account (password required).
+ * The API clears the cookie; locally the store resets to guest either way. */
+export async function deleteAccount(
+  password: string
+): Promise<{ ok: boolean; code?: AuthErrorCode }> {
+  const res = await postJson("/api/auth/delete", { password });
+  set({ user: null });
+  return res.ok ? { ok: true } : { ok: false, code: res.code ?? "server_error" };
+}
+
+/* ------------------------------------------------------------------ */
+/* Billing client (R26) — thin typed wrappers over the stub API.       */
+/* ------------------------------------------------------------------ */
+
+export interface BillingPaymentRow {
+  id: string;
+  amount: number;
+  currency: string;
+  status: string;
+  invoiceNo: string | null;
+  createdAt: string;
+}
+
+export interface BillingStatus {
+  plan: string;
+  subscription: {
+    id: string;
+    plan: string;
+    status: string;
+    periodEnd: string | null;
+  } | null;
+  payments: BillingPaymentRow[];
+}
+
+export interface CheckoutResult {
+  ok: boolean;
+  mode?: "demo";
+  plan?: string;
+  subscriptionId?: string;
+  code?: BillingErrorCode;
+}
+
+export async function startCheckout(planId: string): Promise<CheckoutResult> {
+  try {
+    const res = await fetch("/api/billing/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan: planId }),
+      cache: "no-store",
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      mode?: "demo";
+      plan?: string;
+      subscriptionId?: string;
+    };
+    if (!res.ok) {
+      return { ok: false, code: (data.error as BillingErrorCode) ?? "server_error" };
+    }
+    return {
+      ok: true,
+      mode: data.mode,
+      plan: data.plan,
+      subscriptionId: data.subscriptionId,
+    };
+  } catch {
+    return { ok: false, code: "server_error" };
+  }
+}
+
+export async function confirmCheckout(
+  subscriptionId: string
+): Promise<{ ok: boolean; plan?: string; code?: BillingErrorCode }> {
+  try {
+    const res = await fetch("/api/billing/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subscriptionId }),
+      cache: "no-store",
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      plan?: string;
+    };
+    if (!res.ok) {
+      return { ok: false, code: (data.error as BillingErrorCode) ?? "server_error" };
+    }
+    await refreshMe();
+    return { ok: true, plan: data.plan };
+  } catch {
+    return { ok: false, code: "server_error" };
+  }
+}
+
+export async function cancelPro(): Promise<{ ok: boolean; plan?: string; code?: BillingErrorCode }> {
+  try {
+    const res = await fetch("/api/billing/cancel", {
+      method: "POST",
+      cache: "no-store",
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      plan?: string;
+    };
+    if (!res.ok) {
+      return { ok: false, code: (data.error as BillingErrorCode) ?? "server_error" };
+    }
+    await refreshMe();
+    return { ok: true, plan: data.plan };
+  } catch {
+    return { ok: false, code: "server_error" };
+  }
+}
+
+export async function fetchBillingStatus(): Promise<BillingStatus | null> {
+  try {
+    const res = await fetch("/api/billing/status", { cache: "no-store" });
+    if (!res.ok) return null;
+    return (await res.json()) as BillingStatus;
+  } catch {
+    return null;
   }
 }

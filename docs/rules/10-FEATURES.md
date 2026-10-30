@@ -45,7 +45,13 @@ full tool implementations. Sitemap auto-drops the 3 URLs; live count =
 - **Auth (optional user feature):** email/password accounts — R25 shipped
   the full frontend (AuthModal login/signup with i18n error mapping,
   header AccountMenu with plan badge, mobile-sheet account section,
-  session bootstrap); account settings page pending. Admin panel
+  session bootstrap). **R26 shipped /account** (profile card, plan &
+  billing with cancel flow, billing history, password change, self-delete
+  danger zone) + PricingModal v2 (Free vs Pro comparison, monthly/yearly
+  toggle, INR + USD) + `/api/billing/*` stub APIs (checkout honest
+  `billingNotConfigured` 503 until providers are configured;
+  `BILLING_DEMO=1` sandbox mode completes the full activation) + bottom-tab
+  Account tab. Admin panel
   (announcements, bug reports, contact, feedback, tool requests, audit log).
 - **Feedback loop:** feedback modal, bug reports, tool requests + votes.
 - **Privacy beacons:** UsageEvent/AnonUsage aggregates only (metadata).
@@ -53,5 +59,7 @@ full tool implementations. Sitemap auto-drops the 3 URLs; live count =
 
 ## Out of scope until Phase 10/11
 
-Pro billing UI, server file storage, multi-user shared envelopes history,
-LibreOffice formats (`services/worker/`).
+Real payment provider wiring (Razorpay/Stripe keys — checkout honestly
+503s until then), server file storage, multi-user shared envelopes history,
+LibreOffice formats (`services/worker/`). The billing SURFACE (plan checks,
+pricing modal, account plan management) is live as of R26.

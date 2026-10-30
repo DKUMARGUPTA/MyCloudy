@@ -93,7 +93,8 @@
   "tabs": {
     "home": "Home",
     "tools": "Tools",
-    "search": "Search"
+    "search": "Search",
+    "account": "Account"
   },
   "theme": {
     "label": "Theme",
@@ -256,11 +257,6 @@
     "savedToast": "Privacy choices saved",
     "settings": "Privacy settings",
     "essentialNote": "Essential cookies (language, theme, favorites) are always on and stay on your device."
-  },
-  "pro": {
-    "title": "Pro is coming",
-    "body": "Paid features arrive in a later phase. Device-only tools will always stay free — that's a promise.",
-    "action": "Got it"
   },
   "footer": {
     "tagline": "Har PDF kaam, ek jagah.",
@@ -5109,6 +5105,91 @@
     "menuPlanPro": "Pro",
     "proThanks": "Thanks for backing DocoPDF",
     "menuAdmin": "Admin",
-    "menuLogout": "Log out"
+    "menuLogout": "Log out",
+    "menuSettings": "Account settings"
+  },
+  "account": {
+    "loading": "Loading…",
+    "badge": "Account",
+    "title": "Account settings",
+    "lede": "Your profile, plan and security in one place.",
+    "signInTitle": "Sign in to manage your account",
+    "signInDesc": "Account settings hold your profile, plan and security. The tools stay free without an account too.",
+    "memberSince": "Member since {date}",
+    "sectionProfile": "Profile",
+    "sectionPlan": "Plan & billing",
+    "planFreeDesc": "All 97 device tools, unlimited use, both languages. Free forever — that's the promise.",
+    "planProDesc": "Pro perks activate as server tools launch. Thanks for backing DocoPDF!",
+    "planPeriodEnd": "Active until {date}",
+    "upgradeCta": "Get Pro",
+    "manageCancel": "Cancel Pro",
+    "cancelConfirmTitle": "Cancel Pro?",
+    "cancelConfirmBody": "You'll drop back to the Free plan immediately. All 97 tools stay available.",
+    "cancelKeepTools": "Every tool keeps working exactly as before — only the Pro perks go away.",
+    "cancelConfirmCta": "Yes, cancel Pro",
+    "cancelledToast": "Pro cancelled — you're on the Free plan now.",
+    "sectionHistory": "Billing history",
+    "historyEmpty": "No payments yet.",
+    "statusPaid": "Paid",
+    "statusPending": "Pending",
+    "statusFailed": "Failed",
+    "statusRefunded": "Refunded",
+    "sectionSecurity": "Security",
+    "pwHint": "At least 8 characters. Other devices sign out after the change.",
+    "pwCurrent": "Current password",
+    "pwNew": "New password",
+    "pwConfirm": "Confirm new password",
+    "pwMismatch": "The new passwords don't match.",
+    "pwCta": "Update password",
+    "pwUpdated": "Password updated.",
+    "sectionDanger": "Danger zone",
+    "delDesc": "Soft-deletes your account and signs you out everywhere. Account settings and Pro status go away; your tools and files were always device-only and stay untouched.",
+    "delCta": "Delete account",
+    "delConfirmTitle": "Really delete your account?",
+    "delConfirmBody": "This cannot be undone. Enter your password to confirm.",
+    "delConfirmCta": "Delete forever",
+    "deletedToast": "Account deleted. Take care!"
+  },
+  "pricing": {
+    "title": "Choose your plan",
+    "desc": "Simple pricing. Device-only tools are always free — Pro adds the server-powered perks.",
+    "cycleLabel": "Billing cycle",
+    "monthly": "Monthly",
+    "yearly": "Yearly",
+    "save": "Save 17%",
+    "freeName": "Free",
+    "currentPlan": "Current plan",
+    "proIncludesFree": "Free included",
+    "forever": "forever",
+    "freeF1": "All 97 device tools",
+    "freeF2": "Unlimited use, no watermarks",
+    "freeF3": "English + हिंदी",
+    "freeF4": "Dark mode & offline PWA",
+    "proName": "Pro",
+    "perMonth": "/ month",
+    "perYear": "/ year",
+    "proF1": "Everything in Free",
+    "proF2": "Larger files on server tools (coming)",
+    "proF3": "Batch queue & priority processing (coming)",
+    "proF4": "Early access to new server tools",
+    "proF5": "Email support",
+    "proActive": "Pro is active",
+    "upgradeCta": "Upgrade to Pro",
+    "signUpCta": "Create account & get Pro",
+    "guestHint": "You'll need an account to upgrade — it takes 20 seconds.",
+    "notConfiguredTitle": "Payments aren't live yet",
+    "notConfiguredBody": "Pro checkout launches together with the payment providers. Nothing was charged — the Free tools keep flowing meanwhile.",
+    "promise": "Device-only tools stay free forever — that's a promise.",
+    "upgradedToast": "Welcome to Pro! Thanks for backing DocoPDF."
+  },
+  "billing": {
+    "err": {
+      "bad_request": "Something's off — please try again.",
+      "forbidden": "Please log in first.",
+      "not_found": "That order was not found.",
+      "rate_limited": "Too many attempts — try again in a bit.",
+      "billingNotConfigured": "Payments aren't available yet.",
+      "server_error": "Something went wrong. Please retry."
+    }
   }
 }

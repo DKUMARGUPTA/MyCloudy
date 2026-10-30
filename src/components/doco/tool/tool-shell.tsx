@@ -898,7 +898,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
             className="w-full rounded-btn sm:w-auto"
             onClick={() => setHelpOpen(false)}
           >
-            {t("pro.action")}
+            {t("common.gotIt")}
           </Button>
         }
       >

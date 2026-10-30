@@ -1,16 +1,18 @@
 "use client";
 
-import { Home, Search, Wrench } from "lucide-react";
+import { Home, Search, UserRound, Wrench } from "lucide-react";
 
 import { useI18n } from "@/components/providers/locale-provider";
 import type { HashRoute } from "@/hooks/use-hash-route";
-import { useLocalizedRoutes } from "@/hooks/use-hash-route";
+import { navigateToHash, useLocalizedRoutes, ROUTES } from "@/hooks/use-hash-route";
+import { openAuthModal, useAuth } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 
 /**
- * Mobile bottom tab bar (PRD §5.1). Home / Tools / Search are functional
- * today; "Recent" and "Account" join in Phase 2/10 when those features ship.
- * Fixed above the safe area, hidden on md+ screens.
+ * Mobile bottom tab bar (PRD §5.1). Home / Tools / Search / Account —
+ * the Account tab (Phase-10 R26) routes signed-in users to /account and
+ * opens the login modal for guests. Fixed above the safe area, hidden on
+ * md+ screens.
  */
 export function BottomTabBar({
   route,
@@ -21,6 +23,7 @@ export function BottomTabBar({
 }) {
   const { t } = useI18n();
   const routes = useLocalizedRoutes();
+  const { user } = useAuth();
 
   const tabs = [
     {
@@ -44,7 +47,7 @@ export function BottomTabBar({
       aria-label={t("tabs.tools")}
       className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/92 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md md:hidden"
     >
-      <ul className="grid grid-cols-3">
+      <ul className="grid grid-cols-4">
         {tabs.map(({ id, href, label, icon: Icon, active }) => (
           <li key={id}>
             <a
@@ -68,6 +71,27 @@ export function BottomTabBar({
           >
             <Search className="size-5" aria-hidden="true" />
             {t("tabs.search")}
+          </button>
+        </li>
+        <li>
+          <button
+            type="button"
+            aria-current={route.view === "account" ? "page" : undefined}
+            aria-label={t("auth.accountLabel")}
+            onClick={() => {
+              if (user) {
+                navigateToHash(ROUTES.account);
+              } else {
+                openAuthModal("login");
+              }
+            }}
+            className={cn(
+              "flex min-h-14 w-full flex-col items-center justify-center gap-0.5 px-2 py-1.5 text-[11px] font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+              route.view === "account" ? "text-primary" : "text-muted-foreground"
+            )}
+          >
+            <UserRound className="size-5" aria-hidden="true" />
+            {t("tabs.account")}
           </button>
         </li>
       </ul>

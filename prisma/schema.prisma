@@ -139,6 +139,7 @@ model Subscription {
   plan          String
   status        String
   periodEnd     DateTime?
+  createdAt     DateTime  @default(now())
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -153,6 +154,7 @@ model Payment {
   currency          String   @default("INR")
   status            String
   invoiceNo         String?
+  createdAt         DateTime @default(now())
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])

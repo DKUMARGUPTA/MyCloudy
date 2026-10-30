@@ -50,7 +50,7 @@ import { getStoredLocale, type Locale } from "@/i18n";
  */
 
 export interface HashRoute {
-  view: "home" | "tools" | "tool" | "page";
+  view: "home" | "tools" | "tool" | "page" | "account";
   category?: string;
   query?: string;
   /** Enabled tool id for the "/tool/<id>" view. */
@@ -84,6 +84,7 @@ function parseLegacyHash(hash: string): HashRoute {
     : undefined;
 
   if (path === "tools") return { view: "tools", query };
+  if (path === "account") return { view: "account" };
   if (path.startsWith("tools/")) {
     return { view: "tools", category: path.slice("tools/".length), query };
   }
@@ -133,6 +134,7 @@ export function parseRouteKey(key: string): HashRoute {
 
   if (path === "/" || path === "") return { view: "home" };
   if (path === "/tools") return { view: "tools", query };
+  if (path === "/account") return { view: "account" };
   if (path.startsWith("/tools/")) {
     return { view: "tools", category: path.slice("/tools/".length), query };
   }
@@ -212,6 +214,8 @@ function legacyHashToPath(to: string): string {
     case "page":
       // Static pages live at the root ("/about"), not "/page/about".
       return `/${route.pageId ?? ""}`;
+    case "account":
+      return "/account";
     default:
       return withQuery("/", route.query);
   }
@@ -321,6 +325,7 @@ export function localizedRoutes(urlLocale: UrlLocale) {
     category: (categoryId: string) => p(`/tools/${categoryId}`),
     tool: (toolId: string) => p(`/tool/${toolId}`),
     page: (pageId: string) => p(`/${pageId}`),
+    account: p("/account"),
     toolsWithQuery: (query: string) =>
       `${p("/tools")}?q=${encodeURIComponent(query)}`,
   } as const;
@@ -389,5 +394,7 @@ export const ROUTES = {
   tool: (toolId: string) => `/tool/${toolId}`,
   /** Static content page (about | contact | privacy | terms). */
   page: (pageId: string) => `/${pageId}`,
+  /** Account settings (private — noindex SSR shell). */
+  account: "/account",
   toolsWithQuery: (query: string) => `/tools?q=${encodeURIComponent(query)}`,
 } as const;

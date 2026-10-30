@@ -192,7 +192,11 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
             {/* Account (Phase-10): guests get a login entry, signed-in users
              * see their identity + logout — the sheet is the mobile surface. */}
             {user ? (
-              <div className="flex items-center gap-3">
+              <a
+                href={routes.account}
+                onClick={() => setMenuOpen(false)}
+                className="flex min-h-11 items-center gap-3 rounded-btn px-1 py-1 outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
                 <Avatar className="size-9 border border-border">
                   <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">
                     {(user.name?.trim() || user.email).slice(0, 2).toUpperCase()}
@@ -203,23 +207,11 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
                     {user.name?.trim() || user.email}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {user.plan === "pro" ? t("auth.menuPlanPro") : t("auth.menuPlanFree")}
+                    {user.plan === "pro" ? t("auth.menuPlanPro") : t("auth.menuPlanFree")}{" — "}
+                    {t("auth.menuSettings")}
                   </p>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-11 rounded-btn"
-                  aria-label={t("auth.menuLogout")}
-                  onClick={() => {
-                    setMenuOpen(false);
-                    void logout();
-                  }}
-                >
-                  <LogOut className="size-4" aria-hidden="true" />
-                </Button>
-              </div>
+              </a>
             ) : (
               <Button
                 type="button"
@@ -235,6 +227,21 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
                 {t("auth.tabLogin")}
               </Button>
             )}
+            {user ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="touch"
+                className="w-full rounded-btn text-muted-foreground"
+                onClick={() => {
+                  setMenuOpen(false);
+                  void logout();
+                }}
+              >
+                <LogOut className="size-4" aria-hidden="true" />
+                {t("auth.menuLogout")}
+              </Button>
+            ) : null}
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm font-medium text-muted-foreground">
                 {t("language.label")}

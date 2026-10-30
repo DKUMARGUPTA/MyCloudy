@@ -13,6 +13,7 @@ QUERY STRING, never a port in the hostname (gateway rule; see
 | `/api/auth/*` | public | signup/login/logout/me (sidocs session JWT) |
 | `/api/admin/*` | **gateAdmin** | admin panel actions; AuditLog writes |
 | `/api/announcements` | public | site announcements |
+| `/api/billing/*` | **gateUser** | Phase-10 stub: checkout/confirm/cancel/status (R26) — checkout honest `billingNotConfigured` 503 unless `BILLING_DEMO=1`; confirm demo-guards BEFORE the auth gate |
 | `/api/bug-reports` | public + rate limit | files BugReport rows |
 | `/api/chat` | public + rate limit | chat-with-pdf (AI adapter `src/lib/ai/zai-client.ts`) |
 | `/api/contact` | public + rate limit | ContactMessage |

@@ -32,12 +32,14 @@ type PathInfo =
   | { kind: "tools" }
   | { kind: "category"; category: string }
   | { kind: "tool"; id: string }
-  | { kind: "page"; pageId: string };
+  | { kind: "page"; pageId: string }
+  | { kind: "account" };
 
 function resolvePath(segments: string[] | undefined): PathInfo | null {
   if (!segments || segments.length === 0) return { kind: "home" };
   if (segments.length === 1) {
     if (segments[0] === "tools") return { kind: "tools" };
+    if (segments[0] === "account") return { kind: "account" };
     if ((SITE.staticPages as readonly string[]).includes(segments[0])) {
       return { kind: "page", pageId: segments[0] };
     }
@@ -62,6 +64,7 @@ export function generateStaticParams() {
   return [
     { path: [] },
     { path: ["tools"] },
+    { path: ["account"] },
     ...CATEGORY_IDS.map((category) => ({ path: ["tools", category] })),
     ...ENABLED_TOOL_IDS.map((id) => ({ path: ["tool", id] })),
     ...SITE.staticPages.map((pageId) => ({ path: [pageId] })),
@@ -97,6 +100,13 @@ export async function generateMetadata({
       return toolMetadata(info.id, "hi") ?? {};
     case "page":
       return staticPageMetadata(info.pageId as StaticPageId, "hi");
+    case "account":
+      return {
+        title: "खाता सेटिंग्स — DocoPDF",
+        description:
+          "अपना DocoPDF खाता प्रबंधित करें: प्रोफ़ाइल, प्लान, बिलिंग इतिहास और सुरक्षा।",
+        robots: { index: false, follow: false },
+      };
     default:
       return {};
   }
@@ -223,6 +233,11 @@ export default async function HindiPage({
           <JsonLd items={staticPageJsonLd(info.pageId, "hi")} />
           <AppShell initialRoute={{ view: "page", pageId: info.pageId }} initialLocale="hi" />
         </>
+      );
+      break;
+    case "account":
+      content = (
+        <AppShell initialRoute={{ view: "account" }} initialLocale="hi" />
       );
       break;
   }
