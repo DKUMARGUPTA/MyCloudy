@@ -1,4 +1,10 @@
-import { PDFDocument, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { CreateContext, type CreatePage } from "@/lib/own/pdf";
+import {
+  faceOpts,
+  faceWidth,
+  rgb,
+  type ConvertFace,
+} from "../convert-common/face";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 
 import type {
@@ -194,12 +200,13 @@ function wordStatsToReport(
 /* ------------------------------------------------------------------ */
 
 interface Fonts {
-  helv: PDFFont;
-  noto: PDFFont | null;
+  helv: ConvertFace;
+  noto: ConvertFace | null;
 }
 
 /** Greedy word-wrap of one report line (per-line script font). */
 function wrapLine(
+  doc: CreateContext,
   line: string,
   fonts: Fonts,
   maxWidth: number
@@ -208,7 +215,7 @@ function wrapLine(
   const noto = fonts.noto !== null && blockScript(line) === "noto";
   const font = noto ? fonts.noto : fonts.helv;
   const measure = (s: string): number =>
-    (font ?? fonts.helv).widthOfTextAtSize(s, TEXT_SIZE);
+    faceWidth(doc, font ?? fonts.helv, s, TEXT_SIZE);
   const words = line.split(" ");
   const out: { text: string; noto: boolean }[] = [];
   let current = "";
@@ -227,18 +234,18 @@ function wrapLine(
 
 /** Lay report text lines onto fresh pages; returns the pages used. */
 function writeTextPages(
-  pdf: PDFDocument,
+  pdf: CreateContext,
   lines: string[],
   fonts: Fonts
 ): number {
   const usableW = PAGE_W - 2 * MARGIN;
   const usableH = PAGE_H - 2 * MARGIN;
   const maxLines = Math.floor(usableH / LINE_H);
-  let page: PDFPage | null = null;
+  let page: CreatePage | null = null;
   let lineCursor = maxLines; // force a fresh page on the first real line
-  const ensureRoom = (): PDFPage => {
+  const ensureRoom = (): CreatePage => {
     if (page === null || lineCursor >= maxLines) {
-      page = pdf.addPage([PAGE_W, PAGE_H]);
+      page = pdf.addPage(PAGE_W, PAGE_H);
       lineCursor = 0;
     }
     return page;
@@ -250,21 +257,22 @@ function writeTextPages(
       lineCursor += 1;
       continue;
     }
-    const wrapped = wrapLine(raw, fonts, usableW);
+    const wrapped = wrapLine(pdf, raw, fonts, usableW);
     for (const piece of wrapped) {
       const page = ensureRoom();
       const font = piece.noto && fonts.noto ? fonts.noto : fonts.helv;
-      page.drawText(piece.text, {
+      page.drawText({
+        text: piece.text,
         x: MARGIN,
         y: PAGE_H - MARGIN - TEXT_SIZE - lineCursor * LINE_H,
         size: TEXT_SIZE,
-        font,
-        color: rgb(0.13, 0.13, 0.15),
+        color: { r: 0.13, g: 0.13, b: 0.15 },
+        ...faceOpts(font),
       });
       lineCursor += 1;
     }
   }
-  return pdf.getPageCount();
+  return pdf.getPages().length;
 }
 
 /* ------------------------------------------------------------------ */
@@ -434,7 +442,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     imagesCapped,
   });
 
-  const pdf = await PDFDocument.create();
+  const pdf = CreateContext.create();
   pdf.setTitle("PDF comparison report");
   pdf.setProducer("DocoPDF compare-pdf");
   pdf.setCreator("DocoPDF (on-device)");
@@ -448,7 +456,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   };
 
   writeTextPages(pdf, lines, fonts);
-  const textPageCount = pdf.getPageCount();
+  const textPageCount = pdf.getPages().length;
   void textPageCount;
 
   post({ type: "progress", runId, pct: 52, stage: "processing" });
@@ -461,7 +469,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     let pageA: PdfjsPage | null = null;
     let pageB: PdfjsPage | null = null;
     try {
-      const page = pdf.addPage([PAGE_W, PAGE_H]);
+      const page = pdf.addPage(PAGE_W, PAGE_H);
       const caption =
         pair.a === null
           ? `Pair ${index + 1} - new in the revised (p${pair.b})`
@@ -474,19 +482,21 @@ async function run(request: WorkerRunRequest): Promise<void> {
           : pair.kind === "added"
             ? "present only in the revised file (green frame)"
             : "present only in the original file (red frame)";
-      page.drawText(caption, {
+      page.drawText({
+        text: caption,
         x: MARGIN,
         y: PAGE_H - MARGIN - TEXT_SIZE,
         size: TEXT_SIZE + 1,
-        font: fonts.helv,
-        color: rgb(0.1, 0.1, 0.12),
+        color: { r: 0.1, g: 0.1, b: 0.12 },
+        ...faceOpts(fonts.helv),
       });
-      page.drawText(detail, {
+      page.drawText({
+        text: detail,
         x: MARGIN,
         y: PAGE_H - MARGIN - 2.4 * LINE_H,
         size: TEXT_SIZE - 0.5,
-        font: fonts.helv,
-        color: rgb(0.42, 0.42, 0.46),
+        color: { r: 0.42, g: 0.42, b: 0.46 },
+        ...faceOpts(fonts.helv),
       });
 
       if (pair.kind === "both") {
@@ -515,7 +525,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
           type: "image/jpeg",
           quality: JPEG_QUALITY,
         });
-        const image = await pdf.embedJpg(
+        const image = pdf.embedJpeg(
           new Uint8Array(await blob.arrayBuffer())
         );
         const maxW = PAGE_W - 2 * MARGIN;
@@ -545,7 +555,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
           type: "image/jpeg",
           quality: JPEG_QUALITY,
         });
-        const image = await pdf.embedJpg(
+        const image = pdf.embedJpeg(
           new Uint8Array(await blob.arrayBuffer())
         );
         const maxW = PAGE_W - 2 * MARGIN - 8;
@@ -563,8 +573,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
           height: drawH + 4,
           borderColor:
             pair.kind === "added"
-              ? rgb(0.16, 0.63, 0.31)
-              : rgb(0.87, 0.2, 0.2),
+              ? { r: 0.16, g: 0.63, b: 0.31 }
+              : { r: 0.87, g: 0.2, b: 0.2 },
           borderWidth: 2.5,
         });
       }
@@ -590,7 +600,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   post({ type: "progress", runId, pct: 97, stage: "saving" });
-  const bytes = await pdf.save();
+  const bytes = pdf.write();
 
   post({
     type: "result",

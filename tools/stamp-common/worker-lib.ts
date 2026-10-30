@@ -1,154 +1,116 @@
-import {
-  PDFDocument,
-  StandardFonts,
-  type PDFFont,
-  type PDFPage,
-} from "pdf-lib";
-import "regenerator-runtime/runtime";
-import fontkit from "@pdf-lib/fontkit";
+/**
+ * Worker-side stamp-font helpers — the OWN-ENGINE edition (P6-y): standard
+ * faces are base-14 KEYS (no embedding — our engine emits them from
+ * stamp-fonts-data), the Devanagari TTF is fetched from THIS ORIGIN
+ * (/fonts/…, self-hosted Noto Sans Devanagari, OFL — see
+ * public/fonts/NotoSansDevanagari-OFL.txt), cached per worker lifetime,
+ * and embedded as a shaped Type0/CIDFontType2 auto-subset via our own
+ * engine. Faces come back as ConvertFace handles (convert-common/face),
+ * so every consumer's drawText spreads faceOpts(face) and measures through
+ * faceWidth — the exact wrap math the pdf-lib build had (std faces measure
+ * through CreateContext.measure, pdf-lib-identical, kerning included; the
+ * ttf face through StampTtfFont.measure).
+ *
+ * No user file data ever leaves the device (PRD §2.2 mode D).
+ */
 
+import type { StampFontKey, StampTtfFont } from "@/lib/own/pdf";
+
+import { faceOpts, type ConvertFace } from "../convert-common/face";
+import type { WmFontId } from "../add-watermark/wm-options";
+import { loadDevanagariBytes } from "./deva";
 import {
   type StampFontId,
   type StampMark,
   type TextMeasurer,
 } from "./layout";
-import type { WmFontId } from "../add-watermark/wm-options";
 
-/**
- * Worker-side helpers shared by the page-numbers and header-footer workers:
- * stamp-font loading (standard + the self-hosted Devanagari TTF) and the
- * ONE centered drawText recipe (the exact math the preview canvas mirrors).
- *
- * The Devanagari font is fetched from THIS ORIGIN (/fonts/…, self-hosted
- * Noto Sans Devanagari, OFL — see public/fonts/NotoSansDevanagari-OFL.txt),
- * cached per worker lifetime, and embedded with { subset: true } so only the
- * used glyphs ship in the output. No user file data ever leaves the device
- * (PRD §2.2 mode D).
- */
+export { loadDevanagariBytes, safeStampBaseName } from "./deva";
 
-const STANDARD_FONT_MAP: Record<WmFontId, StandardFonts> = {
-  helvetica: StandardFonts.Helvetica,
-  helveticaBold: StandardFonts.HelveticaBold,
-  times: StandardFonts.TimesRoman,
-  timesBold: StandardFonts.TimesRomanBold,
-  courier: StandardFonts.Courier,
-  courierBold: StandardFonts.CourierBold,
+const STD_KEY: Record<WmFontId, StampFontKey> = {
+  helvetica: "helvetica",
+  helveticaBold: "helveticaBold",
+  times: "times",
+  timesBold: "timesBold",
+  courier: "courier",
+  courierBold: "courierBold",
 };
 
-const DEVA_FONT_URL = "/fonts/NotoSansDevanagari-Regular.ttf";
-
-let devaBytesPromise: Promise<Uint8Array> | null = null;
-
 /**
- * Absolute URL for the font asset, resolved against the worker's REAL base:
- *
- * - Production / static workers are served over http(s), so resolving
- *   against `self.location.href` gives the right origin.
- * - Development (Turbopack) builds workers from `blob:` URLs, where a
- *   relative fetch("/fonts/…") throws "Failed to parse URL" (an opaque
- *   base) — but the blob URL itself embeds the origin, so we recover it
- *   from there.
+ * The embed surface both engine contexts share (CreateContext AND
+ * StampContext expose measure + embedTtf with these exact shapes).
  */
-function devaFontUrl(): string {
-  try {
-    const viaLocation = new URL(DEVA_FONT_URL, self.location.href);
-    if (viaLocation.protocol === "http:" || viaLocation.protocol === "https:") {
-      return viaLocation.href;
-    }
-  } catch {
-    // opaque base (blob: workers) — fall through to the blob-origin recovery
-  }
-  const blobOrigin = /^blob:(https?:\/\/[^/]+)/i.exec(self.location.href);
-  if (blobOrigin) return `${blobOrigin[1]}${DEVA_FONT_URL}`;
-  return DEVA_FONT_URL; // last resort — let fetch try its own base
-}
-
-/** Fetches the self-hosted Devanagari TTF once per worker lifetime. */
-export function loadDevanagariBytes(): Promise<Uint8Array> {
-  if (!devaBytesPromise) {
-    devaBytesPromise = fetch(devaFontUrl()).then(async (res) => {
-      if (!res.ok) throw new Error("devanagari-font-fetch");
-      return new Uint8Array(await res.arrayBuffer());
-    });
-    devaBytesPromise.catch(() => {
-      devaBytesPromise = null; // retry on the next run
-    });
-  }
-  return devaBytesPromise;
-}
+export type StampFontEmbedder = {
+  measure(text: string, font: StampFontKey, size: number): number;
+  embedTtf(bytes: Uint8Array): StampTtfFont;
+};
 
 export interface StampFonts {
-  fontFor: (fontId: StampFontId) => PDFFont;
+  fontFor: (fontId: StampFontId) => ConvertFace;
   measure: TextMeasurer;
 }
 
 /**
- * Embeds the fonts a stamp run needs. `needDevanagari` must be decided
+ * Resolves the fonts a stamp run needs. `needDevanagari` must be decided
  * BEFORE measuring (the widths feed the placement math): pass true when the
  * resolved option values can produce non-WinAnsi text (Hindi digits,
  * Devanagari field text, a non-ASCII {filename} / {title}).
  */
 export async function loadStampFonts(
-  doc: PDFDocument,
+  ctx: StampFontEmbedder,
   needDevanagari: boolean
 ): Promise<StampFonts> {
-  const standard = new Map<StampFontId, PDFFont>();
-  const fontFor = (fontId: StampFontId): PDFFont => {
-    const existing = standard.get(fontId);
-    if (existing) return existing;
-    // embedStandardFont is synchronous for the 14 built-in fonts
-    // (verified against pdf-lib 1.17.1 before this file was written).
-    const pdfFont = doc.embedStandardFont(
-      STANDARD_FONT_MAP[fontId as WmFontId]
-    );
-    standard.set(fontId, pdfFont);
-    return pdfFont;
-  };
+  const deva = needDevanagari
+    ? ctx.embedTtf(await loadDevanagariBytes())
+    : null;
 
-  let deva: PDFFont | null = null;
-  if (needDevanagari) {
-    doc.registerFontkit(fontkit);
-    const bytes = await loadDevanagariBytes();
-    deva = await doc.embedFont(bytes, { subset: true });
-  }
+  const face = (fontId: StampFontId): ConvertFace =>
+    fontId === "devanagari"
+      ? deva
+        ? { ttf: deva }
+        : { std: "helvetica" }
+      : { std: STD_KEY[fontId] };
 
   return {
-    fontFor: (fontId) =>
-      fontId === "devanagari"
-        ? (deva ?? fontFor("helvetica"))
-        : fontFor(fontId),
-    measure: (text, fontId, size) =>
-      (
-        fontId === "devanagari"
-          ? (deva ?? fontFor("helvetica"))
-          : fontFor(fontId)
-      ).widthOfTextAtSize(text, size),
+    fontFor: face,
+    measure: (text, fontId, size) => {
+      if (fontId === "devanagari") {
+        return deva ? deva.measure(text, size) : ctx.measure(text, "helvetica", size);
+      }
+      return ctx.measure(text, STD_KEY[fontId], size);
+    },
   };
 }
 
 /**
  * Draws one mark center-anchored at (cx, cy) — the exact math the preview
  * canvas uses: the baseline sits 0.25em above the box bottom so the em-box
- * middle matches the canvas "middle" baseline.
+ * middle matches the canvas "middle" baseline. `widthOf` is the face-aware
+ * width (faceWidth over the same face the draw spreads).
  */
 export function drawStampMark(
-  page: PDFPage,
+  page: {
+    drawText(opts: {
+      text: string;
+      x: number;
+      y: number;
+      size: number;
+      opacity?: number;
+      font?: StampFontKey;
+      ttf?: StampTtfFont;
+    }): void;
+  },
   mark: StampMark,
-  font: PDFFont
+  face: ConvertFace,
+  widthOf: (text: string, size: number) => number
 ): void {
-  const textW = font.widthOfTextAtSize(mark.text, mark.size);
-  page.drawText(mark.text, {
+  const textW = widthOf(mark.text, mark.size);
+  page.drawText({
+    text: mark.text,
     x: mark.cx - textW / 2,
     y: mark.cy - mark.size * 0.25,
     size: mark.size,
-    font,
     opacity: mark.opacity,
+    ...faceOpts(face),
   });
-}
-
-/** Strips path separators + unsafe chars from a download display name. */
-export function safeStampBaseName(name: string): string {
-  const base = name.replace(/\.(pdf)$/i, "");
-  const cleaned = base.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim();
-  return cleaned.length > 0 ? cleaned.slice(0, 120) : "document";
 }

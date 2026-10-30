@@ -23,7 +23,14 @@
  * Devanagari honestly falls back to the regular weight.
  */
 
-import { rgb, type PDFDocument, type PDFFont, type PDFPage, type RGB } from "pdf-lib";
+import { CreateContext, type CreatePage } from "@/lib/own/pdf";
+import {
+  faceOpts,
+  faceWidth,
+  rgb,
+  type ConvertFace,
+  type RGB,
+} from "../convert-common/face";
 
 import type {
   InvoiceLabelMap,
@@ -69,12 +76,12 @@ const COL_TEXT = rgb(0.067, 0.067, 0.067);
 const COL_AMBER_BG = rgb(0.996, 0.976, 0.902);
 const COL_AMBER_TX = rgb(0.545, 0.4, 0.05);
 
-/** The font bundle the worker embeds before calling in. */
+/** The font bundle the worker embeds before calling in (own-engine faces). */
 export interface RenderFonts {
-  base: PDFFont;
-  bold: PDFFont;
+  base: ConvertFace;
+  bold: ConvertFace;
   /** null on the pure-WinAnsi path (nothing embedded). */
-  deva: PDFFont | null;
+  deva: ConvertFace | null;
 }
 
 export interface RenderReport {
@@ -140,28 +147,28 @@ interface TextOpts {
 }
 
 class Sheet {
-  readonly doc: PDFDocument;
+  readonly doc: CreateContext;
   readonly fonts: RenderFonts;
   readonly pageW: number;
   readonly pageH: number;
   readonly margin: number;
   readonly bottom: number;
-  page: PDFPage;
+  page: CreatePage;
   y: number;
 
-  constructor(doc: PDFDocument, fonts: RenderFonts, pageW: number, pageH: number) {
+  constructor(doc: CreateContext, fonts: RenderFonts, pageW: number, pageH: number) {
     this.doc = doc;
     this.fonts = fonts;
     this.pageW = pageW;
     this.pageH = pageH;
     this.margin = GEO.margin;
     this.bottom = GEO.margin + GEO.footerReserve;
-    this.page = doc.addPage([pageW, pageH]);
+    this.page = doc.addPage(pageW, pageH);
     this.y = pageH - this.margin;
   }
 
   newPage(): void {
-    this.page = this.doc.addPage([this.pageW, this.pageH]);
+    this.page = this.doc.addPage(this.pageW, this.pageH);
     this.y = this.pageH - this.margin;
   }
 
@@ -169,7 +176,7 @@ class Sheet {
     if (this.y - need < this.bottom) this.newPage();
   }
 
-  private fontFor(run: TextRun, bold: boolean): PDFFont {
+  private fontFor(run: TextRun, bold: boolean): ConvertFace {
     if (run.deva && this.fonts.deva) return this.fonts.deva;
     return bold ? this.fonts.bold : this.fonts.base;
   }
@@ -183,7 +190,7 @@ class Sheet {
   measure(text: string, size: number, bold = false): number {
     let w = 0;
     for (const run of splitTextRuns(text)) {
-      w += this.fontFor(run, bold).widthOfTextAtSize(this.runText(run), size);
+      w += faceWidth(this.doc, this.fontFor(run, bold), this.runText(run), size);
     }
     return w;
   }
@@ -197,7 +204,7 @@ class Sheet {
     const color = opts.color ?? COL_TEXT;
     let width = 0;
     for (const run of runs) {
-      width += this.fontFor(run, opts.bold === true).widthOfTextAtSize(this.runText(run), size);
+      width += faceWidth(this.doc, this.fontFor(run, opts.bold === true), this.runText(run), size);
     }
     let tx = x;
     if (opts.right !== undefined) tx = opts.right - width;
@@ -209,8 +216,15 @@ class Sheet {
     for (const run of runs) {
       const text = this.runText(run);
       const font = this.fontFor(run, opts.bold === true);
-      this.page.drawText(text, { x: tx, y: baseline, size, font, color });
-      tx += font.widthOfTextAtSize(text, size);
+      this.page.drawText({
+        text,
+        x: tx,
+        y: baseline,
+        size,
+        color,
+        ...faceOpts(font),
+      });
+      tx += faceWidth(this.doc, font, text, size);
     }
   }
 
@@ -298,7 +312,8 @@ function drawBuyer(c: Ctx, plan: BuyerPlan): void {
 
 /** Centered split-run text on an arbitrary page (the footer stamp). */
 function drawCentered(
-  page: PDFPage,
+  doc: CreateContext,
+  page: CreatePage,
   pageW: number,
   text: string,
   y: number,
@@ -311,14 +326,14 @@ function drawCentered(
   for (const run of runs) {
     const safe = run.deva && fonts.deva ? run.text : baseRunSafe(run.text);
     const font = run.deva && fonts.deva ? fonts.deva : fonts.base;
-    width += font.widthOfTextAtSize(safe, size);
+    width += faceWidth(doc, font, safe, size);
   }
   let x = (pageW - width) / 2;
   for (const run of runs) {
     const safe = run.deva && fonts.deva ? run.text : baseRunSafe(run.text);
     const font = run.deva && fonts.deva ? fonts.deva : fonts.base;
-    page.drawText(safe, { x, y, size, font, color });
-    x += font.widthOfTextAtSize(safe, size);
+    page.drawText({ text: safe, x, y, size, color, ...faceOpts(font) });
+    x += faceWidth(doc, font, safe, size);
   }
 }
 
@@ -572,7 +587,7 @@ function drawTruncationNote(c: Ctx, plan: RowsPlan, inv: ParsedInvoice): void {
  * Devanagari (or ₹) must come with the embedded Noto subset.
  */
 export function drawParsedInvoice(
-  doc: PDFDocument,
+  doc: CreateContext,
   fonts: RenderFonts,
   inv: ParsedInvoice,
   opts: RenderOptions
@@ -640,7 +655,7 @@ export function drawParsedInvoice(
   const total = pages.length;
   pages.forEach((page, i) => {
     const text = labelOf(labels, "page", "Page") + " " + (i + 1) + " / " + total;
-    drawCentered(page, pageW, text, GEO.margin / 2 + 2, GEO.fsSmall, fonts, COL_MUTED);
+    drawCentered(doc, page, pageW, text, GEO.margin / 2 + 2, GEO.fsSmall, fonts, COL_MUTED);
   });
 
   // ---- document metadata -------------------------------------------
@@ -656,7 +671,7 @@ export function drawParsedInvoice(
   doc.setCreationDate(new Date());
 
   return {
-    pages: doc.getPageCount(),
+    pages: doc.getPages().length,
     lines: plan.shown,
     truncated: plan.truncated || inv.truncated,
     fontPath: fonts.deva !== null ? "devanagari" : "standard",

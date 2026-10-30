@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
+import { CreateContext } from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
@@ -35,8 +35,9 @@ import type { XinvRunDetail } from "./types";
  *     ParsedInvoice model; missing nodes become parse ISSUES that
  *     surface in the result detail; the renderer draws what exists;
  *  5. font pick — pure-WinAnsi content embeds NO font at all (base-14
- *     Helvetica + HelveticaBold), while ANY Devanagari (or ₹) run embeds
- *     the self-hosted Noto Sans Devanagari subset (fontkit subset:true);
+ *     Helvetica + HelveticaBold keys), while ANY Devanagari (or ₹) run
+ *     embeds the self-hosted Noto Sans Devanagari auto-subset via the
+ *     own engine;
  *  6. drawParsedInvoice — the exact render.ts the smoke script drives —
  *     multi-page with repeated header, totals on the last page only.
  *
@@ -96,19 +97,19 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const fileWord = String(request.options.fileWord ?? "").slice(0, 60);
     post({ type: "progress", runId, pct: 45, stage: "processing" });
 
-    const doc = await PDFDocument.create();
+    const doc = CreateContext.create();
     const needDeva = invoiceNeedsNoto(inv, labels);
-    let deva: PDFFont | null = null;
+    let deva: RenderFonts["deva"] = null;
     if (needDeva) {
       // the create-invoice/word-to-pdf recipe: fetch the self-hosted
-      // Noto Sans Devanagari TTF + fontkit subset:true — only the used
-      // glyphs ship in the output.
+      // Noto Sans Devanagari TTF + the engine's auto-subset — only the
+      // used glyphs ship in the output.
       const fontsApi = await loadStampFonts(doc, true);
       deva = fontsApi.fontFor("devanagari");
     }
     const fonts: RenderFonts = {
-      base: doc.embedStandardFont(StandardFonts.Helvetica),
-      bold: doc.embedStandardFont(StandardFonts.HelveticaBold),
+      base: { std: "helvetica" },
+      bold: { std: "helveticaBold" },
       deva,
     };
     post({ type: "progress", runId, pct: 60, stage: "processing" });
@@ -116,7 +117,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const report = drawParsedInvoice(doc, fonts, inv, { pageSize, labels });
     post({ type: "progress", runId, pct: 85, stage: "saving" });
 
-    const bytes = await doc.save();
+    const bytes = doc.write();
     const detail: XinvRunDetail = {
       pages: report.pages,
       lines: report.lines,

@@ -5844,3 +5844,17 @@ Stage Summary:
 - Remaining pdf-lib importers: **15 files** (P6-y e-invoice 5 → P6-z misc 8 → P6-v-b pdfa 1 → src/lib/pdf/embed-image.ts 1).
 
 NEXT: **P6-y — e-invoice family** (create-electronic-invoice worker+facturx-attach, pdf-to-e-invoice, xml-invoice-to-pdf render+worker) → then ENABLE the 5 disabled registry tools.
+
+## P6-y round 1 — xml-invoice-to-pdf + worker-lib own-engine edition + compare-pdf early (2025-10-30)
+
+5 files ported pdf-lib-free (15→11 importers left):
+
+- **stamp-common/worker-lib.ts — OWN-ENGINE EDITION (API migration)**: loadStampFonts(ctx: StampFontEmbedder{measure,embedTtf}, needDevanagari) now returns ConvertFace faces (fontFor → {std:key}|{ttf}) + a face-aware measure — CreateContext AND StampContext both satisfy the embedder. drawStampMark(page: LayerTarget-ish, mark, face, widthOf) — the LayerTarget draw-shape contract. loadDevanagariBytes + safeStampBaseName re-exported from the already-pdf-lib-free deva.ts (dedupe; the fetch cache lives there). fontkit + regenerator-runtime imports GONE from the file.
+- **xml-invoice-to-pdf/render.ts**: Sheet painter on CreateContext (addPage(w,h), drawText-object form, drawLine/drawRectangle parity); split-run font logic now measures via faceWidth(doc, face, …) — std faces through ctx.measure (pdf-lib-identical, kerning included), Noto through StampTtfFont.measure; RenderFonts = {base:{std:helvetica}, bold:{std:helveticaBold}, deva:{ttf}|null}; drawCentered(doc, page, …); metadata via CreateContext setters; getPageCount → getPages().length.
+- **xml-invoice-to-pdf/worker.ts**: CreateContext.create + loadStampFonts(doc, needDeva) own signature + doc.write(). 751-assert smoke green UNCHANGED (it drives the real render path).
+- **compare-pdf/worker.ts (P6-z early — forced by the loadStampFonts signature)**: CreateContext port (text pages + image pair pages: embedJpeg sync, drawImage fit, drawRectangle green/red pair frames; wrapLine/writeTextPages take the doc for faceWidth; save→write). 77-assert smoke green.
+- **GATES**: tsc 0 · eslint 0 · battery 108/108 (xml-invoice 751/751, compare 77/77 inside).
+- **E2E (agent-browser, blob-capture byte-verified)**: /#/tool/xml-invoice-to-pdf → uploaded hand-built UBL 2.1 Invoice (2 lines, INR, ₹ + Devanagari item name to force the Noto path) → Convert → invoice-INV-2026-042.pdf 8,650 B captured via the URL.createObjectURL hook → OWN-PARSER offline verification: %PDF-1.7, 1 page, 1× CIDFontType2 (Noto Devanagari auto-subset — the ₹/Hindi runs), 2× Helvetica faces, 47 Tj ops, Info = Producer/Creator DocoPDF + Title "Invoice INV-2026-042" + Author "Acme Traders Pvt Ltd" (UTF-16BE — the raw byte scan misses it, parser confirms), ZERO pdf-lib markers. Console clean, 1280 no-overflow (mobile shell covered by the P6-x 390 pass).
+- Remaining pdf-lib importers: **11** (P6-y rest: create-electronic-invoice worker+facturx-attach, pdf-to-e-invoice → P6-z rest: bookmark×2, rasterize, repair/model, web-optimize×2 → P6-v-b pdf-to-pdfa → embed-image.ts).
+
+NEXT: **P6-y round 2 — create-electronic-invoice (worker + facturx-attach) + pdf-to-e-invoice** (the /AF-EmbeddedFile/Filespec/XMP surgery onto rewriteDocument extraObjects + the filespec/XML extraction onto the own parser), then the registry's 5 disabled e-invoice tools decision.
