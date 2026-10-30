@@ -1,4 +1,16 @@
-import { PDFDocument } from "pdf-lib";
+import {
+  cloneDict,
+  listPages,
+  materializeInheritable,
+  newref,
+  parsePdf,
+  writeDocument,
+  PdfError,
+  type PdfObj,
+  type ParsedPdf,
+  type WritePage,
+  type WriteSynthetic,
+} from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
@@ -26,12 +38,13 @@ import {
  *  2. Opaque boxes are painted onto the raster BEFORE encoding, so the
  *     redacted pixels simply do not exist in the image.
  *  3. The output is a NEW document: unmarked pages are copied vector-perfect
- *     with pdf-lib copyPages; each marked page is replaced by a JPEG-only
- *     page of the painted raster. Nothing else from a marked page survives —
- *     content streams, annotations, form widgets and their field values are
- *     never copied into the output at all (pdf-lib keeps unreferenced
- *     objects OUT of a document it builds itself, unlike in-place edits
- *     whose orphaned streams still serialize).
+ *     (own-engine copy plan — page dict + reachable graph BFS); each marked
+ *     page is replaced by a JPEG-only authored page of the painted raster.
+ *     Nothing else from a marked page survives — content streams,
+ *     annotations, form widgets and their field values are never copied
+ *     into the output at all (the fresh writer emits ONLY the pages' plan
+ *     objects + their reachable graphs — unreferenced source objects never
+ *     ride the output, the same guarantee pdf-lib's copyPages gave).
  *  4. Verification: the finished bytes are re-opened with pdf.js and every
  *     marked page must contain zero selectable text. If it does not, the run
  *     fails honestly instead of shipping a broken redaction.
@@ -52,6 +65,9 @@ const MAX_CANVAS_PIXELS = 40_000_000;
 interface PaintedPage {
   pageIndex: number;
   bytes: Uint8Array;
+  /** Raster pixel dims (the embedded XObject's /Width /Height). */
+  pxW: number;
+  pxH: number;
   /** Display dims at scale 1 (the new page's size). */
   w: number;
   h: number;
@@ -107,6 +123,8 @@ async function paintPage(
   return {
     pageIndex: markPage,
     bytes: new Uint8Array(await blob.arrayBuffer()),
+    pxW: width,
+    pxH: height,
     w: base.width,
     h: base.height,
   };
@@ -159,24 +177,22 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const bytes = new Uint8Array(await file.arrayBuffer());
 
   // Fail fast on encrypted / unparseable files before any heavy work.
-  let src: PDFDocument;
+  let parsed: ParsedPdf;
   try {
-    src = await PDFDocument.load(bytes, {
-      ignoreEncryption: false,
-      updateMetadata: false,
-    });
+    parsed = parsePdf(bytes);
   } catch (error) {
     post({
       type: "error",
       runId,
       code:
-        error instanceof Error && /encrypt/i.test(error.message)
+        error instanceof PdfError && error.code === "encrypted"
           ? "tool.errorEncrypted"
           : "tool.errorCorrupt",
     });
     return;
   }
-  const pageCount = src.getPageCount();
+  const srcPages = listPages(parsed);
+  const pageCount = srcPages.length;
 
   const pdfjs = await loadPdfjsInWorker();
   const jsDoc = await pdfjs.getDocument({
@@ -203,10 +219,11 @@ async function run(request: WorkerRunRequest): Promise<void> {
     }
 
     // --- 1. Paint every marked page ----------------------------------
-    const painted: PaintedPage[] = [];
+    const painted = new Map<number, PaintedPage>();
     let done = 0;
     for (const [pageIndex, pageMarks] of pagesByMark) {
-      painted.push(await paintPage(pdfjs, jsDoc, pageIndex, pageMarks, dpi, color));
+      const paint = await paintPage(pdfjs, jsDoc, pageIndex, pageMarks, dpi, color);
+      painted.set(pageIndex, paint);
       done += 1;
       post({
         type: "progress",
@@ -219,33 +236,79 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
     // --- 2. Rebuild: copies for clean pages, JPEG pages for marked ----
     post({ type: "progress", runId, pct: 68, stage: "processing" });
-    const out = await PDFDocument.create();
-    const keep = Array.from({ length: pageCount }, (_, i) => i).filter(
-      (i) => !pagesByMark.has(i)
-    );
-    const copied = keep.length > 0 ? await out.copyPages(src, keep) : [];
-    let copyAt = 0;
+    // Writer numbering contract: catalog(1) + pages tree(2); every copy
+    // page costs 1 object, every authored JPEG page costs 2 (dict + its
+    // content stream); the image XObjects ride AFTER all page objects —
+    // their numbers are pre-computed so the authored page's /Resources
+    // can newref them.
+    const keep = pageCount - pagesByMark.size;
+    const syntheticBase = 3 + keep + 2 * pagesByMark.size;
+    const writePages: WritePage[] = [];
+    const synthetics: WriteSynthetic[] = [];
+    let jpegIndex = 0;
     const redactedIndexes: number[] = [];
     for (let i = 0; i < pageCount; i += 1) {
-      const paint = painted.find((p) => p.pageIndex === i);
+      const paint = painted.get(i);
       if (paint) {
-        const page = out.addPage([paint.w, paint.h]);
-        const img = await out.embedJpg(paint.bytes);
-        page.drawImage(img, {
-          x: 0,
-          y: 0,
+        const imgNum = syntheticBase + jpegIndex;
+        jpegIndex += 1;
+        const imageObj: PdfObj = {
+          k: "stream",
+          m: new Map<string, PdfObj>([
+            ["Type", { k: "name", v: "XObject" }],
+            ["Subtype", { k: "name", v: "Image" }],
+            ["Width", { k: "num", n: paint.pxW }],
+            ["Height", { k: "num", n: paint.pxH }],
+            ["ColorSpace", { k: "name", v: "DeviceRGB" }],
+            ["BitsPerComponent", { k: "num", n: 8 }],
+            ["Filter", { k: "name", v: "DCTDecode" }],
+            ["Length", { k: "num", n: paint.bytes.length }],
+          ]),
+          raw: paint.bytes,
+        };
+        synthetics.push(imageObj);
+        const resources: PdfObj = {
+          k: "dict",
+          m: new Map<string, PdfObj>([
+            ["XObject", { k: "dict", m: new Map<string, PdfObj>([
+              ["Im0", newref(imgNum)],
+            ]) }],
+            ["ProcSet", { k: "arr", items: [
+              { k: "name", v: "PDF" },
+              { k: "name", v: "ImageC" },
+            ] }],
+          ]),
+        };
+        const numStr = (n: number): string => {
+          const s = String(n);
+          return /^-?\d+$/.test(s) ? s : String(Math.round(n * 1e4) / 1e4);
+        };
+        const content = new TextEncoder().encode(
+          `q ${numStr(paint.w)} 0 0 ${numStr(paint.h)} 0 0 cm /Im0 Do Q`
+        );
+        writePages.push({
+          type: "new",
           width: paint.w,
           height: paint.h,
+          content,
+          resources,
         });
         redactedIndexes.push(i);
       } else {
-        out.addPage(copied[copyAt]);
-        copyAt += 1;
+        const page = srcPages[i];
+        const dict = cloneDict(page.dict, { drop: ["Parent"] });
+        materializeInheritable(dict, page);
+        writePages.push({
+          type: "copy",
+          doc: parsed,
+          srcNum: page.ref.num,
+          dict,
+        });
       }
     }
 
     post({ type: "progress", runId, pct: 86, stage: "saving" });
-    const outBytes = await out.save({ useObjectStreams: true });
+    const outBytes = writeDocument(writePages, parsed.version, undefined, synthetics);
 
     // --- 3. Verify: marked pages must carry zero selectable text ------
     post({ type: "progress", runId, pct: 92, stage: "saving" });
@@ -270,7 +333,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
           }),
         },
       ],
-      detail: { files: 1, pages: out.getPageCount() },
+      detail: { files: 1, pages: pageCount },
     });
   } finally {
     jsDoc.cleanup();

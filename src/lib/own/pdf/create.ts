@@ -112,6 +112,10 @@ export interface CreateRectOptions {
   borderOpacity?: number;
   /** Degrees counter-clockwise about (x,y) — pdf-lib's rotate (P6-l). */
   rotate?: number;
+  /** Dash pattern for the border — pdf-lib's borderDashArray (P6-x,
+   * passport-photo's dashed cut guides). Emitted as `[a b] 0 d` in place
+   * of the default solid `[] 0 d` reset; absent → solid. */
+  borderDashArray?: number[];
 }
 
 export interface CreateLineOptions {
@@ -1009,7 +1013,11 @@ class CreatePageImpl implements CreatePage {
             ]
           : []),
         `${pdfNumToString(borderWidth)} w`,
-        "[] 0 d",
+        ...(opts.borderDashArray && opts.borderDashArray.length > 0
+          ? [
+              `[${opts.borderDashArray.map(pdfNumToString).join(" ")}] 0 d`,
+            ]
+          : ["[] 0 d"]),
         `1 0 0 1 ${pdfNumToString(opts.x)} ${pdfNumToString(opts.y)} cm`,
         `${pdfNumToString(cos)} ${pdfNumToString(sin)} ${pdfNumToString(-sin)} ${pdfNumToString(cos)} 0 0 cm`,
         "1 0 0 1 0 0 cm", // skew(0,0) — pdf-lib always emits the identity

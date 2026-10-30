@@ -1,6 +1,8 @@
 import {
-  PDFDocument,
-} from "pdf-lib";
+  CreateContext,
+  PdfError,
+  StampContext,
+} from "@/lib/own/pdf";
 
 import {
   parsePageSpec,
@@ -36,9 +38,9 @@ import {
  *  - ocr-pdf: scanned PDFs (or photos) → searchable PDF (invisible text
  *    layer over the untouched pixels) or plain text. Pages render at the
  *    chosen DPI with pdf.js, Tesseract (eng/hi/eng+hi, tessdata_fast,
- *    self-hosted from /tessdata) recognizes them, and pdf-lib appends one
- *    invisible drawText per line — positioned through the /Rotate-aware
- *    display→user mapping proven by the crop tool.
+ *    self-hosted from /tessdata) recognizes them, and the OWN ENGINE
+ *    appends one invisible drawText per line — positioned through the
+ *    /Rotate-aware display→user mapping proven by the crop tool.
  *  - copy-from-pdf: every page's selectable text, with per-page OCR
  *    fallback for scans (auto mode OCRs ONLY empty pages — the PRD's
  *    "Scan pages par OCR on-demand").
@@ -98,16 +100,15 @@ function mustPageNumbers(spec: number[] | null, fileName: string): number[] {
   return spec;
 }
 
-/** Opens one PDF with pdf-lib for page copying (encryption → error code). */
-async function loadSrcDoc(
+/** Opens one PDF with the own parser (encryption → honest error codes). */
+function loadSrcDoc(
   bytes: Uint8Array,
   fileName: string
-): Promise<PDFDocument> {
+): StampContext {
   try {
-    return await PDFDocument.load(bytes);
+    return StampContext.load(bytes);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/encrypt/i.test(message)) {
+    if (error instanceof PdfError && error.code === "encrypted") {
       throw new Error(`tool.errorEncrypted\u0000${fileName}`);
     }
     throw new Error(`tool.errorCorrupt\u0000${fileName}`);
@@ -397,8 +398,8 @@ async function runOcrPdf(request: WorkerRunRequest): Promise<void> {
       const bytes = new Uint8Array(await file.arrayBuffer());
       // pdf.js takes OWNERSHIP of the buffer it is handed (it transfers
       // the ArrayBuffer to its worker and detaches it) — every consumer
-      // that needs the bytes afterwards (pdf-lib page copying) must get
-      // an independent copy made BEFORE getDocument runs.
+      // that needs the bytes afterwards (own-engine page surgery) must
+      // get an independent copy made BEFORE getDocument runs.
       const libBytes = bytes.slice();
       const doc = await openPdf(pdfjs, bytes, file.name);
       openedDocs.push(doc);
@@ -477,16 +478,16 @@ async function runOcrPdf(request: WorkerRunRequest): Promise<void> {
     }
   } else if (imageInputs.length > 0) {
     // Photos merge into ONE searchable PDF (a scan batch).
-    const pdf = await PDFDocument.create();
+    const pdf = CreateContext.create();
     const fonts = createTextLayerFonts(pdf);
     for (const item of work) {
       if (!item.image) continue;
       const image = item.image;
       const embedded =
         image.kind === "jpeg"
-          ? await pdf.embedJpg(image.bytes)
-          : await pdf.embedPng(image.bytes);
-      const page = pdf.addPage([image.width, image.height]);
+          ? pdf.embedJpeg(image.bytes)
+          : pdf.embedPng(image.bytes);
+      const page = pdf.addPage(image.width, image.height);
       page.drawImage(embedded, {
         x: 0,
         y: 0,
@@ -508,7 +509,7 @@ async function runOcrPdf(request: WorkerRunRequest): Promise<void> {
       totalPages += 1;
     }
     post({ type: "progress", runId, pct: 95, stage: "saving" });
-    const saved = await pdf.save({ useObjectStreams: true });
+    const saved = pdf.write();
     outputs.push({
       name: `${sanitizeBase(files[imageInputs[0].fileIndex].name)}-ocr.pdf`,
       mime: "application/pdf",
@@ -518,20 +519,21 @@ async function runOcrPdf(request: WorkerRunRequest): Promise<void> {
 
   if (!asText && pdfInputs.length > 0) {
     // Each PDF gets its own output: a copy with the invisible layer.
+    // Own engine: the page SUBSET is a slot plan (edit-pdf precedent —
+    // distinct output page dicts, shared graphs ride once) and the layer
+    // paints through ctx.stampText on each SLOT index.
     for (const input of pdfInputs) {
       const pages = work.filter((item) => item.fileIndex === input.fileIndex);
       if (pages.length === 0) continue;
-      const srcDoc = await loadSrcDoc(input.bytes, files[input.fileIndex].name);
-      const outDoc = await PDFDocument.create();
-      const copied = await outDoc.copyPages(
-        srcDoc,
-        pages.map((item) => item.pageIndex ?? 0)
-      );
-      const fonts = createTextLayerFonts(outDoc);
-      for (let i = 0; i < copied.length; i += 1) {
-        const outPage = outDoc.addPage(copied[i]);
+      const ctx = loadSrcDoc(input.bytes, files[input.fileIndex].name);
+      ctx.setSlotPlan(pages.map((item) => ({ src: item.pageIndex ?? 0 })));
+      const fonts = createTextLayerFonts(ctx);
+      for (let i = 0; i < pages.length; i += 1) {
         const item = pages[i];
-        const view = item.view ?? [0, 0, outPage.getWidth(), outPage.getHeight()];
+        const slot = i;
+        const media = ctx.pages[item.pageIndex ?? 0].mediaBox;
+        const view =
+          item.view ?? [0, 0, media[2] - media[0], media[3] - media[1]];
         const placements: LinePlacement[] = (item.lines ?? []).map((line) =>
           pdfPageLinePlacement(
             line,
@@ -550,10 +552,14 @@ async function runOcrPdf(request: WorkerRunRequest): Promise<void> {
         for (const placement of placements) {
           await fonts.ensureDeva(placement.text);
         }
-        drawSearchableLayer(outPage, placements, fonts);
+        drawSearchableLayer(
+          { drawText: (opts) => ctx.stampText(slot, opts) },
+          placements,
+          fonts
+        );
         totalPages += 1;
       }
-      const saved = await outDoc.save({ useObjectStreams: true });
+      const saved = ctx.write();
       outputs.push({
         name: `${sanitizeBase(files[input.fileIndex].name)}-ocr.pdf`,
         mime: "application/pdf",

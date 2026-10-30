@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { CreateContext } from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
@@ -36,9 +36,10 @@ import {
  *      pixels, JPEG 0.92 (the house single re-compression policy), with
  *      a JFIF density tag so print shops see the true DPI.
  *   2. passport-photo-sheet.pdf — the print-ready sheet (4×6 or A4):
- *      the photo embedded ONCE via pdf-lib embedJpg and drawn at the
- *      exact mm→pt cell size N times, thin dashed cut guides around
- *      every copy, and the optional info line in the bottom margin.
+ *      the photo embedded ONCE via the own engine's embedJpeg and drawn
+ *      at the exact mm→pt cell size N times, thin dashed cut guides
+ *      around every copy, and the optional info line in the bottom
+ *      margin.
  *
  * Inputs: JPG / PNG / WEBP / GIF decode natively (createImageBitmap),
  * HEIC via Safari's native path with the self-hosted libheif WASM
@@ -246,19 +247,19 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   /* ---------------- the print sheet PDF ---------------- */
   post({ type: "progress", runId, pct: 70, stage: "processing" });
-  const pdf = await PDFDocument.create();
+  const pdf = CreateContext.create();
   // Embed ONCE, draw N times — the shared XObject keeps the file lean.
-  const embedded = await pdf.embedJpg(jpegBytes);
-  const page = pdf.addPage([plan.pageW, plan.pageH]);
+  const embedded = pdf.embedJpeg(jpegBytes);
+  const page = pdf.addPage(plan.pageW, plan.pageH);
   page.drawRectangle({
     x: 0,
     y: 0,
     width: plan.pageW,
     height: plan.pageH,
-    color: rgb(1, 1, 1),
+    color: { r: 1, g: 1, b: 1 },
   });
 
-  const gray = rgb(0.62, 0.62, 0.62);
+  const gray = { r: 0.62, g: 0.62, b: 0.62 };
   for (let row = 0; row < plan.rows; row += 1) {
     for (let col = 0; col < plan.cols; col += 1) {
       const cell = sheetCellRect(plan, row, col);
@@ -273,7 +274,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
       });
       if (style.cutGuides) {
         // Thin dashed gray rectangle — the cut line (borderDashArray:
-        // rectangles take the border-prefixed dash option in pdf-lib).
+        // engine CreateRectOptions takes the pdf-lib border-prefixed dash
+        // option verbatim).
         page.drawRectangle({
           x,
           y,
@@ -288,21 +290,22 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   if (plan.infoLine) {
-    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    const font = "helvetica" as const;
     const text = infoLineText(size, plan);
     const fontSize = 7;
-    const textW = font.widthOfTextAtSize(text, fontSize);
-    page.drawText(text, {
+    const textW = pdf.measure(text, font, fontSize);
+    page.drawText({
+      text,
       x: Math.max(2, (plan.pageW - textW) / 2),
       y: 5,
       size: fontSize,
       font,
-      color: rgb(0.47, 0.45, 0.44),
+      color: { r: 0.47, g: 0.45, b: 0.44 },
     });
   }
 
   post({ type: "progress", runId, pct: 94, stage: "saving" });
-  const saved = await pdf.save({ useObjectStreams: true });
+  const saved = pdf.write();
   post({
     type: "result",
     runId,

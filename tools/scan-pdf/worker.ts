@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { CreateContext } from "@/lib/own/pdf";
 
 import type { OptionValues } from "@/lib/tools/config-types";
 import {
@@ -20,8 +20,9 @@ import {
 /**
  * Scan to PDF worker (PRD §8.4) — full-resolution pipeline at export time:
  * decode photo → perspective warp of the edited quad → filter → rotate →
- * JPEG → pdf-lib assembly. Everything stays on the device: photos arrive
- * by structured clone and the PDF Blob goes straight back.
+ * JPEG → OWN-ENGINE assembly (CreateContext, pdf-lib-free). Everything
+ * stays on the device: photos arrive by structured clone and the PDF Blob
+ * goes straight back.
  *
  * Quality policy (honest, bounded):
  * - warp output long edge is capped by the "quality" option (Standard
@@ -131,7 +132,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const autoStraighten = options.autoStraighten !== false;
   const docName = String(options.docName ?? "").trim();
 
-  const pdf = await PDFDocument.create();
+  const pdf = CreateContext.create();
 
   /** Processes one printable side: decode → warp → filter → adjust →
    * rotate → deskew → JPEG. Shared by single pages and P5 pairs. */
@@ -160,7 +161,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       warped = autoDeskew(warped);
     }
     const jpeg = await encodeJpeg(warped, 0.9);
-    const image = await pdf.embedJpg(jpeg);
+    const image = pdf.embedJpeg(jpeg);
     return image;
   };
 
@@ -194,7 +195,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
           (pageH - margin * 2 - PAIR_GAP_PT) / (image.height + backImage.height)
         );
       }
-      const pdfPage = pdf.addPage([pageW, pageH]);
+      const pdfPage = pdf.addPage(pageW, pageH);
       const totalH =
         (image.height + backImage.height) * scale + PAIR_GAP_PT;
       const yFront = (pageH + totalH) / 2 - image.height * scale;
@@ -223,7 +224,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
         pageW = landscape ? base[1] : base[0];
         pageH = landscape ? base[0] : base[1];
       }
-      const pdfPage = pdf.addPage([pageW, pageH]);
+      const pdfPage = pdf.addPage(pageW, pageH);
       const scale = Math.min(
         (pageW - margin * 2) / image.width,
         (pageH - margin * 2) / image.height
@@ -248,7 +249,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   post({ type: "progress", runId, pct: 95, stage: "saving" });
-  const saved = await pdf.save({ useObjectStreams: true });
+  const saved = pdf.write();
 
   // Name: the user's document name (Round-7 "Doc name"), else the first
   // source's base name, unless it is one of our own camera captures

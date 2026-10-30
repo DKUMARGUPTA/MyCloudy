@@ -25,7 +25,8 @@ import {
   Zap,
 } from "lucide-react";
 
-import type { PDFFont } from "pdf-lib";
+import type { ConvertFace } from "../convert-common/face";
+import { faceOpts, faceWidth } from "../convert-common/face";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -64,8 +65,9 @@ import {
  *        → buildDocExcerpt (chat model, head+tail trim, 48k budget)
  *        → /api/summarize (ONLY the excerpt + option codes)
  *        → structured sections on screen (localized labels, (p. N) chips)
- *        → Copy / Export: Markdown, plain text, PDF (lazy pdf-lib on the
- *          main thread — a 1-3 page summary; Devanagari embeds Noto).
+ *        → Copy / Export: Markdown, plain text, PDF (own-engine
+ *          CreateContext on the main thread — a 1-3 page summary;
+ *          Devanagari embeds Noto via our subsetter).
  *
  * Hooks discipline (R3 house rules): no setState during render — the
  * extraction effect keys on the file-set signature + retry tick, exactly
@@ -155,10 +157,9 @@ function latinSafe(text: string): string {
 }
 
 interface PdfFontPair {
-  // Type-only import — pdf-lib itself stays lazy-loaded at runtime.
-  latin: PDFFont;
-  deva: PDFFont | null;
-  bold: PDFFont;
+  latin: ConvertFace;
+  deva: ConvertFace | null;
+  bold: ConvertFace;
 }
 
 export function SummarizeSurface({
@@ -423,40 +424,34 @@ export function SummarizeSurface({
     if (sections.length === 0 || generatingPdf) return;
     setGeneratingPdf(true);
     try {
-      const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
-      const fontkit = (await import("@pdf-lib/fontkit")).default;
-      // fontkit's UMD layout runs on regenerator — the workers import the
-      // polyfill statically; on the main thread it must be in place before
-      // the first drawText with a custom (embedded) font or it throws.
-      await import("regenerator-runtime/runtime");
+      // Own engine — no pdf-lib, no fontkit, no regenerator shim.
+      const { CreateContext } = await import("@/lib/own/pdf");
 
-      const doc = await PDFDocument.create();
-      const latin = await doc.embedFont(StandardFonts.Helvetica);
-      const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+      const doc = CreateContext.create();
+      const latin: ConvertFace = { std: "helvetica" };
+      const bold: ConvertFace = { std: "helveticaBold" };
       let deva: PdfFontPair["deva"] = null;
       const docName = filesRef.current[0]?.file.name ?? "document";
       const labels = exportLabels();
       if (hasDevanagari(summary ?? "")) {
         const res = await fetch("/fonts/NotoSansDevanagari-Regular.ttf");
         if (!res.ok) throw new Error("fontFetch");
-        doc.registerFontkit(fontkit);
-        deva = await doc.embedFont(
-          new Uint8Array(await res.arrayBuffer()),
-          { subset: true },
-        );
+        deva = {
+          ttf: doc.embedTtf(new Uint8Array(await res.arrayBuffer())),
+        };
       }
       const fonts: PdfFontPair = { latin, bold, deva };
 
       const width = A4.w - PDF_MARGIN * 2;
-      let page = doc.addPage([A4.w, A4.h]);
+      let page = doc.addPage(A4.w, A4.h);
       let y = A4.h - PDF_MARGIN;
 
-      const fontFor = (text: string) =>
+      const fontFor = (text: string): ConvertFace =>
         hasDevanagari(text) && fonts.deva ? fonts.deva : fonts.latin;
 
       const draw = (
         text: string,
-        font: PdfFontPair["latin"],
+        font: ConvertFace,
         size: number,
         lineH: number,
         color: { r: number; g: number; b: number },
@@ -466,14 +461,14 @@ export function SummarizeSurface({
         let rest = text;
         while (rest.length > 0) {
           if (y - lineH < PDF_MARGIN) {
-            page = doc.addPage([A4.w, A4.h]);
+            page = doc.addPage(A4.w, A4.h);
             y = A4.h - PDF_MARGIN;
           }
           let lo = 1;
           let hi = rest.length;
           while (lo < hi) {
             const mid = Math.ceil((lo + hi) / 2);
-            if (font.widthOfTextAtSize(rest.slice(0, mid), size) <= usable) {
+            if (faceWidth(doc, font, rest.slice(0, mid), size) <= usable) {
               lo = mid;
             } else {
               hi = mid - 1;
@@ -484,12 +479,13 @@ export function SummarizeSurface({
             const cut = rest.lastIndexOf(" ", take);
             if (cut >= Math.floor(take * 0.4)) take = Math.max(1, cut);
           }
-          page.drawText(rest.slice(0, take), {
+          page.drawText({
+            text: rest.slice(0, take),
             x: PDF_MARGIN + indent,
             y: y - size,
             size,
-            font,
-            color: rgb(color.r, color.g, color.b),
+            color,
+            ...faceOpts(font),
           });
           y -= lineH;
           rest = rest.slice(take).trimStart();
@@ -525,7 +521,7 @@ export function SummarizeSurface({
                   ? labels.details
                   : section.header;
         if (y - 34 < PDF_MARGIN) {
-          page = doc.addPage([A4.w, A4.h]);
+          page = doc.addPage(A4.w, A4.h);
           y = A4.h - PDF_MARGIN;
         }
         y -= 10;
@@ -548,7 +544,7 @@ export function SummarizeSurface({
         }
       }
 
-      const bytes = await doc.save();
+      const bytes = doc.write();
       download(
         new Blob([bytes as BlobPart], { type: "application/pdf" }),
         `${summarizeBaseName(docName, language)}.pdf`,

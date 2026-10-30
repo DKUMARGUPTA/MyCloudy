@@ -395,15 +395,18 @@ console.log("\n§3 wiring — registry, surfaces, route, surface code");
       surface.includes("length"),
   );
   check(
-    "surface: pdf-lib lazy-loaded, Noto Devanagari fetched, winAnsi kept",
-    surface.includes('await import("pdf-lib")') &&
-      surface.includes('await import("@pdf-lib/fontkit")') &&
+    "surface: own-engine lazy-loaded, Noto Devanagari fetched+embedded, winAnsi kept",
+    surface.includes('await import("@/lib/own/pdf")') &&
       surface.includes("/fonts/NotoSansDevanagari-Regular.ttf") &&
+      surface.includes("doc.embedTtf") &&
       surface.includes("latinSafe"),
   );
   check(
-    "surface: regenerator-runtime polyfill loaded before fontkit draws",
-    surface.includes('await import("regenerator-runtime/runtime")'),
+    "surface: no pdf-lib / fontkit / regenerator anywhere in the export path",
+    !surface.includes('from "pdf-lib"') &&
+      !surface.includes('import("pdf-lib")') &&
+      !surface.includes("@pdf-lib/fontkit") &&
+      !surface.includes("regenerator-runtime"),
   );
   check(
     "surface: error toast maps timeout/badRequest/aiUnavailable",

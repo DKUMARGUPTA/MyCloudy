@@ -2,7 +2,7 @@
  * Searchable-text layer for OCR'd PDFs (PRD §8 "PDF OCR — searchable PDF").
  *
  * The output keeps the original page pixels untouched and appends one
- * invisible `drawText` per recognized LINE (pdf-lib, opacity 0). Lines —
+ * invisible `drawText` per recognized LINE (own engine, opacity 0). Lines —
  * not words — keep the copy order sane and the content stream small.
  *
  * Geometry contract: OCR bboxes arrive in IMAGE pixel space (y down);
@@ -14,19 +14,13 @@
  *
  * Fonts: standard Helvetica covers everything WinAnsi-encodable; any line
  * with characters beyond that (Devanagari, other scripts) is drawn with
- * the embedded self-hosted Noto Sans Devanagari TTF (subset: true). The
+ * the embedded self-hosted Noto Sans Devanagari TTF (auto-subset). The
  * layer is invisible — search & copy work through the text itself, so
  * glyph shapes are irrelevant, but the ToUnicode CMap of the embedded
  * font keeps even Hindi copy-paste exact.
  */
 
-import {
-  PDFDocument,
-  StandardFonts,
-  type PDFFont,
-  type PDFPage,
-} from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
+import type { StampFontKey, StampTtfFont } from "@/lib/own/pdf";
 
 import { displayToUser } from "../crop-pdf/crop-options";
 import { loadDevanagariBytes } from "../stamp-common/worker-lib";
@@ -162,30 +156,34 @@ export function imageBoxLinePlacement(
 }
 
 /* ------------------------------------------------------------------ */
-/* Fonts (lazy Helvetica + on-demand embedded Devanagari)             */
+/* Fonts (standard-key Helvetica + on-demand embedded Devanagari)      */
 /* ------------------------------------------------------------------ */
 
 export interface TextLayerFonts {
-  helv: PDFFont;
-  deva: PDFFont | null;
+  helv: StampFontKey;
+  deva: StampTtfFont | null;
   /** Embeds the Devanagari font on first non-Latin text (no-op after). */
   ensureDeva(text: string): Promise<void>;
 }
 
+/** The minimal embed surface both engine contexts share. */
+type TtfEmbedder = { embedTtf(bytes: Uint8Array): StampTtfFont };
+
 /**
- * Fonts for the invisible layer on one output document. Helvetica is
- * embedded immediately; the Devanagari TTF is only fetched + embedded
- * when a placement actually needs it.
+ * Fonts for the invisible layer on one output document. Helvetica is the
+ * standard key (no embedding needed on our engine); the Devanagari TTF is
+ * only fetched + embedded (auto-subset) when a placement needs it. Works
+ * for BOTH routes: CreateContext (image-backed pages) and StampContext
+ * (PDF pass-through pages).
  */
-export function createTextLayerFonts(doc: PDFDocument): TextLayerFonts {
+export function createTextLayerFonts(doc: TtfEmbedder): TextLayerFonts {
   const fonts: TextLayerFonts = {
-    helv: doc.embedStandardFont(StandardFonts.Helvetica),
+    helv: "helvetica",
     deva: null,
     async ensureDeva(text) {
       if (fonts.deva || !needsEmbeddedFont(text)) return;
       const bytes = await loadDevanagariBytes();
-      doc.registerFontkit(fontkit);
-      fonts.deva = await doc.embedFont(bytes, { subset: true });
+      fonts.deva = doc.embedTtf(bytes);
     },
   };
   return fonts;
@@ -196,26 +194,47 @@ export function createTextLayerFonts(doc: PDFDocument): TextLayerFonts {
 /* ------------------------------------------------------------------ */
 
 /**
+ * The draw surface the layer paints on — CreatePage satisfies it
+ * directly; the StampContext pass-through route wraps ctx.stampText
+ * with the SLOT index (see the ocr worker).
+ */
+export interface LayerTarget {
+  drawText(opts: {
+    text: string;
+    x: number;
+    y: number;
+    size: number;
+    font?: StampFontKey;
+    ttf?: StampTtfFont;
+    opacity?: number;
+  }): void;
+}
+
+/**
  * Draws the invisible searchable layer on one page: every placement
  * becomes one opacity-0 drawText in reading order. Lines that need the
  * embedded font when it is unavailable are skipped (never a wrong-font
  * crash on a partially-loaded run).
  */
 export function drawSearchableLayer(
-  page: PDFPage,
+  page: LayerTarget,
   placements: LinePlacement[],
-  fonts: { helv: PDFFont; deva: PDFFont | null }
+  fonts: { helv: StampFontKey; deva: StampTtfFont | null }
 ): void {
   for (const placement of placements) {
     const text = sanitizeLineText(placement.text);
     if (text.length === 0) continue;
-    const font = needsEmbeddedFont(text) && fonts.deva ? fonts.deva : fonts.helv;
+    const needDeva = needsEmbeddedFont(text);
+    if (needDeva && !fonts.deva) continue; // never a wrong-font crash
     try {
-      page.drawText(text, {
+      page.drawText({
+        text,
         x: placement.x,
         y: placement.y,
         size: placement.size,
-        font,
+        ...(needDeva && fonts.deva
+          ? { ttf: fonts.deva }
+          : { font: fonts.helv }),
         opacity: 0,
       });
     } catch {

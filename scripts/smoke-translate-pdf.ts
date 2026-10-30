@@ -421,13 +421,14 @@ check(
     worker.includes("tool.errorTranslateTooLong"),
 );
 check(
-  "worker: all five script fonts fetched from origin (blob-safe) + subset",
+  "worker: all five script fonts fetched from origin (blob-safe) + engine auto-subset",
   worker.includes("absoluteUrl") &&
-    worker.includes("subset: true") &&
+    worker.includes("doc.embedTtf") &&
     worker.includes("loadScriptFont") &&
     model.includes('devanagari: "/fonts/NotoSansDevanagari-Regular.ttf"') &&
     model.includes('arabic: "/fonts/NotoNaskhArabic-Regular.ttf"') &&
-    worker.includes("SCRIPT_FONT"),
+    worker.includes("SCRIPT_FONT") &&
+    !worker.includes("pdf-lib"),
 );
 check(
   "worker: script-routed draws — latin sanitized, Arabic shaped+CJK kinsoku",

@@ -1,4 +1,11 @@
-import { PDFDocument } from "pdf-lib";
+import {
+  listPages,
+  organizeMerge,
+  parsePdf,
+  type MergePlanEntry,
+  type OrganizeSource,
+  type ParsedPdf,
+} from "@/lib/own/pdf";
 import {
   parsePageSpec,
   type WorkerRunRequest,
@@ -42,15 +49,17 @@ import type { OcrRunDetail } from "./invoice-extract";
  *  3. Searchable output: tesseract's own PDF renderer writes the page
  *     (raster + invisible word layer with the GlyphLessFont — logical
  *     character order, so Hindi ि/ी matras and conjuncts stay searchable;
- *     the same C++ path OCRmyPDF-style tools rely on). Page PDFs are
- *     merged with pdf-lib next to the passed-through originals.
+ *     the same C++ path OCRmyPDF-style tools rely on) and the OWN ENGINE
+ *     merges those page PDFs with the passed-through originals in
+ *     document order (organizeMerge).
  *  4. Text output: UTF-8 .txt with the same page markers as pdf-to-txt.
  *
  *  Encrypted inputs are refused upfront (tool.errorEncrypted) in every
  *  mode (FIX-1b / AUD-C): pdf.js opens owner-restricted files (empty user
- *  password) transparently, but pdf-lib cannot decrypt — a pass-through
- *  would copy still-encrypted content streams into a fresh document that
- *  carries no /Encrypt dictionary, silently corrupting those pages.
+ *  password) transparently, but our pass-through merge cannot decrypt —
+ *  a pass-through would copy still-encrypted content streams into a
+ *  fresh document that carries no /Encrypt dictionary, silently
+ *  corrupting those pages.
  *
  * Tesseract itself runs as a nested classic worker (blob-wrapped
  * importScripts of the self-hosted worker.min.js — allowed by CSP
@@ -322,23 +331,20 @@ async function run(request: WorkerRunRequest): Promise<void> {
     const data = new Uint8Array(await file.arrayBuffer());
 
     // FIX-1b (AUD-C): encrypted-input guard — every mode, before any
-    // pdf-lib pass-through/save can touch the bytes. The probe is
-    // STRUCTURAL (pdf-lib parses the trailer and reports isEncrypted),
-    // never a raw-bytes "/Encrypt" sniff, so a plain document that merely
-    // contains the literal text "/Encrypt 26 0 R" cannot be refused by
-    // mistake. A load failure here is not a refusal — files pdf-lib cannot
-    // parse keep flowing through the pdf.js paths below, which report
+    // pass-through/merge can touch the bytes. The probe is STRUCTURAL
+    // (our parser resolves the trailer's /Encrypt entry), never a
+    // raw-bytes "/Encrypt" sniff, so a plain document that merely contains
+    // the literal text "/Encrypt 26 0 R" cannot be refused by mistake. A
+    // parse failure here is not a refusal — files our parser cannot read
+    // keep flowing through the pdf.js paths below, which report
     // corrupt/encrypted as before.
-    let srcProbe: PDFDocument | null = null;
+    let srcParsed: ParsedPdf | null = null;
     try {
-      srcProbe = await PDFDocument.load(data, {
-        ignoreEncryption: true,
-        updateMetadata: false,
-      });
+      srcParsed = parsePdf(data, { encryptedOk: true });
     } catch {
-      // Not parseable by pdf-lib at all — never refuse on a guess.
+      // Not parseable by our parser at all — never refuse on a guess.
     }
-    if (srcProbe !== null && srcProbe.isEncrypted) {
+    if (srcParsed !== null && srcParsed.trailer.has("Encrypt")) {
       post({ type: "error", runId, code: "tool.errorEncrypted" });
       return;
     }
@@ -444,22 +450,24 @@ async function run(request: WorkerRunRequest): Promise<void> {
     } else {
       // Searchable PDF: original pages pass through, scanned pages are
       // rebuilt by tesseract's PDF renderer (raster + invisible logical
-      // text layer), merged in document order with pdf-lib.
-      // The upfront guard already parsed (and cleared) this source — reuse
-      // that probe instead of a second full parse. srcProbe === null (not
-      // parseable by pdf-lib) keeps the legacy behavior: try the load and
-      // let a throw surface as tool.errorCorrupt via the run() catch.
-      const srcDoc = needsOcr.some((need) => !need)
-        ? (srcProbe ??
-          (await PDFDocument.load(data, { ignoreEncryption: true })))
-        : null;
-      const outDoc = await PDFDocument.create();
+      // text layer), merged in document order with the own engine's
+      // organizeMerge. Source 0 is the original (only when some page
+      // passes through); every OCR'd page's renderer output becomes its
+      // own one-page source. srcParsed === null (not parseable by our
+      // parser) keeps the legacy behavior: try the parse and let a throw
+      // surface as tool.errorCorrupt via the run() catch.
+      const sources: OrganizeSource[] = [];
+      const srcHasPass = needsOcr.some((need) => !need);
+      if (srcHasPass) {
+        const parsed = srcParsed ?? parsePdf(data, { encryptedOk: true });
+        sources.push({ doc: parsed, pages: listPages(parsed) });
+      }
+      const plan: MergePlanEntry[] = [];
 
       for (let i = 0; i < pageCount; i += 1) {
         let conf: number | undefined;
         if (!needsOcr[i]) {
-          const [copied] = await outDoc.copyPages(srcDoc!, [pageNumbers[i]]);
-          outDoc.addPage(copied);
+          plan.push({ kind: "page", doc: 0, src: pageNumbers[i] });
           pageTexts.push(nativeTexts[i]);
           totalChars += countChars(nativeTexts[i]);
         } else {
@@ -480,12 +488,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
             { pdfTitle: base },
             { text: true, pdf: true }
           );
-          const pagePdf = await PDFDocument.load(
-            tessPdfBytes(result.data.pdf),
-            { ignoreEncryption: true }
-          );
-          const [copied] = await outDoc.copyPages(pagePdf, [0]);
-          outDoc.addPage(copied);
+          const pageParsed = parsePdf(tessPdfBytes(result.data.pdf));
+          plan.push({
+            kind: "page",
+            doc: sources.length, // pushed right below — stable index
+            src: 0,
+          });
+          sources.push({ doc: pageParsed, pages: listPages(pageParsed) });
           const text =
             typeof result.data.text === "string" ? result.data.text : "";
           pageTexts.push(text.trim());
@@ -501,7 +510,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       }
 
       post({ type: "progress", runId, pct: 94, stage: "saving" });
-      const outBytes = await outDoc.save();
+      const outBytes = organizeMerge(sources, plan);
       outputs.push({
         name: `${base}-ocr.pdf`,
         mime: "application/pdf",

@@ -1,12 +1,6 @@
-import {
-  PDFDocument,
-  StandardFonts,
-  rgb,
-  type PDFFont,
-  type PDFPage,
-} from "pdf-lib";
-import "regenerator-runtime/runtime";
-import fontkit from "@pdf-lib/fontkit";
+import type { StampTtfFont } from "@/lib/own/pdf";
+import { CreateContext, type CreatePage } from "@/lib/own/pdf";
+import { faceOpts, faceWidth, type ConvertFace } from "../convert-common/face";
 
 import type { WorkerRunRequest, WorkerResponse } from "@/lib/workers/protocol";
 import {
@@ -39,13 +33,13 @@ import { stripWrappingQuotes } from "./api-model";
  *   pdf.js extracts per-page text (fake-worker, chat-with-pdf recipe)
  *   → buildBatches packs consecutive lines into ≤2 800-char units
  *   → each batch POSTs to /api/translate (ONLY the batch string + target)
- *   → pdf-lib rebuilds a clean re-flowed PDF (A4, real fonts)
+ *   → the OWN ENGINE rebuilds a clean re-flowed PDF (A4, real fonts)
  *
  * Layout honesty (FAQ promises exactly this): the output is NOT a pixel
  * copy of the input — text is re-flowed, page count can differ, and every
  * original page gets a small "Page N" header. Devanagari targets embed the
- * self-hosted Noto Sans Devanagari (subset:true); CJK targets embed Noto
- * Sans SC/JP/KR (subset:true, kinsoku-lite wrapping); Arabic targets embed
+ * self-hosted Noto Sans Devanagari (auto-subset); CJK targets embed Noto
+ * Sans SC/JP/KR (auto-subset, kinsoku-lite wrapping); Arabic targets embed
  * Noto Naskh Arabic and go through our own presentation-form shaper +
  * display reorder before drawText; latin targets use Helvetica with
  * winAnsiSafe so drawText can never throw.
@@ -221,7 +215,7 @@ async function translateBatch(
 const A4 = { w: 595.28, h: 841.89 } as const;
 const MARGIN = 48;
 
-/** Plain RGB triple (converted to a pdf-lib Color at draw time). */
+/** Plain RGB triple (the engine's draw-time color shape). */
 interface Rgb {
   r: number;
   g: number;
@@ -233,8 +227,8 @@ interface FlowOptions {
   lineH: number;
   color: Rgb;
   headerColor: Rgb;
-  font: PDFFont;
-  headerFont: PDFFont;
+  font: ConvertFace;
+  headerFont: ConvertFace;
   /** Arabic flow: shape first, reorder each drawn line for the LTR renderer. */
   rtl: boolean;
   /** CJK flow: kinsoku-lite break adjustment (no line starting with 。）」). */
@@ -242,17 +236,17 @@ interface FlowOptions {
 }
 
 class TextFlow {
-  private doc: PDFDocument;
-  private page: PDFPage | null = null;
+  private doc: CreateContext;
+  private page: CreatePage | null = null;
   private y = 0;
   private readonly width = A4.w - MARGIN * 2;
 
-  constructor(doc: PDFDocument) {
+  constructor(doc: CreateContext) {
     this.doc = doc;
   }
 
   private newPage(): void {
-    this.page = this.doc.addPage([A4.w, A4.h]);
+    this.page = this.doc.addPage(A4.w, A4.h);
     this.y = A4.h - MARGIN;
   }
 
@@ -270,20 +264,21 @@ class TextFlow {
 
   private line(
     text: string,
-    font: PDFFont,
+    font: ConvertFace,
     size: number,
     lineH: number,
     color: Rgb,
     rtl = false,
   ): void {
     if (this.page === null) this.newPage();
-    const page = this.page as PDFPage;
-    page.drawText(rtl ? bidiVisualLine(text) : text, {
+    const page = this.page as CreatePage;
+    page.drawText({
+      text: rtl ? bidiVisualLine(text) : text,
       x: MARGIN,
       y: Math.max(MARGIN, this.y - size),
       size,
-      font,
-      color: rgb(color.r, color.g, color.b),
+      color,
+      ...faceOpts(font),
     });
     this.y -= lineH;
     if (this.y < MARGIN + lineH * 0.25) this.page = null;
@@ -307,7 +302,9 @@ class TextFlow {
         let hi = rest.length;
         while (lo < hi) {
           const mid = Math.ceil((lo + hi) / 2);
-          if (font.widthOfTextAtSize(rest.slice(0, mid), size) <= this.width) {
+          if (
+            faceWidth(this.doc, font, rest.slice(0, mid), size) <= this.width
+          ) {
             lo = mid;
           } else {
             hi = mid - 1;
@@ -330,20 +327,20 @@ class TextFlow {
 /**
  * Script font loader with a per-run cache: the target language's font and
  * the bilingual original's font are often the same URL — embed once.
- * Fonts are self-hosted TTFs from /fonts (subset:true keeps output small).
+ * Fonts are self-hosted TTFs from /fonts (the engine's auto-subset keeps
+ * output small).
  */
 async function loadScriptFont(
-  doc: PDFDocument,
+  doc: CreateContext,
   url: string,
-  cache: Map<string, PDFFont>,
-): Promise<PDFFont> {
+  cache: Map<string, StampTtfFont>,
+): Promise<StampTtfFont> {
   const cached = cache.get(url);
   if (cached) return cached;
   const res = await fetch(absoluteUrl(url));
   if (!res.ok) throw new Error("translate-fontFetch");
   const bytes = new Uint8Array(await res.arrayBuffer());
-  doc.registerFontkit(fontkit);
-  const font = await doc.embedFont(bytes, { subset: true });
+  const font = doc.embedTtf(bytes);
   cache.set(url, font);
   return font;
 }
@@ -434,13 +431,15 @@ async function run(req: WorkerRunRequest): Promise<void> {
 
   // 4. Build the output PDF.
   post({ type: "progress", runId, pct: 90, stage: "saving" });
-  const doc = await PDFDocument.create();
-  const helv = await doc.embedFont(StandardFonts.Helvetica);
+  const doc = CreateContext.create();
+  const helv: ConvertFace = { std: "helvetica" };
   const lang = targetLang(target);
-  const fontCache = new Map<string, PDFFont>();
-  let translatedFont = helv;
+  const fontCache = new Map<string, StampTtfFont>();
+  let translatedFont: ConvertFace = helv;
   if (lang.font) {
-    translatedFont = await loadScriptFont(doc, lang.font, fontCache);
+    translatedFont = {
+      ttf: await loadScriptFont(doc, lang.font, fontCache),
+    };
   }
   const translatedRtl = lang.script === "arabic";
   const translatedCjk =
@@ -487,7 +486,7 @@ async function run(req: WorkerRunRequest): Promise<void> {
       const origFontUrl =
         origScript === "latin" ? null : SCRIPT_FONT[origScript];
       const origFont = origFontUrl
-        ? await loadScriptFont(doc, origFontUrl, fontCache)
+        ? { ttf: await loadScriptFont(doc, origFontUrl, fontCache) }
         : helv;
       const origRtl = origScript === "arabic";
       const origText =
@@ -515,7 +514,7 @@ async function run(req: WorkerRunRequest): Promise<void> {
     }
   }
 
-  const bytes = await doc.save();
+  const bytes = doc.write();
   post({ type: "progress", runId, pct: 98, stage: "saving" });
   post({
     type: "result",
