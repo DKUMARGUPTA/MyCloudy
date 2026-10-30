@@ -16,6 +16,10 @@ import {
 } from "../pdf-to-txt/text-layout";
 import { isHeifBytes } from "../imgconv/libheif";
 import {
+  loadPdfjsInWorker,
+  workerDocumentShim,
+} from "../pdfjs-common/worker-lib";
+import {
   createOcrEngine,
   isOcrLang,
   recognizeBytes,
@@ -50,34 +54,9 @@ import {
  * use) and the Devanagari font for non-Latin text layers.
  */
 
-type PdfjsModule = typeof import("pdfjs-dist");
-type PdfjsDoc = Awaited<ReturnType<PdfjsModule["getDocument"]>["promise"]>;
-
-let pdfjsPromise: Promise<PdfjsModule> | null = null;
-
-async function loadPdfjsInWorker(): Promise<PdfjsModule> {
-  if (!pdfjsPromise) {
-    pdfjsPromise = (async () => {
-      if (
-        typeof (globalThis as { document?: unknown }).document === "undefined"
-      ) {
-        (globalThis as { document?: unknown }).document = {
-          baseURI: self.location.href,
-        };
-      }
-      const libUrl = "/pdfjs/pdf.min.mjs";
-      const workerUrl = "/pdfjs/pdf.worker.min.mjs";
-      const lib = (await import(
-        /* webpackIgnore: true */ /* turbopackIgnore: true */ libUrl
-      )) as PdfjsModule;
-      await import(
-        /* webpackIgnore: true */ /* turbopackIgnore: true */ workerUrl
-      );
-      return lib;
-    })();
-  }
-  return pdfjsPromise;
-}
+type PdfjsDoc = Awaited<
+  ReturnType<Awaited<ReturnType<typeof loadPdfjsInWorker>>["getDocument"]>["promise"]
+>;
 
 function post(response: WorkerResponse): void {
   self.postMessage(response);
@@ -117,13 +96,16 @@ function loadSrcDoc(
 
 /** Opens one PDF with pdf.js, mapping encryption → honest error codes. */
 async function openPdf(
-  pdfjs: PdfjsModule,
+  pdfjs: Awaited<ReturnType<typeof loadPdfjsInWorker>>,
   bytes: Uint8Array,
   fileName: string
 ): Promise<PdfjsDoc> {
   try {
     return await pdfjs.getDocument({
       data: bytes,
+      // Worker-safe canvas factory + font source (see worker-lib header:
+      // the tofu fix — real FontFaceSet, or glyph-path rendering).
+      ownerDocument: workerDocumentShim() as unknown as HTMLDocument,
       cMapUrl: "/pdfjs/cmaps/",
       cMapPacked: true,
       standardFontDataUrl: "/pdfjs/standard_fonts/",

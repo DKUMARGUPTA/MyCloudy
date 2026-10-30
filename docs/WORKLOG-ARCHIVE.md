@@ -3575,3 +3575,26 @@ Stage Summary:
 - VERDICT: the claim "75 ready yesterday" is not supported by ANY layer. Truth: 65 ready yesterday → 66 today (create-resume). The corrupted first-session summary that claimed 67–68 live (gtools7/pdftk) also had nothing on disk — same conclusion as P7-PWA's STATE TRUTH CHECK. User likely misremembered the About page's "65 of 97" (65↔75) or counted some "Soon" cards.
 - No unknown ready tools exist outside the registry; no lost work to restore.
 - Project state: 66 live / 97 total / 31 pending | i18n 2823 = 2823 | lint + tsc clean. Next queue: passport-photo (P3). Cron 468834 (15-min webDevReview) active.
+
+---
+Task ID: R16-WORKER-TOFU-FIX
+Agent: orchestrator (main session)
+Task: User reported "Convert karne par ye issue hai" with a JPG showing every character as a box-with-X (tofu) — output of DocoPDF PDF→JPG on a Chromium-printed PDF (Claude chat export, embedded Anthropic print fonts + NotoSansDevanagari, CID TrueType Identity-H).
+
+Work Log:
+- Forensics: pdffonts/pdfinfo — all 5 fonts EMBEDDED (emb=yes uni=yes); MuPDF render = READABLE; text extraction perfect → PDF is healthy, bug is in OUR pipeline.
+- Reproduced 1:1 in agent-browser (Chrome): /tool/pdf-to-jpg with the exact file → output `_page1.jpg` = full tofu (VLM-verified). Output naming matched the user's file byte-for-byte pattern.
+- Root cause (pdf.js 4.10.38 fake-worker mode in tool workers): `workerDocumentShim()` has NO `fonts` → `FontLoader.isFontLoadingAPISupported` (= !!document.fonts) = false → falls to the CSS-rule branch → `styleElement.sheet` is undefined on our fakeElement → TypeError → api.js swallows it and sends FontFallback → recovery renders every glyph as the embedded font's .notdef outline → page of tofu boxes.
+- Two fixes designed and VERIFIED separately in-browser:
+  - Fix A (primary): workers on engines with WorkerGlobalScope FontFaceSet (Chrome/Edge — verified available + `fonts.add()` auto-settles `.loaded` in 8ms + OffscreenCanvas fillText resolves custom families from self.fonts, pixel-signature proof) get the REAL set via the shim's `document.fonts` → pdf.js registers embedded fonts natively. Full fake-worker simulation (module blob worker, exact tool architecture) → READABLE.
+  - Fix B (fallback): `disableFontFace: true` → pdf.js fontless mode — evaluator compiles Path2D outlines per glyph during evaluation (pdf.worker.mjs:30963), canvas paints paths, never fillText. Verified READABLE on main thread. Also flips `useSystemFonts` false → non-embedded standard fonts come from self-hosted /pdfjs/standard_fonts as data → render as paths too (no regression for non-embedded PDFs).
+- Implementation (2 files, zero call-site changes — all ~22 pdf.js tool workers fixed at once):
+  - tools/pdfjs-common/worker-lib.ts: `workerFontFaceSet()` probe; shim gains `fonts`; `withWorkerFontFallback()` wraps the frozen module namespace via spread + getDocument override injecting disableFontFace ONLY when no FontFaceSet. Module namespaces are frozen — that's why the wrapper, not a patch.
+  - tools/ocr/worker.ts: dropped its private baseURI-only loader (predates the shim fix — also lacked createElement for image pages) → now imports shared loadPdfjsInWorker + passes ownerDocument shim in openPdf.
+- E2E: pdf-to-jpg full tool run → 10/10 pages, output page1 VLM = READABLE ("DocoPDF — Master SEO, SMO & Webmaster / Prompt (for GLM 5.3 Flash)"); rasterize-pdf (separate worker file) → VLM READABLE; console 0 errors (a transient hydration warn during hot recompile = dev-only Fast Refresh artifact, clean on settled reload); home + /hi + mobile 390 clean (VLM layout pass); tsc 0, lint 0.
+- Cleanup: /public/__tofu_test.pdf probe file removed.
+
+Stage Summary:
+- CRITICAL RENDERING BUG FIXED for every worker-side pdf.js renderer: pdf-to-jpg/png/webp/tiff, rasterize-pdf, ocr-pdf, ocr (copy-from-pdf), compress-pdf-to-size, compare-pdf, redact-pdf, pdf-to-powerpoint, pdf-to-svg, extract-images, translate-pdf, chat-with-pdf + text-only workers unaffected-but-hardened. Chromium/Skia-printed PDFs (chat exports, print-to-PDF) were 100% tofu in conversions; now render with true embedded glyphs — natively where the engine allows, as vector paths everywhere else.
+- Honest limits: fallback path-mode is slower than native fillText on text-heavy pages (acceptable; correctness-first); Safari/Firefox worker FontFaceSet availability untested here (fallback covers them deterministically).
+- Project state: dev E2E green; push + Vercel deploy + production smoke next.
