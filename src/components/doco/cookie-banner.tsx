@@ -52,7 +52,8 @@ function writeConsent(value: Consent): void {
   window.dispatchEvent(new Event(CONSENT_EVENT));
 }
 
-function subscribeToConsent(callback: () => void): () => void {
+/** Subscribe to consent changes (storage + same-tab events) — GA4 glue too. */
+export function subscribeToConsent(callback: () => void): () => void {
   window.addEventListener("storage", callback);
   window.addEventListener(CONSENT_EVENT, callback);
   return () => {
@@ -69,6 +70,11 @@ const consentSnapshot = createLocalSnapshot<Consent | null>(
   parseConsent,
   null
 );
+
+/** Read the current consent (null when not chosen yet) — GA4 glue. */
+export function readConsent(): Consent | null {
+  return consentSnapshot();
+}
 
 /** Fire this to re-open the banner from the footer "Privacy settings" link. */
 export function openConsentSettings(): void {

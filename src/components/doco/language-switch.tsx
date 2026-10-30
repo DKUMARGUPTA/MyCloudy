@@ -4,6 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useI18n } from "@/components/providers/locale-provider";
 import { locales, type Locale } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { track } from "@/lib/analytics/ga4";
 
 /**
  * EN | हिं language switch (PRD §5.1).
@@ -16,6 +17,7 @@ export function LanguageSwitch({ className }: { className?: string }) {
   const change = (next: Locale) => {
     if (next === locale) return;
     setLocale(next);
+    track("language_switch", { from: locale, to: next });
     toast({ title: t("language.changedTo", { language: t(`language.${next}`) }) });
   };
 

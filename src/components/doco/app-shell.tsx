@@ -24,6 +24,8 @@ import { BottomTabBar } from "@/components/doco/bottom-tab-bar";
 import { useI18n } from "@/components/providers/locale-provider";
 import { useHashRoute, type HashRoute } from "@/hooks/use-hash-route";
 import { anchorClickHandler } from "@/lib/anchor";
+import { track } from "@/lib/analytics/ga4";
+import { ALL_TOOLS } from "@/lib/tools/registry";
 import { LOCALE_STORAGE_KEY } from "@/i18n";
 
 /**
@@ -41,12 +43,30 @@ export function AppShell({
   initialRoute: HashRoute;
   initialLocale?: "en" | "hi";
 }) {
-  const { t, setLocale } = useI18n();
+  const { t, setLocale, locale } = useI18n();
   const { route } = useHashRoute(initialRoute);
   const [proOpen, setProOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const openPro = useCallback(() => setProOpen(true), []);
   const openSearch = useCallback(() => setSearchOpen(true), []);
+
+  /*
+   * GA4 tool_view (P7-SEO Phase 6): one event per tool landing, carrying
+   * only registry metadata (slug/category/mode) + the active locale — no
+   * PII, no file names. No-ops unless analytics consent is granted.
+   */
+  const toolId = route.view === "tool" ? route.toolId : undefined;
+  useEffect(() => {
+    if (!toolId) return;
+    const tool = ALL_TOOLS.find((entry) => entry.id === toolId);
+    if (!tool) return;
+    track("tool_view", {
+      tool_slug: tool.id,
+      category: tool.category,
+      mode: tool.mode,
+      locale,
+    });
+  }, [toolId, locale]);
 
   /*
    * Boot marker for the iOS compatibility watchdog (boot-script.ts): once

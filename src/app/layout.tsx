@@ -5,6 +5,7 @@ import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/toaster";
 import { LocaleProvider } from "@/components/providers/locale-provider";
 import { AppErrorBoundary } from "@/components/doco/error-boundary";
+import { Ga4Boot } from "@/components/doco/analytics/ga4-boot";
 import { BOOT_SCRIPT } from "@/lib/compat/boot-script";
 import { SITE, absoluteUrl } from "@/lib/seo/site";
 
@@ -53,27 +54,9 @@ export const metadata: Metadata = {
   description:
     "100 free online PDF tools: convert JPG to PDF, PDF to JPG, Word or Excel, merge, compress, edit, sign and OCR PDF files. No signup — files stay on your device. English + हिंदी",
   applicationName: "DocoPDF",
-  keywords: [
-    "free PDF tools",
-    "PDF tools",
-    "PDF converter",
-    "free PDF editor",
-    "edit PDF online free",
-    "free tool to edit PDF documents",
-    "PDF editing tools free",
-    "JPG to PDF",
-    "PDF to JPG",
-    "PDF to Word",
-    "convert PDF to Word",
-    "PDF to text",
-    "PDF conversion tool",
-    "merge PDF",
-    "compress PDF",
-    "sign PDF",
-    "online PDF tools",
-    "Hindi PDF tools",
-    "DocoPDF",
-  ],
+  /* No <meta name="keywords"> — Google/Bing ignore it (master-plan Phase 3);
+   * researched keywords live in src/lib/seo/tool-seo.ts and feed on-page
+   * copy + the keyword-map CSV deliverable instead. */
   icons: {
     icon: [{ url: "/logo.svg", type: "image/svg+xml" }],
     apple: [{ url: "/apple-touch-icon.png" }],
@@ -231,6 +214,8 @@ export default function RootLayout({
          * src/lib/compat/boot-script.ts (error capture, polyfills, watchdog).
          */}
         <script dangerouslySetInnerHTML={{ __html: BOOT_SCRIPT }} />
+        {/* GA4 boot — consent-gated, no-op until NEXT_PUBLIC_GA_ID is set. */}
+        <Ga4Boot />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{

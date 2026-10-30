@@ -1,7 +1,11 @@
 /**
  * Next.js Metadata builders (P7-SEO) — one function per route family,
- * producing unique title / description / keywords / canonical / hreflang
+ * producing unique title / description / canonical / hreflang
  * alternates / Open Graph / Twitter cards for every crawlable URL.
+ *
+ * NOTE: no <meta name="keywords"> is emitted anywhere — Google ignores it
+ * and Bing does too; the researched keyword sets live in tool-seo.ts and
+ * feed on-page copy (H1/intro/FAQ) + the keyword-map CSV instead.
  *
  * metadataBase (https://www.docopdf.com — the canonical www host) lives in
  * the root layout, so all relative canonical + OG URLs resolve to it.
@@ -28,15 +32,13 @@ function baseMetadata(
   path: string,
   locale: SeoLocale,
   title: string,
-  description: string,
-  keywords: string[]
+  description: string
 ): Metadata {
   const selfPath = locale === "hi" ? hindiPath(path) : path;
   const ogLocale = locale === "hi" ? SITE.localeTags.hi : SITE.localeTags.en;
   return {
     title: { absolute: `${title}${SITE.titleSuffix}` },
     description,
-    keywords,
     alternates: {
       canonical: selfPath,
       languages: {
@@ -71,8 +73,7 @@ export function toolMetadata(toolId: string, locale: SeoLocale = "en"): Metadata
   if (!seo) return undefined;
   const title = locale === "hi" ? seo.titleHi : seo.title;
   const description = locale === "hi" ? seo.descriptionHi : seo.description;
-  const keywords = locale === "hi" ? seo.keywordsHi : seo.keywords;
-  return baseMetadata(`/tool/${toolId}`, locale, title, description, keywords);
+  return baseMetadata(`/tool/${toolId}`, locale, title, description);
 }
 
 /* -------------------------- tools index ---------------------------- */
@@ -86,11 +87,7 @@ export function toolsIndexMetadata(locale: SeoLocale = "en"): Metadata {
     locale === "hi"
       ? "DocoPDF के 100 मुफ़्त PDF टूल एक जगह — कन्वर्ट, मर्ज, कंप्रेस, एडिट, साइन, OCR। सब आपके डिवाइस पर, बिना साइनअप।"
       : "Browse all 100 free DocoPDF tools — converters, merger, compressor, editor, e-sign, OCR, redaction and more. On-device, no signup, no watermarks.";
-  const keywords =
-    locale === "hi"
-      ? ["pdf tools hindi", "पीडीएफ़ टूल्स", "मुफ़्त pdf टूल"]
-      : ["pdf tools", "free pdf tools online", "pdf converter", "pdf editor", "no signup pdf tools"];
-  return baseMetadata("/tools", locale, title, description, keywords);
+  return baseMetadata("/tools", locale, title, description);
 }
 
 /* -------------------------- category page -------------------------- */
@@ -100,8 +97,7 @@ export function categoryMetadata(categoryId: string, locale: SeoLocale = "en"): 
   if (!seo) return undefined;
   const title = locale === "hi" ? seo.titleHi : seo.title;
   const description = locale === "hi" ? seo.descriptionHi : seo.description;
-  const keywords = locale === "hi" ? ["pdf टूल"] : seo.keywords;
-  return baseMetadata(`/tools/${categoryId}`, locale, title, description, keywords);
+  return baseMetadata(`/tools/${categoryId}`, locale, title, description);
 }
 
 /** Category ids that exist (for generateStaticParams + validation). */
@@ -113,5 +109,5 @@ export function staticPageMetadata(pageId: StaticPageId, locale: SeoLocale = "en
   const seo = STATIC_PAGE_SEO[pageId];
   const title = locale === "hi" ? seo.titleHi : seo.title;
   const description = locale === "hi" ? seo.descriptionHi : seo.description;
-  return baseMetadata(`/${pageId}`, locale, title, description, []);
+  return baseMetadata(`/${pageId}`, locale, title, description);
 }

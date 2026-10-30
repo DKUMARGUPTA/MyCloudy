@@ -102,6 +102,15 @@ export async function generateMetadata({
   }
 }
 
+/**
+ * Inline, blocking, pre-hydration: set <html lang="hi"> as soon as the HTML
+ * parses (Google's renderer + assistive tech see the correct document
+ * language before React commits; <html suppressHydrationWarning> in the root
+ * layout keeps the attribute flip mismatch-silent — the same contract
+ * next-themes relies on for the class attribute).
+ */
+const HINDI_LANG_SCRIPT = "document.documentElement.lang='hi'";
+
 export default async function HindiPage({
   params,
 }: {
@@ -111,41 +120,54 @@ export default async function HindiPage({
   const info = resolvePath(path);
   if (!info) notFound();
 
+  let content: React.ReactNode;
   switch (info.kind) {
     case "home":
-      return (
+      content = (
         <>
           <JsonLd items={[toolsIndexJsonLd("hi")]} />
           <AppShell initialRoute={{ view: "home" }} initialLocale="hi" />
         </>
       );
+      break;
     case "tools":
-      return (
+      content = (
         <>
           <JsonLd items={[toolsIndexJsonLd("hi")]} />
           <AppShell initialRoute={{ view: "tools" }} initialLocale="hi" />
         </>
       );
+      break;
     case "category":
-      return (
+      content = (
         <>
           <JsonLd items={categoryJsonLd(info.category, "hi")} />
           <AppShell initialRoute={{ view: "tools", category: info.category }} initialLocale="hi" />
         </>
       );
+      break;
     case "tool":
-      return (
+      content = (
         <>
           <JsonLd items={toolJsonLd(info.id, "hi")} />
           <AppShell initialRoute={{ view: "tool", toolId: info.id }} initialLocale="hi" />
         </>
       );
+      break;
     case "page":
-      return (
+      content = (
         <>
           <JsonLd items={staticPageJsonLd(info.pageId, "hi")} />
           <AppShell initialRoute={{ view: "page", pageId: info.pageId }} initialLocale="hi" />
         </>
       );
+      break;
   }
+
+  return (
+    <>
+      <script dangerouslySetInnerHTML={{ __html: HINDI_LANG_SCRIPT }} />
+      {content}
+    </>
+  );
 }
