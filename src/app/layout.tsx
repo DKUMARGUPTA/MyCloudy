@@ -7,6 +7,7 @@ import { LocaleProvider } from "@/components/providers/locale-provider";
 import { AppErrorBoundary } from "@/components/doco/error-boundary";
 import { Ga4Boot } from "@/components/doco/analytics/ga4-boot";
 import { BOOT_SCRIPT } from "@/lib/compat/boot-script";
+import { CONSENT_KEY, GA_MEASUREMENT_ID } from "@/lib/analytics/ga4-id";
 import { SITE, absoluteUrl } from "@/lib/seo/site";
 
 import "./globals.css";
@@ -214,9 +215,51 @@ export default function RootLayout({
          * src/lib/compat/boot-script.ts (error capture, polyfills, watchdog).
          */}
         <script dangerouslySetInnerHTML={{ __html: BOOT_SCRIPT }} />
-        {/* GA4 boot — consent-gated gtag.js (property G-ZP89M3KQDB by default;
-         * NEXT_PUBLIC_GA_ID env can override or "0"-disable). Zero network
-         * until the visitor accepts analytics in the cookie banner. */}
+        {GA_MEASUREMENT_ID && (
+          <>
+            {/*
+             * Google tag (gtag.js) — Google's own placement, SERVER-RENDERED
+             * so the GA4 installation wizard and crawlers find it in the raw
+             * HTML of every page (the old consent-gated injection was
+             * invisible to the scan → "tag not found" emails).
+             *
+             * Consent Mode v2, privacy preserved in substance:
+             *  1st script — consent DEFAULT DENIED (all four fields) + a
+             *    synchronous restore of a RETURNING visitor's grant, both
+             *    queued BEFORE gtag.js can execute (inline-before-async DOM
+             *    order guarantees it, even from HTTP cache).
+             *  Until opt-in the tag runs cookieless: no _ga cookies, and
+             *  Google DISCARDS GA4 hits fired while analytics_storage is
+             *  denied. ad_* fields stay denied forever (we run no ads).
+             *  2nd — the tag itself (async, exactly ONE per page).
+             *  3rd — js + config (anonymized IP; page_view fires with the
+             *    consent state restored above). The client half (banner
+             *  wiring, buffering, revoke cleanup) lives in ga4.ts via Ga4Boot.
+             */}
+            <script
+              dangerouslySetInnerHTML={{
+                __html:
+                  "window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}" +
+                  "gtag('consent','default',{ad_storage:'denied',ad_user_data:'denied',ad_personalization:'denied',analytics_storage:'denied',wait_for_update:500});" +
+                  `try{var s=JSON.parse(localStorage.getItem('${CONSENT_KEY}')||'null');` +
+                  "if(s&&s.analytics===true){gtag('consent','update',{analytics_storage:'granted'});}}catch(e){}",
+              }}
+            />
+            <script
+              defer
+              src={`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`}
+            />
+            <script
+              dangerouslySetInnerHTML={{
+                __html:
+                  "window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}" +
+                  `gtag('js',new Date());gtag('config','${GA_MEASUREMENT_ID}',{anonymize_ip:true,send_page_view:true});`,
+              }}
+            />
+          </>
+        )}
+        {/* GA4 client half — consent-store wiring, event buffering, revoke
+         * cleanup. The tag itself is SSR'd above. */}
         <Ga4Boot />
         <script
           type="application/ld+json"

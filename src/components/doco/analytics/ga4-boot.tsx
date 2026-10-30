@@ -1,13 +1,14 @@
 "use client";
 
 /**
- * GA4 boot (P7-SEO Phase 6) — mounts once in the root layout and starts the
- * consent-gated analytics layer. Renders nothing.
+ * GA4 boot (P7-SEO) — mounts once in the root layout and starts the dynamic
+ * half of the analytics layer (consent-store wiring + event buffering; see
+ * src/lib/analytics/ga4.ts). The Google tag itself is SERVER-RENDERED in
+ * layout.tsx (standard Consent Mode v2 placement). Renders nothing.
  *
- * Measurement ID G-ZP89M3KQDB is wired as the default (overridable via
- * NEXT_PUBLIC_GA_ID; set it to "0" to disable analytics in a build). Even
- * when enabled, nothing loads until the visitor grants consent — with
- * consent denied this remains a no-op (no script, no network).
+ * With the measurement id unset (NEXT_PUBLIC_GA_ID=0) this is a complete
+ * no-op — and even when enabled, nothing is measured until the visitor
+ * grants consent (cookieless tag, denied by default).
  */
 
 import { useEffect } from "react";

@@ -10,15 +10,17 @@ import { useToast } from "@/hooks/use-toast";
 import { useMounted } from "@/hooks/use-mounted";
 import { useI18n } from "@/components/providers/locale-provider";
 import { createLocalSnapshot } from "@/lib/storage/local-snapshot";
+import { CONSENT_KEY } from "@/lib/analytics/ga4-id";
 
 /**
  * Cookie / consent banner (PRD §5.3): minimal bottom banner with
  * Accept all / Reject non-essential / Customize. Analytics default OFF.
- * The choice persists in localStorage; the footer "Privacy settings" link
- * re-opens the banner via the docopdf:open-consent event.
+ * The choice persists in localStorage (CONSENT_KEY — shared with the SSR'd
+ * GA boot script in layout.tsx and the GA4 glue in ga4.ts, see ga4-id.ts);
+ * the footer "Privacy settings" link re-opens the banner via the
+ * docopdf:open-consent event.
  */
 
-const CONSENT_KEY = "docopdf-consent";
 const CONSENT_EVENT = "docopdf:consent-change";
 const OPEN_EVENT = "docopdf:open-consent";
 

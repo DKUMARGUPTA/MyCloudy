@@ -1,24 +1,36 @@
 /**
- * GA4 analytics (P7-SEO Phase 6) — consent-gated, privacy-first.
+ * GA4 analytics (P7-SEO) — Google Consent Mode v2, consent-gated measurement.
  *
- * Design (master-plan rules):
- *  - ZERO network before consent: the gtag.js script is injected ONLY after
- *    the user accepts analytics in the cookie banner. Before that, only a
- *    local dataLayer shim exists (plain JS, no requests).
- *  - Google Consent Mode v2: analytics_storage / ad_storage / ad_user_data /
- *    ad_personalization all DEFAULT DENIED; flipped to granted on accept
- *    (and back to denied if consent is revoked later).
- *  - No PII ever: events carry only tool_slug / category / locale / mode and
- *    coarse buckets (size_bucket, duration_bucket, error_code) — never file
- *    names, file contents, extracted text or anything the user types.
- *  - Measurement ID: the production property G-ZP89M3KQDB is wired as the
- *    DEFAULT (owner-created, 2025-11). A GA id is a public identifier — it
- *    is visible in the HTML of every GA-enabled site — so it is safe in git.
- *    NEXT_PUBLIC_GA_ID still overrides it (set it in Vercel → Settings →
- *    Environment Variables to swap or kill the property without a redeploy).
- *    Set NEXT_PUBLIC_GA_ID=0 to explicitly disable analytics in a build.
- *  - No ad personalization, no Google signals — pure measurement.
+ * HOW THE TAG IS LOADED (2026-11 rework — the "tag not found" fix):
+ *  - The Google tag (consent-default inline + gtag.js + config inline) is
+ *    SERVER-RENDERED in src/app/layout.tsx, so it appears in the raw HTML of
+ *    every page — exactly the placement Google's installation wizard scans
+ *    for. The previous "inject the script only after consent" approach was
+ *    invisible to that scan (GA4 kept emailing "we haven't found a Google
+ *    tag"). This is Google's standard Consent Mode v2 pattern.
+ *  - PRIVACY IS UNCHANGED IN SUBSTANCE: the consent default is DENIED on all
+ *    four fields, so before opt-in the tag runs cookieless — no _ga cookies,
+ *    no measured hits (Google discards GA4 hits fired while analytics_storage
+ *    is denied). The ad_* fields stay denied FOREVER — we run no ads.
+ *  - Returning visitors who already granted consent are restored by a
+ *    synchronous inline script BEFORE gtag.js executes, so their first
+ *    page_view is measured with no race and no double-count.
+ *
+ * THIS MODULE handles the dynamic half:
+ *  - subscribing to the cookie-banner consent store;
+ *  - pushing consent updates when the visitor decides (or revokes later);
+ *  - buffering events that fire before the consent state is known, flushing
+ *    them on grant, discarding them on denial (see the track() docblock —
+ *    this is what saves the mount-time tool_view on direct tool landings);
+ *  - re-sending page_view when consent is granted mid-session (the
+ *    config-time one fired while denied and was discarded by Google);
+ *  - deleting GA cookies on revoke (consent hygiene — Google keeps the
+ *    cookies otherwise).
+ *
+ * Everything no-ops when GA_MEASUREMENT_ID is unset.
  */
+
+import { GA_MEASUREMENT_ID } from "@/lib/analytics/ga4-id";
 
 /* ----------------------------- gtag shim ----------------------------- */
 
@@ -49,90 +61,86 @@ interface ConsentShape {
  * on /tool/<id> from Google fires tool_view within the first effects —
  * without buffering, that event (the site's most valuable one) was silently
  * dropped. Events captured while consent is still "unknown" are buffered
- * locally (no network, no dataLayer) and flushed ONLY if consent resolves
- * to granted; a denial discards them.
+ * locally (no network exposure) and flushed ONLY if consent resolves to
+ * granted; a denial discards them.
  */
 type ConsentState = "unknown" | "granted" | "denied";
 let consentState: ConsentState = "unknown";
 const pendingEvents: { event: string; params: TrackParams }[] = [];
-let scriptLoaded = false;
-/* Production measurement ID (G-ZP89M3KQDB) unless overridden by env:
- * "0" disables analytics entirely; any other G-XXXX value wins. */
-const GA_ID =
-  process.env.NEXT_PUBLIC_GA_ID === undefined || process.env.NEXT_PUBLIC_GA_ID === ""
-    ? "G-ZP89M3KQDB"
-    : process.env.NEXT_PUBLIC_GA_ID === "0"
-      ? undefined
-      : process.env.NEXT_PUBLIC_GA_ID;
 
-function loadGtagScript(): void {
-  if (scriptLoaded || !GA_ID) return;
-  scriptLoaded = true;
-  const script = document.createElement("script");
-  script.async = true;
-  script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_ID}`;
-  document.head.appendChild(script);
-  gtag("js", new Date());
-  gtag("config", GA_ID, {
-    anonymize_ip: true,
-    send_page_view: true,
-  });
+const GA_ID = GA_MEASUREMENT_ID;
+
+function flushPending(): void {
+  for (const buffered of pendingEvents.splice(0)) {
+    gtag("event", buffered.event, buffered.params);
+  }
 }
 
-function applyConsent(granted: boolean): void {
-  consentState = granted ? "granted" : "denied";
-  const value = granted ? "granted" : "denied";
-  /* Consent Mode v2 — all four fields, always explicit. */
-  gtag("consent", "update", {
-    analytics_storage: value,
-    ad_storage: value,
-    ad_user_data: value,
-    ad_personalization: value,
-  });
-  if (granted) {
-    loadGtagScript();
-    /* Flush events buffered while consent was still being restored (they
-     * were never exposed to dataLayer, so a denial below discards them
-     * without any trace ever leaving the page). */
-    for (const buffered of pendingEvents.splice(0)) {
-      gtag("event", buffered.event, buffered.params);
-    }
-  } else {
-    pendingEvents.length = 0;
+/** Delete any _ga* cookies Google set (revoke hygiene — they are path=/). */
+function clearGaCookies(): void {
+  if (typeof document === "undefined") return;
+  for (const cookie of document.cookie.split(";")) {
+    const name = cookie.split("=")[0]?.trim() ?? "";
+    if (!/^_ga/.test(name)) continue;
+    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
   }
 }
 
 /**
- * Boot GA4: install the consent-default (all denied), wire the cookie-banner
- * consent store, and — when analytics was already granted on a previous
- * visit — load gtag.js immediately.
+ * Boot GA4: mirror the stored consent into the internal state and subscribe
+ * to live consent changes from the cookie banner.
  *
- * Call exactly once from <Ga4Boot /> (client). Safe to call when
- * NEXT_PUBLIC_GA_ID is unset — everything degrades to a no-op.
+ * The SSR'd inline scripts in layout.tsx have already (a) queued the consent
+ * default (all denied) and (b) restored a returning visitor's grant BEFORE
+ * gtag.js executed — so this function never needs to push a boot-time
+ * consent update; it only syncs `consentState` so track() routes correctly
+ * and flushes anything buffered during the async-import window.
+ *
+ * Call exactly once from <Ga4Boot /> (client). No-op when the measurement
+ * id is unset (e.g. NEXT_PUBLIC_GA_ID=0).
  */
 export async function initGa4(): Promise<void> {
   if (!GA_ID) return;
 
-  /* Default state — denied until the visitor opts in. */
-  gtag("consent", "default", {
-    analytics_storage: "denied",
-    ad_storage: "denied",
-    ad_user_data: "denied",
-    ad_personalization: "denied",
-    wait_for_update: 500,
-  });
-
-  /* Subscribe to the cookie-banner consent store (single owner of the
-   * consent storage contract — dynamic import keeps this module free of
-   * React component-graph side effects). */
   const consent = await import("@/components/doco/cookie-banner");
   const read = (): ConsentShape | null => consent.readConsent();
-  consent.subscribeToConsent(() => applyConsent(read()?.analytics === true));
 
-  /* Restore a previous grant (repeat visitor who already accepted). */
-  if (read()?.analytics === true) {
-    applyConsent(true);
+  const stored = read();
+  if (stored === null) {
+    /* Fresh visitor — banner decision pending: keep buffering. */
+    consentState = "unknown";
+  } else {
+    consentState = stored.analytics ? "granted" : "denied";
+    if (consentState === "granted") flushPending();
   }
+
+  /* Live changes: banner accept / reject, or a revoke from the footer
+   * "Privacy settings" link (same tab event) or another tab (storage). */
+  consent.subscribeToConsent(() => {
+    const wasGranted = consentState === "granted";
+    const granted = read()?.analytics === true;
+    consentState = granted ? "granted" : "denied";
+    /* Only analytics_storage ever flips — ad_* stay denied (no ads, ever). */
+    gtag("consent", "update", {
+      analytics_storage: granted ? "granted" : "denied",
+    });
+    if (granted) {
+      flushPending();
+      /* Re-send the page view ONLY on a real grant transition (not on a
+       * no-op re-save of an existing grant): the config-time page_view fired
+       * while denied and was discarded by Google, so this is what counts
+       * the accepted session's landing page. */
+      if (!wasGranted) {
+        gtag("event", "page_view", {
+          page_title: document.title,
+          page_location: window.location.href,
+        });
+      }
+    } else {
+      pendingEvents.length = 0;
+      clearGaCookies();
+    }
+  });
 }
 
 /* ------------------------------ events ------------------------------- */
@@ -160,7 +168,7 @@ export function track(event: string, params: TrackParams = {}): void {
   gtag("event", event, params);
 }
 
-/** Whether GA4 is live in this build (env id present) — for smokes/debug. */
+/** Whether GA4 is live in this build (id present) — for smokes/debug. */
 export function ga4Enabled(): boolean {
   return Boolean(GA_ID);
 }

@@ -6062,3 +6062,29 @@ tsc 0 · eslint 0
 GSC: submit sitemap.xml + request-indexing top-20 list · Bing: submit sitemap · GA4 admin: retention 14mo, GSC link, key events, custom dimensions (tool_slug/category/locale/mode).
 
 NEXT: GA4 event taxonomy round 2 (process_success / download_click / chain_next_tool + web-vitals) → Phase 5 technical SEO (headers, sw.js audit) → SMO kit (Phase 7) → P7-c i18n VLM battery.
+
+## P7-SEO R4 — GOOGLE TAG STANDARD INSTALL (2026-11-01, "tag not found" fix)
+
+**THE ROUND:** GA4 emailed the owner "We haven't found a Google tag on your website" — our consent-gated injection (script created only after banner accept) is invisible to GA4's HTML scan. Reworked to Google's standard Consent Mode v2 placement while keeping the privacy contract.
+
+### Shipped
+- **Google tag SERVER-RENDERED** (src/app/layout.tsx): consent-default inline (all 4 fields denied, wait_for_update 500 + synchronous restore of a returning visitor's grant from localStorage) → gtag.js `<script defer src>` → js+config inline (anonymize_ip, send_page_view). Raw HTML now contains the tag on EVERY page — exactly what the GA4 installation wizard scans for. **defer, not async**: React 19 hoists `<script async src>` into <head> (verified: order broke — src at byte 6703 vs consent-inline at 22524), while defer renders in place; defer executes after parse so all inline commands are queued before gtag.js processes them (order verified in HTML: consent 22435 < src 22786 < config 22952).
+- **ga4.ts reworked** (dynamic half): initGa4 now only syncs internal consent state (the SSR inline handles consent commands) + subscribes to banner changes. On grant TRANSITION: consent update (analytics_storage only — ad_* stay denied forever, we run no ads) + flush buffered events + **manual page_view re-send** (the config-time one fired while denied and is discarded by Google). On revoke/deny: update denied + drop buffer + **clearGaCookies()** (_ga* cookies deleted). No-op re-save of an existing grant does NOT duplicate page_view (wasGranted guard).
+- **src/lib/analytics/ga4-id.ts (NEW)**: shared isomorphic consts — GA_MEASUREMENT_ID (G-ZP89M3KQDB default, NEXT_PUBLIC_GA_ID override / "0" disable) + CONSENT_KEY ("docopdf-consent", single source of truth now imported by cookie-banner, layout inline script and ga4.ts).
+- **Privacy policy made TRUE** (en.json + hi.json + privacy-page.tsx): added "Anonymous analytics (opt-in)" row to What-we-collect (GA4, anonymized IP, no file names/content/typed text, withdraw anytime → cookies deleted); notCollected3 rewritten ("Ad networks and trackers — none, ever; until you opt in the analytics tag stays cookieless and measures nothing"); sharingBody2 now discloses Google Analytics as the sole third party (post-opt-in); retentionBody adds GA's 14-month cap; updated date bumped to November 2026.
+
+### E2E verified (local, clean restart)
+- Raw HTML: gtag src present, order consent-default < gtag.js < config ✓ (wizard-detectable)
+- Fresh visitor: gtag.js in DOM, **document.cookie EMPTY** (cookieless, denied) ✓
+- Accept: consent default → update granted → page_view (grant transition) ✓
+- No-op re-save: page_view count stays 1 (no duplicate) ✓
+- Revoke (footer Privacy settings → toggle off → save): update denied, events dropped, cookie cleanup ran ✓
+- Fresh + accept on /tool/merge-pdf: buffered tool_view flushed + page_view, correct params ✓
+- Hydration: 0 errors after clean restart (one Radix useId mismatch seen mid-compile was a fast-refresh artifact — known dev quirk, documented precedent)
+- Privacy page EN + HI render the new analytics row + updated claims; lang=hi ✓
+- KNOWN SANDBOX LIMIT: the sandbox browser cannot complete requests to googletagmanager.com (OS curl 200s fine) — gtag.js EXECUTION is not observable from here; dataLayer command sequences (the contract gtag.js processes) are all verified. Real-user verification = GA4 Realtime.
+
+### Gates
+tsc 0 · eslint 0
+
+NEXT: deploy + live HTML check → owner re-runs GA4 installation wizard (or it auto-detects) → GA4 event taxonomy round 2 → Phase 5 technical SEO → SMO kit.

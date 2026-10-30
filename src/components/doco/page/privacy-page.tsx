@@ -59,6 +59,10 @@ export function PrivacyPage() {
               value: t("privacy.collectUsageValue"),
             },
             {
+              label: t("privacy.collectAnalyticsLabel"),
+              value: t("privacy.collectAnalyticsValue"),
+            },
+            {
               label: t("privacy.collectContactLabel"),
               value: t("privacy.collectContactValue"),
             },
