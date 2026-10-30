@@ -39,7 +39,7 @@ export function CategoryView({
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 pb-16 pt-8 sm:pt-10">
-      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-sm">
+      <nav aria-label={t("common.a11yBreadcrumb")} className="flex items-center gap-1.5 text-sm">
         <a
           href={ROUTES.home}
           className="flex min-h-11 items-center gap-1 rounded-btn px-2 text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"

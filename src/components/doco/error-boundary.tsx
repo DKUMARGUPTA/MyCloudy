@@ -154,11 +154,11 @@ export class AppErrorBoundary extends Component<Props, State> {
                 cursor: "pointer",
               }}
             >
-              Copy report
+              Copy report / रिपोर्ट कॉपी करें
             </button>
           </div>
           <p style={{ fontSize: 12, color: "#94a3b8", margin: "14px 0 0" }}>
-            DocoPDF — free PDF tools. Files stay on your device.
+            DocoPDF — free PDF tools. Files stay on your device. · फ़ाइलें आपके डिवाइस पर ही रहती हैं।
           </p>
         </div>
       </div>

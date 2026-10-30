@@ -6,6 +6,9 @@
     "openMenu": "मेनू खोलें",
     "closeMenu": "मेनू बंद करें",
     "skipToContent": "कंटेंट पर जाएँ",
+    "a11yMobileCategories": "मोबाइल श्रेणियाँ",
+    "a11yBreadcrumb": "ब्रेडक्रंब",
+    "a11yMainNav": "मुख्य मेन्यू",
     "comingSoon": "जल्द आ रहा है",
     "back": "पीछे",
     "backToTools": "सभी टूल"
@@ -239,7 +242,7 @@
     "openHint": "खोलने के लिए ↵",
     "soonHint": "{phase} में",
     "routeHeading": "स्मार्ट रूट",
-    "routeSteps": "{count, plural, one {# कदम} other {# कदम}}"
+    "routeSteps": "{count, plural, =1 {1 कदम} other {# कदम}}"
   },
   "consent": {
     "title": "आपकी मर्ज़ी, आपका डेटा",
@@ -307,7 +310,7 @@
     "helpPrivacy": "सब कुछ इसी डिवाइस पर होता है। फ़ाइल कहीं अपलोड नहीं होती, और काम पूरा होते ही वर्किंग कॉपी मिट जाती है।",
     "optionsTitle": "विकल्प",
     "optionsButton": "विकल्प",
-    "summary": "{count} फ़ाइलें · ~{size}",
+    "summary": "{count, plural, =1 {1 फ़ाइल} other {# फ़ाइलें}} · ~{size}",
     "chainFrom": "{tool} से जुड़ा",
     "ctaArrow": "→",
     "howTitle": "यह कैसे काम करता है",
@@ -573,7 +576,7 @@
     "blanksFound": "{count} ख़ाली पेज मिले — वे सेपरेटर बनकर हटा दिए जाते हैं।",
     "blanksChipLabel": "ख़ाली पेज जो हटाए जाएँगे",
     "previewTitle": "प्रीव्यू",
-    "willCreate": "{count} फ़ाइलें बनेंगी",
+    "willCreate": "{count, plural, =1 {1 फ़ाइल बनेगी} other {# फ़ाइलें बनेंगी}}",
     "willCreateOne": "1 फ़ाइल बनेगी",
     "partBadge": "भाग {index}",
     "partPages": "{count} पेज",
@@ -5057,5 +5060,12 @@
     "contactTitle": "इन शर्तों के बारे में सवाल",
     "contactBody": "यहाँ कुछ अस्पष्ट या अनुचित लगा? बताइए — कानूनी-सी आवाज़ वाले जाल भी बग हैं, और हम बग ठीक करते हैं।",
     "contactLink": "संपर्क पेज खोलें"
+  },
+  "nf": {
+    "code": "404",
+    "heading": "यह पेज कहीं और निकल गया",
+    "desc": "शायद पते में ग़लती है, या पेज हट गया है। सभी 100 टूल वहीं हैं जहाँ आप उम्मीद करते हैं।",
+    "home": "होम पर वापस जाएँ",
+    "tools": "सभी टूल देखें"
   }
 }

@@ -3641,3 +3641,37 @@ Stage Summary:
 - Pinned insights: (1) Chrome 156 has no XSLT and no XML viewer — never ship XSL-styled XML as the only presentation; (2) content-negotiate on UA-bot-token + Accept q-values with double redundancy for Googlebot; (3) no s-maxage + Vary prevents edge-cache variant poisoning; (4) lint and the dev server cannot run simultaneously in this sandbox — run sequentially, relaunch daemon after.
 - Project state: 116 URLs / 100 live tools | lint 0 + tsc 0 + dev.log clean | local E2E green. Next: push + Vercel deploy + live smoke on docopdf.com.
 - SHIPPED + LIVE-VERIFIED: 5a1d43f pushed → Vercel dpl_9b4o3EZsT834nbjnPd5gUB6D9VQF READY. Production smoke: Googlebot UA → valid XML (116 URLs / 348 alternates); browser Accept → branded HTML (116 rows, stats 116/100/10/6, search "jpg" → 4 of 116); ?raw=1 → XML; prod home clean; VLM live verdict: "high-quality dashboard rather than a raw XML file" (dark mode). Screenshot: public/qa/sitemap-live-prod.png.
+
+---
+Task ID: R19-AUDIT + PHASE-1-FIXES
+Agent: orchestrator (main session)
+Task: User asked "ab aage kya karna chahie". Prior queued request was a full bug/error audit with phase-wise fixing. Executed the audit (2 parallel Explore subagents + browser E2E + production sweep) and shipped Phase 1 (quick user-facing wins).
+
+AUDIT RESULTS (full findings preserved here as the plan of record):
+- Gates baseline: tsc 0, lint 0, dev.log clean; browser E2E home//hi//tools/category/3 tools/sitemap/mobile-390 = 0 console errors; production key URLs all 200.
+- P1 SECURITY (mini-services + gateway, Phase 2): (1) SSRF — convert service webpage2pdf takes any URL to headless Chrome with NO private-IP guard (fetch-page route HAS the guard; convert bypasses it; endpoint is public via XTransformPort in the JS bundle). (2) Both mini-services unauth + unrate-limited public endpoints — CPU/RAM exhaustion; convert's 30MB cap checks AFTER full formData buffering; request-sign persists 25MB × 7 days per POST (disk exhaustion). (3) Caddy ?XTransformPort proxies ANY localhost port — needs allow-list {3031, 3032}.
+- P2 ROBUSTNESS (Phase 3): (4) getSessionUser/getAdminUser called OUTSIDE try/catch in 13 route files / 15 handlers → DB hiccup = default HTML 500 instead of JSON contract (auth/password, auth/delete, bug-reports/mine, admin/* ×10). (5) request-sign handleSign read-check-write race → two concurrent signers silently overwrite (last-write-wins, both get success).
+- P2 UX (Phase 1 — FIXED THIS ROUND, see below).
+- P3 HYGIENE (Phase 3-4): convert 500s leak String(err) detail; unbounded child stdout accumulation; dead landscape branch (both arms identical); losing SDK calls not aborted (withDeadline races but model call continues); request-sign orphan envelope dirs never swept + O(n) folder scan per call; per-instance in-memory rate limiters (accepted, documented); dead PWA stack (PwaProvider/PwaStatus/sw-register never mounted, 14 pwa.* keys absent, sw.js+manifest+offline.html served but unregistered); src/components/sidocs/ legacy dir; ~520 orphan keys in tools/*/i18n.json sidecars; rsign.* recipient-view + legacy panel.tsx files unimported.
+- i18n audit: EN/HI dictionaries in PERFECT parity (4,793 keys each, 0 missing); Hindi quality high. Real findings: plural engine supports only =N branches but palette.routeSteps used `one {…}` syntax → rendered RAW string in UI; "1 files"/"1 tools" singular gaps (tool.summary shows on every single-file tool); 404 = Next.js default EN-only; 4 hardcoded EN aria-labels (incl. Radix NavigationMenu's built-in aria-label="Main"); offline.html carried stale "Sidocs" branding + blue/orange old-brand colors (LIVE in production); FAQ JSON-LD only on EN home; SSR'd /hi page links are EN-prefixed (no-JS visitors + middle-click get EN paths; hreflang compensates for crawlers).
+
+PHASE PLAN (of record):
+- Phase 1 (DONE this round): plural fixes, bilingual 404, a11y labels, offline.html rebrand, /api scaffold delete.
+- Phase 2 (next): security hardening — Caddy allow-list, convert SSRF guard, mini-service rate limits + streaming size pre-check, generic 500 detail, stdout cap.
+- Phase 3: robustness — move session resolution inside try blocks (15 handlers), double-sign lock, SDK abort, envelope sweep + index.
+- Phase 4: dead-code purge — PWA decision (likely remove unregistered sw.js/manifest/offline or properly wire), sidocs/ dir, unimported panel.tsx + recipient-view, sidecar reconciliation.
+- Phase 5: SEO/i18n polish — FAQ JSON-LD on /hi home, SSR locale-prefixed links, GA4 event taxonomy round 2.
+
+WORK LOG (Phase 1 implementation):
+- en.json: 10 strings converted to =1-plural form (routeSteps, resultsCount, tool.summary, split.blanksFound, split.willCreate, pdftxt.previewWords, pick.markedCount, rmeta.afterLine, fill.requiredLeft, stamp.markedCount). hi.json: routeSteps (=1 syntax fix — was rendering raw), tool.summary, split.willCreate. Verified in-browser: palette "docx to png" route chip now renders "2 steps" (was raw {count, plural, one {# step}…}).
+- NEW src/app/not-found.tsx — branded bilingual 404 (teal gradient lockup, 88px gradient 404, Back to home / Browse all tools). Renders inside root layout → follows stored locale. Covers ALL unmatched paths incl. /hi/* (catch-all notFound()) and unknown tool/category ids. Browser-verified EN + HI. Screenshot: public/qa/r19-404-en.png.
+- a11y: localized 4 nav aria-labels — common.a11yMobileCategories (site-header mobile sheet), common.a11yBreadcrumb (category-view + page-shell), common.a11yMainNav (mega-menu — overrides Radix NavigationMenu's hardcoded aria-label="Main", radix applies default BEFORE props so prop wins; verified DOM: ["मुख्य मेन्यू","कंपनी","टूल्स"] in HI mode).
+- offline.html: Sidocs→DocoPDF (title/aria/body), blue #2563eb→teal #0f766e/#0d9488 buttons, logo gradient blue/orange→teal, PDF text teal. Live-check: 0 "Sidocs" occurrences locally.
+- error-boundary.tsx: "Copy report / रिपोर्ट कॉपी करें" + bilingual tagline.
+- DELETED src/app/api/route.ts ("Hello, world!" scaffold). Stale .next/dev/types/validator.ts reference cleared via daemon restart + types regen.
+
+QA: tsc 0 (after regen), lint 0 (benign BABEL note on 500KB stamp-fonts data file only), JSON valid both dicts, browser E2E: home + /hi + /tools/organize + /tool/pdf-to-jpg + 404 EN/HI + palette plural + aria-labels = 0 console errors. Dev server reaped twice during heavy tsc/lint runs (known pattern) — dev-daemon.py relaunch both times.
+
+Stage Summary:
+- Full audit delivered (P0 none; 3×P1 security, 5×P2, 10+×P3) + Phase 1 shipped: plural engine misuse fixed (user-visible raw-string bug gone), branded bilingual 404, 4 a11y labels localized (incl. Radix internal), offline page rebranded, scaffold endpoint removed. Phase 2 (security) is next.
+- Project state: 116 URLs / 100 live tools | tsc 0 + lint 0 | local E2E green. Next: push + Vercel deploy + production live-verify (404 on prod + sitemap regression + tofu regression).

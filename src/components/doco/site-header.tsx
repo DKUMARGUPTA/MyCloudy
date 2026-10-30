@@ -138,7 +138,7 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
           </SheetHeader>
 
           <nav
-            aria-label="Mobile categories"
+            aria-label={t("common.a11yMobileCategories")}
             className="flex flex-col gap-1 p-4"
           >
             <a

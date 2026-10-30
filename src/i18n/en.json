@@ -6,6 +6,9 @@
     "openMenu": "Open menu",
     "closeMenu": "Close menu",
     "skipToContent": "Skip to content",
+    "a11yMobileCategories": "Mobile categories",
+    "a11yBreadcrumb": "Breadcrumb",
+    "a11yMainNav": "Main menu",
     "comingSoon": "Coming soon",
     "back": "Back",
     "backToTools": "All tools"
@@ -194,7 +197,7 @@
     "inputOffice": "Office",
     "inputText": "Text",
     "inputUrl": "URL",
-    "resultsCount": "{count} tools",
+    "resultsCount": "{count, plural, =1 {1 tool} other {# tools}}",
     "resultsFor": "Results for “{query}”",
     "noResultsTitle": "No tool matched “{query}”",
     "noResultsDesc": "Try a different word, or tell us what you need — we build the most-requested tools first.",
@@ -239,7 +242,7 @@
     "openHint": "press ↵ to open",
     "soonHint": "coming {phase}",
     "routeHeading": "Smart route",
-    "routeSteps": "{count, plural, one {# step} other {# steps}}"
+    "routeSteps": "{count, plural, =1 {1 step} other {# steps}}"
   },
   "consent": {
     "title": "Your choice, your data",
@@ -303,7 +306,7 @@
     "helpPrivacy": "Everything happens on this device. The file is never uploaded, and working copies are deleted as soon as the tool finishes.",
     "optionsTitle": "Options",
     "optionsButton": "Options",
-    "summary": "{count} files · ~{size}",
+    "summary": "{count, plural, =1 {1 file} other {# files}} · ~{size}",
     "chainFrom": "Chained from {tool}",
     "ctaArrow": "→",
     "howTitle": "How it works",
@@ -570,10 +573,10 @@
     "blanksDetecting": "Detecting blank pages…",
     "blanksDetectingPct": "Detecting blank pages… {percent}%",
     "blanksNone": "No blank pages found in this PDF.",
-    "blanksFound": "{count} blank pages found — they act as separators and are removed.",
+    "blanksFound": "{count, plural, =1 {1 blank page found} other {# blank pages found}} — they act as separators and are removed.",
     "blanksChipLabel": "Blank pages that will be removed",
     "previewTitle": "Preview",
-    "willCreate": "{count} files will be created",
+    "willCreate": "{count, plural, =1 {1 file will be created} other {# files will be created}}",
     "willCreateOne": "1 file will be created",
     "partBadge": "Part {index}",
     "partPages": "{count} pages",
@@ -701,7 +704,7 @@
   },
   "pdftxt": {
     "previewTitle": "Page 1 text preview",
-    "previewWords": "{count} words on page 1",
+    "previewWords": "{count, plural, =1 {1 word on page 1} other {# words on page 1}}",
     "previewLoading": "Reading the first page…",
     "previewFailed": "Couldn't read this PDF's text for the preview — run the extraction and any problem will be reported honestly.",
     "previewTruncated": "First 240 characters shown",
@@ -776,7 +779,7 @@
     "nextPage": "Next page",
     "stripLabel": "Pick a page to preview",
     "stripPageLabel": "Page {page}",
-    "markedCount": "{count} of {pages} pages marked",
+    "markedCount": "{count} of {pages, plural, =1 {1 page} other {# pages}} marked",
     "ctaNoText": "Type the watermark text first",
     "ctaNoLogo": "Choose a logo image first",
     "zoomLabel": "Preview zoom",
@@ -921,7 +924,7 @@
     "willRemove": "will be removed",
     "kept": "kept",
     "xmpRow": "XMP metadata block",
-    "afterLine": "{count} items will be removed",
+    "afterLine": "{count, plural, =1 {1 item will be removed} other {# items will be removed}}",
     "untouched": "Pages, text and images stay exactly as they are.",
     "empty": "This PDF is already clean",
     "emptyHint": "No document information, custom fields or XMP data found — nothing to remove.",
@@ -962,7 +965,7 @@
     "pAddress": "Address",
     "fieldsTitle": "Form fields",
     "filledCount": "{filled} of {total} filled",
-    "requiredLeft": "{count} required fields left",
+    "requiredLeft": "{count, plural, =1 {1 required field left} other {# required fields left}}",
     "allSet": "Everything required is filled",
     "required": "Required",
     "readonly": "Read-only",
@@ -1532,7 +1535,7 @@
     "previewTitle": "Live preview — base page {page} with the overlay",
     "previewNote": "The preview uses the exact placement math the run draws. Overlay pages render with their real transparency.",
     "previewOverlayFailed": "The base page is shown, but this overlay page could not be previewed — the run will still try it.",
-    "markedCount": "{count} of {pages} pages stamped",
+    "markedCount": "{count} of {pages, plural, =1 {1 page} other {# pages}} stamped",
     "behindChip": "Behind content",
     "frontChip": "Over content",
     "pageUsed": "Overlay page {page}",
@@ -5057,5 +5060,12 @@
     "contactTitle": "Questions about these terms",
     "contactBody": "Anything unclear or unfair here? Tell us — legal-sounding traps are bugs too, and we fix bugs.",
     "contactLink": "Open the contact page"
+  },
+  "nf": {
+    "code": "404",
+    "heading": "This page took a wrong turn",
+    "desc": "The address may be mistyped, or the page may have moved. All 100 tools are right where you expect them.",
+    "home": "Back to home",
+    "tools": "Browse all tools"
   }
 }

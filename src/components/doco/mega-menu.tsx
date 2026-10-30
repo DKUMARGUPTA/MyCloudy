@@ -69,7 +69,7 @@ export function MegaMenu() {
   };
 
   return (
-    <NavigationMenu viewport={false}>
+    <NavigationMenu viewport={false} aria-label={t("common.a11yMainNav")}>
       <NavigationMenuList>
         <NavigationMenuItem>
           <NavigationMenuTrigger className="rounded-btn px-3">

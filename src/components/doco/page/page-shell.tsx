@@ -40,7 +40,7 @@ export function PageShell({
         wide ? "max-w-6xl" : "max-w-3xl"
       )}
     >
-      <nav aria-label="breadcrumb" className="mb-6">
+      <nav aria-label={t("common.a11yBreadcrumb")} className="mb-6">
         <a
           href={ROUTES.home}
           className="inline-flex min-h-11 items-center gap-1.5 rounded-btn text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
