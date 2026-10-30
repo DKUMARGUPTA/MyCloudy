@@ -34,7 +34,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useI18n } from "@/components/providers/locale-provider";
 import { ROUTES, navigateToHash, useLocalizedRoutes } from "@/hooks/use-hash-route";
 import {
-  AI_DEPENDENT_TOOLS,
   getCategory,
   getTool,
   toolsByCategory,
@@ -487,64 +486,8 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
               <Badge variant="outline" className="rounded-chip">
                 {t("tool.freeBadge")}
               </Badge>
-              {tool.aiDependent ? (
-                <Badge
-                  variant="outline"
-                  className="rounded-chip border-cat-invoices/50 bg-cat-invoices/10 text-cat-invoices"
-                >
-                  <Sparkles className="size-3" aria-hidden="true" />
-                  {t("tools.aiBadge")}
-                </Badge>
-              ) : null}
             </div>
           </header>
-
-          {tool.aiDependent ? (
-            <aside
-              role="note"
-              aria-label={t("tools.aiWarningTitle")}
-              className={cn(
-                "flex items-start gap-3 rounded-card border border-cat-invoices/40",
-                "bg-cat-invoices/10 p-4"
-              )}
-            >
-              <TriangleAlert
-                className="mt-0.5 size-5 shrink-0 text-cat-invoices"
-                aria-hidden="true"
-              />
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-foreground">
-                  {t("tools.aiWarningTitle")}
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground sm:text-sm">
-                  {t("tools.aiWarningBody")}
-                </p>
-                <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
-                  <span className="font-medium text-foreground">
-                    {t("tools.aiListLabel")}:
-                  </span>
-                  {AI_DEPENDENT_TOOLS.map((aiTool) =>
-                    aiTool.id === tool.id ? (
-                      <span
-                        key={aiTool.id}
-                        className="rounded-chip border border-cat-invoices/50 bg-cat-invoices/15 px-1.5 py-0.5 font-medium text-cat-invoices"
-                      >
-                        {aiTool.name[locale]}
-                      </span>
-                    ) : (
-                      <a
-                        key={aiTool.id}
-                        href={routes.tool(aiTool.id)}
-                        className="rounded-chip border border-border bg-card px-1.5 py-0.5 text-muted-foreground outline-none transition-colors hover:border-cat-invoices/50 hover:text-cat-invoices focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                      >
-                        {aiTool.name[locale]}
-                      </a>
-                    )
-                  )}
-                </div>
-              </div>
-            </aside>
-          ) : null}
 
           {noFile && WorkspaceSurface ? (
             <div className="pt-2">

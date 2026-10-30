@@ -6179,3 +6179,28 @@ tsc 0 · eslint 0 · dev.log clean (all 200s).
 - **VLM visual verification**: EN banner+chip+list confirmed, no layout breakage; mobile wrap confirmed; Hindi no tofu/broken glyphs (VLM's Devanagari OCR misread of "निर्माणाधीन" overruled by exact browser DOM snapshot).
 
 NEXT: push → Vercel READY → prod spot-check banner on docopdf.com/tool/chat-with-pdf. Then P7-c i18n VLM battery (08-PLAN).
+
+## R23 — AI FEATURES DEFERRED (2025-10-30, owner order: "ye wala featurs abhi nahi dena hai iska future plan karenge")
+
+**THE ROUND:** Owner ne R22 delivery ke baad order diya: AI wale features abhi site par nahi dene — future plan banana hai. Interpretation + action: R22 ka warning UI bhi moot ho jata hai kyunki AI tools khud hi defer ho rahe hain (prod pe AI backend configured nahi hai — R21 — to tools waise bhi sirf honest 503 error dete; ab clean "coming soon" experience hai). Combined action = dono readings cover: AI tools OFF + warning UI removed + future plan documented.
+
+### Shipped
+- **Registry (source of truth)**: chat-with-pdf / summarize-pdf / translate-pdf → `enabled: false` + `phase: "P3"` (Soon badge + "Roadmap: Phase 3" coming-toast + palette "coming P3" hint — designed coming-soon UX). `aiDependent: true` flags RETAINED + `AI_DEPENDENT_TOOLS` / `isAiDependent` exports retained (future re-enable ke liye metadata). liveToolCount/enabledToolCount ab enabled-filter (97) — About page "97 of 100 live" split pehle se {live}/{total} pattern mein tha, ab honest.
+- **R22 warning UI REMOVED**: tool-shell banner + header chip (AI_DEPENDENT_TOOLS import bhi gaya), tool-card chip, search-palette chip + Sparkles imports (tool-shell ke Sparkles/TriangleAlert pre-existing uses barkarar — line 584/775).
+- **i18n**: 4 keys (aiBadge/aiWarningTitle/aiWarningBody/aiListLabel) en+hi se removed — parity 4805 = 4805 verified.
+- **Gating (already-built, verified working)**: SSR /tool/<id> → notFound (ENABLED_TOOL_IDS filter) → branded bilingual 404; client hash-route → ToolView EmptyState ("tool not found" + Browse tools CTA); sitemap auto-drops 3 URLs (enabled filter); ToolCard toast on click.
+- **Docs (same commit)**: 08-PLAN §Deferred — full re-enable plan (5 steps: Vercel env keys → /api/summarize prod verify → enabled:true flip → sitemap auto-return → GSC resubmit; warning UI git 049e7c6 se restore optional). 10-FEATURES — view category row + R23 deferral block (kya retained hai, kya gaya). CONTEXT-MEMORY — R23 warning line + counts refresh.
+
+### Gates
+tsc 0 · eslint 0 · i18n parity 4805=4805.
+
+### E2E (agent-browser + curl)
+- SSR: /tool/chat-with-pdf, /tool/summarize-pdf, /tool/translate-pdf → 404 branded page (curl status + snapshot); /hi/tool/summarize-pdf → 404.
+- Hash-route #/tool/chat-with-pdf → EmptyState (not broken page).
+- Category #/tools/view → Summarize/Chat cards "Soon" dashed badge, koi AI chip nahi.
+- Palette "summarize" → "coming P3" hint rows.
+- Sitemap (curl): chat-with-pdf/summarize-pdf/translate-pdf URLs GAYE; total URLs 116→113.
+- REGRESSION /tool/merge-pdf → 200, normal landing, no banner; home 200 + console clean (fresh session).
+- Prod spot-check after push: docopdf.com 3 URLs → 404, merge 200, home 200.
+
+NEXT: P7-c i18n VLM battery (08-PLAN priority list unchanged — AI deferral usse alag track hai). Cron guard updated: AI tools DELIBERATELY disabled — kabhi auto re-enable mat karna.

@@ -10,7 +10,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Route as RouteIcon, Sparkles } from "lucide-react";
+import { Route as RouteIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useI18n } from "@/components/providers/locale-provider";
 import { searchTools } from "@/lib/search/fuzzy";
@@ -146,17 +146,7 @@ export function SearchPalette({
         <span className="min-w-0 truncate">{tool.name[locale]}</span>
         <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
           {tool.enabled ? (
-            <>
-              {tool.aiDependent ? (
-                <span
-                  className="hidden items-center gap-1 rounded-chip border border-cat-invoices/50 bg-cat-invoices/10 px-1.5 py-0.5 text-cat-invoices sm:inline-flex"
-                >
-                  <Sparkles className="size-3" aria-hidden="true" />
-                  {t("tools.aiBadge")}
-                </span>
-              ) : null}
-              <span className="hidden sm:inline">{t("palette.openHint")}</span>
-            </>
+            <span className="hidden sm:inline">{t("palette.openHint")}</span>
           ) : (
             <span>{t("palette.soonHint", { phase: tool.phase })}</span>
           )}

@@ -3,10 +3,10 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > **⚠️ GOVERNANCE (2025-10-30 se BINDING):** har round pehle `AGENTS.md` + `docs/rules/INDEX.md` padho — 16 rule docs (PRD/Design/Architecture/Folders/Relations/API/Agent/Plan/Steps/Features/Auth/MCP/Integration/Testing/Debugging) ab mandatory hain, contract change = rules doc update SAME commit mein.
 > **⚠️ R21 (2025-10-30):** AI routes (chat/summarize/translate) ab `src/lib/ai/zai-client.ts` adapter use karte hain — SDK import routes me BANNED. Prod pe AI tab tak OFF hai jab tak owner Vercel pe `AI_BASE_URL`+`AI_API_KEY`+`AI_MODEL` set nahi karta (koi bhi OpenAI-compatible provider); tab tak honest `aiNotConfigured` 503. Sandbox file-fallback se sab local golden paths green.
-> **⚠️ R22 (2025-10-30):** 3 AI-dependent tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) ab registry me `aiDependent: true` hain (`AI_DEPENDENT_TOOLS` export). Unke tool pages pe amber "under development" warning banner + AI list, cards/palette pe amber chip — jab AI backend prod-stable ho jaye tab flag/banner hata dena (10-FEATURES me removal condition documented).
+> **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R22 — AI UNDER-DEVELOPMENT WARNING (2025-10-30)** — AI-dependency audit (3 tools), registry `aiDependent` flag + `AI_DEPENDENT_TOOLS`, amber warning banner (EN+HI) + AI-tools list links on tool pages, chips on cards + search palette, i18n 4 keys ×2 parity, 10-FEATURES doc updated. Gates: tsc 0, eslint 0; E2E EN/HI/mobile + merge-pdf regression + VLM visual — all green.
+> **Updated:** **R23 — AI FEATURES DEFERRED (2025-10-30)** — owner order "abhi nahi dena, future plan": 3 AI tools enabled:false + phase P3 (Soon badge UX), R22 warning UI removed, i18n 4 keys ×2 removed (4805=4805), sitemap 116→113 URLs, live count 97/100, re-enable plan 08-PLAN §Deferred. Gates: tsc 0, eslint 0; E2E 404s + Soon cards + merge regression — green.
 
 ---
 
@@ -14,8 +14,8 @@
 
 | Metric | Value |
 |---|---|
-| Registry | **100 tools — SAB LIVE ✅** (verified brace-aware count; e-invoice family included) |
-| **LIVE tools** | **100** ✅ (registry `enabled: true`, 0 disabled) |
+| Registry | **100 tools registered — 97 LIVE + 3 AI DEFERRED** (R23: chat-with-pdf/summarize-pdf/translate-pdf enabled:false, phase P3; re-enable plan 08-PLAN §Deferred) |
+| **LIVE tools** | **97** (3 AI deferred — R23 owner decision) |
 | Own PDF engine (P6) | **P6-a..z + P6-v-b + P6-END — MIGRATION COMPLETE ✅** — ALL 60 tool families pdf-lib-free, **0 runtime importers** (pdf-lib = devDependency only: smoke fixtures + oracles) |
 | Master plan | **MASTER-PLAN-1** worklog mein recorded (P6-t..z → P7 → LAUNCH-OPS → P10 → P11) + discipline contract (worklog+memory+push+Vercel per phase; battery on EXACT commit tree) |
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |
@@ -25,7 +25,7 @@
 | GitHub | `DKUMARGUPTA/MyCloudy` — main fully pushed + 26 tags; zero unpushed |
 | Quality gates | tsc **0** errors · eslint 0 · battery **110/110 ALL PASS** (P7-a a11y-names + P7-b magic-bytes added; 108 tool smokes + 2 P7 gates) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी — **4809 = 4809** flat-leaf keys parity (R22: +4 AI-warning keys ×2) |
+| i18n | English + हिंदी — **4805 = 4805** flat-leaf keys parity (R23: −4 AI-warning keys ×2) |
 | Mini-services | convert (port 3031), request-sign (3032) — double-fork daemonizer se start |
 | Tokens | ⚠️ **WIPED 2025-10-30 05:33** (`.env.credentials` + `/home/z/.tokens/` dono gaye — sandbox artifact; recovery impossible, values kabhi print nahi hue). **Push ke liye user se fresh PAT maango.** Jab mile: TURANT push ritual + tag push — disk files pe durability mat maano |
 

@@ -34,6 +34,18 @@ Update this file whenever a phase lands.
 
 ## ⏸ Deferred (owner decisions pending)
 
+- **AI features — chat/summarize/translate tools (owner order R23,
+  2025-10-30: "ye wala features abhi nahi dena hai, future plan karenge").**
+  The 3 AI tools are `enabled: false` (phase P3) + R22 warning UI removed;
+  API routes retained (honest 503 `aiNotConfigured`), registry keeps
+  `aiDependent` flags + `AI_DEPENDENT_TOOLS` for the re-enable round.
+  **Re-enable plan (future):** (1) owner sets `AI_BASE_URL`+`AI_API_KEY`+
+  `AI_MODEL` on Vercel (any OpenAI-compatible provider, see
+  13-INTEGRATIONS §AI provider); (2) verify `/api/summarize` answers on
+  prod; (3) flip `enabled: true` on the 3 tools (keep `aiDependent` so the
+  warning UI can be restored from commit 049e7c6 while stabilising);
+  (4) sitemap/SSR pages come back automatically; (5) re-submit sitemap in
+  GSC (3 URLs dropped out when deferred).
 - docopdf.com final-domain attach steps beyond current DNS (done), HSTS
   preload submission, Vercel SSO/protection review.
 - Legal/pricing page copy sign-off (needs lawyer review per PRD).

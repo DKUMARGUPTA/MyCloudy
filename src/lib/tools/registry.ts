@@ -156,10 +156,11 @@ export interface ToolDef {
   pro: boolean;
   /**
    * AI-dependent tool (R22): the run pipeline calls a server AI route
-   * (/api/chat | /api/summarize | /api/translate) whose backend model is
-   * still being tuned. Such tools render an honest "under development"
-   * warning banner (tool page) and an amber chip (cards) so users know
-   * availability/quality may vary while the AI service is stabilised.
+   * (/api/chat | /api/summarize | /api/translate) whose backend model
+   * needs a configured provider. R23 (owner decision): these tools are
+   * DEFERRED — enabled:false, phase P3 — until the AI backend goes live
+   * in a future phase. The flag is kept so the future re-enable round
+   * can restore the warning UI (banner + chips) while stabilising.
    */
   aiDependent?: boolean;
 }
@@ -1305,11 +1306,11 @@ export const ALL_TOOLS: ToolDef[] = [
     id: "chat-with-pdf",
     category: "view",
     mode: "D",
-    phase: "P1",
+    phase: "P3",
     icon: Bot,
     popularity: 70,
     accepts: "pdf",
-    enabled: true,
+    enabled: false,
     aiDependent: true,
     name: { en: "Chat with PDF", hi: "PDF से बात करें" },
     description: {
@@ -1325,11 +1326,11 @@ export const ALL_TOOLS: ToolDef[] = [
     id: "summarize-pdf",
     category: "view",
     mode: "D",
-    phase: "P1",
+    phase: "P3",
     icon: AlignLeft,
     popularity: 74,
     accepts: "pdf",
-    enabled: true,
+    enabled: false,
     aiDependent: true,
     name: { en: "Summarize PDF", hi: "PDF सारांश" },
     description: {
@@ -1869,8 +1870,8 @@ export const ALL_TOOLS: ToolDef[] = [
     id: "translate-pdf",
     category: "convert-from",
     mode: "D",
-    enabled: true,
-    phase: "P1",
+    enabled: false,
+    phase: "P3",
     icon: Languages,
     popularity: 72,
     accepts: "pdf",
@@ -2077,18 +2078,21 @@ export const ALL_TOOLS: ToolDef[] = [
 export const totalToolCount = ALL_TOOLS.length;
 
 /**
- * Tools whose implementation ships in this build (worker present).
- * Used by the About page ("X tools are live") — same honesty rule as
- * the announcement banner: count what actually runs, not the roadmap.
+ * Tools whose implementation ships and is offered in this build.
+ * Used by the About page ("X of Y tools are live") — same honesty rule
+ * as the announcement banner: count what actually runs, not the roadmap.
+ * R23: 3 AI tools deferred → 97 live of 100 registered.
  */
-export const liveToolCount = ALL_TOOLS.length;
+export const liveToolCount = ALL_TOOLS.filter((tool) => tool.enabled).length;
 
 /**
- * Tools visible to users after admin overrides are applied. Equals
- * totalToolCount until /api/tools/status publishes overrides that
- * disable a tool; the client merges overrides over this registry.
+ * Registry-level count of tools visible without admin overrides
+ * (R23: 97; /api/tools/status overrides can still disable more on
+ * the client).
  */
-export const enabledToolCount = ALL_TOOLS.length;
+export const enabledToolCount = ALL_TOOLS.filter(
+  (tool) => tool.enabled,
+).length;
 
 const toolIndex = new Map(ALL_TOOLS.map((tool) => [tool.id, tool]));
 
@@ -2109,11 +2113,12 @@ export function toolsByCategory(id: ToolCategoryId): ToolDef[] {
 }
 
 /**
- * R22 — the definitive list of AI-dependent tools. Each of these POSTs a
- * bounded text excerpt to a server AI route (/api/chat, /api/summarize or
- * /api/translate) — the only tools in the toolbox that need a model
- * backend. While that backend is being stabilised they render the honest
- * "under development" warning (tool page banner + card chip).
+ * R23 (owner decision) — the definitive list of AI-dependent tools. Each
+ * of these POSTs a bounded text excerpt to a server AI route (/api/chat,
+ * /api/summarize or /api/translate). DEFERRED: all three are currently
+ * enabled:false (phase P3, future plan) — the R22 warning UI was removed
+ * with the deferral. When the AI provider is configured and the tools are
+ * re-enabled, restore the warning UI from git history (commit 049e7c6).
  *
  * Keep in sync with src/app/api/{chat,summarize,translate}/route.ts.
  */

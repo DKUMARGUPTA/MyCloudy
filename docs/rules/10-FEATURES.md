@@ -15,22 +15,20 @@ Single source of truth for "what exists". Registry: `src/lib/tools/registry.ts`
 | optimize | compress, to-size, resize-kb, web-optimize, pdf-to-pdfa |
 | create | create-pdf, resume, card, collage, invoice (visual), electronic-invoice (UBL/CII + Factur-X attach), fillable forms, passport-photo, qr, photo-collage |
 | invoices | xml-invoice→pdf, validate e-invoice, pdf→e-invoice, create/extract family |
-| view | view, outline, metadata, viewer-preferences, search, scan (+OCR en/hi), translate (13 langs incl. Arabic shaper), summarize, chat-with-pdf |
+| view | view, outline, metadata, viewer-preferences, search, scan (+OCR en/hi) — translate/summarize/chat-with-pdf DEFERRED (R23) |
 
 Families flagged `ai: true` (chat/summarize/translate) call `/api/*` →
 LLM skill backend-only; files stay device-side, only extracted text goes up.
 
-**R22 — AI under-development warning (user-visible honesty):** the three
-AI-dependent tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) are
-marked `aiDependent: true` in the registry (see `AI_DEPENDENT_TOOLS`
-export). While the model backend is being stabilised they render:
-- amber "AI · Under development" chip on the tool-page header + tool cards
-  (All-Tools, category views) + search-palette rows;
-- an amber warning banner (`role=note`) on the tool landing page — bilingual
-  (i18n keys `tools.aiBadge` / `aiWarningTitle` / `aiWarningBody` /
-  `aiListLabel`) — that also lists ALL AI tools in development with links
-  (current tool highlighted).
-Remove the flag (or the banner block) once the AI backend is production-stable.
+**R23 — AI features DEFERRED (owner decision, 2025-10-30: "abhi nahi dena,
+future plan")**: the three AI-dependent tools (`chat-with-pdf`,
+`summarize-pdf`, `translate-pdf`) are `enabled: false` (phase P3) — NOT
+offered on the site until the AI backend goes live in a future phase.
+The R22 warning UI (banner + chips) was removed with the deferral.
+Retained for the future re-enable: registry `aiDependent: true` flags +
+`AI_DEPENDENT_TOOLS` export, API routes (honest 503 `aiNotConfigured`),
+full tool implementations. Sitemap auto-drops the 3 URLs; live count =
+97/100 (About page shows the split). Re-enable plan: 08-PLAN §Deferred.
 
 ## Platform features (beyond tools)
 
