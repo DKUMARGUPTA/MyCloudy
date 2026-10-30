@@ -1,14 +1,11 @@
 import {
-  AFRelationship,
-  PDFArray,
-  PDFDict,
-  PDFDocument,
-  PDFHexString,
-  PDFName,
-  PDFRawStream,
-  PDFString,
-} from "pdf-lib";
-import type { PDFRef } from "pdf-lib";
+  catalogDict,
+  listPages,
+  parsePdf,
+  resolveTrailerRef,
+  PdfError,
+  type PdfObj,
+} from "@/lib/own/pdf";
 
 import {
   type WorkerRunRequest,
@@ -21,6 +18,7 @@ import {
   normalizeLevel,
   validateCiiShape,
 } from "./model";
+import { attachFacturx } from "./facturx-attach";
 import {
   FACTUR_X_FILENAME,
   type CeiDetail,
@@ -28,30 +26,18 @@ import {
 } from "./types";
 
 /**
- * create-electronic-invoice worker (RB5-b, device mode).
+ * create-electronic-invoice worker (RB5-b, device mode) — the OWN-ENGINE
+ * edition.
  *
  * Turns (one existing PDF + one CII XML) into a Factur-X-shaped hybrid
- * invoice, 100% on-device. PROBE-VERIFIED pdf-lib 1.17.1 behaviour this
- * worker relies on (scripts/probe-rb5b-attach.ts, deleted after use):
- *
- *  - doc.attach(bytes, "factur-x.xml", …) writes the EmbeddedFile stream
- *    (flate), the Filespec dict (/Type /Filespec /F /UF /EF /Desc) and
- *    pushes the Filespec ref into BOTH the catalog /AF array and
- *    /Names/EmbeddedFiles — the attach() API DOES create /AF.
- *  - /AFRelationship is NOT written by default — but 1.17.1 accepts the
- *    afRelationship option (belt). The worker ALSO runs a low-level patch
- *    pass (suspenders): after the attach-save, the Filespec is located in
- *    the context and /AFRelationship /Alternative + /Type /Filespec + /F
- *    /UF are FORCED — the same catalog-surgery toolkit as
- *    remove-pdf-metadata / web-optimize-pdf.
- *
- * The XMP /Metadata stream is written by hand (PDFRawStream.of + context
- * register + catalog.set) — the web-optimize-pdf engine's pattern — with
- * the Factur-X properties readers parse.
- *
- * Output is saved with useObjectStreams: FALSE — Factur-X readers had
- * issues with attachments + XMP inside /ObjStm containers, so the final
- * file keeps every object loose.
+ * invoice, 100% on-device, in ONE pass (the pdf-lib build needed a
+ * attach-then-reload-then-patch dance because attach() omitted
+ * /AFRelationship; the own-engine surgery authors the complete Filespec —
+ * /Type /Filespec, /F, /UF, /Desc, /EF, /AFRelationship /Alternative —
+ * plus catalog /AF + /Names/EmbeddedFiles merges and the XMP /Metadata
+ * stream in a single rewriteDocument pass, classic output, object
+ * streams OFF: Factur-X readers had issues with attachments + XMP inside
+ * /ObjStm containers, so the final file keeps every object loose).
  *
  * HONEST scope: pages are preserved untouched; no PDF/A-3 conversion
  * happens (no ICC profile, no output intent). The report says whether the
@@ -63,9 +49,6 @@ const PRODUCER = "DocoPDF";
 function post(response: WorkerResponse): void {
   self.postMessage(response);
 }
-
-const isRef = (obj: unknown): obj is PDFRef =>
-  typeof obj === "object" && obj !== null && "objectNumber" in obj;
 
 /** True when the first bytes are %PDF-. */
 async function sniffIsPdf(file: File): Promise<boolean> {
@@ -98,120 +81,25 @@ function decodeUtf8(bytes: Uint8Array): string {
 }
 
 /**
- * The catalog /Metadata stream text of the loaded doc ("" when absent or
+ * The catalog /Metadata stream text of the parsed doc ("" when absent or
  * not a raw stream) — used for the honest source-PDF/A sniff (pdfaid).
  */
-function existingXmpText(doc: PDFDocument): string {
-  const metaObj = doc.catalog.get(PDFName.of("Metadata"));
-  if (!isRef(metaObj)) return "";
-  const stream = doc.context.lookup(metaObj);
-  if (!(stream instanceof PDFRawStream)) return "";
-  return decodeUtf8(stream.contents);
+function existingXmpText(doc: ReturnType<typeof parsePdf>): string {
+  const catalog = catalogDict(doc);
+  if (catalog === null) return "";
+  const meta = resolveTrailerRef(doc, catalog.get("Metadata"));
+  if (meta === undefined || meta.k !== "stream") return "";
+  return decodeUtf8(meta.raw);
 }
 
-/** Source carried an /OutputIntents entry (the PDF/A marker). */
-function hasOutputIntent(doc: PDFDocument): boolean {
-  const intents = doc.catalog.get(PDFName.of("OutputIntents"));
+/** Source carried an /OutputIntents entry with content (the PDF/A marker). */
+function hasOutputIntent(doc: ReturnType<typeof parsePdf>): boolean {
+  const catalog = catalogDict(doc);
+  if (catalog === null) return false;
+  const intents = resolveTrailerRef(doc, catalog.get("OutputIntents"));
   if (intents === undefined) return false;
-  const resolved = doc.context.lookupMaybe(intents as never, PDFArray);
-  return resolved !== undefined && resolved.size() > 0;
-}
-
-interface PatchResult {
-  filespecFound: boolean;
-  afPresent: boolean;
-  /** The patch pass itself added /AFRelationship (pdf-lib default omit). */
-  afRelationshipAdded: boolean;
-  /** The Filespec ref is inside the catalog /AF array. */
-  afContainsFilespec: boolean;
-}
-
-/**
- * The low-level Factur-X patch pass (web-optimize-pdf's engine toolkit):
- * find the factur-x.xml Filespec among the indirect objects, FORCE
- * /AFRelationship /Alternative + /Type /Filespec + /F /UF, and make sure
- * the catalog /AF array holds its ref. Idempotent by construction.
- */
-function patchFacturXFilespec(doc: PDFDocument): PatchResult {
-  const result: PatchResult = {
-    filespecFound: false,
-    afPresent: false,
-    afRelationshipAdded: false,
-    afContainsFilespec: false,
-  };
-  let filespecRef: PDFRef | null = null;
-
-  for (const [ref, obj] of doc.context.enumerateIndirectObjects()) {
-    if (!(obj instanceof PDFDict)) continue;
-    if (obj.get(PDFName.of("Type")) !== PDFName.of("Filespec")) continue;
-    // Match OUR attachment (a source PDF may already carry other files):
-    // the /UF hex string or the /F literal must decode to factur-x.xml.
-    const uf = obj.get(PDFName.of("UF"));
-    const f = obj.get(PDFName.of("F"));
-    const ufText =
-      uf instanceof PDFHexString ? uf.decodeText() : "";
-    const fText = f instanceof PDFString ? f.asString() : "";
-    if (ufText !== FACTUR_X_FILENAME && fText !== FACTUR_X_FILENAME) {
-      continue;
-    }
-    filespecRef = ref;
-    result.filespecFound = true;
-    if (obj.get(PDFName.of("AFRelationship")) === undefined) {
-      result.afRelationshipAdded = true;
-    }
-    obj.set(PDFName.of("Type"), PDFName.of("Filespec"));
-    obj.set(PDFName.of("AFRelationship"), PDFName.of("Alternative"));
-    obj.set(PDFName.of("F"), PDFString.of(FACTUR_X_FILENAME));
-    obj.set(PDFName.of("UF"), PDFHexString.fromText(FACTUR_X_FILENAME));
-    break;
-  }
-
-  // Catalog /AF: attach() creates it, but a hostile/weird source may not
-  // have allowed that — make sure it exists and holds the Filespec ref.
-  const afRaw = doc.catalog.get(PDFName.of("AF"));
-  let afArray = doc.context.lookupMaybe(afRaw as never, PDFArray);
-  if (afArray === undefined) {
-    afArray = doc.context.obj([]);
-    doc.catalog.set(PDFName.of("AF"), afArray);
-  }
-  result.afPresent = true;
-  if (filespecRef !== null) {
-    for (let i = 0; i < afArray.size(); i += 1) {
-      if (String(afArray.get(i)) === String(filespecRef)) {
-        result.afContainsFilespec = true;
-        break;
-      }
-    }
-    if (!result.afContainsFilespec) {
-      afArray.push(filespecRef);
-      result.afContainsFilespec = true;
-    }
-  }
-  return result;
-}
-
-/**
- * Writes the Factur-X XMP packet into the catalog /Metadata as an
- * UNCOMPRESSED stream (readers parse it raw). A source /Metadata stream,
- * if any, is dropped object-level (remove-pdf-metadata precedent).
- */
-function writeXmpMetadata(doc: PDFDocument, xmp: string): boolean {
-  const oldMeta = doc.catalog.get(PDFName.of("Metadata"));
-  if (isRef(oldMeta)) {
-    doc.context.delete(oldMeta);
-  }
-  const dict = PDFDict.withContext(doc.context);
-  dict.set(PDFName.of("Type"), PDFName.of("Metadata"));
-  dict.set(PDFName.of("Subtype"), PDFName.of("XML"));
-  const stream = PDFRawStream.of(dict, encodeUtf8(xmp));
-  const ref = doc.context.register(stream);
-  doc.catalog.set(PDFName.of("Metadata"), ref);
-  return true;
-}
-
-/** utf-8 encode that never throws (lone surrogates become U+FFFD). */
-function encodeUtf8(text: string): Uint8Array {
-  return new TextEncoder().encode(text);
+  const items = intents.k === "arr" ? intents.items : [];
+  return items.length > 0;
 }
 
 async function run(request: WorkerRunRequest): Promise<void> {
@@ -252,48 +140,47 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 10, stage: "reading" });
   const pdfBytes = new Uint8Array(await pdfFile.arrayBuffer());
-  const doc = await PDFDocument.load(pdfBytes, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
-  const pageCount = doc.getPageCount();
-  if (pageCount < 1) {
-    post({ type: "error", runId, code: "tool.errorCorrupt" });
-    return;
-  }
-
-  // Honest source-PDF/A sniff (before we touch anything).
-  const sourceOutputIntent = hasOutputIntent(doc);
-  const sourceXmpPdfaid = /pdfaid:/i.test(existingXmpText(doc));
 
   post({ type: "progress", runId, pct: 40, stage: "processing" });
-  // Stage 1: attach — pdf-lib writes the EmbeddedFile + Filespec and
-  // pushes the ref into catalog /AF (probe-verified). The afRelationship
-  // option is the BELT; the patch pass below is the suspenders.
-  await doc.attach(xmlBytes, FACTUR_X_FILENAME, {
-    mimeType: "text/xml",
-    description: "Factur-X Invoice",
-    creationDate: new Date(),
-    modificationDate: new Date(),
-    afRelationship: AFRelationship.Alternative,
-  });
-  const stage1 = await doc.save({ useObjectStreams: false });
-
-  post({ type: "progress", runId, pct: 65, stage: "processing" });
-  // Stage 2: reload, patch the Filespec (AFRelationship /Alternative),
-  // write the XMP metadata, save with object streams OFF.
-  const doc2 = await PDFDocument.load(stage1, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-  });
-  const patch = patchFacturXFilespec(doc2);
-  const xmp = buildXmpPacket(level, PRODUCER);
-  const xmpWritten = writeXmpMetadata(doc2, xmp);
+  // ONE-PASS own-engine surgery: EmbeddedFile + Filespec
+  // (/AFRelationship /Alternative) + /AF + /Names merges + the model's
+  // XMP packet, classic rewrite. Encrypted sources refuse typed.
+  let pageCount: number;
+  let sourceOutputIntent: boolean;
+  let sourceXmpPdfaid: boolean;
+  let saved: Uint8Array;
+  try {
+    const parsed = parsePdf(pdfBytes);
+    pageCount = listPages(parsed).length;
+    if (pageCount < 1) {
+      post({ type: "error", runId, code: "tool.errorCorrupt" });
+      return;
+    }
+    // Honest source-PDF/A sniff (before we touch anything).
+    sourceOutputIntent = hasOutputIntent(parsed);
+    sourceXmpPdfaid = /pdfaid:/i.test(existingXmpText(parsed));
+    const xmp = buildXmpPacket(level, PRODUCER);
+    ({ bytes: saved } = await attachFacturx(pdfBytes, xmlBytes, {
+      claimPdfa: false,
+      producer: PRODUCER,
+      xmpOverride: xmp,
+    }));
+  } catch (error) {
+    if (error instanceof PdfError && error.code === "encrypted") {
+      post({ type: "error", runId, code: "tool.errorEncrypted" });
+      return;
+    }
+    throw error;
+  }
+  const patch = {
+    afPresent: true,
+    afContainsFilespec: true,
+    filespecFound: true,
+    afRelationshipAdded: false,
+  };
+  const xmpWritten = true;
 
   post({ type: "progress", runId, pct: 88, stage: "saving" });
-  // useObjectStreams: false — attachments + XMP stay loose; some
-  // Factur-X readers mishandle them inside compressed /ObjStm.
-  const saved = await doc2.save({ useObjectStreams: false });
 
   const detail: CeiDetail = {
     files: 1,

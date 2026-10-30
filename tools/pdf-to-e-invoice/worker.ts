@@ -1,15 +1,14 @@
 import {
-  decodePDFRawStream,
-  PDFArray,
-  PDFDict,
-  PDFDocument as CantooPDF,
-  PDFHexString,
-  PDFName,
-  PDFRawStream,
-  PDFRef,
-  PDFStream,
-  PDFString,
-} from "@cantoo/pdf-lib";
+  asArr,
+  asDict,
+  catalogDict,
+  decodeStreamBytes,
+  decodeTextString,
+  parsePdf,
+  resolve,
+  type PdfObj,
+  type ParsedPdf,
+} from "@/lib/own/pdf";
 
 import type {
   WorkerRunRequest,
@@ -51,9 +50,9 @@ import type { PdfToEInvoiceDetail } from "./types";
  *     standard names (factur-x.xml, zugferd-invoice.xml, …, any .xml);
  *  4. PATH A, attempt 2 — some producers attach OUTSIDE the name tree
  *     (an /AF array of Filespecs only, which pdf.js never looks at —
- *     probe-verified against pdf.worker 4.10.38): @cantoo/pdf-lib
- *     walks the raw catalog, resolves each filespec's /EF stream and
- *     decodes it — still fully on-device;
+ *     probe-verified against pdf.worker 4.10.38): the OWN PARSER walks
+ *     the raw catalog, resolves each filespec's /EF stream and decodes
+ *     it (decodeStreamBytes) — still fully on-device;
  *  5. PATH B — no XML anywhere: getTextContent per page under the
  *     honesty caps (page cap, char cap), the pure model groups the
  *     items into lines and sniffs the fields (best-effort, every hit
@@ -136,86 +135,73 @@ export function attachmentsFromPdfjs(
 /**
  * The raw-catalog walk for producers that attach OUTSIDE the name
  * tree: every /AF filespec + the /Names/EmbeddedFiles flat array is
- * resolved through @cantoo/pdf-lib, and each filespec's /EF stream is
+ * resolved through the own parser, and each filespec's /EF stream is
  * decoded (still on-device — pure structure walking, no network).
  */
 export async function afWalkAttachments(
   bytes: Uint8Array
 ): Promise<RawAttachment[]> {
   const out: RawAttachment[] = [];
-  let pdf: CantooPDF;
+  let doc: ParsedPdf;
   try {
-    pdf = await CantooPDF.load(bytes, {
-      ignoreEncryption: true,
-      updateMetadata: false,
-      throwOnInvalidObject: false,
-    });
+    // encryptedOk: an encrypted stream decodes to garbage the XML picker
+    // rejects — Path B then decides honestly (the @cantoo
+    // ignoreEncryption parity).
+    doc = parsePdf(bytes, { encryptedOk: true });
   } catch {
     return out; // unreadable structure → no walk, Path B decides honestly
   }
   try {
-    const ctx = pdf.context;
-    const catalog = pdf.catalog as unknown as PDFDict;
-    const seen = new Set<string>();
-    const filespecs: { name: string; dict: PDFDict }[] = [];
+    const catalog = catalogDict(doc);
+    if (catalog === null) return out;
+    const seen = new Set<Map<string, PdfObj>>();
+    const filespecs: { name: string; dict: Map<string, PdfObj> }[] = [];
 
-    const textOfPdfStringish = (value: unknown): string => {
-      if (value instanceof PDFHexString) return value.decodeText();
-      if (value instanceof PDFString) return value.asString();
+    const textOf = (value: PdfObj | undefined): string => {
+      if (value !== undefined && (value.k === "str" || value.k === "lstr" || value.k === "hstr")) {
+        return decodeTextString(value.b);
+      }
       return "";
     };
 
-    const pushFilespec = (name: string, value: unknown): void => {
-      const dict =
-        value instanceof PDFRef
-          ? ctx.lookupMaybe(value, PDFDict)
-          : value instanceof PDFDict
-            ? value
-            : undefined;
+    const pushFilespec = (fallback: string, value: PdfObj | undefined): void => {
+      const dict = asDict(resolve(doc, value));
       if (dict === undefined) return;
-      const key = dict.toString();
-      if (seen.has(key)) return;
-      seen.add(key);
+      if (seen.has(dict)) return;
+      seen.add(dict);
       const better =
-        textOfPdfStringish(dict.get(PDFName.of("UF"))) ||
-        textOfPdfStringish(dict.get(PDFName.of("F")));
-      filespecs.push({ name: better || name, dict });
+        textOf(dict.get("UF")) || textOf(dict.get("F"));
+      filespecs.push({ name: better || fallback, dict });
     };
 
     // /AF — an array of filespec (refs or dicts).
-    const af = catalog.get(PDFName.of("AF"));
-    if (af instanceof PDFArray) {
-      for (let i = 0; i < af.size(); i += 1) {
-        pushFilespec("", af.get(i));
-      }
+    const af = asArr(resolve(doc, catalog.get("AF")));
+    if (af !== undefined) {
+      for (const item of af) pushFilespec("", item);
     }
 
     // /Names/EmbeddedFiles/Names — flat [name, filespecRef] pairs.
-    const names = ctx.lookupMaybe(catalog.get(PDFName.of("Names")), PDFDict);
-    const embedded = names
-      ? ctx.lookupMaybe(names.get(PDFName.of("EmbeddedFiles")), PDFDict)
+    const namesDict = asDict(resolve(doc, catalog.get("Names")));
+    const embedded = namesDict
+      ? asDict(resolve(doc, namesDict.get("EmbeddedFiles")))
       : undefined;
     const pairs = embedded
-      ? ctx.lookupMaybe(embedded.get(PDFName.of("Names")), PDFArray)
+      ? asArr(resolve(doc, embedded.get("Names")))
       : undefined;
-    if (pairs instanceof PDFArray) {
-      for (let i = 0; i + 1 < pairs.size(); i += 2) {
-        const name = textOfPdfStringish(pairs.get(i));
-        pushFilespec(name, pairs.get(i + 1));
+    if (pairs !== undefined) {
+      for (let i = 0; i + 1 < pairs.length; i += 2) {
+        pushFilespec(textOf(pairs[i]), pairs[i + 1]);
       }
     }
 
     for (const { name, dict } of filespecs) {
-      const ef = ctx.lookupMaybe(dict.get(PDFName.of("EF")), PDFDict);
+      const ef = asDict(resolve(doc, dict.get("EF")));
       if (ef === undefined) continue;
-      // lookupMaybe has NO PDFRawStream overload — the RB1 pinned
-      // lesson: look up the PDFStream base class, then narrow.
-      const streamValue =
-        ef.get(PDFName.of("UF")) ?? ef.get(PDFName.of("F"));
-      const stream = ctx.lookupMaybe(streamValue as PDFRef, PDFStream);
-      if (!(stream instanceof PDFRawStream)) continue;
-      const decoded = decodePDFRawStream(stream).decode();
-      out.push({ name, bytes: new Uint8Array(decoded) });
+      const streamValue = ef.get("UF") ?? ef.get("F");
+      const stream = resolve(doc, streamValue);
+      if (stream === undefined || stream.k !== "stream") continue;
+      const decoded = decodeStreamBytes(stream.raw, stream.m);
+      out.push({ name, bytes: decoded });
     }
     return out;
   } catch {

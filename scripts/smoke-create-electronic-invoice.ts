@@ -747,18 +747,23 @@ async function main(): Promise<void> {
               size === new TextEncoder().encode(SAMPLE_XML).length,
               size
             );
-            // node:zlib inflate oracle — byte-identical XML round trip.
-            const inflated = inflateSync(Buffer.from(emb.contents));
+            // decode oracle — OUR writer ships the EmbeddedFile RAW (no
+            // /Filter); @cantoo producers flate it. Decode per /Filter.
+            const embFilter = emb.dict.get(PDFName.of("Filter"));
+            const decoded =
+              embFilter === undefined
+                ? Buffer.from(emb.contents)
+                : inflateSync(Buffer.from(emb.contents));
             check(
-              "inflated attachment is byte-identical to the source XML",
+              "decoded attachment is byte-identical to the source XML",
               Buffer.compare(
-                Buffer.from(inflated),
+                Buffer.from(decoded),
                 Buffer.from(new TextEncoder().encode(SAMPLE_XML))
               ) === 0
             );
             check(
-              "inflated XML passes its own shape sniff",
-              validateCiiShape(new TextDecoder().decode(inflated)).ok
+              "decoded XML passes its own shape sniff",
+              validateCiiShape(new TextDecoder().decode(decoded)).ok
             );
           }
         }
@@ -1039,25 +1044,27 @@ async function main(): Promise<void> {
   {
     const workerSrc = readFileSync("tools/create-electronic-invoice/worker.ts", "utf8");
     check(
-      "worker saves with useObjectStreams: false (attachments + XMP loose)",
-      /useObjectStreams:\s*false/.test(workerSrc)
+      "worker ships classic output (attachFacturx surgery — no ObjStm, attachments + XMP loose)",
+      /attachFacturx\(pdfBytes, xmlBytes/.test(workerSrc) &&
+        !/from "pdf-lib"/.test(workerSrc)
     );
     check(
       "worker never positively claims producing PDF/A-3",
       !/to PDF\/A-3/i.test(workerSrc) && !/PDF\/A-3 compliant/i.test(workerSrc)
     );
     check(
-      "worker patches /AFRelationship via the low-level API",
-      /AFRelationship/.test(workerSrc) &&
-        /PDFName\.of\("AFRelationship"\)/.test(workerSrc)
+      "worker delegates the complete Filespec surgery (AFRelationship authored /Alternative in one pass)",
+      /attachFacturx/.test(workerSrc) &&
+        /claimPdfa:\s*false/.test(workerSrc) &&
+        /xmpOverride:\s*xmp/.test(workerSrc)
     );
+    const attachSrc = readFileSync("tools/create-electronic-invoice/facturx-attach.ts", "utf8");
     check(
-      "worker passes afRelationship through attach (belt) AND patches (suspenders)",
-      /afRelationship:\s*AFRelationship\.Alternative/.test(workerSrc)
-    );
-    check(
-      "worker writes the XMP as a raw PDFRawStream",
-      /PDFRawStream\.of/.test(workerSrc)
+      "surgery authors /AFRelationship /Alternative + raw XMP stream on the own engine",
+      attachSrc.includes('name("Alternative")') &&
+        attachSrc.includes('name("Metadata")') &&
+        attachSrc.includes("rewriteDocument") &&
+        !attachSrc.includes("pdf-lib")
     );
     const configSrc = readFileSync("tools/create-electronic-invoice/config.ts", "utf8");
     check(

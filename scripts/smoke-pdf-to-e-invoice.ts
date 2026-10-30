@@ -1498,8 +1498,8 @@ console.log("── 15. error taxonomy (E2E, honest codes) ───────
     /data:\s*bytes\.slice\(\)/.test(workerSrc)
   );
   check(
-    "worker honesty: the /AF walk loads with updateMetadata:false",
-    /updateMetadata:\s*false/.test(workerSrc)
+    "worker honesty: the /AF walk parses leniently (encryptedOk — the ignoreEncryption parity)",
+    /encryptedOk:\s*true/.test(workerSrc) && !/from "@cantoo\/pdf-lib"/.test(workerSrc)
   );
   check(
     "worker honesty: the scan case posts peinv.errorNoInvoice",

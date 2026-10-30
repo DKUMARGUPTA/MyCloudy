@@ -1,32 +1,45 @@
 import {
-  PDFArray,
-  PDFDict,
-  PDFHexString,
-  PDFName,
-  PDFNumber,
-  PDFRawStream,
-  PDFString,
-  PDFDocument,
-  PDFObject,
-  PDFRef,
-} from "pdf-lib";
+  catalogDict,
+  newDict,
+  pdfInfoText,
+  resolveTrailerRef,
+  rewriteDocument,
+  arrItems,
+  dget,
+  asName,
+  asNum,
+  asDict,
+  asArr,
+  newref,
+  ref,
+  num,
+  name,
+  dict as pdfDict,
+  arr as pdfArr,
+  PdfError,
+  parsePdf,
+  type PdfObj,
+  type ParsedPdf,
+} from "@/lib/own/pdf";
 
 /**
- * Factur-X attachment surgery (Task b6-c) — PURE pdf-lib low-level
- * object writing (the bookmark-pdf / meta-common precedents), no
- * browser APIs: the same code runs in the tool workers and under bun
- * in the smokes.
+ * Factur-X attachment surgery (Task b6-c) — PURE own-engine low-level
+ * object writing (the bookmark-pdf / meta-common precedents), no browser
+ * APIs: the same code runs in the tool workers and under bun in the
+ * smokes.
  *
  * What attachFacturx does to the source catalog, per the Factur-X
  * (FNFE-MFE) attachment structure:
  *
- *   1. EmbeddedFile stream — PDFRawStream with dict { Type /EmbeddedFile,
+ *   1. EmbeddedFile stream — new object { Type /EmbeddedFile,
  *      Subtype /text#2Fxml (that IS how "text/xml" is written in a PDF
- *      name — pdf-lib's PDFName.of decodes the "#2F" escape), Params {
- *      Size, ModDate } } registered in the context.
- *   2. Filespec dict — { Type /Filespec, F "factur-x.xml" (PDF literal),
- *      UF <FEFF…> (UTF-16BE hex), EF { F <stream>, UF <stream> },
- *      AFRelationship /Data }.
+ *      name — the "#2F" name escape), Params { Size, ModDate } } as an
+ *      extraObject above the source numbering.
+ *   2. Filespec dict — { Type /Filespec, F "factur-x.xml" (literal),
+ *      UF <FEFF…> (UTF-16BE hex), Desc, EF { F <stream>, UF <stream> },
+ *      AFRelationship /Alternative } — ONE pass: the legacy build needed
+ *      a second reload+patch stage because its attach() omitted
+ *      /AFRelationship; here the dict is authored complete.
  *   3. Catalog /AF — the filespec ref APPENDED to any existing array
  *      (merge, never clobber).
  *   4. Catalog /Names /EmbeddedFiles — the [ <FEFF…>, filespecRef ]
@@ -40,12 +53,18 @@ import {
  *      pdfaExtension schema block, pdf:Producer). The /pdfaid:part +
  *      /pdfaid:conformance lines ship ONLY when PDF/A identification
  *      is being claimed — MyCloudy never writes an identification the
- *      file cannot back.
+ *      file cannot back. A pre-existing /Metadata stream is dropped
+ *      object-level (rewriteDocument deletions — remove-pdf-metadata
+ *      precedent).
  *   6. OutputIntent — ONLY when claiming PDF/A: { S /GTS_PDFA1,
  *      OutputConditionIdentifier "sRGB", DestOutputProfile <ICC stream> }.
  *      When the source already carries OutputIntents they are kept
  *      untouched (the source's own profile backs the claim); the ICC
  *      stream is { N 3 } + the raw profile bytes.
+ *
+ * The rewrite runs CLASSIC (no ObjStm — useObjectStreams:false parity):
+ * Factur-X readers had issues with attachments + XMP inside compressed
+ * containers, so every object stays loose.
  *
  * HONESTY CONTRACT (non-negotiable): `claimPdfa` is the caller's
  * decision — the WORKER derives it honestly (the pdfa select's
@@ -140,6 +159,12 @@ export interface AttachFacturxOptions {
   producer?: string;
   /** Params / ModDate PDF date string ("D:20240115000000Z"). */
   modDate?: string;
+  /**
+   * Replace the default Factur-X XMP packet with a caller-authored one
+   * (the create-electronic-invoice worker's buildXmpPacket — same
+   * surgery, different identification vocabulary).
+   */
+  xmpOverride?: string;
 }
 
 /** attachFacturx result. */
@@ -159,11 +184,11 @@ export class FacturxIccRequiredError extends Error {
 }
 
 /**
- * The whole attachment surgery. The source is loaded LENIENTLY
- * (ignoreEncryption — encrypted sources still refuse the claim
- * honestly below; updateMetadata:false — pdf-lib must not clobber
- * the XMP we are about to write). Pre-existing /Metadata, /AF and
- * /Names entries are MERGED, not clobbered.
+ * The whole attachment surgery (own engine, ONE pass). The source is
+ * parsed strictly (a trailer /Encrypt refuses with the typed "encrypted"
+ * PdfError — the honest refusal, the repair-pdf tier-1 lesson).
+ * Pre-existing /AF and /Names entries are MERGED, not clobbered; a
+ * pre-existing /Metadata stream is deleted object-level.
  */
 export async function attachFacturx(
   pdfBytes: Uint8Array,
@@ -174,109 +199,137 @@ export async function attachFacturx(
     throw new FacturxIccRequiredError();
   }
 
-  const doc = await PDFDocument.load(pdfBytes, {
-    ignoreEncryption: true,
-    updateMetadata: false,
-  });
-  if (doc.isEncrypted) {
-    // Saving would ship a still-encrypted file — the honest refusal
-    // (the repair-pdf tier-1 lesson).
-    throw new Error("facturx: encrypted source");
+  const doc = parsePdf(pdfBytes);
+  const catalog = catalogDict(doc);
+  if (catalog === null) {
+    throw new PdfError("corrupt", "facturx: source has no catalog");
   }
-
-  const context = doc.context;
-  const catalog = doc.catalog;
   const xmlName = "factur-x.xml";
   const producer = opts.producer ?? DEFAULT_PRODUCER;
   const modDate = opts.modDate ?? pdfDateNow();
 
-  /* ---- 1. EmbeddedFile stream ------------------------------------ */
-  const paramsDict = context.obj({
-    Size: PDFNumber.of(xmlBytes.length),
-    ModDate: PDFString.of(modDate),
-  });
-  const embeddedDict = context.obj({
-    Type: PDFName.of("EmbeddedFile"),
-    // PDFName.of decodes "#2F" escapes, so "text#2Fxml" IS "text/xml"
-    // written with the name-escape the PDF format requires.
-    Subtype: PDFName.of("text#2Fxml"),
-    Params: paramsDict,
-  }) as PDFDict;
-  const embeddedStream = PDFRawStream.of(embeddedDict, xmlBytes);
-  const embeddedRef = context.register(embeddedStream);
+  /* ---- numbering: extras ride ABOVE the source table --------------- */
+  let nextNum = 0;
+  for (const numKey of doc.entries.keys()) nextNum = Math.max(nextNum, numKey);
+  nextNum += 1;
+  const extras: Array<{ num: number; obj: PdfObj }> = [];
 
-  /* ---- 2. Filespec ------------------------------------------------ */
-  const efDict = context.obj({
-    F: embeddedRef,
-    UF: embeddedRef,
-  });
-  const filespecDict = context.obj({
-    Type: PDFName.of("Filespec"),
-    F: PDFString.of(xmlName),
-    UF: PDFHexString.fromText(xmlName),
-    Desc: PDFString.of(FILESPEC_DESC),
-    EF: efDict,
-    AFRelationship: PDFName.of("Data"),
-  });
-  const filespecRef = context.register(filespecDict);
+  /* ---- 1. EmbeddedFile stream -------------------------------------- */
+  const embeddedNum = nextNum++;
+  const embeddedStream: PdfObj = {
+    k: "stream",
+    m: new Map<string, PdfObj>([
+      ["Type", name("EmbeddedFile")],
+      // The engine's name writer escapes "/" → "#2F", so the DECODED form
+      // "text/xml" serializes as /text#2Fxml — the name-escape the PDF
+      // format requires (the legacy writer's raw-name-form parity).
+      ["Subtype", name("text/xml")],
+      [
+        "Params",
+        newDict([
+          ["Size", num(xmlBytes.length)],
+          ["ModDate", { k: "lstr", b: latin1Bytes(modDate) }],
+        ]),
+      ],
+    ]),
+    raw: xmlBytes,
+  };
+  extras.push({ num: embeddedNum, obj: embeddedStream });
 
-  /* ---- 3. Catalog /AF (merge) ------------------------------------- */
-  const afExisting = catalog.lookupMaybe(PDFName.of("AF"), PDFArray);
+  /* ---- 2. Filespec (complete — /AFRelationship authored directly) --- */
+  const filespecNum = nextNum++;
+  const filespecDict = newDict([
+    ["Type", name("Filespec")],
+    ["F", { k: "lstr", b: latin1Bytes(xmlName) }],
+    ["UF", pdfInfoText(xmlName)],
+    ["Desc", { k: "lstr", b: latin1Bytes(FILESPEC_DESC) }],
+    [
+      "EF",
+      newDict([
+        ["F", ref(embeddedNum)],
+        ["UF", ref(embeddedNum)],
+      ]),
+    ],
+    ["AFRelationship", name("Alternative")],
+  ]);
+  extras.push({ num: filespecNum, obj: filespecDict });
+  const filespecRef = ref(filespecNum);
+
+  /* ---- 3. Catalog /AF (merge) -------------------------------------- */
+  const afExisting = asArr(catalog.get("AF"));
   if (afExisting !== undefined) {
     afExisting.push(filespecRef);
   } else {
-    catalog.set(PDFName.of("AF"), context.obj([filespecRef]));
+    catalog.set("AF", pdfArr(filespecRef));
   }
 
-  /* ---- 4. /Names /EmbeddedFiles (merge) --------------------------- */
-  mergeEmbeddedFilesName(context, catalog, filespecRef, xmlName);
+  /* ---- 4. /Names /EmbeddedFiles (merge) ---------------------------- */
+  mergeEmbeddedFilesName(doc, catalog, filespecRef, xmlName);
 
   /* ---- 5. XMP metadata stream -------------------------------------- */
-  // Remove the pre-existing /Metadata first (object bytes included).
-  const metaObj = catalog.get(PDFName.of("Metadata"));
-  catalog.delete(PDFName.of("Metadata"));
-  if (metaObj instanceof PDFRef) {
-    context.delete(metaObj);
-  }
-  const xmpText = buildFacturxXmp(opts.claimPdfa === true, producer);
-  const xmpDict = context.obj({
-    Type: PDFName.of("Metadata"),
-    Subtype: PDFName.of("XML"),
-  }) as PDFDict;
-  const xmpStream = PDFRawStream.of(xmpDict, new TextEncoder().encode(xmpText));
-  catalog.set(PDFName.of("Metadata"), context.register(xmpStream));
+  const deletions = new Set<number>();
+  const oldMeta = catalog.get("Metadata");
+  const oldMetaRef = oldMeta && oldMeta.k === "ref" ? oldMeta : null;
+  const xmpText = opts.xmpOverride ?? buildFacturxXmp(opts.claimPdfa === true, producer);
+  const xmpNum = nextNum++;
+  const xmpStream: PdfObj = {
+    k: "stream",
+    m: new Map<string, PdfObj>([
+      ["Type", name("Metadata")],
+      ["Subtype", name("XML")],
+    ]),
+    raw: new TextEncoder().encode(xmpText),
+  };
+  extras.push({ num: xmpNum, obj: xmpStream });
+  catalog.set("Metadata", ref(xmpNum));
+  if (oldMetaRef !== null) deletions.add(oldMetaRef.num);
 
-  /* ---- 6. OutputIntent (claiming only, merged honestly) ----------- */
+  /* ---- 6. OutputIntent (claiming only, merged honestly) ------------ */
   if (opts.claimPdfa === true) {
     const icc = opts.icc as Uint8Array;
-    const existingIntents = catalog.lookupMaybe(
-      PDFName.of("OutputIntents"),
-      PDFArray
+    const existingIntents = resolveTrailerRef(
+      doc,
+      catalog.get("OutputIntents")
     );
-    const hasOwn =
-      existingIntents !== undefined && existingIntents.size() > 0;
+    const intentArr = existingIntents && existingIntents.k === "arr" ? existingIntents.items : undefined;
+    const hasOwn = intentArr !== undefined && intentArr.length > 0;
     if (!hasOwn) {
-      const iccDict = context.obj({ N: PDFNumber.of(3) }) as PDFDict;
-      const iccStream = PDFRawStream.of(iccDict, icc);
-      const iccRef = context.register(iccStream);
-      const intentDict = context.obj({
-        Type: PDFName.of("OutputIntent"),
-        S: PDFName.of("GTS_PDFA1"),
-        OutputConditionIdentifier: PDFString.of("sRGB"),
-        Info: PDFString.of("sRGB IEC61966-2.1"),
-        DestOutputProfile: iccRef,
-      });
-      const intentRef = context.register(intentDict);
-      catalog.set(PDFName.of("OutputIntents"), context.obj([intentRef]));
+      const iccNum = nextNum++;
+      const iccStream: PdfObj = {
+        k: "stream",
+        m: new Map<string, PdfObj>([["N", num(3)]]),
+        raw: icc,
+      };
+      extras.push({ num: iccNum, obj: iccStream });
+      const intentNum = nextNum++;
+      const intentDict = newDict([
+        ["Type", name("OutputIntent")],
+        ["S", name("GTS_PDFA1")],
+        ["OutputConditionIdentifier", { k: "lstr", b: latin1Bytes("sRGB") }],
+        ["Info", { k: "lstr", b: latin1Bytes("sRGB IEC61966-2.1") }],
+        ["DestOutputProfile", ref(iccNum)],
+      ]);
+      extras.push({ num: intentNum, obj: intentDict });
+      catalog.set("OutputIntents", pdfArr(ref(intentNum)));
     }
     // Source OutputIntents kept as-is: the source's own profile backs
     // the claim better than a swapped-in one would.
   }
 
-  // Uncompressed object streams: every object stays a plain indirect
-  // object — raw-byte scans and the widest validator compatibility.
-  const bytes = await doc.save({ useObjectStreams: false });
+  // CLASSIC output (no ObjStm — useObjectStreams:false parity): every
+  // object stays a plain indirect object — raw-byte scans and the widest
+  // validator compatibility.
+  const bytes = rewriteDocument(doc, { extraObjects: extras, deletions });
   return { bytes, claimed: opts.claimPdfa === true };
+}
+
+/** UTF-8 → latin1-ish bytes for literal strings (ASCII names/dates only). */
+function latin1Bytes(text: string): Uint8Array {
+  const out = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i += 1) {
+    out[i] = text.charCodeAt(i) & 0xff;
+  }
+  return out;
 }
 
 /**
@@ -290,74 +343,57 @@ export async function attachFacturx(
  * flat arrays regardless of order.
  */
 function mergeEmbeddedFilesName(
-  context: { obj(value: unknown): PDFObject; lookup(ref: unknown): unknown },
-  catalog: PDFDict,
-  filespecRef: PDFRef,
+  doc: ParsedPdf,
+  catalog: Map<string, PdfObj>,
+  filespecRef: PdfObj,
   xmlName: string
 ): void {
-  const pair: [PDFHexString, PDFRef] = [
-    PDFHexString.fromText(xmlName),
-    filespecRef,
-  ];
+  const pair = pdfArr(pdfInfoText(xmlName), filespecRef);
 
-  const namesDict = catalog.lookupMaybe(PDFName.of("Names"), PDFDict);
-  if (namesDict === undefined) {
+  const namesValue = catalog.get("Names");
+  const namesDictRaw = resolveTrailerRef(doc, namesValue);
+  if (namesDictRaw === undefined || namesDictRaw.k !== "dict") {
     // No /Names at all — create the whole branch.
     catalog.set(
-      PDFName.of("Names"),
-      context.obj({
-        EmbeddedFiles: { Names: context.obj([pair[0], pair[1]]) },
-      })
+      "Names",
+      newDict([["EmbeddedFiles", newDict([["Names", pair]])]])
     );
     return;
   }
 
-  let node: PDFDict | undefined = namesDict.lookupMaybe(
-    PDFName.of("EmbeddedFiles"),
-    PDFDict
+  let node: Map<string, PdfObj> | undefined = asDict(
+    resolveTrailerRef(doc, namesDictRaw.m.get("EmbeddedFiles"))
   );
   // A split tree: follow /Kids to the first leaf carrying /Names.
   let depth = 0;
   while (
     node !== undefined &&
-    node.lookupMaybe(PDFName.of("Names"), PDFArray) === undefined &&
+    asArr(resolveTrailerRef(doc, node.get("Names"))) === undefined &&
     depth < 5
   ) {
-    const kids = node.lookupMaybe(PDFName.of("Kids"), PDFArray);
-    if (kids === undefined || kids.size() === 0) break;
-    const first = kids.lookup(0);
-    const firstDict = resolveDict(context, first);
+    const kids = asArr(resolveTrailerRef(doc, node.get("Kids")));
+    if (kids === undefined || kids.length === 0) break;
+    const firstDict = asDict(resolveTrailerRef(doc, kids[0]));
     if (firstDict === undefined) break;
     node = firstDict;
     depth += 1;
   }
 
   if (node === undefined) {
-    namesDict.set(
-      PDFName.of("EmbeddedFiles"),
-      context.obj({ Names: context.obj([pair[0], pair[1]]) })
+    namesDictRaw.m.set(
+      "EmbeddedFiles",
+      newDict([["Names", pair]])
     );
     return;
   }
 
-  const namesArray = node.lookupMaybe(PDFName.of("Names"), PDFArray);
+  const namesArray = asArr(resolveTrailerRef(doc, node.get("Names")));
   if (namesArray === undefined) {
-    node.set(PDFName.of("Names"), context.obj([pair[0], pair[1]]));
+    node.set("Names", pair);
     return;
   }
-  namesArray.push(pair[0]);
-  namesArray.push(pair[1]);
-}
-
-/** Resolves a ref-or-direct value into a PDFDict (best effort). */
-function resolveDict(
-  context: { lookup(ref: unknown): unknown },
-  value: PDFObject | PDFRef | undefined
-): PDFDict | undefined {
-  if (value === undefined) return undefined;
-  if (value instanceof PDFDict) return value;
-  const resolved = context.lookup(value);
-  return resolved instanceof PDFDict ? resolved : undefined;
+  namesArray.push(pdfInfoText(xmlName));
+  namesArray.push(filespecRef);
 }
 
 /** Formats "now" as a PDF date string (D:YYYYMMDDHHmmSSZ). */
