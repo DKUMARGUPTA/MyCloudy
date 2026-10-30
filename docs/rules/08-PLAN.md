@@ -1,6 +1,7 @@
 # 08 · Plan (Roadmap & Current Priorities)
 
-Status snapshot: R19 complete (audit + 5 phases shipped & prod-verified).
+Status snapshot: R24 complete (/hi URL-wins + P7-c). R25: e-invoice
+rotation 5/5 + R19 P3 backlog closed + ToolShell Back-stuck fix.
 Update this file whenever a phase lands.
 
 ## ✅ Done (do not redo)
@@ -15,21 +16,19 @@ Update this file whenever a phase lands.
 | R19 audit (0×P0) + Phases 1–5: i18n plurals, 404 rebrand, aria-labels, offline.html, SSRF/rate-limit/caps hardening, JSON 500 contract, dead-code purge, /hi FAQ JSON-LD, SSR locale links | shipped & prod-verified |
 | Governance rules system (`AGENTS.md` + `docs/rules/`) | shipped |
 | R21 production AI fix: env-first adapter (`src/lib/ai/zai-client.ts`), aiNotConfigured 503 + honest i18n, AbortSignal deadlines; sandbox golden paths re-verified | shipped (public provider key = owner action, see 13-INTEGRATIONS) |
+| R24 /hi URL-wins + P7-c i18n VLM battery (8 screenshots + 5 VLM checks) | shipped |
+| R25 e-invoice browser QA rotation COMPLETE 5/5 (create-electronic-invoice, xml-invoice-to-pdf, validate-e-invoice, pdf-to-e-invoice Path A+B, +5th spot-check) | shipped |
+| R25 R19 P3 backlog CLOSED with live evidence: handleSign O_EXCL lock (parallel sign race → one 200 + one 409), envelope sweeper (expired + 6h orphan both swept), SDK abort (R21, smoke-ai-config 17/17) | verified |
 
 ## 🔜 Next (priority order)
 
-1. **P7-c i18n VLM battery** — EN+HI screenshots → VLM skill visual
-   verification of language rendering (extends `14-TESTING.md`).
-2. **E-invoice browser QA rotation** — 5 LIVE e-inv tools; one golden-path
-   E2E per session until all covered.
-3. **R19 post-audit P3 backlog** — session-call placement sweep is done;
-   remaining P3s: handleSign atomic-lock upstream, SDK abort signals,
-   envelope-store scan cadence (tracked in worklog R19 entry).
-4. **Phase-10 Accounts + Pro** — request-signature Pro gating, plan checks
-   against `users.plan`, Razorpay/Stripe stubs per PRD §2.5.
-5. **Turso production DB** — swap datasource; graceful-degrade already
+1. **Phase-10 Accounts + Pro** — request-signature Pro gating, plan checks
+   against `users.plan`, Razorpay/Stripe stubs per PRD §2.5. R25 shipped the
+   missing auth frontend (AuthModal + account menu + bootstrap wiring);
+   next: Pro gating surface + checkout stubs.
+2. **Turso production DB** — swap datasource; graceful-degrade already
    proven; keep table names identical.
-6. **Phase-11 services/worker** — server-side LibreOffice (266-format gap,
+3. **Phase-11 services/worker** — server-side LibreOffice (266-format gap,
    Filee comparison positioning).
 
 ## ⏸ Deferred (owner decisions pending)

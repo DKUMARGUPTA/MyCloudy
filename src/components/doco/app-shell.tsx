@@ -21,10 +21,12 @@ import { StaticPageView } from "@/components/doco/page/static-page";
 import { SearchPalette } from "@/components/doco/search/search-palette";
 import { CookieBanner } from "@/components/doco/cookie-banner";
 import { BottomTabBar } from "@/components/doco/bottom-tab-bar";
+import { AuthModal } from "@/components/doco/auth/auth-modal";
 import { useI18n } from "@/components/providers/locale-provider";
 import { useHashRoute, navigateToHash, urlLocaleOf, UrlLocaleContext, type HashRoute } from "@/hooks/use-hash-route";
 import { anchorClickHandler } from "@/lib/anchor";
 import { track } from "@/lib/analytics/ga4";
+import { bootstrapAuth } from "@/lib/auth-client";
 import { ALL_TOOLS } from "@/lib/tools/registry";
 import { LOCALE_STORAGE_KEY, setSessionLocale } from "@/i18n";
 
@@ -175,6 +177,15 @@ export function AppShell({
   }, []);
 
   /*
+   * Session bootstrap (Phase-10): fetch /api/auth/me once per page load so
+   * the account menu reflects the cookie session. Failure = guest — the
+   * tools never depend on it (PRD: no signup wall).
+   */
+  useEffect(() => {
+    bootstrapAuth();
+  }, []);
+
+  /*
    * Locale mirror boot (R24 URL-wins): /hi/… paths ALWAYS render Hindi —
    * the URL is the contract (hreflang pairs, SSR meta, link-graph all
    * promise it). Fresh visitors get the persisted default (setLocale);
@@ -244,6 +255,7 @@ export function AppShell({
         )}
         <CookieBanner />
         <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
+        <AuthModal />
 
         <Modal
           open={proOpen}

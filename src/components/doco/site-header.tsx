@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, Search } from "lucide-react";
+import { LogOut, Menu, Search, UserRound } from "lucide-react";
 
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -14,8 +15,10 @@ import { Logo } from "@/components/doco/logo";
 import { LanguageSwitch } from "@/components/doco/language-switch";
 import { ThemeToggle } from "@/components/doco/theme-toggle";
 import { MegaMenu } from "@/components/doco/mega-menu";
+import { AccountMenu } from "@/components/doco/auth/account-menu";
 import { useI18n } from "@/components/providers/locale-provider";
 import { anchorClickHandler } from "@/lib/anchor";
+import { logout, openAuthModal, useAuth } from "@/lib/auth-client";
 import {
   categoryChipClass,
   CATEGORIES,
@@ -31,12 +34,13 @@ interface SiteHeaderProps {
 
 /**
  * Sticky site header (PRD §5.1): logo, mega-menu, All Tools link,
- * Ctrl+K search trigger, language switch, theme toggle, Get Pro.
- * Mobile: logo + search + hamburger; categories and settings live in the
- * sheet. Bottom tab bar handles primary mobile navigation.
+ * Ctrl+K search trigger, language switch, theme toggle, account menu,
+ * Get Pro. Mobile: logo + search + hamburger; categories and settings
+ * live in the sheet. Bottom tab bar handles primary mobile navigation.
  */
 export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
   const { t, locale } = useI18n();
+  const { user } = useAuth();
   const routes = useLocalizedRoutes();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -101,6 +105,7 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
           <div className="hidden md:block">
             <ThemeToggle />
           </div>
+          <AccountMenu />
           <Button
             type="button"
             variant="cta"
@@ -184,6 +189,52 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
           </nav>
 
           <div className="mt-auto space-y-4 border-t border-border p-4">
+            {/* Account (Phase-10): guests get a login entry, signed-in users
+             * see their identity + logout — the sheet is the mobile surface. */}
+            {user ? (
+              <div className="flex items-center gap-3">
+                <Avatar className="size-9 border border-border">
+                  <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">
+                    {(user.name?.trim() || user.email).slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {user.name?.trim() || user.email}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {user.plan === "pro" ? t("auth.menuPlanPro") : t("auth.menuPlanFree")}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-11 rounded-btn"
+                  aria-label={t("auth.menuLogout")}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void logout();
+                  }}
+                >
+                  <LogOut className="size-4" aria-hidden="true" />
+                </Button>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="touch"
+                className="w-full rounded-btn"
+                onClick={() => {
+                  setMenuOpen(false);
+                  openAuthModal("login");
+                }}
+              >
+                <UserRound className="size-4" aria-hidden="true" />
+                {t("auth.tabLogin")}
+              </Button>
+            )}
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm font-medium text-muted-foreground">
                 {t("language.label")}

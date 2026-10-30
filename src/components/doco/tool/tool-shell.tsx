@@ -642,7 +642,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => setPhase("landing")}
+              onClick={clearAll}
               className="rounded-btn"
             >
               <ArrowLeft className="size-4" aria-hidden="true" />

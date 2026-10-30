@@ -42,7 +42,10 @@ full tool implementations. Sitemap auto-drops the 3 URLs; live count =
   FAQPage, Breadcrumb, Organization, WebSite SearchAction), OG/Twitter
   cards, canonical + hreflang en/hi, branded bilingual 404.
 - **PWA:** installable manifest + offline shell (`public/offline.html`).
-- **Auth (optional user feature):** email/password accounts, admin panel
+- **Auth (optional user feature):** email/password accounts — R25 shipped
+  the full frontend (AuthModal login/signup with i18n error mapping,
+  header AccountMenu with plan badge, mobile-sheet account section,
+  session bootstrap); account settings page pending. Admin panel
   (announcements, bug reports, contact, feedback, tool requests, audit log).
 - **Feedback loop:** feedback modal, bug reports, tool requests + votes.
 - **Privacy beacons:** UsageEvent/AnonUsage aggregates only (metadata).

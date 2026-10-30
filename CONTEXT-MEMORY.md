@@ -6,7 +6,7 @@
 > **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R24 — /hi URL-WINS + P7-c COMPLETE (2025-10-31)** — /hi mirrors ab stored EN preference ke against bhi Hindi render karte hain (session-only override, preference never clobbered; recovery = 1 click). P7-c i18n VLM battery DONE (8 screenshots public/qa/p7c/ + 5 VLM checks ALL PASS). Cron QA job recreated (488164). Gates: tsc 0, eslint 0; E2E locale matrix + R23 regressions green. Pichla: R23 AI deferral (97/100 live, sitemap 113 URLs).
+> **Updated:** **R25 — rotation 5/5 + P3 backlog closed + Back-stuck fix + AUTH UI (2025-10-31)** — e-invoice browser QA rotation COMPLETE (pdf-to-e-invoice Path A+B, blob-verified); P1-grade ToolShell bug pakda+fix (workspace Back files clear nahi karta tha → 1-file tools STUCK — ab onClick={clearAll}, all 97 tools); R19 P3 backlog CLOSED with live evidence (double-sign lock race one-200+one-409, sweeper expired+orphan dono swept, SDK abort R21); Phase-10 pehla slice — AUTH UI shipped (AuthModal + AccountMenu + mobile sheet + bootstrapAuth; P12 ka missing frontend; i18n +35 → 4840=4840; smoke 88/88; E2E full matrix real-API verified). Pichla: R24 /hi URL-wins + P7-c.
 
 ---
 
@@ -25,7 +25,7 @@
 | GitHub | `DKUMARGUPTA/MyCloudy` — main fully pushed + 26 tags; zero unpushed |
 | Quality gates | tsc **0** errors · eslint 0 · battery **110/110 ALL PASS** (P7-a a11y-names + P7-b magic-bytes added; 108 tool smokes + 2 P7 gates) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी — **4805 = 4805** flat-leaf keys parity (R23: −4 AI-warning keys ×2) |
+| i18n | English + हिंदी — **4840 = 4840** flat-leaf keys parity (R25: +35 auth keys ×2) |
 | Mini-services | convert (port 3031), request-sign (3032) — double-fork daemonizer se start |
 | Tokens | ⚠️ **WIPED 2025-10-30 05:33** (`.env.credentials` + `/home/z/.tokens/` dono gaye — sandbox artifact; recovery impossible, values kabhi print nahi hue). **Push ke liye user se fresh PAT maango.** Jab mile: TURANT push ritual + tag push — disk files pe durability mat maano |
 
@@ -65,11 +65,10 @@ python3 scripts/mini-daemon.py convert && python3 scripts/mini-daemon.py request
 - **Phase 7: PWA** (manifest, service worker, offline)
 - Phase 8: Editor — ✅ COMPLETE (6/6)
 - **Phase 9: Advanced tools** (bache hue)
-- **Phase 10: Accounts + Pro** (auth, request-signature Pro gating)
+- **Phase 10: Accounts + Pro — IN PROGRESS** (R25: auth frontend shipped — AuthModal/AccountMenu/bootstrap; NEXT: Pro gating surface + Razorpay/Stripe stubs + account settings page; APIs password/delete already live)
 - **Phase 11: services/worker** (server-side LibreOffice — Filee ka 266-format gap yahi band hota hai)
 
-### 4. E-invoice family browser QA
-5 tools LIVE hain (P3-era se) — smokes pass (cei 147 + peinv 170 + xinv 492 + vei 309). Browser E2E spot-check har session mein ek tool pe kar lena chahiye.
+### 4. ~~E-invoice family browser QA~~ **COMPLETE ✅ (R25)** — 5/5 covered (cei P6-y r2, xinv P6-y r1, vei R24, pdf-to-e-invoice R25 Path A+B). Browser E2E spot-check rotation ab general QA duty.
 
 ### 5. Ops / infra
 - **Turso migration** (DB-backed API routes ab graceful-degrade pe hain)
@@ -100,11 +99,13 @@ Transactional output allocator · invisible waiting window · progress morph · 
 - **⚠️ Signature badlo to SAB smoke callers grep karo:** tool ka apna smoke hi nahi — view-outline jaise cross-smokes bhi writeOutline(doc,…) call kar rahe the (battery ne pakda, importer-scan ne nahi).
 - **⚠️ newDict() wrapper return karta hai:** depth-first build ke baad `extras[last]` = last DESCENDANT, item nahi — recursion se {itemNum, itemDict, count} return karo, index archaeology mat karo. Outline /Count = TOTAL descendants (1+child.count), direct-children nahi.
 - **⚠️ Cron agent + main session ek saath:** commit races (P6-n double-amend) — history REWRITE KABHI nahi (`--amend`/reset ban), naya commit hi.
+- **⚠️ agent-browser `upload` is env me 0-byte File banata hai** (R25: File.prototype.slice intercept se pakda — {name, size:0, type} milta hai, sniff sahi reject karta hai). Real bytes ke liye DataTransfer + `input.files = dt.files` + bubbling change event (async eval me, handler value clear karta hai isliye return me files.length=0 normal hai). ClipboardEvent ka clipboardData constructor Chromium me IGNORE hota hai — paste path synthetic events ke saath kaam nahi karta.
 
 ---
 
 ## 📝 Recent Rounds (detail = worklog.md)
 
+- **R25 (2025-10-31):** "Next" round — 08-PLAN order follow. (1) pdf-to-e-invoice E2E: Path A green (Factur-X XML detected, field citations, 2,060 B CII blob) + Path B amber (honest 0-fields + 689 B json blob) — rotation 5/5 COMPLETE. (2) **P1 FIX:** ToolShell workspace Back stale files — maxFiles=1 tools me Back ke baad upload = "Too many files" STUCK (P2.1 se); fix onClick={clearAll}; live verified. ⚠️ agent-browser `upload` is env me 0-byte File banata hai — DataTransfer+change injection hi real bytes deta hai (File.prototype.slice intercept se pakda). (3) R19 P3 CLOSED: lock race (parallel sign → 409+200 exactly one winner; 3rd → alreadySigned; result 28,690 B), sweeper (expired + 6h orphan swept live), SDK abort (17/17). (4) Phase-10 AUTH UI: P12 ka missing frontend — AuthModal (tabs+errors i18n 1:1+client gates+fresh-mount reset), AccountMenu (guest login btn / avatar dropdown plan+admin badges+logout), mobile sheet section, bootstrapAuth; i18n +35 (4840=4840, used-keys-only — P12 ke unused account/bugs/admin groups OUT); E2E: real signup 201 + welcome toast + logout + wrong-pw 401 + email-taken 409 + weak gate + HI full Devanagari + mobile 390 + session-persists-reload; smoke-auth-ui 88/88 (code↔i18n parity lock). Gates: tsc 0, lint 0; merge 47/47, a11y 9/9, rsign 185/185. Cron job wiped AGAIN → recreated.
 - **R24 (2025-10-31):** /hi URL-wins fix — stored `docopdf-locale=en` + /hi URL pe English content + lang="en" mil raha tha (P7-c screenshot battery ne pakda — HI captures byte-identical EN the). Fix: i18n module me session-only override (`setSessionLocale`/`clearSessionLocale`, NOT persisted) + `getStoredLocale()` override-aware + app-shell boot URL-wins (stored en → session hi; fresh → persist hi; stored hi → no-op; rAF deferral safe) + use-hash-route `currentLocale()` override-aware (SPA nav /hi-prefix maintain karta hai). Explicit setLocale override CLEAR karta hai — header/footer se 1 click me EN restore. E2E locale matrix 7 scenarios green + R23 regressions green + console 0. P7-c VLM battery: 8 screenshots (EN+HI × home/tool/tools + mobile) + 5 VLM checks (no tofu, layouts intact, mobile no-overflow) ALL PASS. Cron job exec-limit-disable → recreated 488164. LESSON: agent-browser localStorage browser close ke baar bhi persist ho sakta hai ya reset — locale tests me har step pe READ karke confirm karo.
 
 - **P7-SEO (2025-10-30):** "world-best SEO" round — sitemap-404 bug fix (hash-only app ke against real URLs promise ho rahi thi) → 11 naye files: seo libs (site/tool-seo/metadata/json-ld) + routes (tool/[id] ×100 static, tools + [category], 4 static, /hi/[[...path]] catch-all with Hindi SSR meta + locale boot) + DYNAMIC sitemap.ts (116 URLs hreflang) + robots.ts (public/sitemap.xml+robots.txt DELETED — stale) + app-shell extraction + useHashRoute(initial) + anchor.ts (plain-anchor scroll fix) + gen-og-image.ts (sharp 1200×630) + layout refresh (60+→100 copy, Organization/WebSite JSON-LD, home-FAQ moved to page). 50 curated keyword copies + generator. E2E: sab routes 200 + 404 unknown, SSR head verified per type, Hindi page lang=hi zero errors, battery 110/110. ⚠️ LESSONS: context consumer provider-same-component hota hai to value null milti hai (hook param better); /hi hydration error = Fast-Refresh artifact (clean restart = zero); setLocale hydration-commit me rAF-defer. **PUSH PENDING (token).**
