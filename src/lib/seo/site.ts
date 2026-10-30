@@ -6,8 +6,13 @@
  */
 
 export const SITE = {
-  /** Canonical production origin (user-attached Vercel domain). */
-  url: "https://docopdf.com",
+  /**
+   * Canonical production origin (user-attached Vercel domain).
+   * WWW host: the apex docopdf.com 308-redirects to www on Vercel, so every
+   * canonical/og:url/sitemap/robots reference must use www (one host site-wide
+   * — Google Search Console property, hreflang and social previews included).
+   */
+  url: "https://www.docopdf.com",
   name: "DocoPDF",
   /** Appended to every page title by the metadata builders. */
   titleSuffix: " | DocoPDF",

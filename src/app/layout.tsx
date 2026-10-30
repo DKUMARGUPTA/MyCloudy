@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { LocaleProvider } from "@/components/providers/locale-provider";
 import { AppErrorBoundary } from "@/components/doco/error-boundary";
 import { BOOT_SCRIPT } from "@/lib/compat/boot-script";
+import { SITE, absoluteUrl } from "@/lib/seo/site";
 
 import "./globals.css";
 
@@ -44,7 +45,7 @@ const notoSansDevanagari = localFont({
  * P7-SEO: tool/category/hi pages override this via src/lib/seo/metadata.ts.
  */
 export const metadata: Metadata = {
-  metadataBase: new URL("https://docopdf.com"),
+  metadataBase: new URL(SITE.url),
   title: {
     default: "Free PDF Tools — Converter, Editor, Merger & More | DocoPDF",
     template: "%s | DocoPDF",
@@ -113,6 +114,24 @@ export const metadata: Metadata = {
     title: "DocoPDF",
   },
   formatDetection: { telephone: false },
+  /*
+   * Webmaster verification (P7-SEO Phase 6) — read from env so the tokens
+   * never live in git. Set in Vercel → Settings → Environment Variables:
+   *   NEXT_PUBLIC_GSC_VERIFICATION   — Google Search Console content= value
+   *   NEXT_PUBLIC_BING_VERIFICATION  — Bing Webmaster msvalidate.01
+   *   NEXT_PUBLIC_YANDEX_VERIFICATION — Yandex Webmaster
+   */
+  verification: {
+    google: process.env.NEXT_PUBLIC_GSC_VERIFICATION,
+    other: {
+      ...(process.env.NEXT_PUBLIC_BING_VERIFICATION && {
+        "msvalidate.01": process.env.NEXT_PUBLIC_BING_VERIFICATION,
+      }),
+      ...(process.env.NEXT_PUBLIC_YANDEX_VERIFICATION && {
+        "yandex-verification": process.env.NEXT_PUBLIC_YANDEX_VERIFICATION,
+      }),
+    },
+  },
   robots: {
     index: true,
     follow: true,
@@ -145,7 +164,7 @@ const appJsonLd = {
   "@context": "https://schema.org",
   "@type": "WebApplication",
   name: "DocoPDF",
-  url: "https://docopdf.com/",
+  url: absoluteUrl("/"),
   applicationCategory: "UtilitiesApplication",
   operatingSystem: "Any",
   inLanguage: ["en", "hi"],
@@ -173,8 +192,8 @@ const orgJsonLd = {
   "@context": "https://schema.org",
   "@type": "Organization",
   name: "DocoPDF",
-  url: "https://docopdf.com/",
-  logo: "https://docopdf.com/icon-512.png",
+  url: absoluteUrl("/"),
+  logo: absoluteUrl("/icon-512.png"),
   description:
     "DocoPDF builds free, privacy-first online PDF tools that run entirely in the browser — 100 tools in English and Hindi, with no signup and no uploads.",
   sameAs: ["https://github.com/DKUMARGUPTA/MyCloudy"],
@@ -184,13 +203,13 @@ const websiteJsonLd = {
   "@context": "https://schema.org",
   "@type": "WebSite",
   name: "DocoPDF",
-  url: "https://docopdf.com/",
+  url: absoluteUrl("/"),
   inLanguage: ["en", "hi"],
   potentialAction: {
     "@type": "SearchAction",
     target: {
       "@type": "EntryPoint",
-      urlTemplate: "https://docopdf.com/tools?q={search_term_string}",
+      urlTemplate: absoluteUrl("/tools?q={search_term_string}"),
     },
     "query-input": "required name=search_term_string",
   },

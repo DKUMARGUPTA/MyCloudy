@@ -3,8 +3,8 @@
  * producing unique title / description / keywords / canonical / hreflang
  * alternates / Open Graph / Twitter cards for every crawlable URL.
  *
- * metadataBase (https://docopdf.com) lives in the root layout, so all
- * relative canonical + OG URLs resolve to the production domain.
+ * metadataBase (https://www.docopdf.com — the canonical www host) lives in
+ * the root layout, so all relative canonical + OG URLs resolve to it.
  */
 
 import type { Metadata } from "next";
