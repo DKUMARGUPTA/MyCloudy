@@ -3598,3 +3598,45 @@ Stage Summary:
 - CRITICAL RENDERING BUG FIXED for every worker-side pdf.js renderer: pdf-to-jpg/png/webp/tiff, rasterize-pdf, ocr-pdf, ocr (copy-from-pdf), compress-pdf-to-size, compare-pdf, redact-pdf, pdf-to-powerpoint, pdf-to-svg, extract-images, translate-pdf, chat-with-pdf + text-only workers unaffected-but-hardened. Chromium/Skia-printed PDFs (chat exports, print-to-PDF) were 100% tofu in conversions; now render with true embedded glyphs — natively where the engine allows, as vector paths everywhere else.
 - Honest limits: fallback path-mode is slower than native fillText on text-heavy pages (acceptable; correctness-first); Safari/Firefox worker FontFaceSet availability untested here (fallback covers them deterministically).
 - Project state: dev E2E green; push + Vercel deploy + production smoke next.
+
+---
+Task ID: R16-COMPLETE (backfill) + R17 (backfill)
+Agent: orchestrator (main session)
+Task: Worklog backfill — a sandbox rollback destroyed the on-disk worklog entries for the R16 completion round and the R17 audit round (git history + remote verified intact; only the log lines were lost). Reconstructed from git commits + session memory. Tokens were also wiped and restored from the documented values.
+
+Work Log (R16 completion, reconstructed):
+- 1bdd643 (fix render) + 9fea645 (QA fixture) pushed to GitHub; Vercel deploy READY (dpl_GS4fuEyXMuGFyFeSm1P9iMnVodiY at 9fea645).
+- Production live-smoke on docopdf.com: fresh-session /tool/pdf-to-jpg convert → downloaded JPG VLM-verified READABLE; console 0 errors. Tofu fix confirmed live.
+- QA screenshots committed: public/qa/tofu-fix-prod-verified.png, public/qa/tofu-verify-local.png.
+
+Work Log (R17 real-path router, reconstructed from commit ac0a5c3):
+- Audit finding: every internal link was a hash route (#/tool/x) → Google's rendered link graph had ZERO internal links to the 116 real tool URLs. Fix: use-hash-route.ts rewritten (ROUTES.* return real paths; route store derives from location.pathname; navigateToHash accepts real paths AND legacy #/ strings; locale-aware pushState); AppShell document-level click interceptor upgrades internal link clicks to pushState SPA nav; LanguageSwitch mirrors visible URL; 4 hardcoded hash links fixed.
+- E2E per commit message: 38 real links/0 hash in DOM; SPA nav preserved; HI mirror; legacy bookmarks; mobile 390 clean; tofu regression intact; tsc 0, lint 0. ac0a5c3 is local HEAD and confirmed synced with origin/main.
+
+Stage Summary:
+- Sandbox rollbacks can eat worklog lines while git survives — always verify remote sync state after any rollback before new work (disk + git > session summaries).
+
+---
+Task ID: R18-SITEMAP-UX
+Agent: orchestrator (main session)
+Task: User reported /sitemap.xml "ajeeb sa lag raha hai" (looked weird) — Chrome showed an unstyled wall of concatenated text. Make the sitemap page look professional.
+
+Work Log:
+- ROOT CAUSE (pinned insight): Chrome 156 removed XSLTProcessor AND the built-in XML tree view (verified in agent-browser: typeof XSLTProcessor === "undefined", no #webkit-xml-viewer-source-xml). Raw XML now renders as a text jumble in the world's dominant browser. (Firefox/Safari still have XSLT; Chrome does not.)
+- First approach (XSLT stylesheet, Yoast-style) was built and worked in lxml/libxslt, but is undeliverable to Chrome → dropped. Lesson: verify engine capability (typeof XSLTProcessor) BEFORE building XSL presentations in 2026.
+- FINAL ARCHITECTURE — content negotiation in src/app/sitemap.xml/route.ts (replaces app/sitemap.ts):
+  * Crawlers/CLI (UA matches BOT_UA regex OR Accept does not prefer text/html — Googlebot sends Accept */*): the exact same valid sitemaps.org 0.9 XML (116 URLs, 348 hreflang en/hi/x-default alternates 1:1, registry-driven, pretty-printed, day-precision lastmod, priority toFixed(1)). Double redundancy: Googlebot caught by BOTH UA regex and Accept fallback.
+  * Human browsers (no bot tokens + Accept prefers text/html q=1 over application/xml q=0.9 — every real browser): branded, searchable, dark-mode-aware HTML page from src/app/sitemap.xml/html.ts (same data, same route).
+  * ?raw=1 → force raw XML (linked as "Raw XML" target=_blank from the HTML page).
+  * Cache safety: force-dynamic + Cache-Control without s-maxage + Vary: Accept, User-Agent — a cached HTML variant can never leak to a crawler at the edge.
+- HTML page design (matches site brand): LogoMark teal gradient lockup + actions; hero (XML Sitemap + 116 URLs pill + sitemaps.org 0.9 + hreflang pills); 4 stat cards (116 total / 100 tools / 10 categories / 6 core pages, computed live); info notice; sticky search bar ("/" shortcut, live "N of 116 URLs" count, empty state); table (# / type chip home-index-category-tool-page / mono path links / EN HI locale chips / updated / frequency / priority badge p-max…p-min); footer with Raw XML link; prefers-color-scheme dark (#0b1220); all CSS/JS/SVG inline (CSP-safe: unsafe-inline already in script-src/style-src).
+- Responsive: ≤860 stats 2-col; ≤720 table → stacked list rows (type chip / path / locale+priority chips), thead hidden; VLM-flagged cramped mobile rows fixed with 14px/16px padding + 13.5px paths. VLM false-positive "overflow" disproven programmatically (scrollWidth==clientWidth, 0 elements exceed parents) + close-up NOT-CLIPPED verdict.
+- JSDoc pitfall hit: `Accept: */*` inside a /* */ comment closes the comment early → parse error. Avoid *-slash sequences in block comments.
+- QA ALL GREEN: XML valid via ElementTree (116 URLs / 348 alternates, Googlebot UA + curl + bingbot-with-browser-Accept + ?raw=1 all get XML; browser-like Accept gets HTML); browser E2E 116 rows render, search filters (ocr→1, invoice→7, zzz→empty state), raw link opens ?raw=1, home + /hi smoke clean, mobile 390 overflowX=0, dark mode clean, agent-browser errors 0; VLM: light GOOD (professional SaaS look), dark GOOD, mobile GOOD after spacing fix; tsc 0; lint 0. Screenshots: public/qa/sitemap-html-{light,dark,mobile}.png.
+- Dev server died twice during lint (heavy babel pass kills the daemon's nohup process — known pattern); dev-daemon.py relaunch both times.
+- Tokens wiped by the sandbox rollback → restored to /home/z/.tokens/docopdf.env + .ops/token-backup.env (chmod 600).
+
+Stage Summary:
+- /sitemap.xml is now a designed surface: crawlers get byte-identical valid XML (GSC/Bing unaffected, hreflang intact), humans get a branded searchable directory view. The negotiation is conservative by design — anything ambiguous (unknown UA, no Accept preference, */*) always receives XML.
+- Pinned insights: (1) Chrome 156 has no XSLT and no XML viewer — never ship XSL-styled XML as the only presentation; (2) content-negotiate on UA-bot-token + Accept q-values with double redundancy for Googlebot; (3) no s-maxage + Vary prevents edge-cache variant poisoning; (4) lint and the dev server cannot run simultaneously in this sandbox — run sequentially, relaunch daemon after.
+- Project state: 116 URLs / 100 live tools | lint 0 + tsc 0 + dev.log clean | local E2E green. Next: push + Vercel deploy + live smoke on docopdf.com.
