@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 
 import { useI18n } from "@/components/providers/locale-provider";
+import { ROUTES } from "@/hooks/use-hash-route";
 import { ToolCard } from "@/components/doco/tools/tool-card";
 import {
   categoryChipClass,
@@ -40,7 +41,7 @@ export function CategoryView({
     <div className="mx-auto w-full max-w-6xl px-4 pb-16 pt-8 sm:pt-10">
       <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-sm">
         <a
-          href="#/"
+          href={ROUTES.home}
           className="flex min-h-11 items-center gap-1 rounded-btn px-2 text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
           <ArrowLeft className="size-4" aria-hidden="true" />
@@ -103,7 +104,7 @@ export function CategoryView({
             return (
               <li key={item.id}>
                 <a
-                  href={`#/tools/${item.id}`}
+                  href={ROUTES.category(item.id)}
                   className="flex min-h-11 items-center gap-2 rounded-chip border border-border bg-background px-4 text-sm font-medium text-muted-foreground outline-none transition-colors hover:border-foreground/20 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 >
                   <RelatedIcon className="size-4" aria-hidden="true" />

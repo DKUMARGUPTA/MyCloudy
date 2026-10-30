@@ -6088,3 +6088,28 @@ NEXT: GA4 event taxonomy round 2 (process_success / download_click / chain_next_
 tsc 0 · eslint 0
 
 NEXT: deploy + live HTML check → owner re-runs GA4 installation wizard (or it auto-detects) → GA4 event taxonomy round 2 → Phase 5 technical SEO → SMO kit.
+
+## R17 — REAL-PATH ROUTER (2026-10-30, internal-links SEO fix)
+
+**THE ROUND:** Full-site audit found ONE high-severity issue: every internal link was a hash route ("#/tool/merge-pdf") — Google's rendered link graph contained ZERO internal links to the 116 real tool URLs (no link equity flow; sitemap-only discovery). Audit otherwise clean: tsc 0, lint 0, dev.log clean, 11 pages console-clean, mobile 390 no-overflow, theme/lang/search/404/cookie-banner OK, 3 conversions E2E OK (tofu fix intact), production headers/CSP/robots/sitemap/gtag-order OK, 464/464 sitemap URLs 200, admin API 403-protected. Two documented non-bugs: Radix useId hydration warning (dev-only cold-compile race; production fresh-session = 0 errors) and locale-preference-overrides-URL (by-design mirror, SSR always URL-matched for crawlers).
+
+### Shipped
+- **src/hooks/use-hash-route.ts REWRITTEN** (kept the export names — 20 call sites untouched): ROUTES.* now return real paths ("/tool/x", "/tools", "/tools/<cat>", "/about"); route store derives state from location.pathname+"?q=" via useSyncExternalStore (popstate + custom ROUTE_EVENT subscriptions); navigateToHash() accepts real paths AND legacy "#/…" strings (converted), plain "#anchor" scrolls natively without touching the route; locale-aware pushState ("/hi" prefix from localStorage ?? current pathname); LEGACY BOOKMARKS still work ("//#/tool/x" routes when the path is a home shell — routeKeySnapshot includes the hash there).
+- **AppShell click interceptor (NEW)**: document-level listener upgrades internal a[href^="/"] left-clicks (no modifiers, no target=_blank/download) to pushState SPA navigation — crawlers get real hrefs, users keep the no-reload feel.
+- **LanguageSwitch URL mirror (NEW)**: locale flip now replaceState-mirrors the visible URL ("/tool/x" ↔ "/hi/tool/x") — no reload, no route event (view unchanged); shares land on the correct-locale SSR page.
+- **4 hardcoded hash links fixed**: site-header logo "#/"→"/", category-view breadcrumb "#/"→"/" + subcategory "#/tools/x"→ROUTES.category, tool-view notFound action "#/tools"→"/tools".
+
+### E2E verified (local)
+- Rendered DOM: 38 real-path links, 0 hash links on home ✓
+- SPA nav marker test: window marker PRESERVED across tool-card click (no full reload) ✓
+- Back/forward history ✓ · category nav ✓ · search palette Enter → /tool/compress-pdf ✓
+- HI mirror: /hi click → /hi/tool/jpg-to-pdf, lang=hi, Hindi h1, 0 errors ✓
+- Legacy bookmark /#/tool/merge-pdf → merge tool renders ✓
+- Language switch → lang flip + URL mirror ✓
+- Mobile 390: no overflow, tab-bar SPA nav ✓
+- Conversion E2E post-refactor: pdf-to-jpg 10 pages, 0 console errors, download OK, VLM VERDICT READABLE (tofu regression intact) ✓
+
+### Gates
+tsc 0 · eslint 0
+
+NEXT: GitHub push → Vercel deploy → live href check on production (rendered DOM must show real paths) → GA4 event taxonomy round 2 → Phase 5 technical SEO.

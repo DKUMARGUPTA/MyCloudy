@@ -28,7 +28,7 @@ export function ToolView({ toolId }: { toolId: string }) {
           description={t("tool.notFoundDesc")}
           action={
             <Button asChild size="touch" className="rounded-btn">
-              <a href="#/tools">{t("tool.notFoundAction")}</a>
+              <a href="/tools">{t("tool.notFoundAction")}</a>
             </Button>
           }
         />

@@ -2,38 +2,68 @@
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
+import { LOCALE_STORAGE_KEY, type Locale } from "@/i18n";
+
 /**
- * Hash-based view router for the app shell (P7-SEO: real paths added).
+ * App-shell view router — REAL PATHS with SPA behavior (P7-SEO R17).
  *
- * Routes:  "#/"            -> home
- *          "#/tools"       -> all tools   (optional ?q=<search>)
- *          "#/tools/<cat>" -> category    (optional ?q=<search>)
- *          "#/tool/<id>"   -> tool workspace (ToolShell; ?q ignored)
- * Anchors: "#<id>" (not starting with "#/") -> keep the current view +
- *          scroll to <id> (previously this jumped home — fixed with the
- *          structural-route ref below).
+ * History: this router was hash-based ("#/tool/x") because the app began as
+ * a single-view SPA. Real crawlable paths ("/tool/<id>", "/hi/…") were added
+ * later as server routes, but every internal <a> still pointed at "#/…", so
+ * Google's rendered link graph contained ZERO links to the 116 tool URLs —
+ * no internal link equity, sitemap-only discovery. R17 flips the model:
  *
- * Real paths (P7-SEO): crawlable pages ("/tool/merge-pdf", "/hi/…") boot
- * the shell with an InitialRouteContext value that is used while the
- * hash is empty; the first hash navigation takes over from there.
- * Works with browser back/forward via the hashchange event, modeled as an
- * external store (useSyncExternalStore) — hydration-safe, no effects
- * writing React state.
+ *   - ROUTES.* now return real paths ("/tool/merge-pdf", "/tools", "/about")
+ *     so crawlers see (and users can copy) genuine URLs in the DOM.
+ *   - A document-level click interceptor in AppShell turns those same
+ *     anchors into history.pushState navigation — the SPA feel is kept,
+ *     no full page loads between views.
+ *   - The route store derives its state from location.pathname (+"?q="),
+ *     re-synced on popstate (back/forward) and a custom navigation event.
+ *
+ * Route shapes (HashRoute kept the name to avoid churning 20 call sites):
+ *   "/"                  -> home
+ *   "/tools" (+ "?q=")   -> all tools
+ *   "/tools/<cat>"       -> category (+ "?q=")
+ *   "/tool/<id>"         -> tool workspace
+ *   "/about|contact|privacy|terms" -> static page
+ *   "/hi/…"              -> identical shapes; the /hi prefix only marks the
+ *                           Hindi mirror (the locale itself lives in the
+ *                           locale provider).
+ *
+ * Backward compatibility:
+ *   - LEGACY BOOKMARKS: "https://docopdf.com/#/tool/x" still routes — when
+ *     the real path is a home shell and the hash starts with "#/", the hash
+ *     drives routing (see routeKeySnapshot).
+ *   - OLD CALL STRINGS: navigateToHash() accepts both real paths and legacy
+ *     "#/…" strings, converting the latter to their real-path equivalents.
+ *   - PLAIN ANCHORS ("#why", "#main"): never touch the route key — the
+ *     snapshot ignores hashes that don't start with "#/", so native anchor
+ *     scrolling cannot jump the app back to the home view.
  */
 
 export interface HashRoute {
   view: "home" | "tools" | "tool" | "page";
   category?: string;
   query?: string;
-  /** Enabled tool id for the "#/tool/<id>" view. */
+  /** Enabled tool id for the "/tool/<id>" view. */
   toolId?: string;
-  /** Static page id (about|contact|privacy|terms) for the "#/page/<id>" view. */
+  /** Static page id (about|contact|privacy|terms) for the "/<page>" view. */
   pageId?: string;
-  /** Anchor id when the hash is a plain "#section" link. */
+  /** Anchor id — legacy plain-"#section" hashes only (see file header). */
   anchor?: string;
 }
 
-export function parseHash(hash: string): HashRoute {
+/** Static pages that live at the site root (mirrors SITE.staticPages). */
+const STATIC_PAGE_IDS = ["about", "contact", "privacy", "terms"] as const;
+
+const ROUTE_EVENT = "docopdf:route-change";
+
+/* ------------------------------------------------------------------ */
+/* Parsing                                                             */
+/* ------------------------------------------------------------------ */
+
+function parseLegacyHash(hash: string): HashRoute {
   if (!hash || hash === "#" || hash === "#/") return { view: "home" };
 
   if (!hash.startsWith("#/")) {
@@ -59,58 +89,206 @@ export function parseHash(hash: string): HashRoute {
   return { view: "home" };
 }
 
-function subscribeToHash(callback: () => void): () => void {
+/** @deprecated Kept for the one legacy export some tools still import. */
+export const parseHash = parseLegacyHash;
+
+/**
+ * Parse a real-path route key ("<pathname><search>", optionally carrying a
+ * legacy "#/…" hash on home shells). "/hi" prefixes are stripped — the
+ * Hindi mirror renders the identical views, and the locale itself lives
+ * in the locale provider, not in the route.
+ */
+export function parseRouteKey(key: string): HashRoute {
+  if (!key) return { view: "home" };
+
+  let rest = key;
+
+  // Legacy hash routing on the home shells ("/#/tool/x", "/hi#/tools").
+  const hashAt = rest.indexOf("#/");
+  if (hashAt !== -1) {
+    return parseLegacyHash(rest.slice(hashAt));
+  }
+
+  // Strip the Hindi mirror prefix.
+  if (rest === "/hi" || rest.startsWith("/hi/")) {
+    rest = rest.slice("/hi".length) || "/";
+  }
+
+  // Split off ?query.
+  const searchAt = rest.indexOf("?");
+  const search = searchAt === -1 ? "" : rest.slice(searchAt + 1);
+  let path = searchAt === -1 ? rest : rest.slice(0, searchAt);
+  const query = search
+    ? new URLSearchParams(search).get("q") ?? undefined
+    : undefined;
+
+  if (path.endsWith("/") && path !== "/") path = path.slice(0, -1);
+
+  if (path === "/" || path === "") return { view: "home" };
+  if (path === "/tools") return { view: "tools", query };
+  if (path.startsWith("/tools/")) {
+    return { view: "tools", category: path.slice("/tools/".length), query };
+  }
+  if (path.startsWith("/tool/")) {
+    return { view: "tool", toolId: path.slice("/tool/".length) };
+  }
+  const staticId = path.slice(1);
+  if (
+    path.startsWith("/") &&
+    !path.includes("/", 1) &&
+    (STATIC_PAGE_IDS as readonly string[]).includes(staticId)
+  ) {
+    return { view: "page", pageId: staticId };
+  }
+  return { view: "home" };
+}
+
+/* ------------------------------------------------------------------ */
+/* External store                                                      */
+/* ------------------------------------------------------------------ */
+
+function subscribeToRoute(callback: () => void): () => void {
+  window.addEventListener("popstate", callback);
   window.addEventListener("hashchange", callback);
-  return () => window.removeEventListener("hashchange", callback);
-}
-
-function hashSnapshot(): string {
-  return window.location.hash;
-}
-
-function hashServerSnapshot(): string {
-  return "";
+  window.addEventListener(ROUTE_EVENT, callback);
+  return () => {
+    window.removeEventListener("popstate", callback);
+    window.removeEventListener("hashchange", callback);
+    window.removeEventListener(ROUTE_EVENT, callback);
+  };
 }
 
 /**
- * Hash navigation primitive: assigns location.hash so the hashchange event
- * fires (History-API pushState would NOT notify the route store).
- * Module-level by design — safe to call from any component or hook.
+ * The store key: the real path + query, except on the home shells where a
+ * legacy "#/…" bookmark hash still drives routing. Plain anchors ("#why")
+ * and hashes on non-home paths are deliberately ignored.
+ */
+function routeKeySnapshot(): string {
+  const { pathname, search, hash } = window.location;
+  if (
+    hash.startsWith("#/") &&
+    (pathname === "/" || pathname === "/hi")
+  ) {
+    return pathname + hash;
+  }
+  return pathname + search;
+}
+
+function routeKeyServerSnapshot(): string {
+  return "";
+}
+
+/* ------------------------------------------------------------------ */
+/* Navigation                                                          */
+/* ------------------------------------------------------------------ */
+
+/** Current UI locale for path prefixing (provider's source of truth). */
+function currentLocale(): Locale {
+  try {
+    const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
+    if (stored === "en" || stored === "hi") return stored;
+  } catch {
+    /* private mode — fall through to the path hint */
+  }
+  return window.location.pathname.startsWith("/hi") ? "hi" : "en";
+}
+
+/** "/tool/x" -> "/hi/tool/x" when the UI is Hindi. */
+function withLocalePrefix(path: string): string {
+  const locale = currentLocale();
+  if (locale !== "hi") return path;
+  if (path === "/") return "/hi";
+  return `/hi${path}`;
+}
+
+/** Map a legacy "#/…" string to its real-path equivalent. */
+function legacyHashToPath(to: string): string {
+  const route = parseLegacyHash(to);
+  switch (route.view) {
+    case "tools":
+      return route.category
+        ? `/tools/${route.category}`
+        : withQuery("/tools", route.query);
+    case "tool":
+      return `/tool/${route.toolId ?? ""}`;
+    case "page":
+      // Static pages live at the root ("/about"), not "/page/about".
+      return `/${route.pageId ?? ""}`;
+    default:
+      return withQuery("/", route.query);
+  }
+}
+
+function withQuery(path: string, query?: string): string {
+  return query ? `${path}?q=${encodeURIComponent(query)}` : path;
+}
+
+/**
+ * Navigate the SPA. Accepts real paths ("/tool/merge-pdf", "/tools?q=x")
+ * and legacy "#/…" strings (converted); plain "#anchor" strings scroll
+ * natively without touching the route. Same-path navigations scroll to
+ * top (or to the anchor) instead of pushing history entries.
+ *
+ * (Name kept from the hash era — 20+ call sites import it.)
  */
 export function navigateToHash(to: string): void {
-  if (window.location.hash === to) {
-    const next = parseHash(to);
-    if (next.anchor) {
+  if (!to) return;
+
+  /* Plain in-page anchor — native behavior, router stays put. */
+  if (to.startsWith("#") && !to.startsWith("#/")) {
+    const el = document.getElementById(to.slice(1));
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (window.location.hash !== to) {
+      history.replaceState(null, "", window.location.pathname + to);
+    }
+    return;
+  }
+
+  /* Legacy hash route string — convert to its real path. */
+  const target = to.startsWith("#/") ? legacyHashToPath(to) : to;
+
+  /* Real path (may carry ?query and/or #anchor). */
+  const url = new URL(target, window.location.origin);
+  const prefixed = withLocalePrefix(url.pathname) + url.search + url.hash;
+
+  if (prefixed === window.location.pathname + window.location.search + window.location.hash) {
+    const anchor = url.hash.slice(1);
+    if (anchor) {
       document
-        .getElementById(next.anchor)
+        .getElementById(anchor)
         ?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
     return;
   }
-  window.location.hash = to;
+
+  window.history.pushState(null, "", prefixed);
+  window.dispatchEvent(new Event(ROUTE_EVENT));
 }
+
+/* ------------------------------------------------------------------ */
+/* Hook                                                                */
+/* ------------------------------------------------------------------ */
 
 export function useHashRoute(initial?: HashRoute): {
   route: HashRoute;
   navigate: (to: string) => void;
 } {
-  const hash = useSyncExternalStore(
-    subscribeToHash,
-    hashSnapshot,
-    hashServerSnapshot
+  const key = useSyncExternalStore(
+    subscribeToRoute,
+    routeKeySnapshot,
+    routeKeyServerSnapshot
   );
 
   const route = useMemo<HashRoute>(() => {
-    if (!hash) {
+    if (!key) {
       return initial ?? { view: "home" };
     }
-    return parseHash(hash);
-  }, [hash, initial]);
+    return parseRouteKey(key);
+  }, [key, initial]);
 
   // Scroll behavior on route changes — a DOM side effect only (no state):
   // view switches go to top; anchors scroll to their section after the
-  // home view mounts. Same-view anchor clicks also fire here, which simply
-  // re-scrolls to the same element the browser already scrolled to.
+  // view mounts. Same-view anchor clicks simply re-scroll.
   useEffect(() => {
     if (route.anchor) {
       const frame = requestAnimationFrame(() => {
@@ -122,20 +300,25 @@ export function useHashRoute(initial?: HashRoute): {
     }
     window.scrollTo(0, 0);
     return undefined;
-  }, [route]);
+  }, [key, route.anchor]);
 
   const navigate = useCallback((to: string) => navigateToHash(to), []);
 
   return { route, navigate };
 }
 
-/** Route hash helpers shared by header, tab bar and views. */
+/**
+ * Route helpers shared by header, tab bar, views and cards — REAL PATHS
+ * (R17): these values land in <a href> so crawlers finally see internal
+ * links to every tool page. The AppShell click interceptor turns them
+ * into SPA navigation for users.
+ */
 export const ROUTES = {
-  home: "#/",
-  tools: "#/tools",
-  category: (categoryId: string) => `#/tools/${categoryId}`,
-  tool: (toolId: string) => `#/tool/${toolId}`,
+  home: "/",
+  tools: "/tools",
+  category: (categoryId: string) => `/tools/${categoryId}`,
+  tool: (toolId: string) => `/tool/${toolId}`,
   /** Static content page (about | contact | privacy | terms). */
-  page: (pageId: string) => `#/page/${pageId}`,
-  toolsWithQuery: (query: string) => `#/tools?q=${encodeURIComponent(query)}`,
+  page: (pageId: string) => `/${pageId}`,
+  toolsWithQuery: (query: string) => `/tools?q=${encodeURIComponent(query)}`,
 } as const;

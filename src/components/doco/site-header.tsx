@@ -43,7 +43,7 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
     <header className="sticky top-0 z-40 w-full border-b border-border bg-background/85 backdrop-blur-md supports-[backdrop-filter]:bg-background/70">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-2 px-4">
         <a
-          href="#/"
+          href={ROUTES.home}
           aria-label={t("a11y.logoLabel")}
           className="rounded-btn outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >

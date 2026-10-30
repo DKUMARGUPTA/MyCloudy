@@ -22,7 +22,7 @@ import { SearchPalette } from "@/components/doco/search/search-palette";
 import { CookieBanner } from "@/components/doco/cookie-banner";
 import { BottomTabBar } from "@/components/doco/bottom-tab-bar";
 import { useI18n } from "@/components/providers/locale-provider";
-import { useHashRoute, type HashRoute } from "@/hooks/use-hash-route";
+import { useHashRoute, navigateToHash, type HashRoute } from "@/hooks/use-hash-route";
 import { anchorClickHandler } from "@/lib/anchor";
 import { track } from "@/lib/analytics/ga4";
 import { ALL_TOOLS } from "@/lib/tools/registry";
@@ -52,6 +52,43 @@ export function AppShell({
   const [searchOpen, setSearchOpen] = useState(false);
   const openPro = useCallback(() => setProOpen(true), []);
   const openSearch = useCallback(() => setSearchOpen(true), []);
+
+  /*
+   * SPA link interception (R17 real-path router): internal anchors now
+   * carry real hrefs ("/tool/merge-pdf") for crawlers and copy-paste;
+   * this listener upgrades those clicks to history.pushState navigation
+   * so the app keeps its no-reload feel. Modifier clicks (new tab,
+   * middle-click fallback, cmd-click) and non-internal targets pass
+   * through untouched.
+   */
+  useEffect(() => {
+    const onClick = (event: MouseEvent): void => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      const anchor = (event.target as HTMLElement | null)?.closest?.(
+        "a[href]"
+      ) as HTMLAnchorElement | null;
+      if (!anchor || anchor.target === "_blank" || anchor.download) return;
+      const href = anchor.getAttribute("href");
+      /* Only same-app path links — anchors (#id), blobs, mailto and
+       * external URLs keep their native behavior. */
+      if (!href || !href.startsWith("/")) return;
+      const url = new URL(href, window.location.origin);
+      if (url.origin !== window.location.origin) return;
+      event.preventDefault();
+      navigateToHash(url.pathname + url.search + url.hash);
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, []);
 
   /*
    * GA4 tool_view (P7-SEO Phase 6): ONE event per tool landing, carrying

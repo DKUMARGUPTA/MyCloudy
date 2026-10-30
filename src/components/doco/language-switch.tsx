@@ -9,14 +9,39 @@ import { track } from "@/lib/analytics/ga4";
 /**
  * EN | हिं language switch (PRD §5.1).
  * Persists the choice in localStorage and updates <html lang>.
+ *
+ * R17 real-path router: the visible URL is mirrored too ("/tool/x" ↔
+ * "/hi/tool/x") via replaceState — no reload, no route-store event (the
+ * view is unchanged); only the address bar (and future shares/links)
+ * reflect the chosen locale. Locales only exist for app paths, so api/,
+ * _next/ and friends are left untouched.
  */
 export function LanguageSwitch({ className }: { className?: string }) {
   const { locale, setLocale, t } = useI18n();
   const { toast } = useToast();
 
+  const mirrorUrl = (next: Locale): void => {
+    try {
+      const { pathname, search } = window.location;
+      const isHindiPath = pathname === "/hi" || pathname.startsWith("/hi/");
+      const wantsHindiPath = next === "hi";
+      if (isHindiPath === wantsHindiPath) return;
+      let target: string;
+      if (wantsHindiPath) {
+        target = pathname === "/" ? "/hi" : `/hi${pathname}`;
+      } else {
+        target = pathname === "/hi" ? "/" : pathname.slice("/hi".length);
+      }
+      window.history.replaceState(null, "", target + search);
+    } catch {
+      /* history unavailable — the UI flip alone is fine */
+    }
+  };
+
   const change = (next: Locale) => {
     if (next === locale) return;
     setLocale(next);
+    mirrorUrl(next);
     track("language_switch", { from: locale, to: next });
     toast({ title: t("language.changedTo", { language: t(`language.${next}`) }) });
   };
