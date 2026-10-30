@@ -398,6 +398,7 @@
     "errorTranslateTooLong": "That document is too long to translate in one go (200 pages / ~100,000 characters). Use the Pages option to translate a smaller range, then the next.",
     "errorTranslateTimeout": "A translation batch took too long and the run was stopped. Check your connection and retry — or translate fewer pages.",
     "errorTranslateAi": "The translation service is not answering right now. Check your connection and try again.",
+    "errorTranslateNotConfigured": "The translation service is not enabled on the server yet. Please check back soon.",
     "errorNoFile": "No file was received — add one and try again."
   },
   "result": {
@@ -2256,6 +2257,7 @@
     "disclaimer": "AI answers only from your document — verify important claims on the cited pages.",
     "errTitle": "Could not get an answer",
     "errSend": "The AI service could not be reached. Check your connection and try again.",
+    "errNotConfigured": "AI features are not enabled on the server yet. Other tools keep working — please check back soon.",
     "errTimeout": "The answer took too long. Try a shorter question, or try again.",
     "errBadRequest": "That message could not be sent. Shorten it and try again.",
     "qp": {
@@ -2343,6 +2345,7 @@
     "exportGenerated": "Generated",
     "errTitle": "Could not build the summary",
     "errSend": "The AI service could not be reached. Check your connection and try again.",
+    "errNotConfigured": "AI features are not enabled on the server yet. Other tools keep working — please check back soon.",
     "errTimeout": "The summary took too long. Try the brief depth, or try again in a moment.",
     "errBadRequest": "This document could not be summarized. Its text may be too unusual — try another file.",
     "errPdf": "The PDF could not be built. Try Markdown or plain text, or try again.",

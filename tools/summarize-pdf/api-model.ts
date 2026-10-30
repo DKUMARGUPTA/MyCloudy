@@ -42,12 +42,14 @@ export type SummarizeErrorCode =
   | "badRequest"
   | "timeout"
   | "aiUnavailable"
+  | "aiNotConfigured"
   | "emptySummary";
 
 export const SUMMARIZE_ERROR_STATUS: Record<SummarizeErrorCode, number> = {
   badRequest: 400,
   timeout: 504,
   aiUnavailable: 502,
+  aiNotConfigured: 503,
   emptySummary: 502,
 };
 

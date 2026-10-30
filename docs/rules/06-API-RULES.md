@@ -14,12 +14,12 @@ QUERY STRING, never a port in the hostname (gateway rule; see
 | `/api/admin/*` | **gateAdmin** | admin panel actions; AuditLog writes |
 | `/api/announcements` | public | site announcements |
 | `/api/bug-reports` | public + rate limit | files BugReport rows |
-| `/api/chat` | public + rate limit | chat-with-pdf (LLM skill, backend only) |
+| `/api/chat` | public + rate limit | chat-with-pdf (AI adapter `src/lib/ai/zai-client.ts`) |
 | `/api/contact` | public + rate limit | ContactMessage |
 | `/api/feedback` | public + rate limit | inline limiter pattern |
 | `/api/fetch-page` | public | Mode-S page fetch **with SSRF guard** (reference implementation, `route.ts:124-141,223`) |
-| `/api/summarize` | public + rate limit | summarize-pdf (LLM skill) |
-| `/api/translate` | public + rate limit | translate (LLM skill) |
+| `/api/summarize` | public + rate limit | summarize-pdf (AI adapter) |
+| `/api/translate` | public + rate limit | translate (AI adapter) |
 | `/api/tools` | public | registry metadata |
 | `/api/usage` | public | beacon (UsageEvent / AnonUsage) |
 
@@ -33,10 +33,13 @@ Mini-services (gateway-proxied, own JSON envelope):
    try/catch (use `src/lib/api-auth.ts` `gateUser`/`gateAdmin` — they fold
    failures into `{ error: "server_error" }` 500).
 2. **No internal leakage.** Never `String(err)` / stack traces to clients.
-   Log server-side with a prefix (`[route] …`), return stable codes:
-   `bad_request | invalid_credentials | email_taken | rate_limited |
-   weak_password | invalid_email | banned | forbidden | not_found |
-   server_error` (client maps to `auth.err.*` i18n keys).
+   Return stable codes: `bad_request | invalid_credentials | email_taken |
+   rate_limited | weak_password | invalid_email | banned | forbidden |
+   not_found | server_error` (client maps to `auth.err.*` i18n keys).
+   EXCEPTION — the three AI routes are ZERO-console by design (enforced
+   by smokes, brighter line than prefixed logging) and add:
+   `aiNotConfigured 503 | aiUnavailable 502 | emptySummary/Answer/
+   Translation 502 | timeout 504`.
 3. **Rate limit every public mutator** with `src/lib/rate-limit.ts`
    (`rateLimit(key, limit, windowMs)` + `clientIp(req)`). Return
    `429` + `retryAfterSec`.

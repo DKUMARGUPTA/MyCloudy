@@ -347,7 +347,9 @@ export function SummarizeSurface({
               ? t("summarize.errTimeout")
               : code === "badRequest"
                 ? t("summarize.errBadRequest")
-                : t("summarize.errSend"),
+                : code === "aiNotConfigured"
+                  ? t("summarize.errNotConfigured")
+                  : t("summarize.errSend"),
           variant: "destructive",
         });
       }

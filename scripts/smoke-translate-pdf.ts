@@ -453,9 +453,11 @@ check(
     /Page \$\{p\.page\}/.test(worker),
 );
 check(
-  "route: zod gate before SDK, nodejs runtime, stateless",
+  "route: zod gate before model, nodejs runtime, stateless",
   route.includes("translateBodySchema.safeParse") &&
     route.includes('runtime = "nodejs"') &&
+    route.includes('from "@/lib/ai/zai-client"') &&
+    !route.includes("z-ai-web-dev-sdk") &&
     !/console\.(log|error|warn)\(/.test(route) &&
     !/prisma|localStorage|fs\.write/i.test(route),
 );

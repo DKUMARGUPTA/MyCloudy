@@ -48,12 +48,14 @@ export type ChatErrorCode =
   | "badRequest"
   | "timeout"
   | "aiUnavailable"
+  | "aiNotConfigured"
   | "emptyAnswer";
 
 export const CHAT_ERROR_STATUS: Record<ChatErrorCode, number> = {
   badRequest: 400,
   timeout: 504,
   aiUnavailable: 502,
+  aiNotConfigured: 503,
   emptyAnswer: 502,
 };
 

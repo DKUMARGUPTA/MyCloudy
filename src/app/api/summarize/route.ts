@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import ZAI from "z-ai-web-dev-sdk";
+import {
+  chatComplete,
+  getAiConfig,
+  type AiConfig,
+} from "@/lib/ai/zai-client";
 
 import {
   SUMMARIZE_API,
@@ -21,10 +25,13 @@ import {
  * call and is gone.
  *
  * Failure behaviour is honest and stable (codes the surface localizes):
- *   badRequest 400 · aiUnavailable 502 · emptySummary 502 · timeout 504.
- * The SDK call gets up to SUMMARIZE_API.attempts tries inside one overall
- * SUMMARIZE_API.timeoutMs wall clock; each attempt is raced against the
- * remaining budget so a stuck model can never hold the request open.
+ *   badRequest 400 · aiNotConfigured 503 · aiUnavailable 502 ·
+ *   emptySummary 502 · timeout 504.
+ * The model call gets up to SUMMARIZE_API.attempts tries inside one
+ * overall SUMMARIZE_API.timeoutMs wall clock; each attempt is raced
+ * against the remaining budget and the underlying fetch is CANCELLED
+ * via AbortSignal when the budget runs out (R21 — the SDK could not do
+ * this; the zai-client adapter can).
  */
 
 export const runtime = "nodejs";
@@ -47,27 +54,26 @@ function fail(code: SummarizeErrorCode): NextResponse {
 
 /**
  * Race one attempt against the remaining wall-clock budget. The timer is
- * cleared as soon as work settles, so a fast success does not leave a
- * dangling deadline timer behind (R19 audit P3).
- *
- * Honest limit: the SDK's chat.completions.create() takes no AbortSignal,
- * so a timed-out attempt's underlying fetch cannot be cancelled from here.
- * The leak is bounded to ONE in-flight call per request — the deadline
- * error short-circuits the retry loop — and the platform reaps it after
- * the response is sent.
+ * cleared as soon as work settles AND the AbortController cancels the
+ * underlying fetch when the deadline wins, so a stuck model can neither
+ * hold the request open nor leak an in-flight call (R19 P3 → R21).
  */
 async function withDeadline<T>(
-  work: Promise<T>,
+  work: (signal: AbortSignal) => Promise<T>,
   deadline: number,
 ): Promise<T> {
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new Error("deadline");
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      work,
+      work(controller.signal),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("deadline")), remaining);
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error("deadline"));
+        }, remaining);
       }),
     ]);
   } finally {
@@ -75,19 +81,25 @@ async function withDeadline<T>(
   }
 }
 
-async function callModel(body: ValidBody): Promise<string> {
-  const zai = await ZAI.create();
-  const completion = await zai.chat.completions.create({
-    messages: [
-      {
-        role: "assistant",
-        content: buildSummarizePrompt(body.language, body.length),
-      },
-      { role: "user", content: body.excerpt },
-    ],
-    thinking: { type: "disabled" },
-  });
-  const text = completion.choices[0]?.message?.content;
+async function callModel(
+  body: ValidBody,
+  config: AiConfig,
+  signal: AbortSignal,
+): Promise<string> {
+  const completion = await chatComplete(
+    {
+      messages: [
+        {
+          role: "assistant",
+          content: buildSummarizePrompt(body.language, body.length),
+        },
+        { role: "user", content: body.excerpt },
+      ],
+      thinking: { type: "disabled" },
+    },
+    { config, signal },
+  );
+  const text = completion.choices?.[0]?.message?.content;
   if (typeof text !== "string" || text.trim().length === 0) {
     throw new Error("emptySummary");
   }
@@ -104,6 +116,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     return fail("badRequest");
   }
 
+  // Resolve the AI backend once per request. No env vars on Vercel and
+  // no sandbox config file → answer honestly and instantly (503) instead
+  // of burning the retry budget on an unreachable service (R21).
+  const config = await getAiConfig();
+  if (!config) return fail("aiNotConfigured");
+
   const deadline = Date.now() + SUMMARIZE_API.timeoutMs;
   for (
     let attempt = 1;
@@ -111,7 +129,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     attempt += 1
   ) {
     try {
-      const summary = await withDeadline(callModel(body), deadline);
+      const summary = await withDeadline(
+        (signal) => callModel(body, config, signal),
+        deadline,
+      );
       return NextResponse.json({ summary });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";

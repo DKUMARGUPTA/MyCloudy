@@ -13,7 +13,8 @@ Update this file whenever a phase lands.
 | GA4 go-live + taxonomy r2; GSC webmaster guide (`docs/seo/`) | shipped |
 | PWA installable manifest + offline shell | shipped |
 | R19 audit (0×P0) + Phases 1–5: i18n plurals, 404 rebrand, aria-labels, offline.html, SSRF/rate-limit/caps hardening, JSON 500 contract, dead-code purge, /hi FAQ JSON-LD, SSR locale links | shipped & prod-verified |
-| Governance rules system (`AGENTS.md` + `docs/rules/`) | this commit |
+| Governance rules system (`AGENTS.md` + `docs/rules/`) | shipped |
+| R21 production AI fix: env-first adapter (`src/lib/ai/zai-client.ts`), aiNotConfigured 503 + honest i18n, AbortSignal deadlines; sandbox golden paths re-verified | shipped (public provider key = owner action, see 13-INTEGRATIONS) |
 
 ## 🔜 Next (priority order)
 

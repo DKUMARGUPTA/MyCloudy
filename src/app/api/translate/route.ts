@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import ZAI from "z-ai-web-dev-sdk";
+import {
+  chatComplete,
+  getAiConfig,
+  type AiConfig,
+} from "@/lib/ai/zai-client";
 
 import {
   TRANSLATE_API,
@@ -21,10 +25,13 @@ import { targetLang, type TargetLangCode } from "../../../../tools/translate-pdf
  * batch exists in this function's memory for one call and is gone.
  *
  * Failure behaviour is honest and stable (codes the worker localizes):
- *   badRequest 400 · aiUnavailable 502 · emptyTranslation 502 · timeout 504.
- * The SDK call gets up to TRANSLATE_API.attempts tries inside one overall
- * TRANSLATE_API.timeoutMs wall clock; each attempt is raced against the
- * remaining budget so a stuck model can never hold the request open.
+ *   badRequest 400 · aiNotConfigured 503 · aiUnavailable 502 ·
+ *   emptyTranslation 502 · timeout 504.
+ * The model call gets up to TRANSLATE_API.attempts tries inside one
+ * overall TRANSLATE_API.timeoutMs wall clock; each attempt is raced
+ * against the remaining budget and the underlying fetch is CANCELLED
+ * via AbortSignal when the budget runs out (R21 — the SDK could not do
+ * this; the zai-client adapter can).
  */
 
 export const runtime = "nodejs";
@@ -45,27 +52,25 @@ function fail(code: TranslateErrorCode): NextResponse {
 
 /**
  * Race one attempt against the remaining wall-clock budget. The timer is
- * cleared as soon as work settles, so a fast success does not leave a
- * dangling deadline timer behind (R19 audit P3).
- *
- * Honest limit: the SDK's chat.completions.create() takes no AbortSignal,
- * so a timed-out attempt's underlying fetch cannot be cancelled from here.
- * The leak is bounded to ONE in-flight call per request — the deadline
- * error short-circuits the retry loop — and the platform reaps it after
- * the response is sent.
+ * cleared as soon as work settles AND the AbortController cancels the
+ * underlying fetch when the deadline wins (R19 P3 → R21).
  */
 async function withDeadline<T>(
-  work: Promise<T>,
+  work: (signal: AbortSignal) => Promise<T>,
   deadline: number,
 ): Promise<T> {
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new Error("deadline");
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      work,
+      work(controller.signal),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("deadline")), remaining);
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error("deadline"));
+        }, remaining);
       }),
     ]);
   } finally {
@@ -73,16 +78,22 @@ async function withDeadline<T>(
   }
 }
 
-async function callModel(body: ValidBody): Promise<string> {
-  const zai = await ZAI.create();
-  const completion = await zai.chat.completions.create({
-    messages: [
-      { role: "assistant", content: buildTranslatePrompt(body.target) },
-      { role: "user", content: body.text },
-    ],
-    thinking: { type: "disabled" },
-  });
-  const text = completion.choices[0]?.message?.content;
+async function callModel(
+  body: ValidBody,
+  config: AiConfig,
+  signal: AbortSignal,
+): Promise<string> {
+  const completion = await chatComplete(
+    {
+      messages: [
+        { role: "assistant", content: buildTranslatePrompt(body.target) },
+        { role: "user", content: body.text },
+      ],
+      thinking: { type: "disabled" },
+    },
+    { config, signal },
+  );
+  const text = completion.choices?.[0]?.message?.content;
   if (typeof text !== "string" || text.trim().length === 0) {
     throw new Error("emptyTranslation");
   }
@@ -102,6 +113,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   // Language sanity (zod already validates; this keeps the type honest).
   const lang = targetLang(body.target);
 
+  // Resolve the AI backend once per request (R21): absent config →
+  // honest instant 503 instead of a doomed retry loop.
+  const config = await getAiConfig();
+  if (!config) return fail("aiNotConfigured");
+
   const deadline = Date.now() + TRANSLATE_API.timeoutMs;
   for (
     let attempt = 1;
@@ -110,7 +126,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   ) {
     try {
       const text = await withDeadline(
-        callModel({ ...body, target: lang.code }),
+        (signal) => callModel({ ...body, target: lang.code }, config, signal),
         deadline,
       );
       return NextResponse.json({ text });

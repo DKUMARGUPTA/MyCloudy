@@ -43,12 +43,14 @@ export type TranslateErrorCode =
   | "badRequest"
   | "timeout"
   | "aiUnavailable"
+  | "aiNotConfigured"
   | "emptyTranslation";
 
 export const TRANSLATE_ERROR_STATUS: Record<TranslateErrorCode, number> = {
   badRequest: 400,
   timeout: 504,
   aiUnavailable: 502,
+  aiNotConfigured: 503,
   emptyTranslation: 502,
 };
 

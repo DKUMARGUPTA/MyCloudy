@@ -6129,3 +6129,25 @@ NEXT: GitHub push → Vercel deploy → live href check on production (rendered 
 Docs-only round — tsc/lint unaffected (0 baseline intact). Tree verified: AGENTS.md + 16 docs/rules files + README. Push = durability.
 
 NEXT: cron rounds now governed; P7-c i18n VLM battery is next roadmap item (docs/rules/08-PLAN.md); owner review of rules wording welcome.
+
+## R21 — PRODUCTION AI FIX (2025-10-30, owner screenshot: summarize failing on docopdf.com)
+
+**THE BUG:** Owner's screenshot (mobile Chrome, docopdf.com/tool/summarize-pdf): uploaded PDF, tapped Summarize → red toast "Could not build the summary — The AI service could not be reached. Check your connection and try again." ROOT CAUSE (VLM screenshot analysis → SDK source read → DNS check): z-ai-web-dev-sdk resolves credentials ONLY from a `.z-ai-config` file (cwd → home → /etc) that exists solely in the dev sandbox; its endpoint `internal-api.z.ai` resolves to PRIVATE IPs (172.25.150.x/172.25.136.x, Alibaba internal ALB) — unreachable from Vercel by design. So ALL THREE AI routes (chat/summarize/translate) failed on production with a MISLEADING "check your connection" error while working perfectly in sandbox. Classic "works on my machine" — production had never been AI-verified.
+
+**THE FIX (env-first adapter, zero behavior change in sandbox):**
+- **`src/lib/ai/zai-client.ts` NEW** — speaks the SDK's exact HTTP contract (POST {baseUrl}/chat/completions, Authorization Bearer, X-Z-AI-From: Z, optional X-Chat-Id/X-User-Id/X-Token) via plain fetch, but config resolves: (1) ENV FIRST — `AI_BASE_URL`+`AI_API_KEY` (+`AI_MODEL`, optional `AI_TOKEN`/`AI_CHAT_ID`/`AI_USER_ID`) = any OpenAI-compatible public provider works on Vercel (z.ai public / OpenAI / Groq / OpenRouter); (2) file fallback = same `.z-ai-config` paths the SDK reads (sandbox unchanged); (3) neither → `AiNotConfiguredError`. Public-provider mode (model set) omits the `thinking` body field (unknown-field rejection); internal mode sends thinking:{type:"disabled"} as before. BONUS: chatComplete accepts AbortSignal — route deadlines now CANCEL the in-flight fetch (R19 P3 "SDK abort" backlog CLOSED).
+- **3 routes rewired** (chat/summarize/translate): adapter import (no SDK import — smoke-enforced), config resolved once per request, EARLY `aiNotConfigured` gate before the retry loop (instant honest 503 instead of burning 2 attempts), withDeadline upgraded to AbortController (timer → abort + reject), choices access via optional chaining. Routes remain ZERO-console (chat smoke's bright-line no-logging contract — my first pass added console.error, smoke caught it, removed).
+- **Error code plumbing**: `aiNotConfigured: 503` added to all 3 api-models; summarize+chat surfaces map it → `errNotConfigured` toasts; translate worker maps `translate-aiNotConfigured` → `tool.errorTranslateNotConfigured` (was falling into errorCorrupt bucket — worker branch added in BOTH translateBatch and onmessage).
+- **i18n**: `summarize.errNotConfigured` + `chat.errNotConfigured` + `tool.errorTranslateNotConfigured` in en+hi, placed adjacent to errSend/errorTranslateAi; parity 4805=4805 verified.
+- **`scripts/smoke-ai-config.ts` NEW (17 checks)**: env resolution (pair/trim/optional/blank/missing), file resolution (sandbox resolves, bogus → null), getAiConfig/aiConfigured, chatComplete REAL round-trip ("OK"), explicit-null → AiNotConfiguredError, dead endpoint honest failure, api-model 503s ×3, surface+worker mappings, routes SDK-free + early gate, i18n presence + real Devanagari.
+- **Tool smokes updated to new reality**: summarize "SDK stays server-only" → adapter-import + no-SDK + no-console; translate "zod gate before SDK" → adapter variant. Chat smoke unchanged (passed once console removed).
+
+**GATES:** tsc 0 · eslint 0 · smoke-ai-config 17/17 · summarize 43/43 · chat 83/83 · translate 73/73.
+
+**E2E (sandbox golden paths, agent-browser):** /tool/summarize-pdf paste-inject qa-text-sample.pdf → Summarize → TL;DR + Key points rendered, 0 error toasts (screenshot public/qa/r21-summarize-e2e.png; only console entry = documented Radix useId dev-only warning). API-level: /api/chat answered with (p. 1) citation; /api/translate → "नमस्ते दुनिया, यह एक परीक्षण है।".
+
+**DOCS (governance, same commit):** 13-INTEGRATIONS gains "AI provider (production) — the R21 contract" section (env vars + provider examples); 06-API-RULES route table + AI-route zero-console exception; 12-MCP-TOOLS section B rewritten (adapter mandatory, raw SDK import banned in routes); 08-PLAN R21 row.
+
+**OWNER ACTION (to make AI tools LIVE on prod):** set on Vercel (Project → Settings → Environment Variables): `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` from any OpenAI-compatible provider (e.g. z.ai public: base `https://api.z.ai/api/paas/v4`, model `glm-4.6`; or OpenAI/Groq/OpenRouter). Until then users see the honest "AI features are not enabled on the server yet" toast — 503 in ~0ms instead of a fake network error.
+
+NEXT: push → Vercel READY → prod verify `{"error":"aiNotConfigured"}` 503 shape → owner key → live AI. Then P7-c VLM battery.

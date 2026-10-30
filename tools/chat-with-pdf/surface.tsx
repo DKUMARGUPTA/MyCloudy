@@ -424,7 +424,9 @@ export function ChatSurface({
               ? t("chat.errTimeout")
               : code === "badRequest"
                 ? t("chat.errBadRequest")
-                : t("chat.errSend"),
+                : code === "aiNotConfigured"
+                  ? t("chat.errNotConfigured")
+                  : t("chat.errSend"),
           variant: "destructive",
         });
       }

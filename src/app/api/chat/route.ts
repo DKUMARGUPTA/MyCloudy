@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import ZAI from "z-ai-web-dev-sdk";
+import {
+  chatComplete,
+  getAiConfig,
+  type AiConfig,
+} from "@/lib/ai/zai-client";
 
 import {
   CHAT_API,
@@ -30,10 +34,13 @@ import {
  *    and crafted payloads stop at the door.
  *
  * Failure behaviour is honest and stable (codes the UI localizes):
- *   badRequest 400 · aiUnavailable 502 · emptyAnswer 502 · timeout 504.
- * The SDK call gets up to CHAT_API.attempts tries inside one overall
+ *   badRequest 400 · aiNotConfigured 503 · aiUnavailable 502 ·
+ *   emptyAnswer 502 · timeout 504.
+ * The model call gets up to CHAT_API.attempts tries inside one overall
  * CHAT_API.timeoutMs wall clock; each attempt is raced against the
- * remaining budget so a stuck model can never hold the request open.
+ * remaining budget and the underlying fetch is CANCELLED via
+ * AbortSignal when the budget runs out (R21 — the SDK could not do
+ * this; the zai-client adapter can).
  */
 
 export const runtime = "nodejs";
@@ -56,24 +63,25 @@ function fail(code: ChatErrorCode): NextResponse {
 
 /**
  * Race one attempt against the remaining wall-clock budget. The timer is
- * cleared as soon as work settles, so a fast success does not leave a
- * dangling deadline timer behind (R19 audit P3).
- *
- * Honest limit: the SDK's chat.completions.create() takes no AbortSignal,
- * so a timed-out attempt's underlying fetch cannot be cancelled from here.
- * The leak is bounded to ONE in-flight call per request — the deadline
- * error short-circuits the retry loop — and the platform reaps it after
- * the response is sent.
+ * cleared as soon as work settles AND the AbortController cancels the
+ * underlying fetch when the deadline wins (R19 P3 → R21).
  */
-async function withDeadline<T>(work: Promise<T>, deadline: number): Promise<T> {
+async function withDeadline<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  deadline: number,
+): Promise<T> {
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new Error("deadline");
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      work,
+      work(controller.signal),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("deadline")), remaining);
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error("deadline"));
+        }, remaining);
       }),
     ]);
   } finally {
@@ -81,18 +89,24 @@ async function withDeadline<T>(work: Promise<T>, deadline: number): Promise<T> {
   }
 }
 
-async function callModel(body: ValidBody): Promise<string> {
-  const zai = await ZAI.create();
-  const completion = await zai.chat.completions.create({
-    messages: [
-      { role: "assistant", content: buildSystemPrompt(body.docCount) },
-      { role: "user", content: buildDocMessage(body.docExcerpt, body.docName) },
-      { role: "assistant", content: DOC_ACK_MESSAGE },
-      ...body.messages,
-    ],
-    thinking: { type: "disabled" },
-  });
-  const answer = completion.choices[0]?.message?.content;
+async function callModel(
+  body: ValidBody,
+  config: AiConfig,
+  signal: AbortSignal,
+): Promise<string> {
+  const completion = await chatComplete(
+    {
+      messages: [
+        { role: "assistant", content: buildSystemPrompt(body.docCount) },
+        { role: "user", content: buildDocMessage(body.docExcerpt, body.docName) },
+        { role: "assistant", content: DOC_ACK_MESSAGE },
+        ...body.messages,
+      ],
+      thinking: { type: "disabled" },
+    },
+    { config, signal },
+  );
+  const answer = completion.choices?.[0]?.message?.content;
   if (typeof answer !== "string" || answer.trim().length === 0) {
     throw new Error("emptyAnswer");
   }
@@ -109,10 +123,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     return fail("badRequest");
   }
 
+  // Resolve the AI backend once per request (R21): absent config →
+  // honest instant 503 instead of a doomed retry loop.
+  const config = await getAiConfig();
+  if (!config) return fail("aiNotConfigured");
+
   const deadline = Date.now() + CHAT_API.timeoutMs;
   for (let attempt = 1; attempt <= CHAT_API.attempts; attempt += 1) {
     try {
-      const answer = await withDeadline(callModel(body), deadline);
+      const answer = await withDeadline(
+        (signal) => callModel(body, config, signal),
+        deadline,
+      );
       return NextResponse.json({ answer });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";

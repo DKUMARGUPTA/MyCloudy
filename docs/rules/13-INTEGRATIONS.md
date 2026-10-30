@@ -40,6 +40,26 @@ External systems, their rituals, and their hard limits.
 - Sitemap: `src/app/sitemap.ts` (116 URLs, hreflang). Owner actions
   (GSC submit, Bing IndexNow) documented in `docs/seo/WEBMASTER-GUIDE.md`.
 
+## AI provider (production) — the R21 contract
+
+The three AI tools (chat / summarize / translate) run through
+`src/lib/ai/zai-client.ts`, NOT the SDK import:
+
+- **Sandbox**: falls back to `/etc/.z-ai-config` (internal endpoint, private
+  IPs — unreachable outside the sandbox network).
+- **Production (Vercel)**: set env vars → any OpenAI-compatible provider
+  works (z.ai public API, OpenAI, Groq, OpenRouter, …):
+  - `AI_BASE_URL` (e.g. `https://api.z.ai/api/paas/v4` or `https://api.openai.com/v1`) — required
+  - `AI_API_KEY` — required
+  - `AI_MODEL` — required by public providers (e.g. `glm-4.6`, `gpt-4o-mini`)
+  - optional: `AI_TOKEN`, `AI_CHAT_ID`, `AI_USER_ID` (gateway-style headers)
+- Neither env nor file → routes answer `aiNotConfigured` 503 with an
+  honest localized "not enabled on the server" toast (never a fake
+  network error). Public-provider mode omits the `thinking` body field
+  (unknown-field rejection).
+- The adapter accepts an AbortSignal — route deadlines CANCEL the
+  in-flight fetch (R19 P3 "SDK abort" closed).
+
 ## Turso (planned production DB)
 
 - Swap datasource provider to libSQL; table/column names already match

@@ -376,9 +376,11 @@ console.log("\n§3 wiring — registry, surfaces, route, surface code");
       route.includes("timeout"),
   );
   check(
-    "route: SDK stays server-only, thinking disabled",
-    route.includes('import ZAI from "z-ai-web-dev-sdk"') &&
-      route.includes('thinking: { type: "disabled" }'),
+    "route: AI via server-only adapter, thinking disabled, no SDK import",
+    route.includes('from "@/lib/ai/zai-client"') &&
+      !route.includes("z-ai-web-dev-sdk") &&
+      route.includes('thinking: { type: "disabled" }') &&
+      !/console\.(log|error|warn)\(/.test(route),
   );
   const surface = read("tools/summarize-pdf/surface.tsx");
   check(

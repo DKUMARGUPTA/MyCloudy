@@ -20,12 +20,16 @@ Skill tool, never hand-roll SDK calls for these in the agent loop.
 
 ## B. In-app AI features (production code)
 
-- SDK calls happen ONLY inside `src/app/api/*` handlers (chat, summarize,
-  translate) or mini-services — **never in client components**.
+- All three AI routes (chat, summarize, translate) call the backend through
+  `src/lib/ai/zai-client.ts` — env-first (`AI_BASE_URL` + `AI_API_KEY` +
+  `AI_MODEL` on Vercel, any OpenAI-compatible provider), file fallback in
+  the sandbox, honest `aiNotConfigured` 503 when neither (R21). The raw
+  SDK import is BANNED in route code (smoke-enforced).
 - Inputs: extracted text snippets only; file bytes never leave the device
   (Mode-D boundary, `03-ARCHITECTURE.md`).
-- Responses are i18n-keyed errors on failure (`ai.failed` family), rate
-  limited per-IP, and never logged with user content.
+- Responses are i18n-keyed errors on failure (`ai.*` family), rate
+  limited per-IP, and never logged with user content (AI routes are
+  zero-console by design).
 - Model outputs are treated as untrusted content — escape before render.
 
 ## C. Cron (agent scheduler)

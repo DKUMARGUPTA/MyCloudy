@@ -206,7 +206,9 @@ async function translateBatch(
       ? "translate-timeout"
       : code === "emptyTranslation"
         ? "translate-emptyTranslation"
-        : "translate-aiUnavailable",
+        : code === "aiNotConfigured"
+          ? "translate-aiNotConfigured"
+          : "translate-aiUnavailable",
   );
 }
 
@@ -543,6 +545,8 @@ self.onmessage = (event: MessageEvent<WorkerRunRequest>) => {
     const code = /^translate-(.+)$/.exec(message)?.[1] ?? "";
     if (code === "timeout") {
       post({ type: "error", runId: data.runId, code: "tool.errorTranslateTimeout" });
+    } else if (code === "aiNotConfigured") {
+      post({ type: "error", runId: data.runId, code: "tool.errorTranslateNotConfigured" });
     } else if (code === "aiUnavailable" || code === "emptyTranslation" || code === "badRequest") {
       post({ type: "error", runId: data.runId, code: "tool.errorTranslateAi" });
     } else if (code === "fontFetch") {
