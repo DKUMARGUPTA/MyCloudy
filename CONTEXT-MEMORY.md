@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **P6 COMPLETE — runtime code 100% pdf-lib-free** (P6-v-b: pdf-to-pdfa/worker.ts mega-port + P6-END: generate-qr-code surface + request-signature recipient-view + embed-image trim). Importers **4→0**. TWO REAL GAPS FIXED: csMap slash-prefix keys never matched tokenizer bare names; TextEncoder UTF-8 re-encode corrupted high-byte streams (latin1BytesOf now byte-exact). Gates: tsc 0, eslint 0, smoke-pdf-to-pdfa 112/112, battery 108/108. E2E blob-capture: pdfa 2b 150,704 B (XMP part2 + GTS_PDFA1 + ICC N3 + FontFile2 + trailer /ID + no ObjStm), QR PDF 8,631 B; console clean; mobile 390 clean. **NEXT: P7 hardening → LAUNCH-OPS.**
+> **Updated:** P6 COMPLETE (100% pdf-lib-free, commit ad3c732) + **P7-a/P7-b DONE**: a11y DOM audit (agent-browser — 110/110 tool pages + सारे static pages, ZERO unnamed interactive elements; contact flag = Radix aria-hidden carrier false positive) + magic-byte E2E truth (GIF-named-.pdf → honest "That's not a PDF" toast; valid-PDF-named-.jpg accepted) → 2 NEW battery smokes lock the source patterns (**a11y-names 9/9 + magic-bytes 18/18 — battery 110/110**, tsc 0, eslint 0). NEXT: **P7-c i18n VLM battery** → LAUNCH-OPS.
 
 ---
 
@@ -20,7 +20,7 @@
 | Server | Next.js 16.1.3, port 3000 (daemon: `python3 scripts/dev-daemon.py`), dev.log clean |
 | **Production** | **https://mycloudy-beta.vercel.app** LIVE (Vercel; DB endpoints degrade gracefully — Turso future) |
 | GitHub | `DKUMARGUPTA/MyCloudy` — main fully pushed + 26 tags; zero unpushed |
-| Quality gates | tsc **0** errors · eslint 0 · battery **108/108 ALL PASS** (P6-w-a ne 1 orphaned prototype smoke delete kiya tha: 109→108) |
+| Quality gates | tsc **0** errors · eslint 0 · battery **110/110 ALL PASS** (P7-a a11y-names + P7-b magic-bytes added; 108 tool smokes + 2 P7 gates) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
 | i18n | English + हिंदी — **4791 = 4791** flat-leaf keys parity |
 | Mini-services | convert (port 3031), request-sign (3032) — double-fork daemonizer se start |
@@ -51,10 +51,10 @@ python3 scripts/dev-daemon.py
 
 ### 1. ~~P6 — Own engine migration~~ **COMPLETE ✅** (2025-10-30; P6-v-b pdfa mega-port + P6-END final surfaces; worklog retro appended)
 
-### 2. P7 — Quality moat (NEXT)
-- a11y-name smoke (har interactive element ka accessible name)
-- magic-byte detection everywhere (har input surface pe)
-- i18n VLM battery (screenshots → visual language verification)
+### 2. P7 — Quality moat (P7-a + P7-b DONE ✅; P7-c NEXT)
+- ~~a11y-name smoke~~ **DONE** — smoke-a11y-names.ts 9/9 (DOM audit: 110/110 pages clean; brace-aware source scanner)
+- ~~magic-byte detection~~ **DONE** — smoke-magic-bytes.ts 18/18 (DropZone content sniffing + worker parse gates locked)
+- **P7-c (NEXT): i18n VLM battery** — screenshots EN+HI → VLM skill se visual language verification
 
 ### 3. PRD phases 7–11
 - **Phase 7: PWA** (manifest, service worker, offline)
