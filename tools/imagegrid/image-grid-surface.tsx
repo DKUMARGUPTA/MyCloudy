@@ -32,6 +32,7 @@ import {
   setSvgRasterOrder,
   subscribeSvgPending,
   svgRastersPending,
+  svgRastersPendingServer,
 } from "./svg-raster";
 import {
   ArrowDownAZ,
@@ -143,7 +144,11 @@ export function ImageGridSurface({
   const [prevFileCount, setPrevFileCount] = useState(files.length);
   // SVG rasters are prepared on the main thread while card previews load —
   // the CTA stays blocked (honest reason) until every one has landed.
-  const svgPending = useSyncExternalStore(subscribeSvgPending, svgRastersPending);
+  const svgPending = useSyncExternalStore(
+    subscribeSvgPending,
+    svgRastersPending,
+    svgRastersPendingServer,
+  );
 
   /* ---------------- state sync (promise callbacks only) ---------------- */
 

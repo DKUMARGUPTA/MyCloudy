@@ -50,6 +50,15 @@ export function getAssetsSnapshot(): EditorAsset[] {
   return snapshot;
 }
 
+/**
+ * SSR/prerender snapshot (static export + Vercel build): stable empty array
+ * for server rendering — inline `[]` would break hydration identity checks.
+ */
+const EMPTY_ASSETS: EditorAsset[] = [];
+export function getAssetsServerSnapshot(): EditorAsset[] {
+  return EMPTY_ASSETS;
+}
+
 export function getAsset(key: string): EditorAsset | undefined {
   return store.get(key);
 }

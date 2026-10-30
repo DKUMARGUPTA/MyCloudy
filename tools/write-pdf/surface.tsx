@@ -84,6 +84,7 @@ import {
   addImageFile,
   collectAssetsInOrder,
   getAssetsSnapshot,
+  getAssetsServerSnapshot,
   removeAsset,
   subscribeAssets,
 } from "./asset-store";
@@ -183,7 +184,11 @@ export function WriteSurface(props: ToolSurfaceProps): JSX.Element {
   const previewWrapRef = useRef<HTMLDivElement>(null);
   const [previewScale, setPreviewScale] = useState(1);
 
-  const assets = useSyncExternalStore(subscribeAssets, getAssetsSnapshot);
+  const assets = useSyncExternalStore(
+    subscribeAssets,
+    getAssetsSnapshot,
+    getAssetsServerSnapshot,
+  );
   const assetMap = useMemo(() => {
     const map = new Map(assets.map((asset) => [asset.key, asset]));
     return map;

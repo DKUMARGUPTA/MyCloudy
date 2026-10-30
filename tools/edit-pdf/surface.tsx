@@ -33,6 +33,7 @@ import {
   addPngBlob,
   clearAssets,
   getAssetsSnapshot,
+  getAssetsServerSnapshot,
   setRunOrder,
   subscribeAssets,
 } from "./asset-store";
@@ -448,7 +449,11 @@ export function EditSurface(props: ToolSurfaceProps): React.JSX.Element | null {
   const file = files.length > 0 ? files[0].file : null;
   const fileId = files.length > 0 ? files[0].id : "";
 
-  const assets = useSyncExternalStore(subscribeAssets, getAssetsSnapshot);
+  const assets = useSyncExternalStore(
+    subscribeAssets,
+    getAssetsSnapshot,
+    getAssetsServerSnapshot,
+  );
   const assetUrls = useMemo(
     () => new Map(assets.map((a) => [a.key, a.url] as const)),
     [assets]

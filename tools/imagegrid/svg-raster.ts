@@ -47,6 +47,11 @@ export function svgRastersPending(): number {
   return pending;
 }
 
+/** SSR/prerender snapshot — 0 pending rasters on the server (primitive, stable). */
+export function svgRastersPendingServer(): number {
+  return 0;
+}
+
 /* ---------------- detection ---------------- */
 
 /** Cheap SVG check without reading bytes (type or extension). */

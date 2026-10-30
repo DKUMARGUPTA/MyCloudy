@@ -48,6 +48,16 @@ export function getAssetsSnapshot(): WAsset[] {
   return snapshot;
 }
 
+/**
+ * SSR/prerender snapshot (static export + Vercel build): the server has no
+ * assets, and a STABLE empty array is required so React can hydrate without
+ * mismatch warnings. Never inline `[]` here — the reference must be stable.
+ */
+const EMPTY_ASSETS: WAsset[] = [];
+export function getAssetsServerSnapshot(): WAsset[] {
+  return EMPTY_ASSETS;
+}
+
 export function getAsset(key: string): WAsset | undefined {
   return store.get(key);
 }
