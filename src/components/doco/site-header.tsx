@@ -15,6 +15,7 @@ import { LanguageSwitch } from "@/components/doco/language-switch";
 import { ThemeToggle } from "@/components/doco/theme-toggle";
 import { MegaMenu } from "@/components/doco/mega-menu";
 import { useI18n } from "@/components/providers/locale-provider";
+import { anchorClickHandler } from "@/lib/anchor";
 import {
   categoryChipClass,
   CATEGORIES,
@@ -60,6 +61,7 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
           </a>
           <a
             href="#why"
+            onClick={anchorClickHandler("why")}
             className="flex min-h-11 items-center rounded-btn px-3 text-sm font-medium text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
             {t("header.why")}
@@ -170,7 +172,10 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
             })}
             <a
               href="#why"
-              onClick={() => setMenuOpen(false)}
+              onClick={(e) => {
+                anchorClickHandler("why")(e);
+                setMenuOpen(false);
+              }}
               className="flex min-h-11 items-center rounded-btn px-3 text-base font-medium text-muted-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >
               {t("header.why")}

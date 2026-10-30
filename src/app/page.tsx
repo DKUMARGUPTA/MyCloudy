@@ -1,116 +1,86 @@
-"use client";
+import { AppShell } from "@/components/doco/app-shell";
 
-import { useCallback, useEffect, useState } from "react";
+/*
+ * Home-only FAQPage JSON-LD (P7-SEO: moved out of the root layout so
+ * tool pages don't carry the home FAQ). Mirrors the six questions of
+ * the home FAQ section (src/components/doco/home/faq.tsx, "faq.*" i18n
+ * keys) in English — keep both in sync when editing the copy.
+ */
+const faqJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: [
+    {
+      "@type": "Question",
+      name: "Is DocoPDF really free to use?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "Yes. Every tool is free, with no signup, no watermarks and no daily limits. Because most tools run entirely in your browser, they're fast too — your files are processed on your own device, not a distant server.",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "How do I convert JPG to PDF for free?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "Open the JPG to PDF tool, drop your photos (JPG, PNG, WEBP, HEIC and TIFF all work), drag them into the order you want, and click Create PDF. The document is built on your device — nothing is ever uploaded.",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "How can I convert a PDF to Word or text?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "For text, use PDF to Text — it extracts everything on your device and can even read scanned pages with OCR in English or Hindi. A full PDF to Word converter that keeps formatting is on our roadmap.",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "Are my PDF files uploaded to a server?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "No. Almost every tool runs 100% on your device inside the browser — your files never leave your computer or phone, and once the site is loaded most tools keep working even offline.",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "Can I edit a PDF without Adobe Acrobat?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "Yes. Edit PDF gives you a Word-style editor — click existing text to retype it, add images, shapes and signatures, highlight and annotate — free and on your device. Annotate PDF and Write PDF round out the set.",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "Does DocoPDF work in Hindi?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "Yes. The whole interface is available in Hindi, and you can write PDFs in Devanagari, fill Hindi forms and OCR scanned documents in Hindi with fully searchable output.",
+      },
+    },
+  ],
+};
 
-import { Button } from "@/components/ui/button";
-import { Modal } from "@/components/doco/modal";
-import { SiteHeader } from "@/components/doco/site-header";
-import { SiteFooter } from "@/components/doco/site-footer";
-import { AnnouncementBanner } from "@/components/doco/home/announcement-banner";
-import { Hero } from "@/components/doco/home/hero";
-import { Steps } from "@/components/doco/home/steps";
-import { Categories } from "@/components/doco/home/categories";
-import { Why } from "@/components/doco/home/why";
-import { Modes } from "@/components/doco/home/modes";
-import { PopularTools } from "@/components/doco/home/popular-tools";
-import { Faq } from "@/components/doco/home/faq";
-import { RecentFiles } from "@/components/doco/home/recent-files";
-import { ToolsView } from "@/components/doco/tools/tools-view";
-import { ToolView } from "@/components/doco/tool/tool-view";
-import { StaticPageView } from "@/components/doco/page/static-page";
-import { SearchPalette } from "@/components/doco/search/search-palette";
-import { CookieBanner } from "@/components/doco/cookie-banner";
-import { BottomTabBar } from "@/components/doco/bottom-tab-bar";
-import { useI18n } from "@/components/providers/locale-provider";
-import { useHashRoute } from "@/hooks/use-hash-route";
+function FaqJsonLdScript() {
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+    />
+  );
+}
 
 /**
- * DocoPDF app shell on the single visible route "/" (sandbox note: path
- * routes are restored at deploy time). Hash router switches between the
- * home view and the tools discovery views, driven entirely by the registry.
+ * Home route "/" — the primary app entry (metadata comes from the root
+ * layout's defaults). The shell itself is shared by every crawlable
+ * route (P7-SEO: /tools, /tool/<id>, /hi/… render the same application
+ * with their own server-rendered <head>).
  */
 export default function Home() {
-  const { t } = useI18n();
-  const { route } = useHashRoute();
-  const [proOpen, setProOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const openPro = useCallback(() => setProOpen(true), []);
-  const openSearch = useCallback(() => setSearchOpen(true), []);
-
-  /*
-   * Boot marker for the iOS compatibility watchdog (boot-script.ts): once
-   * the shell has mounted, the fallback screen must never appear, and
-   * later errors route to the React error boundary instead.
-   */
-  useEffect(() => {
-    (window as unknown as { __DP_BOOTED__?: boolean }).__DP_BOOTED__ = true;
-  }, []);
-
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <a
-        href="#main"
-        className="sr-only rounded-btn bg-primary px-4 py-2 text-primary-foreground focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100]"
-      >
-        {t("common.skipToContent")}
-      </a>
-
-      <AnnouncementBanner />
-      <SiteHeader
-        onGetPro={openPro}
-        onOpenSearch={openSearch}
-        route={route}
-      />
-
-      <main id="main" className="flex-1 pb-16 md:pb-0">
-        {route.view === "home" ? (
-          <>
-            <Hero />
-            <PopularTools />
-            <Steps />
-            <Categories />
-            <Why />
-            <RecentFiles />
-            <Modes />
-            <Faq />
-          </>
-        ) : route.view === "tool" ? (
-          <ToolView toolId={route.toolId ?? ""} />
-        ) : route.view === "page" ? (
-          <StaticPageView pageId={route.pageId ?? ""} />
-        ) : (
-          <ToolsView
-            categoryId={route.category}
-            query={route.query}
-          />
-        )}
-      </main>
-
-      <SiteFooter />
-      {route.view === "tool" ? null : (
-        <BottomTabBar route={route} onOpenSearch={openSearch} />
-      )}
-      <CookieBanner />
-      <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
-
-      <Modal
-        open={proOpen}
-        onOpenChange={setProOpen}
-        title={t("pro.title")}
-        footer={
-          <Button
-            type="button"
-            variant="cta"
-            size="touch"
-            className="w-full rounded-btn sm:w-auto"
-            onClick={() => setProOpen(false)}
-          >
-            {t("pro.action")}
-          </Button>
-        }
-      >
-        <p className="text-sm text-muted-foreground">{t("pro.body")}</p>
-      </Modal>
-    </div>
+    <>
+      <FaqJsonLdScript />
+      <AppShell initialRoute={{ view: "home" }} />
+    </>
   );
 }

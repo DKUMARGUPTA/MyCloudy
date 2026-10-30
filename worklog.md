@@ -5965,3 +5965,38 @@ NEXT: user aage ka plan batayenge. Queue unchanged: P7-c → LAUNCH-OPS → P10.
 - **Lesson pinned**: tokens ki durability sirf user ke chat me hai — jab bhi mile, TURANT pura push ritual + tag push chala do; disk files ko durable mat maano.
 
 NEXT: user se fresh GitHub token lena (tag push + Release create + future pushes) → phir aage ka plan discuss.
+
+## P7-SEO — FULL SEARCH ENGINE OPTIMIZATION LAYER (2025-10-30, "world-best SEO" mandate)
+
+**CRITICAL BUG FOUND & FIXED: sitemap was promising URLs that 404'd.** The app was hash-only (#/tool/x — invisible to Google); public/sitemap.xml listed docopdf.com/tools, /hi, etc. that ALL returned 404 (curl-verified). Submitting that to Search Console would have wasted crawl budget on soft-404s. The fix restores the documented "path routes at deploy time" plan (router.tsx comment said it all along).
+
+### Architecture (11 new files, 5 edited)
+- **src/lib/seo/site.ts** — SITE constants (canonical https://docopdf.com, og-image, hi-path helper). One-line domain change forever.
+- **src/lib/seo/tool-seo.ts** — keyword-researched copy: 50 CURATED tools (merge/split/compress/edit/sign/jpg-to-pdf/pdf-to-word/ocr... with real search-volume terms like "compress pdf to 100kb", "edit pdf without acrobat", Hindi keywords "पीडीएफ़ जोड़ें") + smart generator for the rest (registry name/description/tags + category noun + 3 deterministic privacy tails). 10 category SEO + 4 static-page SEO. Titles ≤60 incl " | DocoPDF".
+- **src/lib/seo/metadata.ts** — per-route Metadata builders: unique title/description/keywords + self-canonical + hreflang (en/hi/x-default→en) + OG (locale en_US/hi_IN, og-image 1200×630) + Twitter summary_large_image.
+- **src/lib/seo/json-ld.ts** — SoftwareApplication (offers $0, featureList from config.features) + BreadcrumbList (Home›Category›Tool) + FAQPage (from config.faq per tool, per locale!) + CollectionPage/ItemList for index+categories + AboutPage. NO fake ratings (guideline-honest).
+- **src/app/tool/[id]/page.tsx** — 100 static params, SSR meta + 3 JSON-LD blocks, boots AppShell straight into the tool workspace.
+- **src/app/tools/page.tsx + tools/[category]/page.tsx** — index + 10 category landings.
+- **src/app/{about,contact,privacy,terms}/page.tsx** — 4 static content routes.
+- **src/app/hi/[[...path]]/page.tsx** — Hindi mirror catch-all (/hi, /hi/tools, /hi/tools/<cat>, /hi/tool/<id>, /hi/<page>): Hindi SSR meta + Hindi JSON-LD + initialLocale boot (rAF-deferred — see lesson).
+- **src/app/sitemap.ts + robots.ts** — DYNAMIC registry-driven (deleted public/sitemap.xml + public/robots.txt — the stale 404-promising ones). 116 URLs with xhtml:link hreflang alternates + lastmod + priority (popularity-weighted).
+- **src/components/doco/app-shell.tsx** — page.tsx shell extracted (initialRoute prop + initialLocale boot). page.tsx now a thin server component.
+- **useHashRoute(initial?)** — real-path boot support; **src/lib/anchor.ts** — plain-anchor links (#main skip, #why ×2) now scroll WITHOUT touching location.hash (was: any anchor hash jumped the app to home view — live bug on tool pages).
+- **scripts/gen-og-image.ts** — sharp-rendered 1200×630 brand card (navy + blue→orange gradient, "100 Free Online PDF Tools", privacy chips) → public/og-image.png (61 KB).
+- **layout.tsx** — stale "60+" copy → 100 (descriptions ×3), OG image wired, twitter summary_large_image + @docopdf, +Organization JSON-LD (logo, sameAs GitHub) +WebSite JSON-LD (SearchAction → /tools?q=). Home-FAQ JSON-LD moved from layout → page.tsx (tool pages were carrying the home FAQ — off-topic schema).
+
+### E2E verified (agent-browser + curl)
+- ALL routes 200: /, /tools, /tools/organize, /tool/merge-pdf, /about, /hi, /hi/tool/merge-pdf, /sitemap.xml (116 URLs), /robots.txt; /tool/unknown-xyz → 404 ✓
+- SSR head (curl, no JS): unique title + description + canonical + hreflang(en/hi/x-default) + OG on every type; /hi/tool/jpg-to-pdf → Hindi title "JPG से PDF — मुफ़्त कन्वर्टर, बिना वॉटरमार्क | DocoPDF" + Hindi JSON-LD ✓
+- Browser: /tool/merge-pdf boots the WORKSPACE (h1 "Merge PDF", dropzone) not home; hash nav from path pages works; Hindi page: lang="hi", h1 "JPG से पीडीएफ़", full Hindi UI, ZERO console errors; home regression clean; mobile 390 no-overflow.
+- **Bugs caught & fixed en route**: (1) InitialRouteContext consumed by the same component that provided it → hook param instead; (2) site-header python replace hit 2 wrong menu links (tools/category onClick) — reverted; (3) hydration error on /hi = FAST-REFRESH artifact (clean restart = zero errors; rAF-deferred locale boot kept as defense).
+
+### Gates
+tsc 0 · eslint 0 · **battery 110/110** (a11y 9/9 with the new anchor handlers) · smoke-a11y-names 9/9 · E2E golden paths clean.
+
+### Pending (needs user)
+- **docopdf.com attach in Vercel** (user doing within 2h): Add Domain → docopdf.com + www → DNS A 76.76.21.21 / CNAME cname.vercel-dns.com → verify HTTPS. Everything here is already canonical to https://docopdf.com.
+- Post-attach: Google Search Console submit https://docopdf.com/sitemap.xml + Bing Webmaster + hreflang will activate.
+- PUSH PENDING (token wiped — incident in VERSION-SAVE entry): local commit ready; push on token re-supply.
+
+NEXT: launch-ops remaining (analytics, GSC submission) + P7-c i18n VLM battery.

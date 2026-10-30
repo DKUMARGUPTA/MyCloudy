@@ -3,14 +3,19 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
 /**
- * Hash-based view router for the single visible route "/" (sandbox note:
- * path routes are restored at Vercel deploy time; see worklog §2).
+ * Hash-based view router for the app shell (P7-SEO: real paths added).
  *
  * Routes:  "#/"            -> home
  *          "#/tools"       -> all tools   (optional ?q=<search>)
  *          "#/tools/<cat>" -> category    (optional ?q=<search>)
  *          "#/tool/<id>"   -> tool workspace (ToolShell; ?q ignored)
- * Anchors: "#<id>" (not starting with "#/") -> home view + scroll to <id>.
+ * Anchors: "#<id>" (not starting with "#/") -> keep the current view +
+ *          scroll to <id> (previously this jumped home — fixed with the
+ *          structural-route ref below).
+ *
+ * Real paths (P7-SEO): crawlable pages ("/tool/merge-pdf", "/hi/…") boot
+ * the shell with an InitialRouteContext value that is used while the
+ * hash is empty; the first hash navigation takes over from there.
  * Works with browser back/forward via the hashchange event, modeled as an
  * external store (useSyncExternalStore) — hydration-safe, no effects
  * writing React state.
@@ -85,7 +90,7 @@ export function navigateToHash(to: string): void {
   window.location.hash = to;
 }
 
-export function useHashRoute(): {
+export function useHashRoute(initial?: HashRoute): {
   route: HashRoute;
   navigate: (to: string) => void;
 } {
@@ -94,7 +99,13 @@ export function useHashRoute(): {
     hashSnapshot,
     hashServerSnapshot
   );
-  const route = useMemo(() => parseHash(hash), [hash]);
+
+  const route = useMemo<HashRoute>(() => {
+    if (!hash) {
+      return initial ?? { view: "home" };
+    }
+    return parseHash(hash);
+  }, [hash, initial]);
 
   // Scroll behavior on route changes — a DOM side effect only (no state):
   // view switches go to top; anchors scroll to their section after the
