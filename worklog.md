@@ -5786,3 +5786,9 @@ Stage Summary:
 - REMOTE TRUTH at time of loss: origin/main = e518542 (P6-v-a). LOCAL AHEAD BY 1: f4d2374 (P6-w-a, all gates green: tsc 0, eslint 0, battery 108/108, E2E byte-verified).
 - RECOVERY (next session, first action): obtain a fresh fine-grained PAT (DKUMARGUPTA/MyCloudy, Contents R+W) → `MYCLOUDY_GH_TOKEN=<tok> bash scripts/push-github.sh` → verify https://mycloudy-beta.vercel.app deploys f4d2374 → THEN continue P6-w-b. NEVER amend/reset — the commit rides as-is.
 - History-rewrite ban stands (cron + main session races; rollback exception unchanged).
+
+## ✅ PUSH-PENDING RESOLVED (fresh PAT + Vercel token from user)
+- User supplied fresh tokens; `.env.credentials` + `/home/z/.tokens/docopdf.env` restored (600, gitignore-covered, leak-guard clean).
+- `bash scripts/push-github.sh`: `e518542..9feb2be main -> main` (f4d2374 P6-w-a + cb59074 + 9feb2be docs) + 26 tags verified.
+- Vercel: deployment dpl_x3gHDfiAbThGZhFwqXpacjHRi8o6 BUILDING→READY (7 polls), https://mycloudy-beta.vercel.app HTTP 200 (132,070 bytes, correct title). Production current = 9feb2be.
+- NEXT: P6-w-b — tools/lock-common/security.ts (own-engine AES-256 V5/R6 + AES-128 V4 encryption writer; the @cantoo/pdf-lib fork's last consumer).
