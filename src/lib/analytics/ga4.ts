@@ -11,9 +11,12 @@
  *  - No PII ever: events carry only tool_slug / category / locale / mode and
  *    coarse buckets (size_bucket, duration_bucket, error_code) — never file
  *    names, file contents, extracted text or anything the user types.
- *  - Enabled only when NEXT_PUBLIC_GA_ID is set (Vercel env var, OWNER
- *    ACTION: create the GA4 property → paste the G-XXXXXXX id). Without the
- *    env var every function is a no-op and zero bytes ship to the client.
+ *  - Measurement ID: the production property G-ZP89M3KQDB is wired as the
+ *    DEFAULT (owner-created, 2025-11). A GA id is a public identifier — it
+ *    is visible in the HTML of every GA-enabled site — so it is safe in git.
+ *    NEXT_PUBLIC_GA_ID still overrides it (set it in Vercel → Settings →
+ *    Environment Variables to swap or kill the property without a redeploy).
+ *    Set NEXT_PUBLIC_GA_ID=0 to explicitly disable analytics in a build.
  *  - No ad personalization, no Google signals — pure measurement.
  */
 
@@ -40,9 +43,27 @@ interface ConsentShape {
   savedAt: number;
 }
 
-let consentGranted = false;
+/*
+ * Consent race fix: track() can fire BEFORE initGa4() has finished reading
+ * the stored consent (its cookie-banner import is async). A direct landing
+ * on /tool/<id> from Google fires tool_view within the first effects —
+ * without buffering, that event (the site's most valuable one) was silently
+ * dropped. Events captured while consent is still "unknown" are buffered
+ * locally (no network, no dataLayer) and flushed ONLY if consent resolves
+ * to granted; a denial discards them.
+ */
+type ConsentState = "unknown" | "granted" | "denied";
+let consentState: ConsentState = "unknown";
+const pendingEvents: { event: string; params: TrackParams }[] = [];
 let scriptLoaded = false;
-const GA_ID = process.env.NEXT_PUBLIC_GA_ID;
+/* Production measurement ID (G-ZP89M3KQDB) unless overridden by env:
+ * "0" disables analytics entirely; any other G-XXXX value wins. */
+const GA_ID =
+  process.env.NEXT_PUBLIC_GA_ID === undefined || process.env.NEXT_PUBLIC_GA_ID === ""
+    ? "G-ZP89M3KQDB"
+    : process.env.NEXT_PUBLIC_GA_ID === "0"
+      ? undefined
+      : process.env.NEXT_PUBLIC_GA_ID;
 
 function loadGtagScript(): void {
   if (scriptLoaded || !GA_ID) return;
@@ -59,7 +80,7 @@ function loadGtagScript(): void {
 }
 
 function applyConsent(granted: boolean): void {
-  consentGranted = granted;
+  consentState = granted ? "granted" : "denied";
   const value = granted ? "granted" : "denied";
   /* Consent Mode v2 — all four fields, always explicit. */
   gtag("consent", "update", {
@@ -68,7 +89,17 @@ function applyConsent(granted: boolean): void {
     ad_user_data: value,
     ad_personalization: value,
   });
-  if (granted) loadGtagScript();
+  if (granted) {
+    loadGtagScript();
+    /* Flush events buffered while consent was still being restored (they
+     * were never exposed to dataLayer, so a denial below discards them
+     * without any trace ever leaving the page). */
+    for (const buffered of pendingEvents.splice(0)) {
+      gtag("event", buffered.event, buffered.params);
+    }
+  } else {
+    pendingEvents.length = 0;
+  }
 }
 
 /**
@@ -110,11 +141,22 @@ export async function initGa4(): Promise<void> {
 export type TrackParams = Record<string, string | number | boolean>;
 
 /**
- * Push an analytics event. Silently ignored until analytics consent is
- * granted (so a revoked banner also silences mid-session events).
+ * Push an analytics event.
+ *
+ *  - consent "granted"  → pushed to dataLayer immediately.
+ *  - consent "unknown"  → buffered locally (initGa4 has not finished reading
+ *    the stored choice yet); flushed on grant, discarded on denial. This is
+ *    what saves the mount-time tool_view on direct tool-page landings.
+ *  - consent "denied"   → silently dropped (so a revoked banner also
+ *    silences mid-session events).
  */
 export function track(event: string, params: TrackParams = {}): void {
-  if (!GA_ID || !consentGranted) return;
+  if (!GA_ID) return;
+  if (consentState === "denied") return;
+  if (consentState === "unknown") {
+    pendingEvents.push({ event, params });
+    return;
+  }
   gtag("event", event, params);
 }
 

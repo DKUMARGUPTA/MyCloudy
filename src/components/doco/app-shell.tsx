@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/doco/modal";
@@ -28,6 +28,9 @@ import { track } from "@/lib/analytics/ga4";
 import { ALL_TOOLS } from "@/lib/tools/registry";
 import { LOCALE_STORAGE_KEY } from "@/i18n";
 
+/* GA4 tool_view dedupe — see the tool_view effect below for the contract. */
+let lastToolView: string | null = null;
+
 /**
  * DocoPDF app shell — the single visible application, shared by every
  * route (/, /tools, /tool/<id>, /hi/…). On real crawlable paths the
@@ -51,22 +54,49 @@ export function AppShell({
   const openSearch = useCallback(() => setSearchOpen(true), []);
 
   /*
-   * GA4 tool_view (P7-SEO Phase 6): one event per tool landing, carrying
+   * GA4 tool_view (P7-SEO Phase 6): ONE event per tool landing, carrying
    * only registry metadata (slug/category/mode) + the active locale — no
    * PII, no file names. No-ops unless analytics consent is granted.
+   *
+   * Data-quality rules (learned the hard way, live-verified 2025-11):
+   *  - DEDUPE per toolId: the /hi locale-mirror boot flips the i18n locale
+   *    one frame after mount, which re-runs this effect — without the
+   *    lastToolView guard every cross-locale returning visitor was counted
+   *    TWICE in GA4.
+   *  - FIRE SETTLED: the event is deferred two frames so the deferred
+   *    locale flip commits first — localeRef then carries the language the
+   *    visitor actually sees (en page + stored hi preference → "hi").
+   *  - Module-level state (not useRef): survives hash-route re-lands but
+   *    resets on a real page load, so A→B→A hash navigation still fires.
    */
+  const localeRef = useRef(locale);
+  useEffect(() => {
+    localeRef.current = locale;
+  }, [locale]);
+
   const toolId = route.view === "tool" ? route.toolId : undefined;
   useEffect(() => {
     if (!toolId) return;
-    const tool = ALL_TOOLS.find((entry) => entry.id === toolId);
-    if (!tool) return;
-    track("tool_view", {
-      tool_slug: tool.id,
-      category: tool.category,
-      mode: tool.mode,
-      locale,
-    });
-  }, [toolId, locale]);
+    let cancelled = false;
+    const settle = requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (cancelled || lastToolView === toolId) return;
+        const tool = ALL_TOOLS.find((entry) => entry.id === toolId);
+        if (!tool) return;
+        lastToolView = toolId;
+        track("tool_view", {
+          tool_slug: tool.id,
+          category: tool.category,
+          mode: tool.mode,
+          locale: localeRef.current,
+        });
+      })
+    );
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(settle);
+    };
+  }, [toolId]);
 
   /*
    * Boot marker for the iOS compatibility watchdog (boot-script.ts): once

@@ -6036,3 +6036,29 @@ tsc 0 · eslint 0 · E2E agent-browser clean (home/tool/hi/mobile/console)
 4. (opt) IndexNow key, Yandex
 
 NEXT: owner values → env wiring → GSC sitemap submit → P7-c i18n VLM battery → remaining GA4 event taxonomy (process_success/download_click/chain_next_tool + web-vitals) → Phase 5 technical SEO (headers, sw.js audit) → SMO kit (Phase 7).
+
+## P7-SEO R3 — GA4 GO-LIVE (2025-11-01, "owner values" round)
+
+**THE ROUND:** User completed all three owner actions — GSC verified via GoDaddy DNS, Bing verified via GSC "Sign in with Google" import, GA4 property created with Measurement ID **G-ZP89M3KQDB**. This round wired the ID and fixed two real analytics bugs found during live verification.
+
+### Shipped
+- **GA4 ID wired**: `src/lib/analytics/ga4.ts` — `G-ZP89M3KQDB` is now the compile-time DEFAULT (env `NEXT_PUBLIC_GA_ID` overrides; `0` disables). No Vercel env needed — a GA measurement ID is a public identifier (visible in every GA site's page source), so committing it is safe and makes deploys self-contained.
+- **BUG FIX 1 — consent race (tool_view dropped on direct landings)**: `initGa4()` reads stored consent via a dynamic import (async); AppShell's mount-time `tool_view` fired BEFORE it resolved → `track()` saw `consentGranted=false` and silently dropped the event. For a site whose organic traffic lands directly on /tool/<id> from Google, this was the most valuable event being lost on EVERY returning-visitor landing. Fix: three-state consent (`unknown | granted | denied`) + a local `pendingEvents` buffer — events captured while "unknown" are held in memory (no network, no dataLayer exposure), flushed only on grant, discarded on denial.
+- **BUG FIX 2 — duplicate tool_view (cross-locale returning visitors)**: the /hi locale-mirror boot flips i18n locale one frame after mount, re-running the effect on `[toolId, locale]` → every EN-page visitor with stored hi preference (and vice versa) was counted TWICE. Fix: module-level `lastToolView` dedupe + double-rAF settle so the event carries the locale the visitor actually SEES (not the pre-flip page locale). Hash-route A→B→A still fires per landing (module state resets on real page loads only).
+- **docs/seo/WEBMASTER-GUIDE.md**: all three owner actions marked DONE with dates; sections rewritten to "ab aapke bache hue kaam" (GSC sitemap submit + request-indexing list, Bing sitemap submit, GA4 admin tweaks: retention/GSC-link/key-events/custom-dimensions); Vercel-env section demoted to future-override-only.
+
+### E2E verified (agent-browser on local dev, all flows)
+- Fresh visitor, no consent: ZERO googletagmanager network, no gtag in DOM, dataLayer = single local consent-default ✓ (buffered tool_view never exposed)
+- Reject: consent update denied, buffered event discarded, no gtag ever loads ✓
+- Fresh + Accept all: gtag.js?id=G-ZP89M3KQDB loads; buffered tool_view FLUSHES into dataLayer with correct params ✓
+- Returning visitor (persisted consent): exactly ONE tool_view with SETTLED locale ("hi" on EN page with stored hi pref) ✓; config carries anonymize_ip + send_page_view ✓
+- Language toggle: language_switch {from:en,to:hi} fires; NO duplicate tool_view ✓
+- Zero console/page errors on every flow ✓
+
+### Gates
+tsc 0 · eslint 0
+
+### Owner side (guide updated, told in chat)
+GSC: submit sitemap.xml + request-indexing top-20 list · Bing: submit sitemap · GA4 admin: retention 14mo, GSC link, key events, custom dimensions (tool_slug/category/locale/mode).
+
+NEXT: GA4 event taxonomy round 2 (process_success / download_click / chain_next_tool + web-vitals) → Phase 5 technical SEO (headers, sw.js audit) → SMO kit (Phase 7) → P7-c i18n VLM battery.

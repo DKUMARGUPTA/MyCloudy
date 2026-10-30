@@ -214,7 +214,9 @@ export default function RootLayout({
          * src/lib/compat/boot-script.ts (error capture, polyfills, watchdog).
          */}
         <script dangerouslySetInnerHTML={{ __html: BOOT_SCRIPT }} />
-        {/* GA4 boot — consent-gated, no-op until NEXT_PUBLIC_GA_ID is set. */}
+        {/* GA4 boot — consent-gated gtag.js (property G-ZP89M3KQDB by default;
+         * NEXT_PUBLIC_GA_ID env can override or "0"-disable). Zero network
+         * until the visitor accepts analytics in the cookie banner. */}
         <Ga4Boot />
         <script
           type="application/ld+json"
