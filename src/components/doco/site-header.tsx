@@ -20,7 +20,7 @@ import {
   categoryChipClass,
   CATEGORIES,
 } from "@/lib/tools/registry";
-import { ROUTES, type HashRoute } from "@/hooks/use-hash-route";
+import { useLocalizedRoutes, type HashRoute } from "@/hooks/use-hash-route";
 import { cn } from "@/lib/utils";
 
 interface SiteHeaderProps {
@@ -37,13 +37,14 @@ interface SiteHeaderProps {
  */
 export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
   const { t, locale } = useI18n();
+  const routes = useLocalizedRoutes();
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border bg-background/85 backdrop-blur-md supports-[backdrop-filter]:bg-background/70">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-2 px-4">
         <a
-          href={ROUTES.home}
+          href={routes.home}
           aria-label={t("a11y.logoLabel")}
           className="rounded-btn outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
@@ -53,7 +54,7 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
         <div className="ml-2 hidden items-center gap-1 md:flex">
           <MegaMenu />
           <a
-            href={ROUTES.tools}
+            href={routes.tools}
             aria-current={route.view === "tools" ? "page" : undefined}
             className="flex min-h-11 items-center rounded-btn px-3 text-sm font-medium outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-[current=page]:text-primary"
           >
@@ -142,7 +143,7 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
             className="flex flex-col gap-1 p-4"
           >
             <a
-              href={ROUTES.tools}
+              href={routes.tools}
               onClick={() => setMenuOpen(false)}
               className="flex min-h-11 items-center rounded-btn bg-primary/10 px-3 text-base font-semibold text-primary outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >
@@ -153,7 +154,7 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
               return (
                 <a
                   key={category.id}
-                  href={ROUTES.category(category.id)}
+                  href={routes.category(category.id)}
                   onClick={() => setMenuOpen(false)}
                   className="flex min-h-11 items-center gap-3 rounded-btn px-3 text-base font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 >

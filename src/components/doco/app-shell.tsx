@@ -22,7 +22,7 @@ import { SearchPalette } from "@/components/doco/search/search-palette";
 import { CookieBanner } from "@/components/doco/cookie-banner";
 import { BottomTabBar } from "@/components/doco/bottom-tab-bar";
 import { useI18n } from "@/components/providers/locale-provider";
-import { useHashRoute, navigateToHash, type HashRoute } from "@/hooks/use-hash-route";
+import { useHashRoute, navigateToHash, urlLocaleOf, UrlLocaleContext, type HashRoute } from "@/hooks/use-hash-route";
 import { anchorClickHandler } from "@/lib/anchor";
 import { track } from "@/lib/analytics/ga4";
 import { ALL_TOOLS } from "@/lib/tools/registry";
@@ -47,11 +47,20 @@ export function AppShell({
   initialLocale?: "en" | "hi";
 }) {
   const { t, setLocale, locale } = useI18n();
-  const { route } = useHashRoute(initialRoute);
+  const { route, routeKey } = useHashRoute(initialRoute);
   const [proOpen, setProOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const openPro = useCallback(() => setProOpen(true), []);
-  const openSearch = useCallback(() => setSearchOpen(true), []);
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+    track("search_open", { locale });
+  }, [locale]);
+
+  /* URL locale (R19 Phase 5): the /hi-ness of the current URL, from the
+   * server-rendered boot (initialLocale — "hi" on /hi mirror pages) until
+   * the route store goes live, then from the actual path. Provided to the
+   * whole tree so internal link hrefs carry the right prefix in the RAW
+   * HTML — crawlers and no-JS visitors on /hi stay on /hi paths. */
+  const urlLocale = urlLocaleOf(routeKey, initialLocale === "hi" ? "hi" : "en");
 
   /*
    * SPA link interception (R17 real-path router): internal anchors now
@@ -84,6 +93,22 @@ export function AppShell({
       const url = new URL(href, window.location.origin);
       if (url.origin !== window.location.origin) return;
       event.preventDefault();
+      /* Cross-locale links (R19 Phase 5 — the footer "read in …" anchor
+       * and any future /hi↔EN link): when the target path's /hi-ness
+       * differs from the CURRENT URL's, flip the locale to match the
+       * target. setLocale writes localStorage synchronously, so the
+       * withLocalePrefix normalization inside navigateToHash mirrors the
+       * URL to the chosen locale. Comparing against the PATH (not the UI
+       * locale) keeps link-graph semantics: a /hi page's links keep the
+       * visitor in /hi regardless of a stored preference. */
+      const targetIsHi = url.pathname === "/hi" || url.pathname.startsWith("/hi/");
+      const pathIsHi =
+        window.location.pathname === "/hi" || window.location.pathname.startsWith("/hi/");
+      if (targetIsHi !== pathIsHi) {
+        const next: "en" | "hi" = targetIsHi ? "hi" : "en";
+        setLocale(next);
+        track("language_switch", { from: pathIsHi ? "hi" : "en", to: next });
+      }
       navigateToHash(url.pathname + url.search + url.hash);
     };
     document.addEventListener("click", onClick);
@@ -109,6 +134,11 @@ export function AppShell({
   const localeRef = useRef(locale);
   useEffect(() => {
     localeRef.current = locale;
+  }, [locale]);
+
+  const openPro = useCallback(() => {
+    setProOpen(true);
+    track("pro_open", { locale });
   }, [locale]);
 
   const toolId = route.view === "tool" ? route.toolId : undefined;
@@ -165,6 +195,7 @@ export function AppShell({
   }, [initialLocale, setLocale]);
 
   return (
+    <UrlLocaleContext.Provider value={urlLocale}>
     <div className="flex min-h-screen flex-col bg-background">
         <a
           href="#main"
@@ -198,7 +229,7 @@ export function AppShell({
           )}
         </main>
 
-        <SiteFooter />
+        <SiteFooter route={route} />
         {route.view === "tool" ? null : (
           <BottomTabBar route={route} onOpenSearch={openSearch} />
         )}
@@ -224,5 +255,6 @@ export function AppShell({
           <p className="text-sm text-muted-foreground">{t("pro.body")}</p>
         </Modal>
     </div>
+    </UrlLocaleContext.Provider>
   );
 }

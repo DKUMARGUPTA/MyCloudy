@@ -28,7 +28,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { PageShell } from "@/components/doco/page/page-shell";
 import { useI18n } from "@/components/providers/locale-provider";
-import { ROUTES } from "@/hooks/use-hash-route";
+import { useLocalizedRoutes } from "@/hooks/use-hash-route";
 
 /**
  * Contact page (PRD §5.4): contact form (name, email, category, message +
@@ -47,6 +47,7 @@ const CATEGORIES_FORM = [
 
 export function ContactPage() {
   const { t } = useI18n();
+  const routes = useLocalizedRoutes();
   const { toast } = useToast();
   const formId = useId();
   const honeypotRef = useRef<HTMLInputElement>(null);
@@ -153,7 +154,7 @@ export function ContactPage() {
         </p>
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
           <Button asChild variant="cta" size="touch" className="rounded-btn">
-            <a href={ROUTES.tools}>{t("contact.backTools")}</a>
+            <a href={routes.tools}>{t("contact.backTools")}</a>
           </Button>
           <Button
             type="button"
@@ -365,7 +366,7 @@ export function ContactPage() {
               {t("contact.privacyBody")}
             </p>
             <a
-              href={ROUTES.page("privacy")}
+              href={routes.page("privacy")}
               className="mt-2 inline-flex min-h-11 items-center rounded-btn text-sm font-medium text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >
               {t("contact.privacyLink")}

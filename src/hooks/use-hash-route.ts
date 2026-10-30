@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useSyncExternalStore,
+} from "react";
 
 import { LOCALE_STORAGE_KEY, type Locale } from "@/i18n";
 
@@ -193,13 +200,7 @@ function currentLocale(): Locale {
   return window.location.pathname.startsWith("/hi") ? "hi" : "en";
 }
 
-/** "/tool/x" -> "/hi/tool/x" when the UI is Hindi. */
-function withLocalePrefix(path: string): string {
-  const locale = currentLocale();
-  if (locale !== "hi") return path;
-  if (path === "/") return "/hi";
-  return `/hi${path}`;
-}
+
 
 /** Map a legacy "#/…" string to its real-path equivalent. */
 function legacyHashToPath(to: string): string {
@@ -247,7 +248,10 @@ export function navigateToHash(to: string): void {
   /* Legacy hash route string — convert to its real path. */
   const target = to.startsWith("#/") ? legacyHashToPath(to) : to;
 
-  /* Real path (may carry ?query and/or #anchor). */
+  /* Real path (may carry ?query and/or #anchor). Idempotent: an existing
+   * /hi mirror prefix is normalized first (R19 Phase 5 — SSR'd /hi links
+   * now carry the prefix, and prefixing "/hi/tool/x" again would produce
+   * "/hi/hi/tool/x"). */
   const url = new URL(target, window.location.origin);
   const prefixed = withLocalePrefix(url.pathname) + url.search + url.hash;
 
@@ -265,6 +269,70 @@ export function navigateToHash(to: string): void {
   window.dispatchEvent(new Event(ROUTE_EVENT));
 }
 
+/** "/tool/x" -> "/hi/tool/x" when the UI is Hindi (idempotent — an
+ * existing /hi prefix is normalized away first). */
+function withLocalePrefix(path: string): string {
+  const locale = currentLocale();
+  let base = path;
+  if (base === "/hi") base = "/";
+  else if (base.startsWith("/hi/")) base = base.slice("/hi".length);
+  if (locale !== "hi") return base;
+  if (base === "/") return "/hi";
+  return `/hi${base}`;
+}
+
+/** Fire the route-change event so every useSyncExternalStore subscriber
+ * (route store + URL-locale consumers) re-reads location. */
+export function notifyRouteChanged(): void {
+  window.dispatchEvent(new Event(ROUTE_EVENT));
+}
+
+/* ------------------------------------------------------------------ */
+/* URL locale (R19 Phase 5 — SSR locale-prefixed links)                */
+/* ------------------------------------------------------------------ */
+
+/** The locale the CURRENT URL is served under (path-derived, not the i18n
+ * store — the i18n locale is "en" during SSR by design, while the URL's
+ * /hi-ness is known from the server-rendered boot). This is what internal
+ * link hrefs are prefixed with, so the raw HTML of /hi pages carries
+ * /hi-prefixed links for crawlers and no-JS visitors. */
+export type UrlLocale = "en" | "hi";
+
+/** Derive the URL locale from a route store key ("" during SSR → boot). */
+export function urlLocaleOf(key: string, boot: UrlLocale = "en"): UrlLocale {
+  if (!key) return boot;
+  return key === "/hi" || key.startsWith("/hi/") ? "hi" : "en";
+}
+
+const UrlLocaleContext = createContext<UrlLocale>("en");
+
+/** Current URL locale — AppShell provides the value (SSR-stable boot +
+ * live path re-syncs). Defaults to "en" outside the shell. */
+export function useUrlLocale(): UrlLocale {
+  return useContext(UrlLocaleContext);
+}
+
+/** Locale-aware ROUTES: identical shapes, but every path carries the
+ * current URL's locale prefix. Use inside the AppShell tree; the static
+ * ROUTES below stays for locale-agnostic contexts. */
+export function localizedRoutes(urlLocale: UrlLocale) {
+  const p = (path: string): string =>
+    urlLocale === "hi" ? (path === "/" ? "/hi" : `/hi${path}`) : path;
+  return {
+    home: p("/"),
+    tools: p("/tools"),
+    category: (categoryId: string) => p(`/tools/${categoryId}`),
+    tool: (toolId: string) => p(`/tool/${toolId}`),
+    page: (pageId: string) => p(`/${pageId}`),
+    toolsWithQuery: (query: string) =>
+      `${p("/tools")}?q=${encodeURIComponent(query)}`,
+  } as const;
+}
+
+export function useLocalizedRoutes(): ReturnType<typeof localizedRoutes> {
+  return localizedRoutes(useUrlLocale());
+}
+
 /* ------------------------------------------------------------------ */
 /* Hook                                                                */
 /* ------------------------------------------------------------------ */
@@ -272,6 +340,8 @@ export function navigateToHash(to: string): void {
 export function useHashRoute(initial?: HashRoute): {
   route: HashRoute;
   navigate: (to: string) => void;
+  /** Raw store key ("" during SSR) — for URL-locale derivation. */
+  routeKey: string;
 } {
   const key = useSyncExternalStore(
     subscribeToRoute,
@@ -304,8 +374,10 @@ export function useHashRoute(initial?: HashRoute): {
 
   const navigate = useCallback((to: string) => navigateToHash(to), []);
 
-  return { route, navigate };
+  return { route, navigate, routeKey: key };
 }
+
+export { UrlLocaleContext };
 
 /**
  * Route helpers shared by header, tab bar, views and cards — REAL PATHS

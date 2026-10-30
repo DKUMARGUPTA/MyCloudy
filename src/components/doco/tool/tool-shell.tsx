@@ -32,7 +32,7 @@ import { Modal } from "@/components/doco/modal";
 import { BottomSheet } from "@/components/doco/bottom-sheet";
 import { useToast } from "@/hooks/use-toast";
 import { useI18n } from "@/components/providers/locale-provider";
-import { ROUTES, navigateToHash } from "@/hooks/use-hash-route";
+import { ROUTES, navigateToHash, useLocalizedRoutes } from "@/hooks/use-hash-route";
 import {
   getCategory,
   getTool,
@@ -94,6 +94,7 @@ function nextFileId(): string {
 
 export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig }) {
   const { t, locale } = useI18n();
+  const routes = useLocalizedRoutes();
   const { toast } = useToast();
   const category = getCategory(tool.category);
   // Viewer tools (PRD §6.5) never process anything: no run CTA, no options
@@ -432,7 +433,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
         <ol className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
           <li>
             <a
-              href={ROUTES.home}
+              href={routes.home}
               className="inline-flex items-center gap-1 rounded-btn outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >
               <Home className="size-3" aria-hidden="true" />
@@ -442,7 +443,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           <li aria-hidden="true">/</li>
           <li>
             <a
-              href={ROUTES.category(tool.category)}
+              href={routes.category(tool.category)}
               className="rounded-btn outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >
               {category.name[locale]}
@@ -610,7 +611,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
                     return (
                       <li key={item.id}>
                         <a
-                          href={item.enabled ? ROUTES.tool(item.id) : ROUTES.category(item.category)}
+                          href={item.enabled ? routes.tool(item.id) : routes.category(item.category)}
                           className="flex min-h-11 items-center gap-2.5 rounded-btn px-2 text-sm outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
                         >
                           <RelatedIcon className="size-4 text-muted-foreground" aria-hidden="true" />

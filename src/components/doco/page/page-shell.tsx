@@ -5,7 +5,7 @@ import { ArrowLeft, ShieldCheck } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/providers/locale-provider";
-import { ROUTES } from "@/hooks/use-hash-route";
+import { useLocalizedRoutes } from "@/hooks/use-hash-route";
 
 /**
  * Shared frame for the Phase 6 static pages (About, Contact, Privacy,
@@ -32,6 +32,7 @@ export function PageShell({
   wide?: boolean;
 }) {
   const { t } = useI18n();
+  const routes = useLocalizedRoutes();
 
   return (
     <div
@@ -42,7 +43,7 @@ export function PageShell({
     >
       <nav aria-label={t("common.a11yBreadcrumb")} className="mb-6">
         <a
-          href={ROUTES.home}
+          href={routes.home}
           className="inline-flex min-h-11 items-center gap-1.5 rounded-btn text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
           <ArrowLeft className="size-4" aria-hidden="true" />

@@ -19,7 +19,7 @@ import {
   PrivacyCallout,
 } from "@/components/doco/page/page-shell";
 import { useI18n } from "@/components/providers/locale-provider";
-import { ROUTES } from "@/hooks/use-hash-route";
+import { useLocalizedRoutes } from "@/hooks/use-hash-route";
 
 /**
  * Terms of Service page (PRD §5.4): acceptance, service description,
@@ -29,6 +29,7 @@ import { ROUTES } from "@/hooks/use-hash-route";
  */
 export function TermsPage() {
   const { t } = useI18n();
+  const routes = useLocalizedRoutes();
 
   return (
     <PageShell
@@ -121,7 +122,7 @@ export function TermsPage() {
         </p>
         <p>
           <a
-            href={ROUTES.page("contact")}
+            href={routes.page("contact")}
             className="inline-flex min-h-11 items-center rounded-btn text-sm font-medium text-primary outline-none transition-colors hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
             {t("terms.contactLink")}

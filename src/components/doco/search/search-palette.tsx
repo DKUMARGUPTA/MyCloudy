@@ -27,6 +27,7 @@ import {
 } from "@/lib/tools/registry";
 import { useFavoriteTools } from "@/lib/tools/favorites";
 import { ROUTES, navigateToHash } from "@/hooks/use-hash-route";
+import { track } from "@/lib/analytics/ga4";
 import { ALL_TOOLS } from "@/lib/tools/registry";
 
 const ALL_TOOLS_BY_ID = new Map(ALL_TOOLS.map((tool) => [tool.id, tool]));
@@ -103,6 +104,16 @@ export function SearchPalette({
 
   const openTool = (tool: ToolDef) => {
     handleOpenChange(false);
+    /* GA4 taxonomy round 2 (R19 Phase 5): search-driven tool selection.
+     * search_term is the GA4-standard parameter — the query is a tool
+     * search, never personal data. */
+    if (query.trim()) {
+      track("search_select", {
+        search_term: query.trim().slice(0, 100),
+        tool_slug: tool.id,
+        locale,
+      });
+    }
     if (tool.enabled) {
       navigateToHash(ROUTES.tool(tool.id));
       return;

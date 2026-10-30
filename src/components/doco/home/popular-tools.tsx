@@ -2,7 +2,7 @@
 
 import { getTool, categoryChipClass, categoryHoverClass } from "@/lib/tools/registry";
 import { useI18n } from "@/components/providers/locale-provider";
-import { ROUTES } from "@/hooks/use-hash-route";
+import { useLocalizedRoutes } from "@/hooks/use-hash-route";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,6 +25,7 @@ const POPULAR_TOOL_IDS = [
 
 export function PopularTools() {
   const { t, locale } = useI18n();
+  const routes = useLocalizedRoutes();
 
   const tools = POPULAR_TOOL_IDS.map((id) => getTool(id)).filter(
     (tool): tool is NonNullable<typeof tool> => Boolean(tool?.enabled)
@@ -56,7 +57,7 @@ export function PopularTools() {
             return (
               <li key={tool.id}>
                 <a
-                  href={ROUTES.tool(tool.id)}
+                  href={routes.tool(tool.id)}
                   className={cn(
                     "group flex h-full min-h-22 flex-col gap-2.5 rounded-card border border-border bg-card p-4 shadow-xs outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
                     categoryHoverClass[tool.category]

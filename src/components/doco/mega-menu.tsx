@@ -20,7 +20,7 @@ import {
   totalToolCount,
   type ToolCategoryId,
 } from "@/lib/tools/registry";
-import { ROUTES } from "@/hooks/use-hash-route";
+import { useLocalizedRoutes } from "@/hooks/use-hash-route";
 import { cn } from "@/lib/utils";
 
 /**
@@ -50,6 +50,7 @@ const TOOLS_PER_COLUMN = 6;
 
 export function MegaMenu() {
   const { t, locale } = useI18n();
+  const routes = useLocalizedRoutes();
   const { toast } = useToast();
 
   const onToolClick = (
@@ -87,7 +88,7 @@ export function MegaMenu() {
                 return (
                   <div key={categoryId} className="space-y-1.5">
                     <a
-                      href={ROUTES.category(categoryId)}
+                      href={routes.category(categoryId)}
                       className={cn(
                         "flex min-h-10 items-center gap-2 rounded-btn px-2 text-sm font-semibold text-foreground outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50"
                       )}
@@ -111,8 +112,8 @@ export function MegaMenu() {
                             <a
                               href={
                                 tool.enabled
-                                  ? ROUTES.tool(tool.id)
-                                  : ROUTES.category(categoryId)
+                                  ? routes.tool(tool.id)
+                                  : routes.category(categoryId)
                               }
                               onClick={(event) =>
                                 onToolClick(
@@ -135,7 +136,7 @@ export function MegaMenu() {
                       })}
                     </ul>
                     <a
-                      href={ROUTES.category(categoryId)}
+                      href={routes.category(categoryId)}
                       className="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-xs font-medium text-primary outline-none transition-colors hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
                     >
                       {t("header.seeCategory", {
@@ -159,7 +160,7 @@ export function MegaMenu() {
                     return (
                       <li key={categoryId}>
                         <NavigationMenuLink
-                          href={ROUTES.category(categoryId)}
+                          href={routes.category(categoryId)}
                           className="flex min-h-9 flex-row items-center gap-2 px-2 py-1"
                         >
                           <span
@@ -184,7 +185,7 @@ export function MegaMenu() {
 
             <div className="border-t border-border bg-muted/50 px-4 py-2.5">
               <a
-                href={ROUTES.tools}
+                href={routes.tools}
                 className="inline-flex min-h-10 items-center gap-1.5 rounded-btn px-2 text-sm font-medium text-primary outline-none transition-colors hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
               >
                 {t("header.seeAllTools", { count: totalToolCount })}

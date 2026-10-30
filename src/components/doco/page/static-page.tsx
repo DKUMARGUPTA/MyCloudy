@@ -9,7 +9,7 @@ import { ContactPage } from "@/components/doco/page/contact-page";
 import { PrivacyPage } from "@/components/doco/page/privacy-page";
 import { TermsPage } from "@/components/doco/page/terms-page";
 import { useI18n } from "@/components/providers/locale-provider";
-import { ROUTES } from "@/hooks/use-hash-route";
+import { useLocalizedRoutes } from "@/hooks/use-hash-route";
 
 /**
  * Static page view entry (Phase 6): resolves the routed "#/page/<id>"
@@ -27,6 +27,7 @@ export function isStaticPageId(id: string): id is StaticPageId {
 
 export function StaticPageView({ pageId }: { pageId: string }) {
   const { t } = useI18n();
+  const routes = useLocalizedRoutes();
 
   if (!isStaticPageId(pageId)) {
     return (
@@ -37,7 +38,7 @@ export function StaticPageView({ pageId }: { pageId: string }) {
           description={t("pages.notFoundDesc")}
           action={
             <Button asChild size="touch" className="rounded-btn">
-              <a href={ROUTES.home}>{t("pages.notFoundAction")}</a>
+              <a href={routes.home}>{t("pages.notFoundAction")}</a>
             </Button>
           }
         />

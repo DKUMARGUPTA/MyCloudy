@@ -20,7 +20,7 @@ import {
   PrivacyCallout,
 } from "@/components/doco/page/page-shell";
 import { useI18n } from "@/components/providers/locale-provider";
-import { ROUTES } from "@/hooks/use-hash-route";
+import { useLocalizedRoutes } from "@/hooks/use-hash-route";
 import { CATEGORIES, liveToolCount, totalToolCount } from "@/lib/tools/registry";
 
 /**
@@ -30,6 +30,7 @@ import { CATEGORIES, liveToolCount, totalToolCount } from "@/lib/tools/registry"
  */
 export function AboutPage() {
   const { t } = useI18n();
+  const routes = useLocalizedRoutes();
 
   const stats: { value: string; label: string }[] = [
     { value: t("about.statTools", { live: liveToolCount, total: totalToolCount }), label: t("about.statToolsLabel") },
@@ -145,13 +146,13 @@ export function AboutPage() {
         </p>
         <div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row">
           <Button asChild variant="cta" size="touch" className="rounded-btn">
-            <a href={ROUTES.tools}>
+            <a href={routes.tools}>
               {t("header.seeAllTools", { count: totalToolCount })}
               <ArrowRight className="size-4" aria-hidden="true" />
             </a>
           </Button>
           <Button asChild variant="outline" size="touch" className="rounded-btn">
-            <a href={ROUTES.page("contact")}>
+            <a href={routes.page("contact")}>
               <Mail className="size-4" aria-hidden="true" />
               {t("about.ctaContact")}
             </a>

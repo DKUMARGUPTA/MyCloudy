@@ -3,6 +3,7 @@
 import { useToast } from "@/hooks/use-toast";
 import { useI18n } from "@/components/providers/locale-provider";
 import { locales, type Locale } from "@/i18n";
+import { notifyRouteChanged } from "@/hooks/use-hash-route";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/analytics/ga4";
 
@@ -33,6 +34,11 @@ export function LanguageSwitch({ className }: { className?: string }) {
         target = pathname === "/hi" ? "/" : pathname.slice("/hi".length);
       }
       window.history.replaceState(null, "", target + search);
+      /* Re-sync the route store (R19 Phase 5): every localized link href
+       * derives from the URL's /hi-ness, so the replaceState flip must
+       * wake the useSyncExternalStore subscribers — otherwise the DOM
+       * hrefs keep the OLD locale's prefix until the next navigation. */
+      notifyRouteChanged();
     } catch {
       /* history unavailable — the UI flip alone is fine */
     }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Lock, ShieldCheck } from "lucide-react";
+import { Lock, ShieldCheck, Languages } from "lucide-react";
 
 import { Logo } from "@/components/doco/logo";
 import { openConsentSettings } from "@/components/doco/cookie-banner";
@@ -10,16 +10,50 @@ import {
   CATEGORIES,
   totalToolCount,
 } from "@/lib/tools/registry";
-import { ROUTES } from "@/hooks/use-hash-route";
+import {
+  localizedRoutes,
+  useUrlLocale,
+  type HashRoute,
+} from "@/hooks/use-hash-route";
 import { cn } from "@/lib/utils";
+
+/** Mirror of the current route in the OTHER locale ("/tool/x" ↔
+ * "/hi/tool/x") — the crawlable cross-locale footer link (R19 Phase 5).
+ * Computed from the route so it is correct in the RAW HTML: crawlers and
+ * no-JS visitors get a real <a> to the opposite locale of THIS page. */
+function mirroredRouteHref(route: HashRoute, urlLocale: "en" | "hi"): string {
+  let base: string;
+  switch (route.view) {
+    case "tool":
+      base = `/tool/${route.toolId ?? ""}`;
+      break;
+    case "page":
+      base = `/${route.pageId ?? ""}`;
+      break;
+    case "tools":
+      base = route.category ? `/tools/${route.category}` : "/tools";
+      break;
+    default:
+      base = "/";
+  }
+  if (route.query) base += `?q=${encodeURIComponent(route.query)}`;
+  if (urlLocale === "en") {
+    return base === "/" ? "/hi" : `/hi${base}`;
+  }
+  return base;
+}
 
 /**
  * Site footer (PRD §5.2): tagline, trust line, category links, company
  * pages (about/contact/privacy/terms — Phase 6 static pages), privacy
- * settings (re-opens the consent banner).
+ * settings (re-opens the consent banner), and the cross-locale link
+ * (R19 Phase 5 — the only always-visible EN↔HI anchor on every page).
  */
-export function SiteFooter() {
+export function SiteFooter({ route }: { route: HashRoute }) {
   const { t, locale } = useI18n();
+  const urlLocale = useUrlLocale();
+  const routes = localizedRoutes(urlLocale);
+  const otherLocaleHref = mirroredRouteHref(route, urlLocale);
   const year = new Date().getFullYear();
 
   return (
@@ -32,10 +66,24 @@ export function SiteFooter() {
               {t("footer.tagline")}
             </p>
             <a
-              href={ROUTES.tools}
+              href={routes.tools}
               className="inline-flex min-h-11 items-center rounded-btn text-sm font-medium text-primary outline-none transition-colors hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >
               {t("header.seeAllTools", { count: totalToolCount })}
+            </a>
+            {/* Cross-locale link (R19 Phase 5): a REAL anchor to the
+             * opposite-locale mirror of this page. Crawlable in the raw
+             * HTML (hreflang <link>s alone left discovery blind without
+             * JS); with JS the AppShell interceptor flips the locale and
+             * mirrors the URL without a reload; middle-click / no-JS get
+             * a full SSR load in the other language. */}
+            <a
+              href={otherLocaleHref}
+              hrefLang={urlLocale === "en" ? "hi" : "en"}
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-btn text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            >
+              <Languages className="size-4" aria-hidden="true" />
+              {t("footer.readOther")}
             </a>
           </div>
           <div className="max-w-sm space-y-3">
@@ -67,7 +115,7 @@ export function SiteFooter() {
               return (
                 <li key={category.id}>
                   <a
-                    href={ROUTES.category(category.id)}
+                    href={routes.category(category.id)}
                     className="flex min-h-11 items-center gap-2 rounded-chip border border-border bg-background px-3 text-xs text-muted-foreground outline-none transition-colors hover:border-foreground/20 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   >
                     <span
@@ -103,7 +151,7 @@ export function SiteFooter() {
               ).map(([id, label]) => (
                 <li key={id}>
                   <a
-                    href={ROUTES.page(id)}
+                    href={routes.page(id)}
                     className="inline-flex min-h-11 items-center rounded-btn text-sm text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   >
                     {label}

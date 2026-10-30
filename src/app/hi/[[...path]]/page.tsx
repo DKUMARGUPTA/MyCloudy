@@ -111,6 +111,69 @@ export async function generateMetadata({
  */
 const HINDI_LANG_SCRIPT = "document.documentElement.lang='hi'";
 
+/*
+ * Home-only FAQPage JSON-LD, Hindi mirror (R19 Phase 5 — the EN home in
+ * src/app/page.tsx carried the only FAQ schema; /hi had none, so Hindi
+ * rich results had nothing to read). Mirrors the six questions of the
+ * home FAQ section (src/components/doco/home/faq.tsx renders the "faq.*"
+ * keys of src/i18n/hi.json) — keep all three in sync when editing copy.
+ */
+const faqJsonLdHi = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  inLanguage: "hi",
+  mainEntity: [
+    {
+      "@type": "Question",
+      name: "क्या DocoPDF सच में फ़्री है?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "हाँ। हर टूल फ़्री है — कोई साइनअप नहीं, कोई वॉटरमार्क नहीं, कोई डेली लिमिट नहीं। ज़्यादातर टूल्स पूरे ब्राउज़र में ही चलते हैं, इसलिए तेज़ भी हैं — आपकी फ़ाइलें आपके ही डिवाइस पर प्रोसेस होती हैं, किसी दूर के सर्वर पर नहीं।",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "JPG को PDF में मुफ़्त कैसे बदलें?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "JPG to PDF टूल खोलिए, फ़ोटो ड्रॉप कर दीजिए (JPG, PNG, WEBP, HEIC और TIFF सब चलते हैं), क्रम बदल लीजिए और Create PDF दबा दीजिए। दस्तावेज़ आपके डिवाइस पर ही बनता है — कुछ भी अपलोड नहीं होता।",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "PDF को Word या टेक्स्ट में कैसे बदलें?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "टेक्स्ट के लिए PDF to Text इस्तेमाल करें — यह सब कुछ आपके डिवाइस पर निकालता है और स्कैन किए पेज भी OCR से पढ़ लेता है (अंग्रेज़ी या हिंदी)। फ़ॉर्मैटिंग बचाने वाला पूरा PDF to Word कन्वर्टर हमारी रोडमैप पर है।",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "क्या मेरी PDF फ़ाइलें किसी सर्वर पर अपलोड होती हैं?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "नहीं। लगभग हर टूल आपके ब्राउज़र में, आपके डिवाइस पर ही चलता है — फ़ाइलें आपके कंप्यूटर या फ़ोन से बाहर नहीं जातीं, और साइट एक बार लोड होने के बाद ज़्यादातर टूल्स ऑफ़लाइन भी चलते रहते हैं।",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "Adobe Acrobat के बिना PDF एडिट कर सकते हैं?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "हाँ। Edit PDF आपको वर्ड जैसा एडिटर देता है — मौजूदा टेक्स्ट पर क्लिक करके बदलें, तस्वीरें, आकृतियाँ और सिग्नेचर जोड़ें, हाइलाइट और एनोटेट करें — मुफ़्त और आपके डिवाइस पर। Annotate PDF और Write PDF भी साथ हैं।",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "क्या DocoPDF हिंदी में काम करता है?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "हाँ! पूरा इंटरफ़ेस हिंदी में है — देवनागरी में PDF लिखें, हिंदी फ़ॉर्म भरें और स्कैन किए दस्तावेज़ों का हिंदी OCR करें, पूरी तरह सर्च करने लायक आउटपुट के साथ।",
+      },
+    },
+  ],
+};
+
 export default async function HindiPage({
   params,
 }: {
@@ -125,7 +188,7 @@ export default async function HindiPage({
     case "home":
       content = (
         <>
-          <JsonLd items={[toolsIndexJsonLd("hi")]} />
+          <JsonLd items={[toolsIndexJsonLd("hi"), faqJsonLdHi]} />
           <AppShell initialRoute={{ view: "home" }} initialLocale="hi" />
         </>
       );

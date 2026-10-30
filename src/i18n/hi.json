@@ -272,7 +272,8 @@
     "linkPrivacy": "प्राइवेसी",
     "linkTerms": "शर्तें",
     "phaseNote": "खुले तौर पर बन रहा है — {count} टूल लाइव, नए आ रहे हैं।",
-    "rights": "© {year} DocoPDF। सर्वाधिकार सुरक्षित।"
+    "rights": "© {year} DocoPDF। सर्वाधिकार सुरक्षित।",
+    "readOther": "Read in English"
   },
   "a11y": {
     "logoLabel": "DocoPDF होम",

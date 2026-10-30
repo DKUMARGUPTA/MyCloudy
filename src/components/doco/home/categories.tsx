@@ -11,7 +11,7 @@ import {
   totalToolCount,
   toolsByCategory,
 } from "@/lib/tools/registry";
-import { ROUTES } from "@/hooks/use-hash-route";
+import { useLocalizedRoutes } from "@/hooks/use-hash-route";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
  */
 export function Categories() {
   const { t, locale } = useI18n();
+  const routes = useLocalizedRoutes();
 
   return (
     <section
@@ -51,7 +52,7 @@ export function Categories() {
             return (
               <li key={category.id}>
                 <a
-                  href={ROUTES.category(category.id)}
+                  href={routes.category(category.id)}
                   aria-label={t("categories.openCategory", {
                     category: category.name[locale],
                   })}

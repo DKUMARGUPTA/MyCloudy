@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useI18n } from "@/components/providers/locale-provider";
+import { track } from "@/lib/analytics/ga4";
 import type { ToolDef } from "@/lib/tools/registry";
 import type { ToolOutput } from "@/lib/workers/protocol";
 import {
@@ -182,6 +183,14 @@ export function ResultView({
       "docopdf-results.zip"
     );
     downloadBlob(blob, name);
+    /* GA4 taxonomy round 2 (R19 Phase 5): the conversion funnel's last
+     * step. Only registry metadata + counts — never file names (PII). */
+    track("result_download", {
+      tool_slug: tool.id,
+      method: "zip",
+      outputs: outputs.length,
+      locale,
+    });
   };
 
   return (
@@ -428,7 +437,15 @@ export function ResultView({
                 type="button"
                 size="touch"
                 className="rounded-btn"
-                onClick={() => downloadBlob(output.blob, names[index])}
+                onClick={() => {
+                  downloadBlob(output.blob, names[index]);
+                  track("result_download", {
+                    tool_slug: tool.id,
+                    method: "single",
+                    outputs: outputs.length,
+                    locale,
+                  });
+                }}
               >
                 <Download className="size-4" aria-hidden="true" />
                 {t("result.download")}
@@ -440,7 +457,19 @@ export function ResultView({
                   variant="outline"
                   className="rounded-btn"
                   onClick={() => {
-                    void saveBlobAs(output.blob, names[index], output.mime);
+                    void saveBlobAs(output.blob, names[index], output.mime).then(
+                      (method) => {
+                        /* "failed" = the user closed the picker — measure the
+                         * real outcome, not the click. */
+                        if (method !== "failed") {
+                          track("result_save", {
+                            tool_slug: tool.id,
+                            method,
+                            locale,
+                          });
+                        }
+                      }
+                    );
                   }}
                 >
                   <HardDriveDownload className="size-4" aria-hidden="true" />
@@ -478,7 +507,15 @@ export function ResultView({
                   mime: output.mime,
                   blob: output.blob,
                 }))
-              );
+              ).then((shared) => {
+                if (shared) {
+                  track("result_share", {
+                    tool_slug: tool.id,
+                    outputs: outputs.length,
+                    locale,
+                  });
+                }
+              });
             }}
           >
             <Share2 className="size-4" aria-hidden="true" />

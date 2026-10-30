@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { SmartDropZone } from "@/components/doco/home/smart-drop-zone";
 import { useI18n } from "@/components/providers/locale-provider";
 import { totalToolCount } from "@/lib/tools/registry";
-import { ROUTES } from "@/hooks/use-hash-route";
+import { useLocalizedRoutes } from "@/hooks/use-hash-route";
 
 /**
  * Home hero (PRD §6.1): H1 + subtitle + the interactive Smart Drop Zone
@@ -16,6 +16,7 @@ import { ROUTES } from "@/hooks/use-hash-route";
  */
 export function Hero() {
   const { t } = useI18n();
+  const routes = useLocalizedRoutes();
 
   const trustBadges = [
     { icon: Lock, label: t("hero.badgePrivate"), variant: "private" as const },
@@ -63,7 +64,7 @@ export function Hero() {
 
         <p className="mt-5 text-sm text-muted-foreground">
           <a
-            href={ROUTES.tools}
+            href={routes.tools}
             className="rounded-btn font-medium text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
             {t("hero.browseAll", { count: totalToolCount })}

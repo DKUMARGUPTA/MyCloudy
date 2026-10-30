@@ -272,7 +272,8 @@
     "linkPrivacy": "Privacy",
     "linkTerms": "Terms",
     "phaseNote": "Built in the open — {count} tools live, more rolling out.",
-    "rights": "© {year} DocoPDF. All rights reserved."
+    "rights": "© {year} DocoPDF. All rights reserved.",
+    "readOther": "हिंदी में पढ़ें"
   },
   "nav": {
     "home": "Home"

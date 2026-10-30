@@ -4,7 +4,7 @@ import { Home, Search, Wrench } from "lucide-react";
 
 import { useI18n } from "@/components/providers/locale-provider";
 import type { HashRoute } from "@/hooks/use-hash-route";
-import { ROUTES } from "@/hooks/use-hash-route";
+import { useLocalizedRoutes } from "@/hooks/use-hash-route";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,18 +20,19 @@ export function BottomTabBar({
   onOpenSearch: () => void;
 }) {
   const { t } = useI18n();
+  const routes = useLocalizedRoutes();
 
   const tabs = [
     {
       id: "home" as const,
-      href: ROUTES.home,
+      href: routes.home,
       label: t("tabs.home"),
       icon: Home,
       active: route.view === "home",
     },
     {
       id: "tools" as const,
-      href: ROUTES.tools,
+      href: routes.tools,
       label: t("tabs.tools"),
       icon: Wrench,
       active: route.view === "tools",
