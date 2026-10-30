@@ -1,10 +1,10 @@
 # DocoPDF — Webmaster & Analytics Setup Guide (OWNER ACTIONS)
 
-_Last updated: 2025-11-01 · Site: https://www.docopdf.com (canonical www host)_
+_Last updated: 2026-11-01 · Site: https://www.docopdf.com (canonical www host)_
 _Status: SEO layer LIVE · **GA4 G-ZP89M3KQDB WIRED & VERIFIED (consent-gated)** · GSC verified (GoDaddy DNS) · Bing verified (GSC import). Ab sirf dashboard-side actions bache hain (§1, §2, §3 ke “Ab aapke bache hue kaam”)._
 
 This guide lists every OWNER ACTION in priority order. GA4 ID ab code mein
-wired hai (`src/lib/analytics/ga4.ts` — `NEXT_PUBLIC_GA_ID` env se override
+wired hai (`src/lib/analytics/ga4-id.ts` — `NEXT_PUBLIC_GA_ID` env se override
 ya `0` se disable ho sakta hai; Vercel dashboard mein kuch set karne ki
 zaroorat NahI hai). GSC/Bing DNS/import se verified hain — meta-tag env vars
 ki zaroorat nahi padi.
@@ -37,10 +37,20 @@ permanent hai — domain renewal tak valid.)_
 ## 2. Google Analytics 4 (15 min)
 
 > **✅ DONE — property ban gayi, Measurement ID `G-ZP89M3KQDB` site mein
-> wired + live-verified (2025-11-01).** Vercel env ki zaroorat NahI — ID
-> code mein default hai (`src/lib/analytics/ga4.ts`); env se sirf override
-> hota hai. Data ab collect ho raha hai (jab visitor analytics accept karta
-> hai — privacy-first, Consent Mode v2).
+> wired + live-verified.** Vercel env ki zaroorat NahI — ID code mein
+> default hai (`src/lib/analytics/ga4-id.ts`); env se sirf override hota
+> hai. Data ab collect ho raha hai (jab visitor analytics accept karta hai
+> — privacy-first, Consent Mode v2).
+
+> **📩 GA4 ka “We haven't found a Google tag” email aaya tha?** Wo purane
+> setup ki wajah se tha — tag sirf consent ke BAAD inject hoti thi, isliye
+> Google ka page-scan use HTML mein nahi dekh pata tha. **Ab Google tag
+> har page ke raw HTML mein standard placement par server-rendered hai**
+> (Consent Mode v2 ke saath: opt-in se pehle cookieless — koi _ga cookie
+> NahI, kuch measure nahi hota). GA4 mein **Start installation guide** /
+> **Install manually** kholkar scan dobara chalayein — ab tag detect ho
+> jayega. Ya 1–2 din rukein: Realtime mein data aate hi warning apne aap
+> hat jayegi.
 
 **Ab aapke bache hue kaam (GA4 dashboard mein — Reports tab mein data dikhne
 lagega, pehle din se hi):**
@@ -55,11 +65,13 @@ lagega, pehle din se hi):**
    dimensions** (Event scope, exact naam): `tool_slug`, `category`, `locale`,
    `mode` — Reports mein “kaunsa tool kitna popular” isse pata chalega.
 
-**Wired & verified (2025-11-01, live test):** gtag.js sirf analytics-accept
-karne wale visitors ke liye load hoti hai (zero network before consent),
-`anonymize_ip: true`, aur direct tool-page landings pe `tool_view` ab
-guaranteed fire hota hai (consent-race + duplicate-count dono fix ho gaye).
-Events mein kabhi file name, content ya typed text nahi jata.
+**Wired & verified (live test, www.docopdf.com):** Google tag har page ke
+HTML mein (consent-default denied → gtag.js → config, sahi order), fresh
+visitor par **koi cookie nahi** (cookieless denied state), Accept karne par
+`analytics_storage` granted + pehli page_view counted + buffered `tool_view`
+flush, revoke par cookies delete, no-op re-save par duplicate NahI. IP
+anonymized; events mein kabhi file name, content ya typed text nahi jata.
+Ad storage hamesha denied — DocoPDF par ads hain hi nahi.
 
 ---
 
