@@ -6238,3 +6238,11 @@ tsc 0 · eslint 0 (dono ke baad dev daemon relaunch — :3000/:3031/:3032 sab he
 10-FEATURES.md — "i18n URL-wins (R24)" platform bullet; CONTEXT-MEMORY.md header + recent rounds refresh.
 
 NEXT: 08-PLAN list — e-invoice browser QA rotation, R19 P3 backlog, Phase-10 accounts/Pro, Turso, Phase-11 worker.
+
+### R24 addendum — e-invoice QA rotation (validate-e-invoice) + hydration artifact investigation
+- **validate-e-invoice browser golden path (rotation item #3 of 5): PASS.**
+  - Paste `public/qa/qa-factur-x.xml` (8.2 KB CII, synthetic ClipboardEvent — React 19 paste path) → sniffed "CII XML detected" → ToolShell run → `qa-factur-x-validation-report.txt` (1.7 KB) + result view + related rail; blob-tab preview shows the FULL report.
+  - **Verdict CORRECT: FAIL — 11 passed / 0 warnings / 2 failed** (fixture has deliberate arithmetic breaks: line-nets 3005 ≠ TaxBasis 2905; GrandTotal 3219.00 ≠ basis+tax 3219.09) — totals reconciliation table + honesty block + ISO 4217 INR sab verified.
+  - Surface inline verdict banner path bhi green (FAIL banner + "11 passed · 0 warnings · 2 failed" + checks chips). Screenshot `public/qa/r24-validate-einvoice-verdict.png`.
+- **Known-issue investigation (NOT a regression — A/B verified):** flaky hydration attribute-mismatch error (`useId` shifts) on returning-visitor loads with divergent storage (stored `docopdf-locale=hi` on EN pages, ya dismissed banner). Evidence: (1) PRE-CHANGE tree (19a9a6a checkout) me bhi flaky reproduce hua (run 2/2); (2) fresh-visitor loads hamesha clean; (3) React 19.2.3 streaming-hydration + `useSyncExternalStore` snapshot divergence — post-commit re-render kabhi-kabhi baad-wale segments ke against compare hota hai → Radix IDs shift → ek attribute-mismatch log + auto-recovery (app fully functional). Fix needs dedicated round (guard/keyword options documented above); cosmetic + flaky + pre-existing = defer karne laayak. R19 pinned insight ("Fast-Refresh artifact") isi class ka hai — ab better understood.
+- E-invoice rotation status: create-electronic-invoice ✅ (P6-y r2), xml-invoice-to-pdf ✅ (P6-y r1), validate-e-invoice ✅ (R24). Remaining: pdf-to-e-invoice, (validate-pdfa alag family hai).
