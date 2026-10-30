@@ -55,6 +55,11 @@ export const metadata: Metadata = {
   description:
     "100 free online PDF tools: convert JPG to PDF, PDF to JPG, Word or Excel, merge, compress, edit, sign and OCR PDF files. No signup — files stay on your device. English + हिंदी",
   applicationName: "DocoPDF",
+  /* Installable web app (R19 Phase 4): the manifest is DocoPDF-branded with
+   * real-path shortcuts. Deliberately WITHOUT a service worker — public/sw.js
+   * is a self-unregistering cleanup script (sandbox preview hygiene), not an
+   * app-shell cacher; Chrome's install criteria no longer require one. */
+  manifest: "/manifest.webmanifest",
   /* No <meta name="keywords"> — Google/Bing ignore it (master-plan Phase 3);
    * researched keywords live in src/lib/seo/tool-seo.ts and feed on-page
    * copy + the keyword-map CSV deliverable instead. */

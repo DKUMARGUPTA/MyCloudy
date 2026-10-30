@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Sidocs — Free Document Tools",
-  "short_name": "Sidocs",
-  "description": "Free, privacy-first document tools — convert, merge, edit, sign and OCR PDF files 100% on your device. English + हिंदी. No signup, no uploads.",
+  "name": "DocoPDF — Free PDF & Document Tools",
+  "short_name": "DocoPDF",
+  "description": "100 free online PDF tools: convert, merge, compress, edit, sign and OCR PDF files. No signup — files stay on your device. English + हिंदी.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -44,28 +44,28 @@
       "name": "Merge PDF",
       "short_name": "Merge",
       "description": "Combine PDFs into one file",
-      "url": "/#/tool/merge-pdf",
+      "url": "/tool/merge-pdf",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
       "name": "JPG to PDF",
       "short_name": "JPG→PDF",
       "description": "Photos to a single PDF",
-      "url": "/#/tool/jpg-to-pdf",
+      "url": "/tool/jpg-to-pdf",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
       "name": "Edit PDF",
       "short_name": "Edit",
       "description": "Word-style PDF editor",
-      "url": "/#/tool/edit-pdf",
+      "url": "/tool/edit-pdf",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
       "name": "Sign PDF",
       "short_name": "Sign",
       "description": "Draw, type or upload a signature",
-      "url": "/#/tool/sign-pdf",
+      "url": "/tool/sign-pdf",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
