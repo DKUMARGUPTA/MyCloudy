@@ -3677,3 +3677,42 @@ Stage Summary:
 - Project state: 116 URLs / 100 live tools | tsc 0 + lint 0 | local E2E green. Next: push + Vercel deploy + production live-verify (404 on prod + sitemap regression + tofu regression).
 - SHIPPED + LIVE-VERIFIED: commit 78e51247 (+ QA doc commit) pushed → Vercel dpl_DKd4BKZxzRnV3tFSJRHj21by6xCH READY. Production: /nope-r19-test = HTTP 404 + branded bilingual page (h1 "This page took a wrong turn", Back to home / Browse all tools; browser console 0 errors; screenshot public/qa/r19-404-prod.png); sitemap regression green (Googlebot → XML urlset, browser Accept → HTML "XML Sitemap" h1, ?raw=1 → XML); offline.html 0 "Sidocs" (DocoPDF teal live); /api → 404 (scaffold gone); prod home clean. Local tofu regression (R16 ritual): qa/tofu-regression-chromium-print.pdf → /tool/pdf-to-jpg → downloaded page1 VLM = READABLE ("DocoPDF — Master SEO, SMO & Webmaster Prompt").
 - Phase 2 (security hardening) is the NEXT round: Caddy XTransformPort allow-list, convert webpage2pdf SSRF guard, mini-service rate limits + streaming size pre-check, generic 500s, stdout cap.
+
+---
+Task ID: R19-PHASE-2-SECURITY
+Agent: orchestrator (main session)
+Task: Phase 2 of the R19 audit — security hardening of the mini-services + gateway (audit items S1-S5 / P1-1..P1-3 + P2-5 + P3 hygiene).
+
+WORK LOG:
+- Caddyfile (repo): XTransformPort hard allow-list — @port_convert (3031) + @port_sign (3032) get proxied, any other XTransformPort value → 403. HONEST LIMIT: the RUNNING gateway loads /app/Caddyfile (root-owned, unreadable/unwritable from the app user; admin API :2019 not listening) — the repo file is the source of truth for any deployment that uses it; runtime hardening had to happen at the SERVICE layer instead (defense in depth). Verified the live gateway still proxies any port (502 on closed ports = it TRIED), so the service-level guards below are the real enforcement.
+- convert service (mini-services/convert/index.ts):
+  * SSRF guard on webpage2pdf (audit P1-1): validatePageUrl (strict http/https) + DNS lookup(all) + checkResolvedIps (loopback/private/link-local/ULA/v4-mapped refused, fail-closed) — imported from the SHARED pure module tools/webpage-to-pdf/url-guard (same policy as /api/fetch-page). Chrome pinned to the validated IP via --host-resolver-rules=MAP host ip so a DNS-rebinding TOCTOU cannot retarget the browser for THIS hostname. Residual documented: Chrome follows redirects to other hostnames itself (acceptable — only inward services are the two mini-services).
+  * Per-IP sliding-window rate limit: 40 POST /convert per 10 min (clientIp from gateway-set X-Real-IP, non-spoofable through the gateway).
+  * Global concurrency cap 4 (503 + Retry-After 5s when exceeded) — parallel gs/Chrome/pdftocairo jobs could previously exhaust CPU/RAM.
+  * Content-Length pre-check (MAX + 2MB envelope overhead) BEFORE req.formData() buffers — old cap fired only after a multi-GB body was fully absorbed.
+  * Child stdout/stderr TOTAL cap 64KB per stream (old code capped chunks, not accumulation).
+  * Generic 500 detail ("internal error") — String(err) leaked paths/stacks before; full error stays in the service log.
+  * Dead `landscape ? "--print-to-pdf" : "--print-to-pdf"` ternary removed (silent no-op; landscape comes from @page CSS).
+  * BONUS PRE-EXISTING BUG FOUND+FIXED: hardcoded puppeteer chrome path linux-155.0.8059.39 was STALE (cache now has 156.0.8078.47) — every webpage2pdf/html2pdf run died ENOENT at spawn. findChromeBinary() now auto-detects the newest linux-* version dir.
+- request-sign service (mini-services/request-sign/index.ts):
+  * Per-IP rate limits: create 10/hour, sign 30/hour (sliding window, gateway X-Real-IP).
+  * Content-Length pre-check before formData (25MB+1 / 30MB+1 envelopes).
+  * MAX_LIVE_ENVELOPES=500 disk cap on creation (503 at capacity) — disk-exhaustion ceiling.
+  * Double-sign race (audit P2-5) CLOSED: O_EXCL (.sign-lock with flag "wx") + stale-lock auto-expiry (60s) + status RE-CHECK under the lock + write-then-rename atomicity for signed.pdf. Old flow: two concurrent signers both passed the check, both wrote, loser silently overwritten (last-write-wins, both got success).
+
+QA (all direct service + gateway curl tests):
+- VALID webpage2pdf https://example.com → 200 real PDF (34KB, %PDF-1.4) — chrome auto-detect works.
+- SSRF vectors ALL BLOCKED: http://localhost:3032/health → 403 urlPrivate; http://169.254.169.254/latest/meta-data/ → 403; file:///etc/passwd → 400 invalid URL; http://127.0.0.1:3032 via gateway → 403.
+- Oversize declared Content-Length 100MB → 413 immediately.
+- Rate limit: 44 rapid converts → 403s (SSRF refusals count, they consume resources) then 429s exactly at the 40-request boundary.
+- request-sign full flow: create 200 (tokens) → PARALLEL sign ×2 → A=409 signingInProgress (lock held) + B=200 signed (EXACTLY ONE winner — race closed) → result 200 real PDF bytes.
+- request-sign rate limits: 11 creates → 10×200 + 429s; 32 sign attempts → 409s (alreadySigned, counting) then 429s at the 30 boundary.
+- Gateway path (what the browser actually uses): POST localhost:81/requests?XTransformPort=3032 → 200 tokens (X-Real-IP bucket works); /health both services ok; SSRF blocked through the gateway too.
+- Tool pages: /tool/request-signature loads 0 console errors, upload + form fields verified in browser; final submit-click E2E blocked by agent-browser daemon instability (EAGAIN/timeouts/wedge — environment issue, page itself clean) — covered instead via the identical gateway route with curl.
+- Rituals this round: home 0 errors; tofu regression READABLE (run earlier this round, Phase 2 changes don't touch the pdf.js on-device path); tsc 0; lint 0.
+
+Stage Summary:
+- Both public mini-services now have real abuse defenses (SSRF, rate limits, concurrency/disk caps, early size rejection, error hygiene) and the request-sign double-sign data-integrity race is closed. One pre-existing production bug (stale Chrome path → webpage2pdf/html2pdf ENOENT) fixed as a bonus.
+- Honest limits: the RUNNING gateway's arbitrary-port proxying cannot be patched from the app user (root-owned config, no admin API) — repo Caddyfile fixed + service-layer defense in depth is the mitigation; documented for the platform owner.
+- Project state: gates green (tsc 0, lint 0, dev.log clean). Next: Phase 3 (13 route files' session-outside-try fix + SDK abort + orphan sweep) → Phase 4 (dead-code purge) → Phase 5 (SEO/i18n polish).
+- SHIPPED: a5fcb026 pushed → Vercel dpl_75VRjDtzwxrNtBC7xt6wxmCowFFd READY. Production smoke: /, /hi, /tools, /tool/merge-pdf, /sitemap.xml all 200; Googlebot UA → valid XML urlset. (Note: the mini-service hardening itself runs in the sandbox, not on Vercel — the deploy validates the repo builds clean with the changes.)
