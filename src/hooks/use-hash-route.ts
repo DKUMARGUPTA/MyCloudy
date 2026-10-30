@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
 } from "react";
 
-import { LOCALE_STORAGE_KEY, type Locale } from "@/i18n";
+import { getStoredLocale, type Locale } from "@/i18n";
 
 /**
  * App-shell view router — REAL PATHS with SPA behavior (P7-SEO R17).
@@ -189,14 +189,11 @@ function routeKeyServerSnapshot(): string {
 /* Navigation                                                          */
 /* ------------------------------------------------------------------ */
 
-/** Current UI locale for path prefixing (provider's source of truth). */
+/** Current UI locale for path prefixing (provider's source of truth —
+ * getStoredLocale honors the URL-wins session override, R24). */
 function currentLocale(): Locale {
-  try {
-    const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-    if (stored === "en" || stored === "hi") return stored;
-  } catch {
-    /* private mode — fall through to the path hint */
-  }
+  const active = getStoredLocale();
+  if (active) return active;
   return window.location.pathname.startsWith("/hi") ? "hi" : "en";
 }
 

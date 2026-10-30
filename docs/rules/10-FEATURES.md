@@ -34,6 +34,10 @@ full tool implementations. Sitemap auto-drops the 3 URLs; live count =
 
 - **App:** Ctrl+K search, All-Tools + category pages, favorites (local),
   recent tools, related-tools rail, dark/light, EN/हिंदी toggle.
+- **i18n URL-wins (R24):** `/hi` mirrors ALWAYS render Hindi — a stored
+  conflicting "en" preference gets a session-only override (never
+  clobbered); one header/footer switch restores EN. EN app stays
+  preference-driven. hreflang + link-graph + `<html lang>` stay honest.
 - **SEO:** 116-URL dynamic sitemap, robots, JSON-LD (SoftwareApplication,
   FAQPage, Breadcrumb, Organization, WebSite SearchAction), OG/Twitter
   cards, canonical + hreflang en/hi, branded bilingual 404.

@@ -10,7 +10,9 @@ import {
 } from "react";
 
 import {
+  clearSessionLocale,
   getStoredLocale,
+  LOCALE_CHANGE_EVENT,
   LOCALE_STORAGE_KEY,
   translate,
   type Locale,
@@ -24,9 +26,13 @@ import {
  * During SSR/hydration the snapshot is null -> locale falls back to "en";
  * right after hydration React re-syncs with the client snapshot, so a stored
  * "hi" preference applies without any hydration mismatch.
+ *
+ * R24: getStoredLocale honors the URL-wins session override (see i18n
+ * setSessionLocale) — an explicit setLocale below CLEARS it, so a user
+ * choice always wins from that moment on.
  */
 
-const LOCALE_EVENT = "docopdf:locale-change";
+const LOCALE_EVENT = LOCALE_CHANGE_EVENT;
 
 function subscribeToLocale(callback: () => void): () => void {
   window.addEventListener("storage", callback);
@@ -67,6 +73,8 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
   }, [locale]);
 
   const setLocale = useCallback((next: Locale) => {
+    /* An explicit user switch wins over the URL-wins session override. */
+    clearSessionLocale();
     try {
       window.localStorage.setItem(LOCALE_STORAGE_KEY, next);
     } catch {

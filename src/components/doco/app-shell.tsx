@@ -26,7 +26,7 @@ import { useHashRoute, navigateToHash, urlLocaleOf, UrlLocaleContext, type HashR
 import { anchorClickHandler } from "@/lib/anchor";
 import { track } from "@/lib/analytics/ga4";
 import { ALL_TOOLS } from "@/lib/tools/registry";
-import { LOCALE_STORAGE_KEY } from "@/i18n";
+import { LOCALE_STORAGE_KEY, setSessionLocale } from "@/i18n";
 
 /* GA4 tool_view dedupe — see the tool_view effect below for the contract. */
 let lastToolView: string | null = null;
@@ -175,7 +175,12 @@ export function AppShell({
   }, []);
 
   /*
-   * Locale mirror boot: /hi/… paths default to Hindi for fresh visitors.
+   * Locale mirror boot (R24 URL-wins): /hi/… paths ALWAYS render Hindi —
+   * the URL is the contract (hreflang pairs, SSR meta, link-graph all
+   * promise it). Fresh visitors get the persisted default (setLocale);
+   * returning visitors with a conflicting stored "en" get a SESSION-ONLY
+   * override (setSessionLocale) so their explicit preference survives
+   * for the next EN visit — one "Read in English" click also restores it.
    * Deferred by one animation frame so the store update lands AFTER the
    * hydration commit — flipping the locale in the same task makes Radix
    * useIds regenerate and logs a hydration attribute mismatch.
@@ -184,9 +189,13 @@ export function AppShell({
     if (!initialLocale) return;
     const frame = requestAnimationFrame(() => {
       try {
-        if (!window.localStorage.getItem(LOCALE_STORAGE_KEY)) {
+        const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
+        if (stored === "en") {
+          setSessionLocale("hi");
+        } else if (!stored) {
           setLocale(initialLocale);
         }
+        /* stored "hi" (or unreadable storage): already correct. */
       } catch {
         /* private mode / storage blocked — default locale is fine */
       }

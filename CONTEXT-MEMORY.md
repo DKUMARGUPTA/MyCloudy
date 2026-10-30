@@ -6,7 +6,7 @@
 > **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R23 — AI FEATURES DEFERRED (2025-10-30)** — owner order "abhi nahi dena, future plan": 3 AI tools enabled:false + phase P3 (Soon badge UX), R22 warning UI removed, i18n 4 keys ×2 removed (4805=4805), sitemap 116→113 URLs, live count 97/100, re-enable plan 08-PLAN §Deferred. Gates: tsc 0, eslint 0; E2E 404s + Soon cards + merge regression — green.
+> **Updated:** **R24 — /hi URL-WINS + P7-c COMPLETE (2025-10-31)** — /hi mirrors ab stored EN preference ke against bhi Hindi render karte hain (session-only override, preference never clobbered; recovery = 1 click). P7-c i18n VLM battery DONE (8 screenshots public/qa/p7c/ + 5 VLM checks ALL PASS). Cron QA job recreated (488164). Gates: tsc 0, eslint 0; E2E locale matrix + R23 regressions green. Pichla: R23 AI deferral (97/100 live, sitemap 113 URLs).
 
 ---
 
@@ -56,10 +56,10 @@ python3 scripts/mini-daemon.py convert && python3 scripts/mini-daemon.py request
 
 ### 1. ~~P6 — Own engine migration~~ **COMPLETE ✅** (2025-10-30; P6-v-b pdfa mega-port + P6-END final surfaces; worklog retro appended)
 
-### 2. P7 — Quality moat (P7-a + P7-b DONE ✅; P7-c NEXT)
+### 2. P7 — Quality moat (P7-a + P7-b + P7-c ALL DONE ✅)
 - ~~a11y-name smoke~~ **DONE** — smoke-a11y-names.ts 9/9 (DOM audit: 110/110 pages clean; brace-aware source scanner)
 - ~~magic-byte detection~~ **DONE** — smoke-magic-bytes.ts 18/18 (DropZone content sniffing + worker parse gates locked)
-- **P7-c (NEXT): i18n VLM battery** — screenshots EN+HI → VLM skill se visual language verification
+- ~~P7-c i18n VLM battery~~ **DONE ✅ (R24)** — 8 screenshots public/qa/p7c/ + 5 VLM checks ALL PASS (no tofu, layouts intact, mobile no-overflow); saath me /hi URL-wins bug fix
 
 ### 3. PRD phases 7–11
 - **Phase 7: PWA** (manifest, service worker, offline)
@@ -104,6 +104,8 @@ Transactional output allocator · invisible waiting window · progress morph · 
 ---
 
 ## 📝 Recent Rounds (detail = worklog.md)
+
+- **R24 (2025-10-31):** /hi URL-wins fix — stored `docopdf-locale=en` + /hi URL pe English content + lang="en" mil raha tha (P7-c screenshot battery ne pakda — HI captures byte-identical EN the). Fix: i18n module me session-only override (`setSessionLocale`/`clearSessionLocale`, NOT persisted) + `getStoredLocale()` override-aware + app-shell boot URL-wins (stored en → session hi; fresh → persist hi; stored hi → no-op; rAF deferral safe) + use-hash-route `currentLocale()` override-aware (SPA nav /hi-prefix maintain karta hai). Explicit setLocale override CLEAR karta hai — header/footer se 1 click me EN restore. E2E locale matrix 7 scenarios green + R23 regressions green + console 0. P7-c VLM battery: 8 screenshots (EN+HI × home/tool/tools + mobile) + 5 VLM checks (no tofu, layouts intact, mobile no-overflow) ALL PASS. Cron job exec-limit-disable → recreated 488164. LESSON: agent-browser localStorage browser close ke baar bhi persist ho sakta hai ya reset — locale tests me har step pe READ karke confirm karo.
 
 - **P7-SEO (2025-10-30):** "world-best SEO" round — sitemap-404 bug fix (hash-only app ke against real URLs promise ho rahi thi) → 11 naye files: seo libs (site/tool-seo/metadata/json-ld) + routes (tool/[id] ×100 static, tools + [category], 4 static, /hi/[[...path]] catch-all with Hindi SSR meta + locale boot) + DYNAMIC sitemap.ts (116 URLs hreflang) + robots.ts (public/sitemap.xml+robots.txt DELETED — stale) + app-shell extraction + useHashRoute(initial) + anchor.ts (plain-anchor scroll fix) + gen-og-image.ts (sharp 1200×630) + layout refresh (60+→100 copy, Organization/WebSite JSON-LD, home-FAQ moved to page). 50 curated keyword copies + generator. E2E: sab routes 200 + 404 unknown, SSR head verified per type, Hindi page lang=hi zero errors, battery 110/110. ⚠️ LESSONS: context consumer provider-same-component hota hai to value null milti hai (hook param better); /hi hydration error = Fast-Refresh artifact (clean restart = zero); setLocale hydration-commit me rAF-defer. **PUSH PENDING (token).**
 - **VERSION-SAVE (2025-10-30 ~05:40):** audited version `cd89b6b` GitHub main pe **locked** (verified no-auth ls-remote; Vercel 200; audit record commit ke andar). Save-gates re-run green (tsc 0, lint 0). Local annotated tags `checkpoint-100-tools` + `v1.0.0-rc.1` → cd89b6b (verify via ^{commit}). ⚠️ INCIDENT: credential files ~05:33 pe wipe (root cause unknown — cron spawn correlate; recovery searched, zero). Push blocked until fresh PAT. Tags recreate one-liner worklog mein pinned.

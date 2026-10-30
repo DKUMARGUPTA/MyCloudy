@@ -87,13 +87,53 @@ export function translate(
   return value;
 }
 
-/** Read the persisted locale (client only). */
+/** Read the effective locale (client only): a URL-wins session override
+ * (see setSessionLocale) takes precedence over the stored preference,
+ * then the persisted value. */
 export function getStoredLocale(): Locale | null {
   if (typeof window === "undefined") return null;
+  if (sessionLocale) return sessionLocale;
   try {
     const saved = window.localStorage.getItem(LOCALE_STORAGE_KEY);
     return saved === "en" || saved === "hi" ? saved : null;
   } catch {
     return null;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* URL-wins session override (R24)                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Cross-component locale-change event (single source of truth — the
+ * LocaleProvider subscribes to it; the /hi mirror boot dispatches it
+ * after applying a session override).
+ */
+export const LOCALE_CHANGE_EVENT = "docopdf:locale-change";
+
+/**
+ * In-memory, per-tab locale override — module state, NOT persisted.
+ *
+ * WHY (R24 /hi URL-wins fix): a visitor with a stored "en" preference
+ * who lands directly on a /hi mirror (external link, bookmark, Hindi
+ * search result) must still get the Hindi experience the URL promises
+ * (hreflang contract, link-graph semantics, <html lang>) — WITHOUT
+ * clobbering their explicit stored choice. Any later explicit switch
+ * (header toggle, footer "read in …") calls setLocale, which clears
+ * the override and persists as before.
+ */
+let sessionLocale: Locale | null = null;
+
+/** Apply a session-only locale override and wake subscribers. */
+export function setSessionLocale(locale: Locale): void {
+  sessionLocale = locale;
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(LOCALE_CHANGE_EVENT));
+  }
+}
+
+/** Clear the session override (an explicit user switch wins from now on). */
+export function clearSessionLocale(): void {
+  sessionLocale = null;
 }

@@ -6204,3 +6204,37 @@ tsc 0 · eslint 0 · i18n parity 4805=4805.
 - Prod spot-check after push: docopdf.com 3 URLs → 404, merge 200, home 200.
 
 NEXT: P7-c i18n VLM battery (08-PLAN priority list unchanged — AI deferral usse alag track hai). Cron guard updated: AI tools DELIBERATELY disabled — kabhi auto re-enable mat karna.
+
+## R24 — /hi URL-WINS FIX + P7-c i18n VLM BATTERY (2025-10-31)
+
+**THE ROUND:** Session continuation — infra restore (cron QA job "Disabled due to exec limits" → delete + recreate id 488164; dev daemon relaunch after tsc/lint), full R23 regression sweep (ALL GREEN), then P7-c execution ne ek REAL BUG pakda aur fix kiya.
+
+### Bug found (P7-c screenshot battery ne)
+- **Symptom:** HI screenshots byte-identical EN ke — /hi URL par stored `docopdf-locale=en` wale visitor ko ENGLISH content + `lang="en"` mil raha tha (SSR Hindi meta ke against). hreflang promise + R19 link-graph semantics ("a /hi page's links keep the visitor in /hi regardless of a stored preference") toot rahe the — boot me localStorage guard preference ko content-language se upar rakh raha tha.
+- **Fix (URL-wins session override):**
+  - `src/i18n/index.ts` — `LOCALE_CHANGE_EVENT` export (provider se moved, single source) + `setSessionLocale`/`clearSessionLocale` (module-state, per-tab, NOT persisted) + `getStoredLocale()` ab override ko honor karta hai.
+  - `locale-provider.tsx` — shared event import; explicit `setLocale` ab override CLEAR karta hai (user choice always wins).
+  - `app-shell.tsx` boot — /hi par: stored "en" → session override "hi" (preference safe); no stored → `setLocale("hi")` persist (fresh-visitor behavior UNCHANGED); stored "hi" → no-op. rAF deferral barkarar (Radix useId hydration safety).
+  - `use-hash-route.ts` `currentLocale()` — ab `getStoredLocale()` use karta hai (override-aware) → SPA nav /hi prefixes maintain karta hai.
+- **Design rationale:** URL = contract (/hi wale ko Hindi chahiye — external link/bookmark/search se aaye bhi); stored EN preference clobber NAHI hoti (session-only); recovery = 1 click (header toggle ya footer "Read in English" → setLocale("en") + URL mirror). EN app ("/") preference-driven SPA hi hai (by design, unchanged).
+
+### E2E verified (agent-browser)
+- stored=en + /hi → Hindi heading + `lang="hi"` + stored stays "en" ✓ (reload flow bhi)
+- Header "English" toggle on /hi → URL "/", EN content, stored "en" ✓
+- SPA nav (session hi, stored en): "सभी टूल" click → `/hi/tools` Hindi ✓
+- Fresh visitor /hi → Hindi + persists "hi" (legacy unchanged) ✓; stored=hi + "/" → Hindi (unchanged) ✓
+- Fresh-session consoles: / , /hi , /tool/merge-pdf → 0 errors ✓ (location.reload()-from-eval par ek hydration warning / par BHI aata hai — pre-existing dev artifact, locale-unrelated, fresh loads me zero)
+- R23 guards re-verified: AI tools 404 ×3, merge 200, sitemap 113 URLs 0 AI, /hi links 36, manifest, API 403 JSON ✓
+
+### P7-c i18n VLM battery (COMPLETE)
+- 8 screenshots `public/qa/p7c/` (EN+HI × home/tool/tools desktop 1440 + mobile 390) — HI captures post-fix (pehli baar byte-identical EN nikle the = bug ka symptom).
+- VLM (glm-5v-turbo, 5 checks): HI home "Devanagari perfect, no tofu, layout intact" · HI tool "no tofu, upload area intact" · HI tools catalog "4-col grid aligned, uniform cards" · HI mobile 390 "no overflow, crisp, production-ready" · EN home control "professional, no defects" — ALL PASS.
+- DOM snapshots se text-content proof pehle se tha; VLM ne visual layer (tofu/layout) confirm kiya. (Pinned insight respect: VLM Devanagari OCR pe trust nahi — sirf visual verdict liya.)
+
+### Gates
+tsc 0 · eslint 0 (dono ke baad dev daemon relaunch — :3000/:3031/:3032 sab healthy).
+
+### Docs (same commit)
+10-FEATURES.md — "i18n URL-wins (R24)" platform bullet; CONTEXT-MEMORY.md header + recent rounds refresh.
+
+NEXT: 08-PLAN list — e-invoice browser QA rotation, R19 P3 backlog, Phase-10 accounts/Pro, Turso, Phase-11 worker.
