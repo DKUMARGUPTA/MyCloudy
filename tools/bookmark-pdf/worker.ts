@@ -1,10 +1,9 @@
-import { PDFDocument } from "pdf-lib";
-
 import type { OptionValues } from "@/lib/tools/config-types";
 import type { WorkerRunRequest, WorkerResponse } from "@/lib/workers/protocol";
 import {
   classifyBookmarkError,
   normalizeTree,
+  outlinePageCount,
   writeOutline,
 } from "./engine";
 
@@ -17,8 +16,8 @@ import {
  *         the worker is the authority, never trusting the UI payload.
  *
  * The output REPLACES any existing outline (the engine deletes the old
- * items) and sets /PageMode /UseOutlines so viewers open the panel.
- * Never touches the network.
+ * items object-level) and sets /PageMode /UseOutlines so viewers open the
+ * panel. Own engine end to end (P6-z). Never touches the network.
  */
 
 function post(response: WorkerResponse): void {
@@ -43,12 +42,9 @@ async function run(request: WorkerRunRequest): Promise<void> {
   });
 
   const bytes = new Uint8Array(await file.arrayBuffer());
-  let doc: PDFDocument;
+  let pageCount: number;
   try {
-    doc = await PDFDocument.load(bytes, {
-      ignoreEncryption: false,
-      updateMetadata: false,
-    });
+    pageCount = outlinePageCount(bytes);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     post({
@@ -61,7 +57,6 @@ async function run(request: WorkerRunRequest): Promise<void> {
     return;
   }
 
-  const pageCount = doc.getPageCount();
   const tree = normalizeTree((options as OptionValues).tree, pageCount);
   if (tree.length === 0) {
     post({
@@ -80,7 +75,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
   });
 
   try {
-    const report = writeOutline(doc, tree);
+    const { bytes: saved, report } = writeOutline(bytes, tree);
 
     post({
       type: "progress",
@@ -89,7 +84,6 @@ async function run(request: WorkerRunRequest): Promise<void> {
       stage: "saving",
     });
 
-    const saved = await doc.save({ useObjectStreams: true });
     const outputName = `${safeBaseName(file.name)}-bookmarked.pdf`;
 
     post({
@@ -107,6 +101,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       detail: {
         files: 1,
         pages: pageCount,
+        bookmarks: report.written,
       },
     });
   } catch (error) {

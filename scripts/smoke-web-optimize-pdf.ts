@@ -14,6 +14,8 @@
  * Run: bun scripts/smoke-web-optimize-pdf.ts
  */
 import { inflateSync } from "node:zlib";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import {
@@ -27,14 +29,16 @@ import {
 } from "pdf-lib";
 import type { PDFRef } from "pdf-lib";
 import { zlibSync } from "../src/lib/own/zip/index";
+import { rewriteDocument } from "../src/lib/own/pdf/index";
 
 import {
   classifyWebOptError,
   collectUnreferencedObjects,
   countObjectStreams,
+  loadWebOpt,
   recompressFlateStreams,
   resolveParams,
-  stripWebMetadata,
+  rewriteWebOpt,
   type WebOptParams,
 } from "../tools/web-optimize-pdf/engine";
 
@@ -107,7 +111,7 @@ function objStmOracle(bytes: Uint8Array): number {
 }
 
 /* ------------------------------------------------------------------ */
-/* The worker's exact pipeline (worker.ts run(), minus postMessage)     */
+/* The worker's exact pipeline (own engine — loadWebOpt + rewriteWebOpt) */
 /* ------------------------------------------------------------------ */
 
 interface RunDetailOut {
@@ -122,46 +126,29 @@ interface RunDetailOut {
   pages: number;
 }
 
-async function runWebOpt(
+function runWebOpt(
   input: Uint8Array,
   params: WebOptParams
-): Promise<RunDetailOut> {
-  const doc = await PDFDocument.load(input, {
-    ignoreEncryption: false,
-    updateMetadata: false,
-    throwOnInvalidObject: true,
-  });
-  const pageCount = doc.getPageCount();
-  if (pageCount < 1) throw new Error("pdf has no pages");
-  const garbage = collectUnreferencedObjects(doc);
-  let metadataStripped = false;
-  if (params.stripMetadata) {
-    const strip = stripWebMetadata(doc);
-    metadataStripped =
-      strip.xmpRemoved || strip.producerRemoved || strip.creatorRemoved;
-  }
-  let streamsRecompressed = 0;
-  if (params.recompress) {
-    streamsRecompressed = recompressFlateStreams(doc).streamsRecompressed;
-  }
-  const saved = await doc.save({ useObjectStreams: params.objectStreams });
+): RunDetailOut {
+  const doc = loadWebOpt(input);
+  const out = rewriteWebOpt(doc, params);
   const objectStreamsCount = params.objectStreams
-    ? countObjectStreams(saved)
+    ? countObjectStreams(out.bytes)
     : 0;
   const beforeBytes = input.length;
-  const afterBytes = saved.length;
+  const afterBytes = out.bytes.length;
   const savedPct =
     beforeBytes > 0 ? Math.round((1 - afterBytes / beforeBytes) * 1000) / 10 : 0;
   return {
-    bytes: saved,
+    bytes: out.bytes,
     beforeBytes,
     afterBytes,
     savedPct,
-    streamsRecompressed,
+    streamsRecompressed: out.recompress?.streamsRecompressed ?? 0,
     objectStreamsCount,
-    metadataStripped,
-    unreferencedObjects: garbage.removed,
-    pages: pageCount,
+    metadataStripped: out.metadataStripped,
+    unreferencedObjects: out.garbage.removed,
+    pages: out.pageCount,
   };
 }
 
@@ -306,6 +293,18 @@ async function buildDeadFixture(): Promise<Uint8Array> {
 /* ------------------------------------------------------------------ */
 
 async function main(): Promise<void> {
+  console.log("── 0. own-engine no-pdf-lib guard ───────────────────────");
+  {
+    const root = join(import.meta.dir, "../tools/web-optimize-pdf");
+    for (const file of ["engine.ts", "worker.ts"]) {
+      const src = readFileSync(join(root, file), "utf8");
+      check(
+        `${file} imports no pdf-lib`,
+        !/(from\s+["'](?:@cantoo\/)?pdf-lib["']|import\(["'](?:@cantoo\/)?pdf-lib["']\))/.test(src),
+      );
+    }
+  }
+
   console.log("── 1. resolveParams ─────────────────────────────────────");
   {
     const d = resolveParams({});
@@ -345,12 +344,12 @@ async function main(): Promise<void> {
 
   console.log("\n── 3. recompressFlateStreams (engine, isolated) ──────────");
   {
-    const loaded = await PDFDocument.load(bloaty, { updateMetadata: false });
-    const report = recompressFlateStreams(loaded);
+    const loaded = loadWebOpt(bloaty);
+    const { report, replacements } = recompressFlateStreams(loaded);
     check("found the 3 bloaty flate streams", report.streamsFound === 3, report);
     check("all 3 replaced (level 9 < level 1)", report.streamsRecompressed === 3, report);
     check("bytesAfter < bytesBefore", report.bytesAfter < report.bytesBefore, report);
-    const saved = await loaded.save({ useObjectStreams: false });
+    const saved = rewriteDocument(loaded, { replacements });
     const reloaded = await PDFDocument.load(saved, {
       updateMetadata: false,
       throwOnInvalidObject: true,
@@ -367,8 +366,8 @@ async function main(): Promise<void> {
     const f = await native.embedFont(StandardFonts.Helvetica);
     p.drawText("native compression reference", { x: 10, y: 150, size: 10, font: f });
     const nativeBytes = await native.save({ useObjectStreams: false });
-    const nativeLoaded = await PDFDocument.load(nativeBytes, { updateMetadata: false });
-    const nativeReport = recompressFlateStreams(nativeLoaded);
+    const nativeLoaded = loadWebOpt(nativeBytes);
+    const nativeReport = recompressFlateStreams(nativeLoaded).report;
     check(
       "already-max stream is kept, never grown (honest)",
       nativeReport.streamsFound >= 1 &&
@@ -456,11 +455,14 @@ async function main(): Promise<void> {
   console.log("\n── 6. unreferenced objects (garbage walk) ─────────────────");
   const dead = await buildDeadFixture();
   {
-    const loaded = await PDFDocument.load(dead, { updateMetadata: false });
+    const loaded = loadWebOpt(dead);
     const report = collectUnreferencedObjects(loaded);
     check("finds exactly the 2 planted dead objects", report.removed === 2, report);
     check("live + removed == total", report.liveObjects + report.removed === report.totalObjects, report);
-    const saved = await loaded.save({ useObjectStreams: true });
+    const saved = rewriteDocument(loaded, {
+      deletions: report.deletions,
+      objectStreams: true,
+    });
     const re = await PDFDocument.load(saved, {
       updateMetadata: false,
       throwOnInvalidObject: true,
@@ -476,8 +478,7 @@ async function main(): Promise<void> {
     check("live needle survives", hasText(flateTextOf(re), "Dead objects fixture"));
 
     // Clean file: nothing dead, nothing removed.
-    const clean = await PDFDocument.load(bloaty, { updateMetadata: false });
-    const cleanReport = collectUnreferencedObjects(clean);
+    const cleanReport = collectUnreferencedObjects(loadWebOpt(bloaty));
     check("clean fixture: 0 unreferenced", cleanReport.removed === 0, cleanReport);
   }
 
@@ -571,6 +572,12 @@ async function main(): Promise<void> {
         updateMetadata: false,
       });
       check("encrypted: stock pdf-lib must refuse", false, "no throw");
+    } catch {
+      // fixture oracle: a genuinely encrypted file refuses everywhere
+    }
+    try {
+      loadWebOpt(encrypted);
+      check("own engine: encrypted must refuse", false, "no throw");
     } catch (error) {
       code = classifyWebOptError(error);
     }
@@ -578,16 +585,8 @@ async function main(): Promise<void> {
 
     code = "";
     try {
-      const doc = await PDFDocument.load(
-        new TextEncoder().encode("%PDF-1.7 not really a pdf"),
-        {
-          ignoreEncryption: false,
-          updateMetadata: false,
-        }
-      );
-      const pages = doc.getPageCount(); // recovered-but-broken docs throw HERE
-      if (pages < 1) throw new Error("pdf has no pages");
-      check("garbage: must fail", false, `no throw (pages=${pages})`);
+      loadWebOpt(new TextEncoder().encode("%PDF-1.7 not really a pdf"));
+      check("garbage: must fail", false, "no throw");
     } catch (error) {
       code = classifyWebOptError(error);
     }
@@ -595,10 +594,7 @@ async function main(): Promise<void> {
 
     code = "";
     try {
-      await PDFDocument.load(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]), {
-        ignoreEncryption: false,
-        updateMetadata: false,
-      });
+      loadWebOpt(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]));
       check("non-PDF bytes: load must fail", false, "no throw");
     } catch (error) {
       code = classifyWebOptError(error);

@@ -1,10 +1,14 @@
 /**
- * Bookmark PDF smoke (P4.3) — engine tree-op unit checks + REAL pdf-lib
- * outline round-trips: write → save → reload with pdf.js → verify titles,
- * pages, nesting, then REPLACE an outline and verify the old tree is gone
- * and the file still parses. Exit code = failures.
+ * Bookmark PDF smoke (P4.3, P6-z own-engine port) — engine tree-op unit
+ * checks + REAL outline round-trips: pdf-lib builds the FIXTURE, the OWN
+ * ENGINE (writeOutline on the rewriteDocument seam) writes the outline,
+ * pdf.js reloads and verifies titles, pages, nesting, then REPLACE an
+ * outline and verify the old tree is gone and the file still parses
+ * (pdf-lib strict reload = the oracle). Exit code = failures.
  */
-import { PDFDocument, PDFName, PDFDict, PDFRef } from "pdf-lib";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { PDFDocument, PDFName, PDFDict } from "pdf-lib";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import {
   appendChild,
@@ -16,6 +20,7 @@ import {
   insertAfterNode,
   moveNode,
   normalizeTree,
+  outlinePageCount,
   outdentNode,
   removeNode,
   serializeTree,
@@ -128,14 +133,27 @@ check("normalizeTree depth cap", (() => {
 })());
 check("classifyBookmarkError", classifyBookmarkError(new Error("encrypted")) === "tool.errorEncrypted" && classifyBookmarkError(new Error("boom")) === "tool.errorCorrupt");
 
-/* ---------------- real pdf-lib write + pdf.js read-back ---------------- */
+/* ---------------- own-engine no-pdf-lib guard ---------------- */
 
-async function makePdf(pages: number): Promise<PDFDocument> {
+{
+  const root = join(import.meta.dir, "../tools/bookmark-pdf");
+  for (const file of ["engine.ts", "worker.ts"]) {
+    const src = readFileSync(join(root, file), "utf8");
+    check(
+      `${file} imports no pdf-lib`,
+      !/(from\s+["'](?:@cantoo\/)?pdf-lib["']|import\(["'](?:@cantoo\/)?pdf-lib["']\))/.test(src),
+    );
+  }
+}
+
+/* ---------------- real write (own engine) + pdf.js read-back ---------------- */
+
+async function makePdf(pages: number): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   for (let i = 0; i < pages; i += 1) {
     doc.addPage([595, 842]);
   }
-  return doc;
+  return doc.save();
 }
 
 async function readOutline(bytes: Uint8Array): Promise<{ titles: string[]; flat: Array<{ title: string; page: number; level: number }> }> {
@@ -165,7 +183,8 @@ async function readOutline(bytes: Uint8Array): Promise<{ titles: string[]; flat:
 }
 
 // 1. Write a fresh 3-level outline onto a 6-page PDF.
-const doc1 = await makePdf(6);
+const bytes1fixture = await makePdf(6);
+check("outlinePageCount pre-pass agrees", outlinePageCount(bytes1fixture) === 6);
 const tree1 = [
   n("a", "मुखबंध", 1, [
     n("a1", "पहला अध्याय", 2),
@@ -173,74 +192,87 @@ const tree1 = [
   ]),
   n("b", "Appendix", 6),
 ];
-const report1 = writeOutline(doc1, tree1);
-check("report counts", report1.written === 5 && report1.rootCount === 5 && report1.removed === 0);
-const bytes1 = await doc1.save();
-const read1 = await readOutline(bytes1);
+const out1 = writeOutline(bytes1fixture, tree1);
+check("report counts", out1.report.written === 5 && out1.report.rootCount === 5 && out1.report.removed === 0);
+check("result pageCount carried", out1.pageCount === 6);
+const read1 = await readOutline(out1.bytes);
 check("readback count", read1.flat.length === 5);
 check("readback titles incl. devanagari", JSON.stringify(read1.titles) === JSON.stringify(["मुखबंध", "पहला अध्याय", "दूसरा अध्याय", "उप-अनुभाग", "Appendix"]));
 check("readback pages", read1.flat[1].page === 2 && read1.flat[3].page === 5 && read1.flat[4].page === 6);
 check("readback nesting", read1.flat[1].level === 1 && read1.flat[3].level === 2 && read1.flat[4].level === 0);
-check("catalog PageMode UseOutlines", (() => {
-  // confirm on a fresh load of the saved bytes
-  const check = PDFDocument.load(bytes1, { ignoreEncryption: true }).then((d) => {
-    const mode = d.catalog.get(PDFName.of("PageMode"));
-    return mode === PDFName.of("UseOutlines");
-  });
-  return check;
-})() instanceof Promise ? await (async () => {
-  const d = await PDFDocument.load(bytes1, { ignoreEncryption: true });
-  return d.catalog.get(PDFName.of("PageMode")) === PDFName.of("UseOutlines");
-})() : false);
+{
+  // ORACLE: pdf-lib strict reload — catalog /PageMode + structure intact.
+  const d = await PDFDocument.load(out1.bytes, { ignoreEncryption: true });
+  check("oracle reload PageMode UseOutlines", d.catalog.get(PDFName.of("PageMode")) === PDFName.of("UseOutlines"));
+  check("oracle reload page count", d.getPageCount() === 6);
+  const outlines = d.catalog.get(PDFName.of("Outlines"));
+  check("oracle reload has /Outlines ref", outlines !== undefined);
+  const outlinesDict = d.context.lookupMaybe(outlines as never, PDFDict);
+  check(
+    "oracle reload root Count === 5",
+    outlinesDict !== undefined && String(outlinesDict.get(PDFName.of("Count"))) === "5",
+  );
+}
 
-// 2. REPLACE the outline: load bytes1, write a different tree, verify.
-const doc2 = await PDFDocument.load(bytes1, { ignoreEncryption: true });
+// 2. REPLACE the outline: bytes1 → a different tree, verify.
 const tree2 = [n("x", "Only chapter", 3), n("y", "End", 6)];
-const report2 = writeOutline(doc2, tree2);
-check("replace report removed old items", report2.removed === 6 && report2.written === 2);
-const bytes2 = await doc2.save();
-const read2 = await readOutline(bytes2);
+const out2 = writeOutline(out1.bytes, tree2);
+check("replace report removed old items", out2.report.removed === 6 && out2.report.written === 2);
+const read2 = await readOutline(out2.bytes);
 check("replace readback exact", JSON.stringify(read2.titles) === JSON.stringify(["Only chapter", "End"]));
 check("replace readback pages", read2.flat[0].page === 3 && read2.flat[1].page === 6);
 // old devanagari titles must NOT be present anywhere in the new file's outline
 check("old titles gone", !read2.titles.some((title) => title.includes("अध्याय") || title.includes("मुखबंध")));
+// old title BYTES must not ride anywhere in the output (object-level deletion)
+{
+  const raw = Buffer.from(out2.bytes).toString("latin1");
+  // "मु" = <FEFF 092E 0941> — the hex form our writer emits for Titles.
+  check("old title bytes gone from the file", !raw.includes("FEFF092E0941"));
+}
 
 // 3. Empty tree REMOVES the outline entirely.
-const doc3 = await PDFDocument.load(bytes2, { ignoreEncryption: true });
-const report3 = writeOutline(doc3, []);
-check("empty write removes", report3.written === 0);
-const bytes3 = await doc3.save();
-const read3 = await readOutline(bytes3);
+const out3 = writeOutline(out2.bytes, []);
+check("empty write removes", out3.report.written === 0);
+const read3 = await readOutline(out3.bytes);
 check("empty readback none", read3.flat.length === 0);
+{
+  const d = await PDFDocument.load(out3.bytes, { ignoreEncryption: true });
+  check("empty write: catalog /Outlines gone", d.catalog.get(PDFName.of("Outlines")) === undefined);
+  check("empty write: catalog /PageMode gone", d.catalog.get(PDFName.of("PageMode")) === undefined);
+}
 
 // 4. Round-trip a serialized tree through normalizeTree → writeOutline
 //    (the exact worker path).
 const serialized = serializeTree(tree1);
 const normalized = normalizeTree(serialized, 6);
-const doc4 = await makePdf(6);
-writeOutline(doc4, normalized);
-const bytes4 = await doc4.save();
-const read4 = await readOutline(bytes4);
+const bytes4fixture = await makePdf(6);
+const out4 = writeOutline(bytes4fixture, normalized);
+const read4 = await readOutline(out4.bytes);
 check("worker path roundtrip", JSON.stringify(read4.titles) === JSON.stringify(["मुखबंध", "पहला अध्याय", "दूसरा अध्याय", "उप-अनुभाग", "Appendix"]));
 
 // 5. An existing REAL outline made by another writer (pdf-lib low-level,
 //    mimicking a foreign generator) survives load + replace without
 //    corrupting the xref (pdf.js parses the final file fine).
-const doc5 = await makePdf(3);
-const foreignRoot = doc5.context.obj({ Type: PDFName.of("Outlines") });
-const foreignRef = doc5.context.register(foreignRoot);
-doc5.catalog.set(PDFName.of("Outlines"), foreignRef);
-const foreignItem = doc5.context.obj({ Title: doc5.context.obj("Foreign"), Parent: foreignRef });
-const foreignItemRef = doc5.context.register(foreignItem);
-foreignRoot.set(PDFName.of("First"), foreignItemRef);
-foreignRoot.set(PDFName.of("Last"), foreignItemRef);
-foreignRoot.set(PDFName.of("Count"), doc5.context.obj(1));
-// a cycle-style malformed link must not hang the collector
-foreignItem.set(PDFName.of("Next"), foreignItemRef);
-const report5 = writeOutline(doc5, [n("z", "Mine", 2)]);
-check("cycle-safe replace", report5.written === 1);
-const read5 = await readOutline(await doc5.save());
-check("cycle-safe readback", JSON.stringify(read5.titles) === JSON.stringify(["Mine"]));
+{
+  const doc5 = await PDFDocument.create();
+  for (let i = 0; i < 3; i += 1) doc5.addPage([595, 842]);
+  const foreignRoot = doc5.context.obj({ Type: PDFName.of("Outlines") });
+  const foreignRef = doc5.context.register(foreignRoot);
+  doc5.catalog.set(PDFName.of("Outlines"), foreignRef);
+  const foreignItem = doc5.context.obj({ Title: doc5.context.obj("Foreign"), Parent: foreignRef });
+  const foreignItemRef = doc5.context.register(foreignItem);
+  foreignRoot.set(PDFName.of("First"), foreignItemRef);
+  foreignRoot.set(PDFName.of("Last"), foreignItemRef);
+  foreignRoot.set(PDFName.of("Count"), doc5.context.obj(1));
+  // a cycle-style malformed link must not hang the collector
+  foreignItem.set(PDFName.of("Next"), foreignItemRef);
+  const foreignBytes = await doc5.save();
+
+  const out5 = writeOutline(foreignBytes, [n("z", "Mine", 2)]);
+  check("cycle-safe replace", out5.report.written === 1);
+  const read5 = await readOutline(out5.bytes);
+  check("cycle-safe readback", JSON.stringify(read5.titles) === JSON.stringify(["Mine"]));
+}
 
 console.log(`bookmark smoke: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

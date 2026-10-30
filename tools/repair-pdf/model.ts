@@ -1,30 +1,36 @@
-import { PDFDocument } from "pdf-lib";
 import { unzlibSync } from "@/lib/own/zip";
+import {
+  asName,
+  listPages,
+  parsePdf,
+  rewriteDocument,
+  type ParsedPdf,
+} from "@/lib/own/pdf";
 
 import type { RunDetail } from "@/lib/workers/protocol";
 
 /**
  * Repair PDF model (RB3-c — the 75th tool) — a raw-byte PDF salvager that
  * runs 100% on-device in a Web Worker (or headless in the smoke; no DOM).
+ * OWN ENGINE since P6-z: the structure check, the clean-file re-serialize
+ * and the verification all ride the preserve-numbers rewriter + strict
+ * parser (the smoke keeps pdf-lib strict loads as the independent oracle).
  *
  * HONEST ARCHITECTURE (why two stages):
  *
- * pdf-lib's parser is deliberately lenient — it scans objects linearly and
- * can "load" a PDF whose xref/startxref/trailer are entirely missing. A
- * repair tool that trusts that load alone would call stripped files
- * "valid". The structure check is therefore two-part:
- *
- *  Stage 1 (structure check):
+ *  The structure check is two-part:
  *   a. A raw damage scan (this file): %PDF- header at offset 0, startxref
  *      present and pointing at a real xref whose sampled entry offsets
  *      actually hit "N G obj" headers, %%EOF near the tail, plus the object
  *      scan's findings (duplicate object numbers, wrong/missing stream
  *      /Length entries, an unterminated final object).
- *   b. pdf-lib load with throwOnInvalidObject: true.
+ *   b. A strict parse with the own engine (typed encrypted/corrupt
+ *      refusals — the parser brute-recovers broken xref chains, so its
+ *      verdict is the honest "could this be parsed at all" signal).
  *   Only when BOTH are clean is the file "valid": it is still rebuilt
- *   (fresh header + xref via pdf-lib save, object streams off for maximum
- *   viewer compatibility) and reported honestly as such — or, with the
- *   rebuild switch off, returned byte-for-byte unchanged.
+ *      (fresh header + xref via the rewriter, object streams off for
+ *      maximum viewer compatibility) and reported honestly as such — or,
+ *      with the rebuild switch off, returned byte-for-byte unchanged.
  *
  *  Stage 2 (raw salvage — the real work), whenever the structure check
  *   finds ANY damage:
@@ -109,7 +115,7 @@ export interface RepairReport {
   structureWasValid: boolean;
   /** Valid file returned byte-for-byte unchanged (switch off). */
   unchanged: boolean;
-  /** pdf-lib's structure check threw on the input (the "before" state). */
+  /** The strict own-engine parse refused the input (the "before" state). */
   loadFailed: boolean;
   /** Original xref/startxref missing or not pointing at a real xref. */
   xrefRebuilt: boolean;
@@ -1074,22 +1080,40 @@ function buildRebuilt(
 }
 
 /* ------------------------------------------------------------------ */
-/* Verification                                                        */
+/* Verification (own engine — strict: the xref chain must parse, the  */
+/* page tree must walk; brute recovery means the rebuild failed)       */
 /* ------------------------------------------------------------------ */
 
-async function strictVerify(bytes: Uint8Array): Promise<number> {
+function strictVerify(bytes: Uint8Array): number {
   try {
-    const doc = await PDFDocument.load(bytes, {
-      throwOnInvalidObject: true,
-      updateMetadata: false,
-    });
-    return doc.getPageCount();
+    const doc = parsePdf(bytes);
+    if (doc.recovered) {
+      // A freshly rebuilt file must parse through its OWN xref chain —
+      // the brute scanner rescuing our output means the rebuild is wrong.
+      throw new Error("rebuilt file does not parse through its xref chain");
+    }
+    return listPages(doc).length;
   } catch (error) {
+    if (error instanceof RepairError) throw error;
     throw new RepairError(
       "errVerify",
       error instanceof Error ? error.message : String(error)
     );
   }
+}
+
+/** In-use, non-structural indirect objects (the enumerate parity). */
+function inUseRealObjects(doc: ParsedPdf): number {
+  let count = 0;
+  for (const [num, entry] of doc.entries) {
+    if (entry.type === 0) continue;
+    const obj = doc.getObject(num);
+    if (!obj) continue;
+    if (obj.k === "stream" && asName(obj.m.get("Type")) === "ObjStm") continue;
+    if (obj.k === "stream" && asName(obj.m.get("Type")) === "XRef") continue;
+    count += 1;
+  }
+  return count;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1115,7 +1139,7 @@ export async function repairPdf(
     throw new RepairError("errEncrypted");
   }
 
-  // ---- Raw damage scan (ALWAYS — pdf-lib's lenient load alone cannot
+  // ---- Raw damage scan (ALWAYS — the parse alone cannot
   // tell a stripped file from a valid one).
   const scan = scanRaw(s);
   const damaged =
@@ -1126,30 +1150,30 @@ export async function repairPdf(
     scan.streamLengthsFixed > 0 ||
     scan.dupObjNums > 0;
 
-  // ---- pdf-lib structure check.
-  let loaded: PDFDocument | null = null;
+  // ---- Own-engine structure check (strict parse; typed refusals).
+  let loaded: ParsedPdf | null = null;
   let loadFailed = false;
   try {
-    loaded = await PDFDocument.load(bytes, {
-      throwOnInvalidObject: true,
-      updateMetadata: false,
-    });
+    loaded = parsePdf(bytes);
   } catch (error) {
     loadFailed = true;
-    const message = error instanceof Error ? error.message : String(error);
-    if (/encrypt/i.test(message)) {
+    if (
+      error instanceof Error &&
+      /encrypt/i.test(error.message)
+    ) {
+      const message = error instanceof Error ? error.message : String(error);
       throw new RepairError("errEncrypted", message);
     }
   }
 
   /* ---------------- Stage 1: clean file ---------------------------- */
   if (loaded !== null && !damaged) {
-    const objectCount = loaded.context.enumerateIndirectObjects().length;
+    const objectCount = inUseRealObjects(loaded);
     if (options.alsoRebuildValid) {
       // Honest rebuild of an already-valid file: fresh header + xref via
-      // pdf-lib save; object streams OFF for maximum viewer compatibility.
-      const out = await loaded.save({ useObjectStreams: false });
-      const pages = await strictVerify(out);
+      // the rewriter; object streams OFF for maximum viewer compatibility.
+      const out = rewriteDocument(loaded, {});
+      const pages = strictVerify(out);
       return {
         bytes: out,
         report: {
@@ -1171,7 +1195,7 @@ export async function repairPdf(
         },
       };
     }
-    const pages = loaded.getPageCount();
+    const pages = listPages(loaded).length;
     return {
       bytes,
       report: {
@@ -1239,7 +1263,7 @@ export async function repairPdf(
 
   const root = pickCatalog(byNum);
   const out = buildRebuilt(byNum, root, scan.structure.infoRef);
-  const pages = await strictVerify(out);
+  const pages = strictVerify(out);
 
   return {
     bytes: out,

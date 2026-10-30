@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { CreateContext } from "@/lib/own/pdf";
 
 import type { OptionValues } from "@/lib/tools/config-types";
 import {
@@ -19,10 +19,11 @@ import {
  * /pdfjs modules — same recipe as tools/pdf-to-images/worker.ts): every
  * selected page is rendered to an OffscreenCanvas at dpi/72 (clamped to
  * [0.5, 8], then clamped again so a page never exceeds 40 megapixels),
- * encoded as JPEG or PNG, and rebuilt by pdf-lib into a NEW document —
- * one page per image at the original page's VISIBLE point size (the
- * pdf.js viewport at scale 1 is /Rotate-aware, so rotation is baked in
- * and the output page has the orientation the user saw).
+ * encoded as JPEG or PNG, and rebuilt by the OWN ENGINE (CreateContext —
+ * the scan-pdf / passport-photo precedent) into a NEW document — one
+ * page per image at the original page's VISIBLE point size (the pdf.js
+ * viewport at scale 1 is /Rotate-aware, so rotation is baked in and the
+ * output page has the orientation the user saw).
  *
  * Options read (exact ids, matching tools/rasterize-pdf/config.ts):
  *   dpi          "72" | "96" | "150" (default) | "220" | "300"
@@ -106,7 +107,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     return;
   }
 
-  const out = await PDFDocument.create();
+  const out = CreateContext.create();
   let done = 0;
 
   for (const pageIndexOfPageNumbers of pageNumbers) {
@@ -143,11 +144,12 @@ async function run(request: WorkerRunRequest): Promise<void> {
       });
       const imageBytes = new Uint8Array(await blob.arrayBuffer());
 
-      // 2. Rebuild: page per image at the visible point size, full-bleed.
+      // 2. Rebuild (own engine): page per image at the visible point size,
+      //     full-bleed.
       const image = usePng
-        ? await out.embedPng(imageBytes)
-        : await out.embedJpg(imageBytes);
-      const outPage = out.addPage([base.width, base.height]);
+        ? out.embedPng(imageBytes)
+        : out.embedJpeg(imageBytes);
+      const outPage = out.addPage(base.width, base.height);
       outPage.drawImage(image, {
         x: 0,
         y: 0,
@@ -179,7 +181,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     stage: "saving",
   });
 
-  const saved = await out.save({ useObjectStreams: true });
+  const saved = out.write();
   const outputName = `${safeBaseName(file.name)}-rasterized.pdf`;
 
   post({

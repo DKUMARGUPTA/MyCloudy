@@ -31,8 +31,7 @@ import { type DocInfoRead } from "../meta-common/meta";
  * On-device, reads via the shared cached pdf.js document + one byte scan.
  */
 
-/** Option ids — mirrors config.ts (kept local so the engine's pdf-lib
- *  + fflate graph never loads on the main thread). */
+/** Option ids — mirrors config.ts (kept local to this file). */
 const OPT = {
   objectStreams: "objectStreams",
   recompress: "recompress",

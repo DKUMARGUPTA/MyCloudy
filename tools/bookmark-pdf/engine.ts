@@ -1,25 +1,32 @@
 import {
-  PDFArray,
-  PDFDict,
-  PDFHexString,
-  PDFName,
-  PDFNumber,
-  PDFRef,
-  type PDFDocument,
-  type PDFPage,
-} from "pdf-lib";
+  arr,
+  catalogDict,
+  listPages,
+  name,
+  newDict,
+  num,
+  parsePdf,
+  pdfInfoText,
+  PdfError,
+  ref,
+  rewriteDocument,
+  type PdfObj,
+  type ParsedPdf,
+  type PdfPageInfo,
+} from "@/lib/own/pdf";
 
 /**
  * Bookmark PDF engine (PRD §7.1 / §8.1, Organize) — the outline tree model
- * (PURE, zero pdf-lib imports) + the outline writer (pdf-lib low-level
- * objects, no browser APIs) so the same code runs in the worker and under
- * bun in scripts/smoke-bookmark.ts.
+ * (PURE) + the outline writer (OWN ENGINE low-level objects, no browser
+ * APIs) so the same code runs in the worker and under bun in
+ * scripts/smoke-bookmark.ts.
  *
  * The PDF outline (PDF 32000-1 §12.3.3) is a tree of item dictionaries
  * linked through /First /Last /Prev /Next /Parent, owned by an /Outlines
- * root referenced from the catalog. pdf-lib has no outline API — the writer
- * below builds the dictionaries directly, including:
- *   /Title  PDFHexString (Unicode-safe: Devanagari works),
+ * root referenced from the catalog. The writer below builds the
+ * dictionaries directly on the preserve-numbers rewriter seam (the
+ * facturx-attach / meta-common precedents), including:
+ *   /Title  <FEFF…> UTF-16BE hex (Unicode-safe: Devanagari works),
  *   /Dest   [pageRef /XYZ null top null] (top of the destination page,
  *           zoom retained — what "jump to page" means in every viewer),
  *   /Count  positive = open (root: total items; item: visible descendants).
@@ -27,8 +34,10 @@ import {
  * bookmarks panel on load.
  *
  * REPLACE semantics: the existing outline (if any) is walked and its
- * objects deleted from the context so the output carries exactly the tree
- * the user built — no orphan bloat, no mixed old/new items.
+ * objects deleted (rewriteDocument deletions — object-level removal) so
+ * the output carries exactly the tree the user built — no orphan bloat,
+ * no mixed old/new items. New items ride extraObjects ABOVE the source
+ * numbering; output packs object streams (pdf-lib save parity).
  */
 
 /* ------------------------------------------------------------------ */
@@ -336,7 +345,7 @@ export function normalizeTree(
 }
 
 /* ------------------------------------------------------------------ */
-/* The pdf-lib outline writer (worker + smoke share this)               */
+/* The own-engine outline writer (worker + smoke share this)           */
 /* ------------------------------------------------------------------ */
 
 export interface OutlineWriteReport {
@@ -348,160 +357,183 @@ export interface OutlineWriteReport {
   rootCount: number;
 }
 
+/** writeOutline result — the rewritten bytes + the honest report. */
+export interface OutlineWriteResult {
+  bytes: Uint8Array;
+  report: OutlineWriteReport;
+  pageCount: number;
+}
+
 /**
- * Collects the item dict REFS reachable from an existing /Outlines root
- * (First child chains + Next sibling chains) so the writer can delete
- * them before installing the new tree. Cycle-safe (visited set) —
+ * The document's page count (worker pre-pass — the tree normalizer needs
+ * the REAL count before anything is written). Typed refusals match the
+ * writer: encrypted → PdfError("encrypted"), broken trees → corrupt.
+ */
+export function outlinePageCount(pdfBytes: Uint8Array): number {
+  return listPages(parsePdf(pdfBytes)).length;
+}
+
+/**
+ * Collects the item OBJECT NUMBERS reachable from an existing /Outlines
+ * root (First child chains + Next sibling chains) so the rewrite can
+ * delete them before installing the new tree. Cycle-safe (visited set) —
  * corrupt outlines never loop.
  */
-function collectOutlineItems(
-  context: { lookup(ref: unknown): unknown },
-  rootRef: unknown
-): PDFRef[] {
-  const refs: PDFRef[] = [];
-  const seen = new Set<number>();
-  const visitDict = (dict: PDFDict): void => {
+function collectOutlineObjects(
+  doc: ParsedPdf,
+  rootValue: PdfObj | undefined
+): Set<number> {
+  const dead = new Set<number>();
+  const visit = (obj: PdfObj | undefined): void => {
+    if (!obj || (obj.k !== "dict" && obj.k !== "stream")) return;
     for (const key of ["First", "Next"] as const) {
-      const link = dict.get(PDFName.of(key));
-      if (!(link instanceof PDFRef)) continue;
-      if (seen.has(link.objectNumber)) continue;
-      seen.add(link.objectNumber);
-      refs.push(link);
-      const child = context.lookup(link);
-      if (child instanceof PDFDict) visitDict(child);
+      const link = obj.m.get(key);
+      if (!link || link.k !== "ref") continue;
+      if (dead.has(link.num)) continue;
+      dead.add(link.num);
+      visit(doc.getObject(link.num));
     }
   };
-  const root = rootRef instanceof PDFRef ? context.lookup(rootRef) : rootRef;
-  if (root instanceof PDFDict) visitDict(root);
-  return refs;
+  if (rootValue && rootValue.k === "ref") {
+    dead.add(rootValue.num);
+    visit(doc.getObject(rootValue.num));
+  } else {
+    visit(rootValue);
+  }
+  return dead;
 }
 
 /** Top of the page's visible area (CropBox preferred, else MediaBox). */
-function pageTop(page: PDFPage): number {
-  for (const key of ["CropBox", "MediaBox"] as const) {
-    const box = page.node.lookupMaybe(PDFName.of(key), PDFArray);
-    if (box === undefined || box.size() < 4) continue;
-    const top = box.lookupMaybe(3, PDFNumber);
-    const bottom = box.lookupMaybe(1, PDFNumber);
-    if (top !== undefined && bottom !== undefined) {
-      return Math.max(top.asNumber(), bottom.asNumber());
-    }
-  }
-  return 842; // A4 fallback
+function pageTop(page: PdfPageInfo): number {
+  const [, y0, , y1] = page.cropBox;
+  return Math.max(y1, y0);
 }
+
+/** The null object (arr member form). */
+const NULL: PdfObj = { k: "null" };
 
 /**
  * Writes `tree` as the document's outline, REPLACING any existing one
- * (old item objects are deleted from the context), and sets
+ * (old item objects deleted via rewriteDocument deletions), and sets
  * /PageMode /UseOutlines so viewers open the bookmarks panel.
  *
  * Every item points at the TOP of its destination page with the zoom
  * retained (/XYZ null top null) — the universal "go to page" behavior.
+ * Parse is strict: encrypted sources refuse with the typed PdfError
+ * (classifyBookmarkError maps it to tool.errorEncrypted).
  */
 export function writeOutline(
-  doc: PDFDocument,
+  pdfBytes: Uint8Array,
   tree: BookmarkNode[]
-): OutlineWriteReport {
-  const context = doc.context;
-  const pages = doc.getPages();
+): OutlineWriteResult {
+  const doc = parsePdf(pdfBytes);
+  const catalog = catalogDict(doc);
+  if (catalog === null) {
+    throw new PdfError("corrupt", "source has no readable catalog");
+  }
+  const pages = listPages(doc);
   const pageCount = pages.length;
 
   // 1. Remove the existing outline root + every reachable item.
-  let removed = 0;
-  const existingRootRef = doc.catalog.get(PDFName.of("Outlines"));
-  if (existingRootRef !== undefined) {
-    for (const ref of collectOutlineItems(context, existingRootRef)) {
-      context.delete(ref);
-      removed += 1;
-    }
-    if (existingRootRef instanceof PDFRef) {
-      context.delete(existingRootRef);
-      removed += 1;
-    }
-  }
-
+  const deletions = collectOutlineObjects(doc, catalog.get("Outlines"));
   const report: OutlineWriteReport = {
     written: 0,
-    removed,
+    removed: deletions.size,
     rootCount: 0,
   };
   if (tree.length === 0 || pageCount === 0) {
-    doc.catalog.delete(PDFName.of("Outlines"));
-    doc.catalog.delete(PDFName.of("PageMode"));
-    return report;
+    catalog.delete("Outlines");
+    catalog.delete("PageMode");
+    return {
+      bytes: rewriteDocument(doc, { deletions, objectStreams: true }),
+      report,
+      pageCount,
+    };
   }
 
-  // 2. Build items depth-first; sibling links are patched per level once
-  //    every child exists (item i's /Prev is item i-1's ref).
+  // 2. Build items depth-first as extraObjects ABOVE the source numbering
+  //    (sibling links patched per level once every child exists — item i's
+  //    /Prev is item i-1's ref).
+  let nextNum = 0;
+  for (const numKey of doc.entries.keys()) nextNum = Math.max(nextNum, numKey);
+  nextNum += 1;
+  const extras: Array<{ num: number; obj: PdfObj }> = [];
+
+  const outlinesDict = newDict([["Type", name("Outlines")]]);
+  const outlinesNum = nextNum++;
+  extras.push({ num: outlinesNum, obj: outlinesDict });
+  const outlinesRef = ref(outlinesNum);
+
+  /** Depth-first build; returns the item's dict + TOTAL descendant count
+   *  (the /Count a viewer shows — all levels, the pdf-lib writer's exact
+   *  semantics). */
   const buildItem = (
     node: BookmarkNode,
-    parentRef: PDFRef
-  ): { ref: PDFRef; count: number } => {
-    const page =
-      pages[Math.min(Math.max(node.page, 1), pageCount) - 1];
-    const dest = context.obj([
-      page.ref,
-      PDFName.of("XYZ"),
-      null,
-      pageTop(page),
-      null,
+    parentRef: PdfObj
+  ): { itemNum: number; itemDict: { k: "dict"; m: Map<string, PdfObj> }; count: number } => {
+    const page = pages[Math.min(Math.max(node.page, 1), pageCount) - 1]!;
+    const dest = arr(page.ref, name("XYZ"), NULL, num(pageTop(page)), NULL);
+    const itemNum = nextNum++;
+    const itemDict = newDict([
+      ["Title", pdfInfoText(node.title)],
+      ["Dest", dest],
+      ["Parent", parentRef],
     ]);
-    const dict = context.obj({
-      Title: PDFHexString.fromText(node.title),
-      Dest: dest,
-      Parent: parentRef,
-    });
-    const ref = context.register(dict);
+    extras.push({ num: itemNum, obj: itemDict });
     report.written += 1;
 
     let count = 0;
     if (node.children.length > 0) {
-      const childRefs: { ref: PDFRef; count: number }[] = [];
+      const childNums: number[] = [];
+      const childDicts: Array<Map<string, PdfObj>> = [];
+      const childCounts: number[] = [];
       for (const child of node.children) {
-        childRefs.push(buildItem(child, ref));
+        const built = buildItem(child, ref(itemNum));
+        childNums.push(built.itemNum);
+        childDicts.push(built.itemDict.m);
+        childCounts.push(built.count);
       }
-      for (let i = 0; i < childRefs.length; i += 1) {
-        const childDict = context.lookup(childRefs[i].ref, PDFDict);
-        if (i > 0) childDict.set(PDFName.of("Prev"), childRefs[i - 1].ref);
-        if (i < childRefs.length - 1) {
-          childDict.set(PDFName.of("Next"), childRefs[i + 1].ref);
+      for (let i = 0; i < childNums.length; i += 1) {
+        if (i > 0) childDicts[i]!.set("Prev", ref(childNums[i - 1]!));
+        if (i < childNums.length - 1) {
+          childDicts[i]!.set("Next", ref(childNums[i + 1]!));
         }
-        count += 1 + childRefs[i].count;
+        count += 1 + childCounts[i]!;
       }
-      const parentDict = context.lookup(ref, PDFDict);
-      parentDict.set(PDFName.of("First"), childRefs[0].ref);
-      parentDict.set(
-        PDFName.of("Last"),
-        childRefs[childRefs.length - 1].ref
-      );
-      parentDict.set(PDFName.of("Count"), PDFNumber.of(count));
+      itemDict.m.set("First", ref(childNums[0]!));
+      itemDict.m.set("Last", ref(childNums[childNums.length - 1]!));
+      itemDict.m.set("Count", num(count));
     }
-    return { ref, count };
+    return { itemNum, itemDict, count };
   };
 
-  // 3. Root level + the /Outlines root dict.
-  const outlinesDict = context.obj({ Type: PDFName.of("Outlines") });
-  const outlinesRef = context.register(outlinesDict);
-
-  const rootRefs: { ref: PDFRef; count: number }[] = [];
+  // 3. Root level: items + the /Outlines root wiring.
+  const rootNums: number[] = [];
+  const rootDicts: Array<Map<string, PdfObj>> = [];
   for (const node of tree) {
-    rootRefs.push(buildItem(node, outlinesRef));
+    const built = buildItem(node, outlinesRef);
+    rootNums.push(built.itemNum);
+    rootDicts.push(built.itemDict.m);
   }
-  for (let i = 0; i < rootRefs.length; i += 1) {
-    const itemDict = context.lookup(rootRefs[i].ref, PDFDict);
-    if (i > 0) itemDict.set(PDFName.of("Prev"), rootRefs[i - 1].ref);
-    if (i < rootRefs.length - 1) {
-      itemDict.set(PDFName.of("Next"), rootRefs[i + 1].ref);
+  for (let i = 0; i < rootNums.length; i += 1) {
+    if (i > 0) rootDicts[i]!.set("Prev", ref(rootNums[i - 1]!));
+    if (i < rootNums.length - 1) {
+      rootDicts[i]!.set("Next", ref(rootNums[i + 1]!));
     }
   }
-  outlinesDict.set(PDFName.of("First"), rootRefs[0].ref);
-  outlinesDict.set(PDFName.of("Last"), rootRefs[rootRefs.length - 1].ref);
+  outlinesDict.m.set("First", ref(rootNums[0]!));
+  outlinesDict.m.set("Last", ref(rootNums[rootNums.length - 1]!));
   report.rootCount = report.written;
-  outlinesDict.set(PDFName.of("Count"), PDFNumber.of(report.written));
+  outlinesDict.m.set("Count", num(report.written));
 
-  doc.catalog.set(PDFName.of("Outlines"), outlinesRef);
-  doc.catalog.set(PDFName.of("PageMode"), PDFName.of("UseOutlines"));
-  return report;
+  catalog.set("Outlines", outlinesRef);
+  catalog.set("PageMode", name("UseOutlines"));
+
+  return {
+    bytes: rewriteDocument(doc, { deletions, extraObjects: extras, objectStreams: true }),
+    report,
+    pageCount,
+  };
 }
 
 /** Maps any worker failure to the i18n key the UI shows. */

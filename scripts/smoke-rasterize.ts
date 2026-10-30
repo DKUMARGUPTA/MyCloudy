@@ -4,7 +4,7 @@
  *
  * bun cannot run pdf.js's canvas renderer, so this smoke locks the PURE
  * parts of the pipeline — the same math the worker performs — plus the
- * pdf-lib rebuild step with a real (hardcoded) JPEG:
+ * OWN-ENGINE rebuild step with a real (hardcoded) JPEG (P6-z port):
  *
  *  1. DPI → scale math (pdf.js convention: scale = dpi / 72, clamped to
  *     [0.5, 8] exactly like tools/pdf-to-images).
@@ -14,15 +14,17 @@
  *     mirroring pdf.js core Page.rotate + PageViewport).
  *  3. The 40MP per-page pixel cap clamp (aspect-preserving downscale,
  *     floor guarantees the product stays under the cap).
- *  4. The pdf-lib rebuild: build the output document exactly like the
- *     worker does (embedJpg + page at exact visible point size +
- *     drawImage full-bleed at margin 0) and verify it structurally:
- *     page count/sizes, full-bleed cm, image XObject dims, byte-identical
- *     DCT payload (no PDF-layer recompression), and a pristine image-only
- *     document (no AcroForm, no /Annots).
+ *  4. The OWN-ENGINE rebuild: build the output document exactly like the
+ *     worker does (CreateContext.embedJpeg + page at exact visible point
+ *     size + drawImage full-bleed at margin 0) and verify it with pdf-lib
+ *     as the strict ORACLE: page count/sizes, full-bleed cm, image XObject
+ *     dims, byte-identical DCT payload (no PDF-layer recompression), and a
+ *     pristine image-only document (no AcroForm, no /Annots).
  *
  * Run: bun scripts/smoke-rasterize.ts
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   PDFDocument,
   PDFName,
@@ -30,6 +32,7 @@ import {
   PDFRawStream,
   PDFDict,
 } from "pdf-lib";
+import { CreateContext } from "../src/lib/own/pdf/index";
 
 let passed = 0;
 let failed = 0;
@@ -115,7 +118,7 @@ export function clampPixels(
 }
 
 /* ------------------------------------------------------------------ */
-/* pdf-lib rebuild (exactly what the worker does after rendering)      */
+/* Own-engine rebuild (exactly what the worker does after rendering)   */
 /* ------------------------------------------------------------------ */
 
 /** A 16×8 two-tone JPEG (red top, blue bottom), 792 bytes. */
@@ -138,13 +141,11 @@ interface RasterPage {
 }
 
 /** Rebuild pass: one page per image, exact point size, full-bleed margin 0. */
-export async function buildRasterizedDoc(
-  pages: RasterPage[]
-): Promise<PDFDocument> {
-  const doc = await PDFDocument.create();
+export function buildRasterizedDoc(pages: RasterPage[]): Uint8Array {
+  const doc = CreateContext.create();
   for (const page of pages) {
-    const image = await doc.embedJpg(page.image);
-    const out = doc.addPage([page.widthPt, page.heightPt]);
+    const image = doc.embedJpeg(page.image);
+    const out = doc.addPage(page.widthPt, page.heightPt);
     out.drawImage(image, {
       x: 0,
       y: 0,
@@ -152,7 +153,7 @@ export async function buildRasterizedDoc(
       height: page.heightPt,
     });
   }
-  return doc;
+  return doc.write();
 }
 
 /* ------------------------------------------------------------------ */
@@ -262,17 +263,28 @@ async function main(): Promise<void> {
   }
   assert(worstCase, "clamp: floor math holds the cap for extreme page shapes");
 
-  /* 5. pdf-lib rebuild -------------------------------------------------- */
+  /* 5. own-engine rebuild (pdf-lib = the strict reload oracle) ------- */
+  {
+    const workerSrc = readFileSync(
+      join(import.meta.dir, "../tools/rasterize-pdf/worker.ts"),
+      "utf8",
+    );
+    assert(
+      !/(from\s+["'](?:@cantoo\/)?pdf-lib["']|import\(["'](?:@cantoo\/)?pdf-lib["']\))/.test(
+        workerSrc,
+      ),
+      "worker.ts imports no pdf-lib (own engine only)"
+    );
+  }
   // Page 1: a portrait A4 page with /Rotate 0. Page 2: the same page
   // stored with /Rotate 90 — the output must use the VISIBLE orientation.
   const jpeg = tinyJpegBytes();
   const [w0, h0] = visibleSize(595.28, 841.89, 0);
   const [w90, h90] = visibleSize(595.28, 841.89, 90);
-  const doc = await buildRasterizedDoc([
+  const saved = buildRasterizedDoc([
     { image: jpeg, widthPt: w0, heightPt: h0 },
     { image: jpeg, widthPt: w90, heightPt: h90 },
   ]);
-  const saved = await doc.save();
   const reloaded = await PDFDocument.load(saved, { updateMetadata: false });
 
   eq(reloaded.getPageCount(), 2, "rebuild: one output page per rendered image");

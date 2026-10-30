@@ -210,7 +210,7 @@ export function BookmarkSurface({
       } catch {
         if (cancelled) return;
         setProbe({ file, status: "error", pageCount: 0, imported: 0, skippedLinks: 0, truncated: false });
-        // The worker may still load it (pdf-lib is laxer than pdf.js) —
+        // The worker's parser is laxer than pdf.js's preview —
         // leave the run enabled with an empty tree the user can build on.
       }
     })();

@@ -153,12 +153,13 @@ console.log("── 2. REAL pdf.js outline resolution ────────�
       const page = doc.addPage([200, 300]);
       page.drawText(`Page ${i + 1}`, { x: 20, y: 150, size: 14, font });
     }
-    const report = writeOutline(doc, tree);
+    const base = await doc.save();
+    const out = writeOutline(base, tree);
     check(
-      `fixture outline written (${report.written} items)`,
-      report.written === treeLength(tree)
+      `fixture outline written (${out.report.written} items)`,
+      out.report.written === treeLength(tree)
     );
-    return doc.save();
+    return out.bytes;
   };
 
   const treeLength = (nodes: BookmarkNode[]): number =>

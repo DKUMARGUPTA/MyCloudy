@@ -74,6 +74,8 @@ export interface RunDetail {
   imagesSkipped?: number;
   /** Sticky notes among the annotations (annotate-pdf). */
   notes?: number;
+  /** Outline items written into the output (bookmark-pdf). */
+  bookmarks?: number;
   /** Words of text written into the output (write-pdf). */
   words?: number;
   /** Characters of salvaged story text (publisher-to-pdf). */

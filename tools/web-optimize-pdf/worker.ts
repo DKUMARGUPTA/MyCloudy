@@ -1,5 +1,3 @@
-import { PDFDocument } from "pdf-lib";
-
 import {
   type WorkerRunRequest,
   type WorkerResponse,
@@ -7,23 +5,21 @@ import {
 import { fileBaseName } from "../stamp-common/layout";
 import {
   classifyWebOptError,
-  collectUnreferencedObjects,
   countObjectStreams,
-  recompressFlateStreams,
+  loadWebOpt,
   resolveParams,
-  stripWebMetadata,
+  rewriteWebOpt,
 } from "./engine";
 
 /**
- * Web optimize PDF worker (RB3-b, device mode).
- *
- * Structural web tune-up, honest end to end: unreferenced objects are
- * counted and dropped, optional XMP/producer metadata is stripped (Title/
- * Author survive), every FlateDecode stream is re-deflated at level 9
- * (replace-if-smaller only), and the save packs loose objects into
- * compressed /ObjStm containers when asked. No fake /Linearized flag is
- * ever written — the FAQ explains what real linearization is and why this
- * tool does not claim it.
+ * Web optimize PDF worker (RB3-b, device mode) — OWN ENGINE end to end
+ * (P6-z). Structural web tune-up, honest end to end: unreferenced objects
+ * are counted and dropped, optional XMP/producer metadata is stripped
+ * (Title/Author survive), every FlateDecode stream is re-deflated at
+ * level 9 (replace-if-smaller only), and the rewrite packs loose objects
+ * into compressed /ObjStm containers when asked. No fake /Linearized
+ * flag is ever written — the FAQ explains what real linearization is and
+ * why this tool does not claim it.
  *
  * Device-only: the File arrives by structured clone, the PDF Blob goes
  * back — nothing touches the network.
@@ -57,54 +53,19 @@ async function run(request: WorkerRunRequest): Promise<void> {
     });
 
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const doc = await PDFDocument.load(bytes, {
-      ignoreEncryption: false,
-      updateMetadata: false,
-    });
-    const pageCount = doc.getPageCount();
-    if (pageCount < 1) throw new Error("pdf has no pages");
+    const doc = loadWebOpt(bytes);
 
-    // 1. Unreferenced objects: reachability walk + safe removal.
     post({
       type: "progress",
       runId,
       pct: 24,
       stage: "processing",
     });
-    const garbage = collectUnreferencedObjects(doc);
 
-    // 2. Optional metadata strip (XMP + Info producer/creator).
-    let metadataStripped = false;
-    if (params.stripMetadata) {
-      const strip = stripWebMetadata(doc);
-      metadataStripped =
-        strip.xmpRemoved || strip.producerRemoved || strip.creatorRemoved;
-    }
-    post({
-      type: "progress",
-      runId,
-      pct: 38,
-      stage: "processing",
-    });
-
-    // 3. Flate stream recompression (replace-if-smaller, level 9).
-    let streamsRecompressed = 0;
-    if (params.recompress) {
-      streamsRecompressed = recompressFlateStreams(doc).streamsRecompressed;
-    }
-    post({
-      type: "progress",
-      runId,
-      pct: 70,
-      stage: "processing",
-    });
-
-    // 4. Save — object stream packing per the switch.
-    const saved = await doc.save({
-      useObjectStreams: params.objectStreams,
-    });
+    // Garbage walk → strip → recompress → rewrite (one place, the engine).
+    const out = rewriteWebOpt(doc, params);
     const objectStreamsCount = params.objectStreams
-      ? countObjectStreams(saved)
+      ? countObjectStreams(out.bytes)
       : 0;
 
     post({
@@ -116,16 +77,16 @@ async function run(request: WorkerRunRequest): Promise<void> {
     outputs.push({
       name: `${fileBaseName(file.name)}-web.pdf`,
       mime: "application/pdf",
-      blob: new Blob([saved as BlobPart], { type: "application/pdf" }),
+      blob: new Blob([out.bytes as BlobPart], { type: "application/pdf" }),
     });
 
-    totalPages += pageCount;
+    totalPages += out.pageCount;
     beforeBytesTotal += bytes.length;
-    afterBytesTotal += saved.length;
-    streamsRecompressedTotal += streamsRecompressed;
+    afterBytesTotal += out.bytes.length;
+    streamsRecompressedTotal += out.recompress?.streamsRecompressed ?? 0;
     objectStreamsTotal += objectStreamsCount;
-    anyMetadataStripped = anyMetadataStripped || metadataStripped;
-    unreferencedTotal += garbage.removed;
+    anyMetadataStripped = anyMetadataStripped || out.metadataStripped;
+    unreferencedTotal += out.garbage.removed;
   }
 
   // ONE result per run, posted AFTER the loop (FIX-3: posting inside the
