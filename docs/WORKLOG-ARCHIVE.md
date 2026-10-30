@@ -3776,3 +3776,33 @@ Stage Summary:
 - 14 verified-dead files purged (PWA island, legacy panels, abandoned recipient flow, orphan offline page); the dead manifest asset converted into a working installable-web-app feature; sidecar drift measured + documented (260×2, deferred); sw.js + mini-service kept with documented rationale.
 - Project state: 116 URLs / 100 live tools | tsc 0 + lint 0 | local E2E + full regression suite green | commit 9ca55fa local.
 - Next: owner re-provides tokens → push-github.sh → Vercel READY → production live-check (manifest fetch + tool pages + 404/sitemap) → Phase 5 (SEO/i18n polish: /hi FAQ JSON-LD, SSR locale links, GA4 taxonomy round 2).
+
+---
+Task ID: R19-PHASE-5-SEO-I18N
+Agent: orchestrator (main session)
+Task: Phase 5 of the R19 audit — SEO/i18n polish: /hi FAQ JSON-LD, SSR locale-prefixed links, GA4 event taxonomy round 2. (Session start also re-provided tokens after the Phase-4 rollback wipe → Phase 4 push completed first: 9ca55fa + 1d6149d → dpl_2wHMVdncNhfCZUA8x8WrpZvMWeEd READY, manifest live-verified.)
+
+WORK LOG:
+- /hi FAQ JSON-LD: /hi home now emits a Hindi FAQPage (inLanguage "hi", the six home FAQ questions mirrored verbatim from src/i18n/hi.json faq.* — the EN home carried the ONLY FAQ schema, so Hindi rich results had nothing to read). Keep page.tsx / hi page / hi.json in sync when editing copy.
+- SSR locale-prefixed links (audit: /hi raw HTML had 36 EN-prefixed app links, ZERO /hi — no-JS visitors and the rendered link graph bounced off the Hindi mirror):
+  * use-hash-route.ts: withLocalePrefix is now IDEMPOTENT (strips an existing /hi prefix before re-prefixing — prefixing "/hi/tool/x" previously produced "/hi/hi/tool/x"); new UrlLocaleContext + useUrlLocale() + localizedRoutes()/useLocalizedRoutes(); notifyRouteChanged() export; useHashRoute returns the raw routeKey.
+  * AppShell: derives urlLocale from routeKey with the SSR-stable boot fallback (initialLocale) and provides it to the whole tree — hrefs are locale-correct in the RAW HTML, then live-re-sync on every navigation (route store).
+  * 16 components migrated (href={ROUTES.*} → localized): mega-menu, hero, popular-tools, bottom-tab-bar, categories, static-page, privacy/terms/about/contact pages, page-shell, category-view, site-header, site-footer, tool-shell (4 hrefs; its programmatic navigateToHash(ROUTES.*) call stays on static EN ROUTES — withLocalePrefix mirrors at runtime).
+  * LanguageSwitch: dispatches notifyRouteChanged() after its replaceState mirror so localized hrefs re-sync immediately.
+- Footer cross-locale anchor (every page): real <a> to the opposite locale's mirror of the CURRENT page ("हिंदी में पढ़ें" / "Read in English", hrefLang-typed, Languages icon, min-h-11 touch target). With JS the AppShell click interceptor flips the locale (setLocale writes localStorage synchronously → withLocalePrefix mirrors correctly) and navigates without a reload; middle-click/new-tab/no-JS get a full SSR load in the other language. Interceptor compares the TARGET's /hi-ness against the PATH's (not the UI locale) — link-graph semantics: a /hi page's links keep the visitor in /hi regardless of stored preference.
+- i18n: footer.readOther added to BOTH dicts — value written IN THE TARGET language (en.json: "हिंदी में पढ़ें"; hi.json: "Read in English") so target speakers can spot it; parity verified.
+- GA4 taxonomy round 2 (consent-gated as always; no PII — never file names): result_download (method single|zip, outputs count), result_save (measures the real picker/download outcome, skips "failed"), result_share, search_open, search_select (GA4-standard search_term, 100-char cap), pro_open; language_switch now also measures the footer-link path. Call sites: result-view.tsx, search-palette.tsx, app-shell.tsx.
+- QA fixtures restored (sandbox rollback ate them): public/qa/tofu-regression-chromium-print.pdf regenerated via headless Chrome 156 print (28,817 B); p5-tofu-result.jpg added.
+
+QA (all green):
+- Gates: tsc 0, lint 0. First lint run FAILED on react-hooks/immutability (new React Compiler rule) — "latest value ref" mutation pattern; fixed by comparing window.location's /hi-ness in the interceptor and using `locale` with deps in openPro/openSearch instead of reading/writing localeRef there (the pre-existing tool_view localeRef effect is untouched and still passes).
+- Local raw HTML: /hi = 38/38 hi-prefixed app links (was 0), FAQPage hi 6Q, cross anchor href="/" hrefLang="en"; EN home = 36 EN links + exactly 1 /hi (the footer anchor, text "हिंदी में पढ़ें" visible pre-hydration).
+- Interactive (local + PRODUCTION): footer link click → URL mirrors to /hi, <html lang> flips, stored pref set, H1 Hindi, 8 live /hi/tool links, NO reload; reverse flip to EN verified. Console errors: 0.
+- Regressions: palette "docx to png" → "2 steps" chip (plural engine intact); branded bilingual 404 ("This page took a wrong turn"); sitemap negotiation (Googlebot UA → valid XML urlset, browser Accept → HTML "XML Sitemap" h1, ?raw=1 → XML); tofu FULL RITUAL — chromium-printed fixture paste-injected (synthetic ClipboardEvent — agent-browser upload still doesn't fire React 19 onChange) → pdf-to-jpg convert → download (51,399 B JPG) → VLM verdict "READABLE — The text is clearly visible, such as the title 'DocoPDF — Master SEO, SMO & Webmaster Prompt'"; mobile 390 overflowX=false on /hi; dev.log error scan clean.
+- R19 Phase 4 push completed at session start (tokens restored): 1d6149d → production manifest 200 + <link rel="manifest"> + DocoPDF branding, offline.html 404 (deleted), key routes 200.
+
+Stage Summary:
+- R19 IS COMPLETE: all five phases shipped and production-verified (Phase 1 UX/i18n, Phase 2 security, Phase 3 robustness, Phase 4 dead-code, Phase 5 SEO/i18n polish).
+- The Hindi mirror is now a first-class citizen of the link graph: /hi pages link within /hi, every page carries a crawlable cross-locale anchor, and Hindi FAQ rich results have schema to read.
+- SHIPPED: 2ae4d2a pushed → Vercel dpl_3J2vMtsgvdnjjHqpPcNaj7P8L9JB READY. PRODUCTION LIVE-VERIFIED: /hi 38/38 hi-prefixed links + FAQPage(inLanguage hi, 6Q) + cross anchor; EN home /hi anchor + pre-hydration Hindi label; interactive flip on prod (URL+lang+H1, no reload, 0 console errors); Googlebot sitemap XML; all key routes 200.
+- Owner-side next (unchanged): GSC sitemap submit + Request Indexing, Bing submission, GA4 Admin config; optional deferred items — sidecar key cleanup (260×2 orphans, documented), request-sign service UI wiring decision.
