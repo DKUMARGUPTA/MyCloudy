@@ -1,15 +1,44 @@
 :81 {
-	@transform_port_query {
-		query XTransformPort=*
-	}
+	# XTransformPort gateway — HARD ALLOW-LIST (security, R19 audit S1).
+	#
+	# The gateway used to proxy ?XTransformPort=<any-port> to
+	# localhost:<any-port>, which made EVERY loopback service (databases,
+	# dev servers, future admin tools) publicly reachable through the
+	# external port. Only the two known mini-services may be proxied;
+	# every other port value is refused with 403.
+	#
+	# NOTE (sandbox reality): the running gateway loads /app/Caddyfile
+	# (root-owned, not writable from the app user) — this repo file is the
+	# source of truth for any deployment that actually uses it. The
+	# service-level hardening (SSRF guard, rate limits, caps) in
+	# mini-services/convert and mini-services/request-sign assumes an
+	# attacker CAN still reach the gateway ports and defends in depth.
 
-	handle @transform_port_query {
-		reverse_proxy localhost:{query.XTransformPort} {
+	@port_convert query XTransformPort=3031
+	@port_sign query XTransformPort=3032
+
+	handle @port_convert {
+		reverse_proxy localhost:3031 {
 			header_up Host {host}
 			header_up X-Forwarded-For {remote_host}
 			header_up X-Forwarded-Proto {scheme}
 			header_up X-Real-IP {remote_host}
 		}
+	}
+
+	handle @port_sign {
+		reverse_proxy localhost:3032 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Any other XTransformPort value targets an unknown port — refuse.
+	@port_denied query XTransformPort=*
+	handle @port_denied {
+		respond "Forbidden port" 403
 	}
 
 	handle {

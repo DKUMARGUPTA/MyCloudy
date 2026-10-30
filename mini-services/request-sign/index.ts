@@ -23,13 +23,24 @@
  * folder whose expiresAt is in the past — max 7 days, then deleted.
  */
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const PORT = 3032;
 const DATA_DIR = path.join(import.meta.dir, "data");
 const MAX_ORIGINAL_BYTES = 25 * 1024 * 1024;
 const MAX_SIGNED_BYTES = 30 * 1024 * 1024;
+/** Multipart envelope overhead for the pre-parse Content-Length check. */
+const MAX_ORIGINAL_ENVELOPE = MAX_ORIGINAL_BYTES + 1 * 1024 * 1024;
+const MAX_SIGNED_ENVELOPE = MAX_SIGNED_BYTES + 1 * 1024 * 1024;
+/** Abuse defenses (R19 audit S3): per-IP rate limits + total envelope cap. */
+const CREATE_RATE_LIMIT = 10; // envelopes per hour per IP
+const CREATE_RATE_WINDOW_MS = 60 * 60_000;
+const SIGN_RATE_LIMIT = 30; // signature submissions per hour per IP
+const SIGN_RATE_WINDOW_MS = 60 * 60_000;
+const MAX_LIVE_ENVELOPES = 500; // pending + signed envelopes on disk
+/** A .sign-lock older than this is treated as stale (crashed signer). */
+const SIGN_LOCK_STALE_MS = 60_000;
 const HOURS_ALLOWED = new Set([24, 48, 168]);
 const FROM_MAX = 80;
 const MESSAGE_MAX = 500;
@@ -84,6 +95,72 @@ const json = (status: number, body: unknown) =>
     status,
     headers: { "content-type": "application/json" },
   });
+
+/* ---------------- abuse defenses (R19 audit S3) ---------------- */
+
+/** Client IP — the gateway overwrites X-Real-IP with the actual remote
+ * host, so it cannot be spoofed through the gateway; direct loopback
+ * connections are local by definition. */
+function clientIp(req: Request): string {
+  const ip = req.headers.get("x-real-ip");
+  return ip && /^[0-9a-fA-F.:]+$/.test(ip) ? ip : "direct";
+}
+
+const buckets = new Map<string, { times: number[] }>();
+
+/** Sliding-window per-IP rate limit. */
+function rateLimited(
+  ip: string,
+  kind: "create" | "sign",
+  limit: number,
+  windowMs: number
+): boolean {
+  const key = `${kind}:${ip}`;
+  const now = Date.now();
+  const recent = (buckets.get(key)?.times ?? []).filter(
+    (time) => now - time < windowMs
+  );
+  if (recent.length >= limit) {
+    buckets.set(key, { times: recent });
+    return true;
+  }
+  recent.push(now);
+  buckets.set(key, { times: recent });
+  if (buckets.size > 2000) {
+    for (const [k, v] of buckets) {
+      if (v.times.every((time) => now - time >= CREATE_RATE_WINDOW_MS)) {
+        buckets.delete(k);
+      }
+    }
+  }
+  return false;
+}
+
+/** Refuse the body BEFORE buffering when the declared size is over the
+ * cap — the old check fired only after formData() had absorbed it. */
+function assertEnvelopeSize(req: Request, maxEnvelope: number, code: string): void {
+  const declared = req.headers.get("content-length");
+  if (declared === null) return; // chunked — post-parse checks still apply
+  const n = Number(declared);
+  if (Number.isFinite(n) && n > maxEnvelope) {
+    throw new HttpError(
+      413,
+      `${code}.tooLarge`,
+      `request body over ${Math.round(maxEnvelope / (1024 * 1024))} MB`
+    );
+  }
+}
+
+/** Count live (pending|signed) envelopes — the sweeper removes expired
+ * ones, but an attacker must not be able to fill the disk faster. */
+async function liveEnvelopeCount(): Promise<number> {
+  try {
+    const entries = await readdir(DATA_DIR);
+    return entries.length;
+  } catch {
+    return 0;
+  }
+}
 
 /** Strip path separators / control chars — names are display-only here. */
 function sanitizeName(raw: string): string {
@@ -165,6 +242,7 @@ async function readValidatedPdf(
 /* ------------------------------- handlers ------------------------------- */
 
 async function handleCreate(req: Request): Promise<Response> {
+  assertEnvelopeSize(req, MAX_ORIGINAL_ENVELOPE, "rsign.file");
   const form = await req.formData().catch(() => {
     throw new HttpError(400, "rsign.formData", "expected multipart/form-data");
   });
@@ -260,20 +338,72 @@ async function handleSign(token: string, req: Request): Promise<Response> {
     throw new HttpError(410, "rsign.cancelled", "this request was cancelled");
   }
 
-  const form = await req.formData().catch(() => {
-    throw new HttpError(400, "rsign.formData", "expected multipart/form-data");
-  });
-  const file = form.get("file");
-  if (!(file instanceof File)) {
-    throw new HttpError(400, "rsign.needFile", "a PDF file is required");
-  }
-  const bytes = await readValidatedPdf(file, MAX_SIGNED_BYTES, "rsign.signed");
+  assertEnvelopeSize(req, MAX_SIGNED_ENVELOPE, "rsign.signed");
 
-  await writeFile(path.join(found.dir, "signed.pdf"), bytes);
-  const meta: Meta = { ...found.meta, status: "signed" };
-  await writeFile(path.join(found.dir, "meta.json"), JSON.stringify(meta), "utf8");
-  console.log(`[request-sign] signed ${found.meta.id} (${bytes.length} B)`);
-  return json(200, { ok: true, status: "signed" });
+  // Double-sign race lock (audit P2-5): the old flow did an unlocked
+  // read-check-write on meta.json — two concurrent signers BOTH passed
+  // the "signed?" check, both wrote signed.pdf, and the loser's bytes
+  // were silently overwritten (last-write-wins, both got success). An
+  // O_EXCL ("wx") lock file closes the window; a stale lock (crashed
+  // signer) auto-expires so a crash cannot wedge the request forever.
+  const lockPath = path.join(found.dir, ".sign-lock");
+  try {
+    const lockStat = await stat(lockPath);
+    if (Date.now() - lockStat.mtimeMs > SIGN_LOCK_STALE_MS) {
+      await rm(lockPath, { force: true }).catch(() => undefined);
+    }
+  } catch {
+    /* no lock yet — normal path */
+  }
+  try {
+    await writeFile(lockPath, String(Date.now()), { flag: "wx" });
+  } catch {
+    throw new HttpError(
+      409,
+      "rsign.signingInProgress",
+      "another signature is being submitted for this request"
+    );
+  }
+  try {
+    // Re-check status UNDER the lock — the pre-lock check raced.
+    const fresh = JSON.parse(
+      await readFile(path.join(found.dir, "meta.json"), "utf8")
+    ) as Meta;
+    const freshStatus = statusOf(fresh);
+    if (freshStatus === "signed") {
+      throw new HttpError(409, "rsign.alreadySigned", "already signed");
+    }
+    if (freshStatus !== "pending") {
+      throw new HttpError(
+        410,
+        `rsign.${freshStatus}`,
+        `this request is ${freshStatus}`
+      );
+    }
+
+    const form = await req.formData().catch(() => {
+      throw new HttpError(400, "rsign.formData", "expected multipart/form-data");
+    });
+    const file = form.get("file");
+    if (!(file instanceof File)) {
+      throw new HttpError(400, "rsign.needFile", "a PDF file is required");
+    }
+    const bytes = await readValidatedPdf(file, MAX_SIGNED_BYTES, "rsign.signed");
+
+    // Write-then-rename: a reader never sees a half-written signed.pdf.
+    const tmpPath = path.join(found.dir, ".signed.tmp");
+    await writeFile(tmpPath, bytes);
+    await rm(path.join(found.dir, "signed.pdf"), { force: true }).catch(
+      () => undefined
+    );
+    await rename(tmpPath, path.join(found.dir, "signed.pdf"));
+    const meta: Meta = { ...fresh, status: "signed" };
+    await writeFile(path.join(found.dir, "meta.json"), JSON.stringify(meta), "utf8");
+    console.log(`[request-sign] signed ${found.meta.id} (${bytes.length} B)`);
+    return json(200, { ok: true, status: "signed" });
+  } finally {
+    await rm(lockPath, { force: true }).catch(() => undefined);
+  }
 }
 
 async function handleResult(token: string): Promise<Response> {
@@ -377,6 +507,21 @@ const server = Bun.serve({
       const parts = url.pathname.split("/").filter((p) => p !== "");
       if (parts[0] === "requests") {
         if (req.method === "POST" && parts.length === 1) {
+          const ip = clientIp(req);
+          if (rateLimited(ip, "create", CREATE_RATE_LIMIT, CREATE_RATE_WINDOW_MS)) {
+            console.error(`[request-sign] 429 create rate-limited ${ip}`);
+            return json(429, {
+              error: "too many requests — try again later",
+              code: "rsign.rateLimited",
+            });
+          }
+          if ((await liveEnvelopeCount()) >= MAX_LIVE_ENVELOPES) {
+            console.error(`[request-sign] 503 at envelope capacity`);
+            return json(503, {
+              error: "service at capacity — try again later",
+              code: "rsign.capacity",
+            });
+          }
           return await handleCreate(req);
         }
         if (parts.length >= 2) {
@@ -390,6 +535,14 @@ const server = Bun.serve({
             return await handlePdf(token);
           }
           if (req.method === "POST" && action === "sign") {
+            const ip = clientIp(req);
+            if (rateLimited(ip, "sign", SIGN_RATE_LIMIT, SIGN_RATE_WINDOW_MS)) {
+              console.error(`[request-sign] 429 sign rate-limited ${ip}`);
+              return json(429, {
+                error: "too many requests — try again later",
+                code: "rsign.rateLimited",
+              });
+            }
             return await handleSign(token, req);
           }
           if (req.method === "GET" && action === "result") {

@@ -14,21 +14,67 @@
  * Success: raw converted bytes, Content-Type + X-Convert-Name headers.
  * Failure: JSON {error, code, detail} with the right status.
  *
- * Hard rules: job-scoped temp dirs (always cleaned), 30 MB upload cap,
- * URL scheme allow-list (http/https), per-action timeouts, one soffice
- * job at a time (isolated -env:UserInstallation profiles), no shell
- * interpolation of user strings (execFile-style arrays only).
+ * Hard rules: job-scoped temp dirs (always cleaned), 30 MB upload cap
+ * (Content-Length pre-checked BEFORE the body is buffered), URL scheme
+ * allow-list (http/https), SSRF guard on webpage2pdf (DNS resolve +
+ * refuse loopback/private/link-local — same policy as /api/fetch-page,
+ * pinned via --host-resolver-rules so Chrome cannot be DNS-rebound),
+ * per-IP rate limit, global concurrency cap, per-action timeouts, one
+ * soffice job at a time (isolated -env:UserInstallation profiles), no
+ * shell interpolation of user strings (execFile-style arrays only).
  */
 import { spawn } from "node:child_process";
+import { lookup } from "node:dns/promises";
+import { readdirSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { checkResolvedIps, validatePageUrl } from "../../tools/webpage-to-pdf/url-guard";
+
 const PORT = 3031;
 const MAX_BYTES = 30 * 1024 * 1024;
+/** Multipart envelope overhead (boundaries, field names, encoding). */
+const MAX_ENVELOPE_BYTES = MAX_BYTES + 2 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 90_000;
-const CHROME = `${process.env.HOME}/.cache/puppeteer/chrome/linux-155.0.8059.39/chrome-linux64/chrome`;
-const CHROME_HEADLESS = `${process.env.HOME}/.cache/puppeteer/chrome-headless-shell/linux-155.0.8059.39/chrome-headless-shell-linux64/chrome-headless-shell`;
+/** Total stdout/stderr kept per child process — chatty converters must
+ * not grow memory without bound (audit S5). */
+const MAX_CHILD_OUTPUT = 64 * 1024;
+/** Per-IP sliding window for POST /convert (audit S3). */
+const RATE_LIMIT = 40;
+const RATE_WINDOW_MS = 10 * 60_000;
+/** Max simultaneously-running conversion jobs (audit S3 — parallel gs /
+ * Chrome / pdftocairo jobs could otherwise exhaust CPU/RAM). soffice is
+ * separately serialized. */
+const MAX_CONCURRENT_JOBS = 4;
+
+/** Locate the newest installed Chrome binary under a puppeteer cache
+ * dir — the old hardcoded "linux-155.0.8059.39" path went stale the day
+ * the cache updated to 156 and every webpage2pdf/html2pdf run died with
+ * ENOENT (found during R19 Phase 2 testing). Picks the lexicographically
+ * highest version dir; fails honestly at spawn time when absent. */
+function findChromeBinary(cacheDir: string, inner: string): string {
+  try {
+    const versions = readdirSync(cacheDir)
+      .filter((name) => name.startsWith("linux-"))
+      .sort();
+    const latest = versions[versions.length - 1];
+    if (latest) return `${cacheDir}/${latest}/${inner}`;
+  } catch {
+    /* fall through to the legacy path */
+  }
+  return `${cacheDir}/linux-155.0.8059.39/${inner}`;
+}
+
+const PUPPETEER_CACHE = `${process.env.HOME}/.cache/puppeteer`;
+const CHROME = findChromeBinary(
+  `${PUPPETEER_CACHE}/chrome`,
+  "chrome-linux64/chrome"
+);
+const CHROME_HEADLESS = findChromeBinary(
+  `${PUPPETEER_CACHE}/chrome-headless-shell`,
+  "chrome-headless-shell-linux64/chrome-headless-shell"
+);
 
 type Params = {
   dpi?: number;
@@ -54,6 +100,58 @@ const json = (status: number, body: unknown) =>
     headers: { "content-type": "application/json" },
   });
 
+/* ---------------- abuse defenses (R19 audit S3) ---------------- */
+
+/** Client IP — the gateway (Caddy) overwrites X-Real-IP with the actual
+ * remote host, so it cannot be spoofed THROUGH the gateway; direct
+ * loopback connections are local by definition. */
+function clientIp(req: Request): string {
+  const ip = req.headers.get("x-real-ip");
+  return ip && /^[0-9a-fA-F.:]+$/.test(ip) ? ip : "direct";
+}
+
+const hits = new Map<string, number[]>();
+
+/** Sliding-window per-IP rate limit for expensive endpoints. */
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  const recent = (hits.get(ip) ?? []).filter(
+    (time) => now - time < RATE_WINDOW_MS
+  );
+  if (recent.length >= RATE_LIMIT) {
+    hits.set(ip, recent);
+    return true;
+  }
+  recent.push(now);
+  hits.set(ip, recent);
+  if (hits.size > 1000) {
+    for (const [key, times] of hits) {
+      if (times.every((time) => now - time >= RATE_WINDOW_MS)) {
+        hits.delete(key);
+      }
+    }
+  }
+  return false;
+}
+
+let activeJobs = 0;
+
+/** Refuse the body BEFORE buffering it when the declared size is already
+ * over the cap (audit S3 — the old check fired only after req.formData()
+ * had fully absorbed a multi-GB upload into memory). */
+function assertEnvelopeSize(req: Request): void {
+  const declared = req.headers.get("content-length");
+  if (declared === null) return; // chunked — post-parse checks still apply
+  const n = Number(declared);
+  if (Number.isFinite(n) && n > MAX_ENVELOPE_BYTES) {
+    throw new HttpError(
+      413,
+      "convert.tooLarge",
+      `request body over ${Math.round(MAX_ENVELOPE_BYTES / (1024 * 1024))} MB`
+    );
+  }
+}
+
 /** execFile-style: no shell, argv array only. */
 function run(
   cmd: string,
@@ -68,8 +166,17 @@ function run(
       child.kill("SIGKILL");
       reject(new HttpError(504, "convert.timeout", `${path.basename(cmd)} timed out`));
     }, timeoutMs);
-    child.stdout.on("data", (d) => (stdout += d.toString().slice(0, 4000)));
-    child.stderr.on("data", (d) => (stderr += d.toString().slice(0, 4000)));
+    // Total cap per stream (audit S5) — chatty soffice/gs jobs used to
+    // grow stdout without bound (the per-chunk slice capped chunks, not
+    // the accumulation).
+    child.stdout.on("data", (d) => {
+      if (stdout.length >= MAX_CHILD_OUTPUT) return;
+      stdout += d.toString().slice(0, MAX_CHILD_OUTPUT - stdout.length);
+    });
+    child.stderr.on("data", (d) => {
+      if (stderr.length >= MAX_CHILD_OUTPUT) return;
+      stderr += d.toString().slice(0, MAX_CHILD_OUTPUT - stderr.length);
+    });
     child.on("error", (err) => {
       clearTimeout(timer);
       reject(new HttpError(500, "convert.spawn", String(err)));
@@ -154,6 +261,7 @@ const OFFICE_IN = new Set([
 ]);
 
 async function handleConvert(req: Request): Promise<Response> {
+  assertEnvelopeSize(req);
   const form = await req.formData().catch(
     () => {
       throw new HttpError(400, "convert.formData", "expected multipart/form-data");
@@ -258,6 +366,10 @@ async function handleConvert(req: Request): Promise<Response> {
       }
       if (action === "html2pdf") {
         const out = path.join(jobDir, "out.pdf");
+        // Landscape comes from the HTML itself (@page { size: A4
+        // landscape }) — the CLI has no landscape switch. The old
+        // `landscape ? "--print-to-pdf" : "--print-to-pdf"` ternary was
+        // a silent no-op (audit P3, removed).
         await run(
           CHROME,
           [
@@ -265,10 +377,9 @@ async function handleConvert(req: Request): Promise<Response> {
             "--no-sandbox",
             "--disable-gpu",
             "--no-pdf-header-footer",
-            params.landscape ? "--print-to-pdf" : "--print-to-pdf",
             `--print-to-pdf=${out}`,
             `file://${input}`,
-          ].filter((a, i, arr) => a !== "--print-to-pdf" || i === arr.indexOf(a)),
+          ],
           timeoutMs
         );
         return fileResponse(out, "pdf");
@@ -278,14 +389,38 @@ async function handleConvert(req: Request): Promise<Response> {
 
     // No file — the URL-driven actions.
     if (action === "webpage2pdf") {
-      let target: URL;
+      // SSRF guard (audit S2) — same policy as /api/fetch-page:
+      //   1. strict http(s) URL parse (validatePageUrl),
+      //   2. DNS-resolve EVERY address and require them all public
+      //      (loopback / private / link-local / ULA / v4-mapped refused,
+      //      fail-closed on unparseable),
+      //   3. pin Chrome to the validated IP via --host-resolver-rules so
+      //      a rebinding attack between check and fetch cannot retarget
+      //      the browser at a private address for THIS hostname.
+      // Residual (documented): Chrome follows redirects itself; a
+      // redirect to a DIFFERENT hostname resolves fresh. Acceptable here
+      // — the only inward services are these two mini-services.
+      const check = validatePageUrl(urlField);
+      if (!check.ok) throw new HttpError(400, "convert.url", "invalid URL");
+      const target = check.url;
+      let addresses: string[];
       try {
-        target = new URL(urlField);
+        const resolved = await lookup(
+          target.hostname.replace(/^\[|\]$/g, ""),
+          { all: true }
+        );
+        addresses = resolved.map((entry) => entry.address);
       } catch {
-        throw new HttpError(400, "convert.url", "invalid URL");
+        throw new HttpError(400, "convert.url", "hostname could not be resolved");
       }
-      if (target.protocol !== "http:" && target.protocol !== "https:")
-        throw new HttpError(400, "convert.url", "only http/https are allowed");
+      const guard = checkResolvedIps(addresses);
+      if (!guard.ok) {
+        throw new HttpError(
+          403,
+          "convert.urlPrivate",
+          "target host is not publicly reachable"
+        );
+      }
       const out = path.join(jobDir, "out.pdf");
       await run(
         CHROME_HEADLESS,
@@ -293,6 +428,7 @@ async function handleConvert(req: Request): Promise<Response> {
           "--no-sandbox",
           "--disable-gpu",
           "--no-pdf-header-footer",
+          `--host-resolver-rules=MAP ${target.hostname} ${addresses[0]}`,
           `--print-to-pdf=${out}`,
           target.href,
         ],
@@ -359,7 +495,38 @@ const server = Bun.serve({
         });
       }
       if (url.pathname === "/convert" && req.method === "POST") {
-        const res = await handleConvert(req);
+        const ip = clientIp(req);
+        if (rateLimited(ip)) {
+          console.error(`[convert] 429 rate-limited ${ip}`);
+          return json(429, {
+            code: "convert.rateLimited",
+            detail: `over ${RATE_LIMIT} conversions per 10 minutes`,
+          });
+        }
+        if (activeJobs >= MAX_CONCURRENT_JOBS) {
+          console.error(`[convert] 503 busy (${activeJobs} jobs running)`);
+          return new Response(
+            JSON.stringify({
+              code: "convert.busy",
+              detail: "too many conversions are running — retry shortly",
+            }),
+            {
+              status: 503,
+              headers: {
+                "content-type": "application/json",
+                "retry-after": "5",
+                ...cors,
+              },
+            }
+          );
+        }
+        activeJobs += 1;
+        let res: Response;
+        try {
+          res = await handleConvert(req);
+        } finally {
+          activeJobs -= 1;
+        }
         for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
         return res;
       }
@@ -370,7 +537,10 @@ const server = Bun.serve({
         return json(err.status, { code: err.code, detail: err.message });
       }
       console.error(`[convert] internal:`, err);
-      return json(500, { code: "convert.internal", detail: String(err) });
+      // Generic message only (audit P3) — String(err) can leak absolute
+      // paths and stack snippets to a public endpoint. The full error
+      // stays in the service log above.
+      return json(500, { code: "convert.internal", detail: "internal error" });
     }
   },
 });
