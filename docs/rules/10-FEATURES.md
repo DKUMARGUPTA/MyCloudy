@@ -20,6 +20,18 @@ Single source of truth for "what exists". Registry: `src/lib/tools/registry.ts`
 Families flagged `ai: true` (chat/summarize/translate) call `/api/*` →
 LLM skill backend-only; files stay device-side, only extracted text goes up.
 
+**R22 — AI under-development warning (user-visible honesty):** the three
+AI-dependent tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) are
+marked `aiDependent: true` in the registry (see `AI_DEPENDENT_TOOLS`
+export). While the model backend is being stabilised they render:
+- amber "AI · Under development" chip on the tool-page header + tool cards
+  (All-Tools, category views) + search-palette rows;
+- an amber warning banner (`role=note`) on the tool landing page — bilingual
+  (i18n keys `tools.aiBadge` / `aiWarningTitle` / `aiWarningBody` /
+  `aiListLabel`) — that also lists ALL AI tools in development with links
+  (current tool highlighted).
+Remove the flag (or the banner block) once the AI backend is production-stable.
+
 ## Platform features (beyond tools)
 
 - **App:** Ctrl+K search, All-Tools + category pages, favorites (local),

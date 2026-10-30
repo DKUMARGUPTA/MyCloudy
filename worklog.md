@@ -6151,3 +6151,31 @@ NEXT: cron rounds now governed; P7-c i18n VLM battery is next roadmap item (docs
 **OWNER ACTION (to make AI tools LIVE on prod):** set on Vercel (Project → Settings → Environment Variables): `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` from any OpenAI-compatible provider (e.g. z.ai public: base `https://api.z.ai/api/paas/v4`, model `glm-4.6`; or OpenAI/Groq/OpenRouter). Until then users see the honest "AI features are not enabled on the server yet" toast — 503 in ~0ms instead of a fake network error.
 
 NEXT: push → Vercel READY → prod verify `{"error":"aiNotConfigured"}` 503 shape → owner key → live AI. Then P7-c VLM battery.
+
+## R22 — AI UNDER-DEVELOPMENT WARNING (2025-10-30, owner order: "jo bhi tool AI par dependent hai uska list banao aur warning dalo under develop")
+
+**THE ROUND:** Owner ne order diya: jitne tools AI par dependent hain unki list banao aur un par "under development" warning daho. AI-dependency audit: `rg z-ai-web-dev-sdk src/` → zai-client.ts → exactly 3 routes consume it (`/api/chat`, `/api/summarize`, `/api/translate`) → exactly 3 tools POST to them (chat-with-pdf, summarize-pdf, translate-pdf; verified in tools/*/surface.tsx + worker.ts). Baaki 97 tools = pure on-device/own-engine, zero AI. So the definitive AI list = 3 tools.
+
+### Shipped
+- **Registry contract (source of truth)**: `ToolDef.aiDependent?: boolean` field + `aiDependent: true` on chat-with-pdf/summarize-pdf/translate-pdf + `AI_DEPENDENT_TOOLS` export + `isAiDependent(id)` helper (src/lib/tools/registry.ts). One flag drives every surface — no per-tool hand-written warnings.
+- **Tool page warning banner** (tool-shell.tsx, landing phase): amber `role="note"` aside (border-cat-invoices/40 + bg-cat-invoices/10 + TriangleAlert icon) — title "AI-powered tool — under development", honest body (AI backend still being tuned → can be slow/unavailable/imperfect; PDF itself never leaves device), AND the LIST: "AI tools in development:" with all 3 AI tools — current tool as amber chip, others as card-styled links (routes.tool, hover→amber). Header also gains amber Sparkles chip "AI · Under development" next to Private/Free badges.
+- **Tool cards** (tool-card.tsx): amber outline chip `AI · Under development` (Sparkles icon, cat-invoices tokens) — shows on All-Tools, category views, favorites, everywhere ToolCard renders.
+- **Search palette** (search-palette.tsx): compact amber AI chip before "press ↵ to open" hint (sm+ only, keeps mobile rows clean).
+- **i18n (en+hi parity)**: `tools.aiBadge` / `tools.aiWarningTitle` / `tools.aiWarningBody` / `tools.aiListLabel` — full Devanagari, no plurals needed.
+- **Docs (same commit)**: 10-FEATURES gains "R22 — AI under-development warning" block (what renders where + removal condition: drop flag when AI backend is production-stable).
+
+### Gates
+tsc 0 · eslint 0 · dev.log clean (all 200s).
+
+### E2E (agent-browser, fresh sessions)
+- /tool/chat-with-pdf (EN): banner + title + body + list (Chat chip + Summarize/Translate links) + header chip — snapshot verified; screenshot public/qa/r22-ai-warning-en.png.
+- /hi/tool/summarize-pdf: full Devanagari banner ("AI-आधारित टूल — निर्माणाधीन"), chip "AI · निर्माणाधीन" — no tofu; screenshot public/qa/r22-ai-warning-hi.png.
+- /tool/translate-pdf: banner + list (locale persistence honored).
+- REGRESSION /tool/merge-pdf: NO banner, NO chip, 0 errors (non-AI tools unaffected).
+- Category view (#/tools/view): Summarize + Chat cards show amber chip.
+- Ctrl+K palette: "Summarize PDF AI · Under development press ↵ to open".
+- Mobile 390px: banner wraps cleanly, chips fit one row; screenshot public/qa/r22-ai-warning-mobile.png.
+- Console: fresh-session 0 errors (earlier hydration warnings were stale-session HMR artifacts, not reproducible).
+- **VLM visual verification**: EN banner+chip+list confirmed, no layout breakage; mobile wrap confirmed; Hindi no tofu/broken glyphs (VLM's Devanagari OCR misread of "निर्माणाधीन" overruled by exact browser DOM snapshot).
+
+NEXT: push → Vercel READY → prod spot-check banner on docopdf.com/tool/chat-with-pdf. Then P7-c i18n VLM battery (08-PLAN).

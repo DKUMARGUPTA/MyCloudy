@@ -3,9 +3,10 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > **⚠️ GOVERNANCE (2025-10-30 se BINDING):** har round pehle `AGENTS.md` + `docs/rules/INDEX.md` padho — 16 rule docs (PRD/Design/Architecture/Folders/Relations/API/Agent/Plan/Steps/Features/Auth/MCP/Integration/Testing/Debugging) ab mandatory hain, contract change = rules doc update SAME commit mein.
 > **⚠️ R21 (2025-10-30):** AI routes (chat/summarize/translate) ab `src/lib/ai/zai-client.ts` adapter use karte hain — SDK import routes me BANNED. Prod pe AI tab tak OFF hai jab tak owner Vercel pe `AI_BASE_URL`+`AI_API_KEY`+`AI_MODEL` set nahi karta (koi bhi OpenAI-compatible provider); tab tak honest `aiNotConfigured` 503. Sandbox file-fallback se sab local golden paths green.
+> **⚠️ R22 (2025-10-30):** 3 AI-dependent tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) ab registry me `aiDependent: true` hain (`AI_DEPENDENT_TOOLS` export). Unke tool pages pe amber "under development" warning banner + AI list, cards/palette pe amber chip — jab AI backend prod-stable ho jaye tab flag/banner hata dena (10-FEATURES me removal condition documented).
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **P7-SEO COMPLETE (2025-10-30)** — full SEO layer: real crawlable routes (/tool/<id> ×100, /tools + 10 categories, 4 static, /hi Hindi mirrors via catch-all) with SSR meta (unique title/desc/keywords + canonical + hreflang en/hi + OG/Twitter cards), JSON-LD (SoftwareApplication + FAQPage + Breadcrumb + Organization + WebSite SearchAction), dynamic registry-driven sitemap.ts (116 URLs) + robots.ts, 50 curated keyword-researched tool copies + generator, sharp OG image 1200×630. **FIXED: purana sitemap 404 URLs promise kar raha tha (hash-only app)**. Anchor-links hash-touch fix (tool pages pe skip-link home jump bug). Gates: tsc 0, eslint 0, battery 110/110, E2E clean. **PUSH PENDING (token wiped)**. User docopdf.com attach kar raha hai — sab canonical ready.
+> **Updated:** **R22 — AI UNDER-DEVELOPMENT WARNING (2025-10-30)** — AI-dependency audit (3 tools), registry `aiDependent` flag + `AI_DEPENDENT_TOOLS`, amber warning banner (EN+HI) + AI-tools list links on tool pages, chips on cards + search palette, i18n 4 keys ×2 parity, 10-FEATURES doc updated. Gates: tsc 0, eslint 0; E2E EN/HI/mobile + merge-pdf regression + VLM visual — all green.
 
 ---
 
@@ -24,7 +25,7 @@
 | GitHub | `DKUMARGUPTA/MyCloudy` — main fully pushed + 26 tags; zero unpushed |
 | Quality gates | tsc **0** errors · eslint 0 · battery **110/110 ALL PASS** (P7-a a11y-names + P7-b magic-bytes added; 108 tool smokes + 2 P7 gates) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी — **4791 = 4791** flat-leaf keys parity |
+| i18n | English + हिंदी — **4809 = 4809** flat-leaf keys parity (R22: +4 AI-warning keys ×2) |
 | Mini-services | convert (port 3031), request-sign (3032) — double-fork daemonizer se start |
 | Tokens | ⚠️ **WIPED 2025-10-30 05:33** (`.env.credentials` + `/home/z/.tokens/` dono gaye — sandbox artifact; recovery impossible, values kabhi print nahi hue). **Push ke liye user se fresh PAT maango.** Jab mile: TURANT push ritual + tag push — disk files pe durability mat maano |
 

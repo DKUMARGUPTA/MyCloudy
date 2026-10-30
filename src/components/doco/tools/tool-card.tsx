@@ -1,6 +1,6 @@
 "use client";
 
-import { Star } from "lucide-react";
+import { Sparkles, Star } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -107,6 +107,15 @@ export function ToolCard({ tool, onOpen }: ToolCardProps) {
             className="rounded-chip border-dashed px-2 py-0.5 text-[11px] text-muted-foreground"
           >
             {t("tools.soonBadge")}
+          </Badge>
+        ) : null}
+        {tool.aiDependent ? (
+          <Badge
+            variant="outline"
+            className="rounded-chip border-cat-invoices/50 bg-cat-invoices/10 px-2 py-0.5 text-[11px] text-cat-invoices"
+          >
+            <Sparkles className="size-3" aria-hidden="true" />
+            {t("tools.aiBadge")}
           </Badge>
         ) : null}
         <span

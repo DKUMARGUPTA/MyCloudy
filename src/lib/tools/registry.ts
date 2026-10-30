@@ -154,6 +154,14 @@ export interface ToolDef {
   /** True once the tool is live (flipped per PRD phase plan). */
   enabled: boolean;
   pro: boolean;
+  /**
+   * AI-dependent tool (R22): the run pipeline calls a server AI route
+   * (/api/chat | /api/summarize | /api/translate) whose backend model is
+   * still being tuned. Such tools render an honest "under development"
+   * warning banner (tool page) and an amber chip (cards) so users know
+   * availability/quality may vary while the AI service is stabilised.
+   */
+  aiDependent?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1302,6 +1310,7 @@ export const ALL_TOOLS: ToolDef[] = [
     popularity: 70,
     accepts: "pdf",
     enabled: true,
+    aiDependent: true,
     name: { en: "Chat with PDF", hi: "PDF से बात करें" },
     description: {
       en: "Ask anything about your PDF — summaries, key points, dates — with page citations, free.",
@@ -1321,6 +1330,7 @@ export const ALL_TOOLS: ToolDef[] = [
     popularity: 74,
     accepts: "pdf",
     enabled: true,
+    aiDependent: true,
     name: { en: "Summarize PDF", hi: "PDF सारांश" },
     description: {
       en: "One-tap TL;DR with key points, action items and page citations — English or Hindi, free.",
@@ -1864,6 +1874,7 @@ export const ALL_TOOLS: ToolDef[] = [
     icon: Languages,
     popularity: 72,
     accepts: "pdf",
+    aiDependent: true,
     name: { en: "Translate PDF", hi: "PDF अनुवाद" },
     description: {
       en: "Whole-document translation into 13 languages — Hindi, Chinese, Japanese, Korean, Arabic with real fonts — free.",
@@ -2095,6 +2106,24 @@ export function toolsByCategory(id: ToolCategoryId): ToolDef[] {
   return ALL_TOOLS.filter((tool) => tool.category === id).sort(
     (a, b) => b.popularity - a.popularity
   );
+}
+
+/**
+ * R22 — the definitive list of AI-dependent tools. Each of these POSTs a
+ * bounded text excerpt to a server AI route (/api/chat, /api/summarize or
+ * /api/translate) — the only tools in the toolbox that need a model
+ * backend. While that backend is being stabilised they render the honest
+ * "under development" warning (tool page banner + card chip).
+ *
+ * Keep in sync with src/app/api/{chat,summarize,translate}/route.ts.
+ */
+export const AI_DEPENDENT_TOOLS: ToolDef[] = ALL_TOOLS.filter(
+  (tool) => tool.aiDependent === true,
+);
+
+/** True when the tool needs the AI backend to finish its run. */
+export function isAiDependent(id: string): boolean {
+  return toolIndex.get(id)?.aiDependent === true;
 }
 
 /** Top tools by curated popularity (quick tools, popular suggestions). */
