@@ -511,19 +511,19 @@ export function GenerateQrSurface(_props: ToolSurfaceProps): React.JSX.Element |
 
   const downloadPdf = useCallback(async (): Promise<void> => {
     if (payload === null) return;
-    const { PDFDocument } = await import("pdf-lib");
+    const { CreateContext } = await import("@/lib/own/pdf");
     const png = await composeQrPng(payload, baseRenderOptions, state.logoDataUrl);
-    const doc = await PDFDocument.create();
-    const embedded = await doc.embedPng(await png.arrayBuffer());
+    const doc = CreateContext.create();
+    const embedded = doc.embedPng(new Uint8Array(await png.arrayBuffer()));
     // 1 px → 1 pt: the page is exactly the QR (quiet zone included).
-    const page = doc.addPage([embedded.width, embedded.height]);
+    const page = doc.addPage(embedded.width, embedded.height);
     page.drawImage(embedded, {
       x: 0,
       y: 0,
       width: embedded.width,
       height: embedded.height,
     });
-    const bytes = await doc.save();
+    const bytes = doc.write();
     downloadBlob(
       new Blob([bytes as unknown as BlobPart], { type: "application/pdf" }),
       sanitizeFileName(qrFileName(state.kind, "pdf"), "pdf")

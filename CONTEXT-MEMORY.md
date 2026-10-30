@@ -3,7 +3,7 @@
 > **Purpose:** Ye file har session mein sabse pehle padho — isme pura project ka short-term memory hai.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** P6-z COMPLETE + COMMITTED 6bd5e8d (misc family: bookmark×2, web-optimize×2, rasterize, repair×2 onto the own engine; dead repair engine.ts deleted) — **59 tool families pdf-lib-free**, importers **11→4** (P6-v-b: pdf-to-pdfa/worker.ts → P6-END: embed-image.ts type-only + generate-qr-code/surface.tsx + request-signature/recipient-view.tsx client-side). Gates: tsc 0, eslint 0, battery 108/108 (bookmark 62/62, web-opt 79/79, rasterize 33/33, repair 85/85, view-outline 31/31). E2E dual-parser: bookmark outline pdf.js-readback, web-opt 1,486→1,472 B ObjStm+XRef, repair damaged→fresh-table + 3/3 needles; mobile clean. P6 ~92% done.
+> **Updated:** **P6 COMPLETE — runtime code 100% pdf-lib-free** (P6-v-b: pdf-to-pdfa/worker.ts mega-port + P6-END: generate-qr-code surface + request-signature recipient-view + embed-image trim). Importers **4→0**. TWO REAL GAPS FIXED: csMap slash-prefix keys never matched tokenizer bare names; TextEncoder UTF-8 re-encode corrupted high-byte streams (latin1BytesOf now byte-exact). Gates: tsc 0, eslint 0, smoke-pdf-to-pdfa 112/112, battery 108/108. E2E blob-capture: pdfa 2b 150,704 B (XMP part2 + GTS_PDFA1 + ICC N3 + FontFile2 + trailer /ID + no ObjStm), QR PDF 8,631 B; console clean; mobile 390 clean. **NEXT: P7 hardening → LAUNCH-OPS.**
 
 ---
 
@@ -13,7 +13,7 @@
 |---|---|
 | Registry | **100 tools — SAB LIVE ✅** (verified brace-aware count; e-invoice family included) |
 | **LIVE tools** | **100** ✅ (registry `enabled: true`, 0 disabled) |
-| Own PDF engine (P6) | **P6-a..z COMPLETE (P6-v-b + P6-END bache)** — 59 families pdf-lib-free; **4 importers** bache (pdf-to-pdfa/worker → embed-image type-only + generate-qr-code + request-signature surfaces) |
+| Own PDF engine (P6) | **P6-a..z + P6-v-b + P6-END — MIGRATION COMPLETE ✅** — ALL 60 tool families pdf-lib-free, **0 runtime importers** (pdf-lib = devDependency only: smoke fixtures + oracles) |
 | Master plan | **MASTER-PLAN-1** worklog mein recorded (P6-t..z → P7 → LAUNCH-OPS → P10 → P11) + discipline contract (worklog+memory+push+Vercel per phase; battery on EXACT commit tree) |
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |
 | Static pages (PRD §9) | **LIVE** — about/contact/privacy/terms wired end-to-end (footer + `#/page/<id>` + i18n 166×2) |
@@ -49,12 +49,9 @@ python3 scripts/dev-daemon.py
 
 ## ⏳ KYA PENDING HAI (priority order)
 
-### 1. P6-v-b + P6-END — Own engine migration ka LAST stretch (**4 pdf-lib importer files**)
-- **P6-v-b (NEXT):** tools/pdf-to-pdfa/worker.ts — the mega-port (1,200+ lines): pdfaId XMP+ICC surgery onto rewriteDocument{extraObjects} (attachFacturx ka naya seam use karo — claim-route ICC + OutputIntent already engine mein hai), decodeStreamBytes walks, /OutputIntents metadata. Smoke pdfa (130+ asserts) = gate.
-- **P6-END r1:** src/lib/pdf/embed-image.ts — type-only import (embed-image-own.ts already exists); retype onto own engine handles.
-- **P6-END r2:** generate-qr-code/surface.tsx + request-signature/recipient-view.tsx — client-side `await import("pdf-lib")` → own engine lazy imports (summarize-surface precedent: `await import("@/lib/own/pdf")` main-thread safe).
+### 1. ~~P6 — Own engine migration~~ **COMPLETE ✅** (2025-10-30; P6-v-b pdfa mega-port + P6-END final surfaces; worklog retro appended)
 
-### 2. P7 — Quality moat
+### 2. P7 — Quality moat (NEXT)
 - a11y-name smoke (har interactive element ka accessible name)
 - magic-byte detection everywhere (har input surface pe)
 - i18n VLM battery (screenshots → visual language verification)

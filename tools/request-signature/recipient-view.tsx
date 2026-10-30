@@ -271,27 +271,34 @@ export function RecipientSignView({ token }: { token: string }): React.JSX.Eleme
     };
   }, [pageSize, sig, sigWidth, pos]);
 
-  /* ---- sign & submit: merge client-side (pdf-lib), then one upload ---- */
+  /* ---- sign & submit: merge client-side (own engine), then one upload ---- */
   const submit = useCallback(async (): Promise<void> => {
     if (phase !== "ready" || sig === null || pdf === null) return;
     setPhase("signing");
     try {
-      const { PDFDocument, rgb } = await import("pdf-lib");
-      const doc = await PDFDocument.load(await pdf.blob.arrayBuffer());
-      const img = await doc.embedPng(dataUrlToUint8(sig.dataUrl)); // AWAITED — logo lesson
-      const page = doc.getPage(Math.min(pageNum, pdf.pages) - 1);
-      const { width: pw, height: ph } = page.getSize();
+      const { StampContext } = await import("@/lib/own/pdf");
+      const ctx = StampContext.load(new Uint8Array(await pdf.blob.arrayBuffer()));
+      const img = ctx.embedPng(dataUrlToUint8(sig.dataUrl));
+      const pageIndex = Math.min(pageNum, pdf.pages) - 1;
+      const page = ctx.pages[pageIndex]!;
+      const pw = page.mediaBox[2] - page.mediaBox[0];
+      const ph = page.mediaBox[3] - page.mediaBox[1];
       const box = placementBox(pw, ph, sig.h / sig.w, sigWidth, pos);
-      page.drawRectangle({
+      ctx.stampRect(pageIndex, {
         x: box.x,
         y: box.y,
         width: box.w,
         height: box.h,
-        borderColor: rgb(0.55, 0.57, 0.6),
+        borderColor: { r: 0.55, g: 0.57, b: 0.6 },
         borderWidth: 0.75,
       });
-      page.drawImage(img, { x: box.x, y: box.y, width: box.w, height: box.h });
-      const out = await doc.save();
+      ctx.stampImage(pageIndex, img, {
+        x: box.x,
+        y: box.y,
+        width: box.w,
+        height: box.h,
+      });
+      const out = ctx.write();
       const blob = new Blob([out as unknown as BlobPart], {
         type: "application/pdf",
       });

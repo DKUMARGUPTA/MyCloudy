@@ -1,18 +1,29 @@
-import {
-  PDFArray,
-  PDFDict,
-  PDFDocument,
-  PDFHeader,
-  PDFHexString,
-  PDFName,
-  PDFNumber,
-  PDFObject,
-  PDFRawStream,
-  PDFStream,
-  PDFString,
-} from "pdf-lib";
-import type { PDFRef } from "pdf-lib";
 import { unzlibSync, zlibSync } from "@/lib/own/zip";
+import {
+  PdfError,
+  arr,
+  asArr,
+  asDict,
+  asName,
+  asNum,
+  catalogDict,
+  decodeTextString,
+  dget,
+  hstr,
+  listPages,
+  lstr,
+  name,
+  newDict,
+  num,
+  parsePdf,
+  ref,
+  resolve,
+  resolveTrailerRef,
+  rewriteDocument,
+  type ParsedPdf,
+  type PdfObj,
+  type PdfPageInfo,
+} from "@/lib/own/pdf";
 
 import type { OptionValues } from "@/lib/tools/config-types";
 import type {
@@ -45,12 +56,15 @@ import type { PdfaChangeReport, PdfaDetail } from "./types";
 
 /**
  * PDF to PDF/A worker (RB7-a, the 96th tool, optimize — 100% on-device).
+ * OWN-ENGINE port (P6-v-b): the whole pipeline rides the own parser +
+ * rewriteDocument seam — zero pdf-lib at runtime.
  *
  * The conversion pipeline (types.ts §"the honest conversion pipeline"):
  *
  *  1. gate: empty / oversize / non-PDF / encrypted inputs are rejected
- *     before anything is touched (pdf-lib loads with ignoreEncryption:
- *     false — an /Encrypt dictionary throws, and PDF/A forbids it);
+ *     before anything is touched (parsePdf is strict — an /Encrypt
+ *     dictionary refuses with the typed encrypted error, and PDF/A
+ *     forbids it);
  *  2. transparency: soft masks + constant alpha are detected per page —
  *     PDF/A-1b forbids them, so the run is REJECTED (a naive flatten would
  *     silently alter rendering); -2b/-3b keep them and the report says so;
@@ -73,7 +87,7 @@ import type { PdfaChangeReport, PdfaDetail } from "./types";
  *     sRGB ICC v2.1 profile becomes the /DestOutputProfile of a
  *     /GTS_PDFA1 OutputIntent; a trailer /ID is ensured; the header is
  *     stamped %PDF-1.4 for -1b and %PDF-1.7 for -2b/-3b;
- *  7. save WITHOUT object streams (flat xref — the -b honest layout),
+ *  7. rewrite WITHOUT object streams (flat xref — the -b honest layout),
  *     then the plain-text change report.
  *
  * Output: <base>-pdfa-<level>.pdf + <base>-pdfa-<level>-report.txt.
@@ -83,7 +97,7 @@ import type { PdfaChangeReport, PdfaDetail } from "./types";
  *   tool.errorEncrypted                               /Encrypt present
  *   pa.errTransparency                                soft masks/alpha on -1b
  *   pa.errUnembeddableFonts                           non-standard-14 unembedded
- *   pa.errConvertFailed                               the save itself failed
+ *   pa.errConvertFailed                               the rewrite itself failed
  *   tool.errorCorrupt / tool.errorGeneric             load failure / no file
  */
 
@@ -117,22 +131,24 @@ function post(response: WorkerResponse): void {
   self.postMessage(response);
 }
 
-const isRef = (obj: unknown): obj is PDFRef =>
-  typeof obj === "object" && obj !== null && "objectNumber" in obj;
-
-/** A resolvable indirect-object key (pdf-lib's own LookupKey shape). */
-type RawKey = PDFRef | PDFObject | undefined;
-
 /**
- * Resolves a stream-valued resource to its PDFRawStream (lookupMaybe has
- * no PDFRawStream overload — PDFStream is the closest, then narrowed).
+ * latin1Of's byte-exact inverse: one byte per char (codes 0–255).
+ * TextEncoder is UTF-8 — it would CORRUPT every high byte a content
+ * stream legitimately carries outside the rewritten operator regions
+ * (literal strings, preserved inline-image bodies). P6-v-b fix: the
+ * re-encode is now byte-safe where the pdf-lib port round-tripped
+ * through UTF-8.
  */
-function lookupRawStream(
-  doc: PDFDocument,
-  raw: RawKey
-): PDFRawStream | undefined {
-  const stream = doc.context.lookupMaybe(raw, PDFStream);
-  return stream instanceof PDFRawStream ? stream : undefined;
+function latin1BytesOf(text: string): Uint8Array {
+  const out = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i += 1) out[i] = text.charCodeAt(i) & 0xff;
+  return out;
+}
+
+/** The dict of a dict-or-stream object (both carry an entry map). */
+function mapOf(o: PdfObj | undefined): Map<string, PdfObj> | undefined {
+  if (o === undefined) return undefined;
+  return o.k === "dict" || o.k === "stream" ? o.m : undefined;
 }
 
 /* ------------------------------------------------------------------ */
@@ -181,78 +197,87 @@ function loadFontAsset(path: string): Promise<Uint8Array> {
 }
 
 /* ------------------------------------------------------------------ */
-/* pdf-lib walk helpers                                                 */
+/* Own-engine walk helpers                                             */
 /* ------------------------------------------------------------------ */
 
-/** The page's /Resources, walking the /Parent chain (spec inheritance). */
-function resourcesOf(doc: PDFDocument, node: PDFDict): PDFDict | undefined {
-  let current: PDFDict | undefined = node;
+/**
+ * The node's /Resources, walking the /Parent chain (spec inheritance).
+ * Works for page nodes AND Form XObject nodes (forms carry their own
+ * /Resources directly; the /Parent lookup simply stops).
+ */
+function resourcesOf(
+  doc: ParsedPdf,
+  node: Map<string, PdfObj>
+): Map<string, PdfObj> | undefined {
+  let current: Map<string, PdfObj> | undefined = node;
   for (let hop = 0; current !== undefined && hop < 32; hop += 1) {
-    const res = doc.context.lookupMaybe(
-      current.get(PDFName.of("Resources")),
-      PDFDict
-    );
-    if (res !== undefined) return res;
-    const parent = doc.context.lookupMaybe(
-      current.get(PDFName.of("Parent")),
-      PDFDict
-    );
-    current = parent;
+    const resRaw = current.get("Resources");
+    const res = resRaw !== undefined ? resolve(doc, resRaw) : undefined;
+    const resMap = mapOf(res);
+    if (resMap !== undefined) return resMap;
+    const parentRaw = current.get("Parent");
+    const parent =
+      parentRaw !== undefined ? resolve(doc, parentRaw) : undefined;
+    current = mapOf(parent);
   }
   return undefined;
+}
+
+/** Resolves a resource value to a raw stream object (or undefined). */
+function lookupStream(
+  doc: ParsedPdf,
+  raw: PdfObj | undefined
+): Extract<PdfObj, { k: "stream" }> | undefined {
+  const obj = resolve(doc, raw);
+  return obj !== undefined && obj.k === "stream" ? obj : undefined;
 }
 
 interface WalkState {
   /** Form XObjects already visited (cycle guard). */
   seenForms: Set<number>;
   /** Content stream refs (pages + forms). */
-  streamRefs: PDFRef[];
+  streamRefs: Array<{ num: number }>;
 }
 
 /** Collects the page's content stream + every Form XObject, recursively. */
 function walkPageStreams(
-  doc: PDFDocument,
-  pageNode: PDFDict,
+  doc: ParsedPdf,
+  pageNode: Map<string, PdfObj>,
   state: WalkState,
   depth: number
 ): void {
   if (depth > MAX_FORM_DEPTH) return;
 
   // /Contents: a single ref or an array of refs
-  const contentsRaw = pageNode.get(PDFName.of("Contents"));
-  if (isRef(contentsRaw)) {
-    state.streamRefs.push(contentsRaw);
+  const contentsRaw = pageNode.get("Contents");
+  if (contentsRaw !== undefined && contentsRaw.k === "ref") {
+    state.streamRefs.push({ num: contentsRaw.num });
   } else {
-    const arr = doc.context.lookupMaybe(contentsRaw, PDFArray);
-    if (arr !== undefined) {
-      for (let i = 0; i < arr.size(); i += 1) {
-        const el = arr.get(i);
-        if (isRef(el)) state.streamRefs.push(el);
+    const contentsArr = asArr(resolve(doc, contentsRaw));
+    if (contentsArr !== undefined) {
+      for (const el of contentsArr) {
+        if (el.k === "ref") state.streamRefs.push({ num: el.num });
       }
     }
   }
 
   const resources = resourcesOf(doc, pageNode);
   if (resources === undefined) return;
-  const xobjs = doc.context.lookupMaybe(
-    resources.get(PDFName.of("XObject")),
-    PDFDict
-  );
+  const xobjs = asDict(resolve(doc, resources.get("XObject")));
   if (xobjs === undefined) return;
-  for (const [, value] of xobjs.entries()) {
-    const stream = lookupRawStream(doc, value);
+  for (const value of xobjs.values()) {
+    const stream = lookupStream(doc, value);
     if (stream === undefined) continue;
-    if (stream.dict.get(PDFName.of("Subtype")) !== PDFName.of("Form")) {
-      continue;
-    }
-    const key = isRef(value)
-      ? value.objectNumber
-      : stream.dict.toString().length * 31 + stream.contents.length;
+    if (asName(stream.m.get("Subtype")) !== "Form") continue;
+    const key =
+      value.k === "ref"
+        ? value.num
+        : stream.m.size * 31 + stream.raw.length;
     if (state.seenForms.has(key)) continue;
     state.seenForms.add(key);
     // recurse into the form's own resources (nested forms + shared streams)
-    walkPageStreams(doc, stream.dict, state, depth + 1);
-    if (isRef(value)) state.streamRefs.push(value);
+    walkPageStreams(doc, stream.m, state, depth + 1);
+    if (value.k === "ref") state.streamRefs.push({ num: value.num });
   }
 }
 
@@ -265,46 +290,42 @@ interface TransparencyFindings {
   alphaPages: number[];
 }
 
-function scanTransparency(doc: PDFDocument): TransparencyFindings {
+function scanTransparency(
+  doc: ParsedPdf,
+  pages: PdfPageInfo[]
+): TransparencyFindings {
   const softMaskPages: number[] = [];
   const alphaPages: number[] = [];
-  const pages = doc.getPages();
   for (let p = 0; p < pages.length; p += 1) {
     const page = pages[p]!;
-    const resources = resourcesOf(doc, page.node);
+    const resources = resourcesOf(doc, page.dict);
     if (resources === undefined) continue;
     let softMask = false;
     let alpha = false;
 
-    const gs = doc.context.lookupMaybe(
-      resources.get(PDFName.of("ExtGState")),
-      PDFDict
-    );
+    const gs = asDict(resolve(doc, resources.get("ExtGState")));
     if (gs !== undefined) {
-      for (const [, value] of gs.entries()) {
-        const dict = doc.context.lookupMaybe(value, PDFDict);
+      for (const value of gs.values()) {
+        const dict = asDict(resolve(doc, value));
         if (dict === undefined) continue;
-        const smask = dict.get(PDFName.of("SMask"));
-        if (smask !== undefined && smask.toString() !== "/None") {
+        const smask = dict.get("SMask");
+        if (smask !== undefined && asName(smask) !== "None") {
           softMask = true;
         }
         for (const key of ["ca", "CA"] as const) {
-          const v = dict.get(PDFName.of(key));
-          if (v instanceof PDFNumber && v.asNumber() < 1) alpha = true;
+          const v = asNum(dict.get(key));
+          if (v !== undefined && v < 1) alpha = true;
         }
       }
     }
     // images with a soft mask put transparency on the page too
-    const xobjs = doc.context.lookupMaybe(
-      resources.get(PDFName.of("XObject")),
-      PDFDict
-    );
+    const xobjs = asDict(resolve(doc, resources.get("XObject")));
     if (xobjs !== undefined) {
-      for (const [, value] of xobjs.entries()) {
-        const stream = lookupRawStream(doc, value);
+      for (const value of xobjs.values()) {
+        const stream = lookupStream(doc, value);
         if (stream === undefined) continue;
-        const smask = stream.dict.get(PDFName.of("SMask"));
-        if (smask !== undefined && smask.toString() !== "/None") {
+        const smask = stream.m.get("SMask");
+        if (smask !== undefined && asName(smask) !== "None") {
           softMask = true;
         }
       }
@@ -330,42 +351,37 @@ interface FontAudit {
   notes: string[];
   /** Non-embeddable fonts: base name → pages (0-based, unique). */
   unembeddable: Map<string, number[]>;
-  /** Refs the substitution must patch (standard-14, deduped). */
-  pending: { ref: PDFRef | null; dict: PDFDict; baseFont: string }[];
+  /** Dicts the substitution must patch (standard-14, deduped). */
+  pending: Array<{
+    refNum: number | null;
+    dict: Map<string, PdfObj>;
+    baseFont: string;
+  }>;
 }
 
 /** A font dict's FontDescriptor (Type0 → DescendantFonts' descriptor). */
 function fontDescriptorOf(
-  doc: PDFDocument,
-  fontDict: PDFDict
-): PDFDict | undefined {
-  const direct = doc.context.lookupMaybe(
-    fontDict.get(PDFName.of("FontDescriptor")),
-    PDFDict
-  );
+  doc: ParsedPdf,
+  fontDict: Map<string, PdfObj>
+): Map<string, PdfObj> | undefined {
+  const direct = asDict(resolve(doc, fontDict.get("FontDescriptor")));
   if (direct !== undefined) return direct;
-  const descendants = doc.context.lookupMaybe(
-    fontDict.get(PDFName.of("DescendantFonts")),
-    PDFArray
-  );
-  if (descendants !== undefined && descendants.size() > 0) {
-    const child = doc.context.lookupMaybe(descendants.get(0), PDFDict);
+  const descendants = asArr(resolve(doc, fontDict.get("DescendantFonts")));
+  if (descendants !== undefined && descendants.length > 0) {
+    const child = asDict(resolve(doc, descendants[0]));
     if (child !== undefined) {
-      return doc.context.lookupMaybe(
-        child.get(PDFName.of("FontDescriptor")),
-        PDFDict
-      );
+      return asDict(resolve(doc, child.get("FontDescriptor")));
     }
   }
   return undefined;
 }
 
-function descriptorHasFile(descriptor: PDFDict | undefined): boolean {
+function descriptorHasFile(descriptor: Map<string, PdfObj> | undefined): boolean {
   if (descriptor === undefined) return false;
   return (
-    descriptor.get(PDFName.of("FontFile")) !== undefined ||
-    descriptor.get(PDFName.of("FontFile2")) !== undefined ||
-    descriptor.get(PDFName.of("FontFile3")) !== undefined
+    descriptor.get("FontFile") !== undefined ||
+    descriptor.get("FontFile2") !== undefined ||
+    descriptor.get("FontFile3") !== undefined
   );
 }
 
@@ -375,35 +391,29 @@ function descriptorHasFile(descriptor: PDFDict | undefined): boolean {
  * every Form XObject, recursively (a form can carry its own fonts).
  */
 function resourceScopesOf(
-  doc: PDFDocument,
-  pageNode: PDFDict,
+  doc: ParsedPdf,
+  pageNode: Map<string, PdfObj>,
   seen: Set<number>,
   depth: number
-): PDFDict[] {
+): Array<Map<string, PdfObj>> {
   if (depth > MAX_FORM_DEPTH) return [];
-  const scopes: PDFDict[] = [];
+  const scopes: Array<Map<string, PdfObj>> = [];
   const resources = resourcesOf(doc, pageNode);
   if (resources !== undefined) {
     scopes.push(resources);
-    const xobjs = doc.context.lookupMaybe(
-      resources.get(PDFName.of("XObject")),
-      PDFDict
-    );
+    const xobjs = asDict(resolve(doc, resources.get("XObject")));
     if (xobjs !== undefined) {
-      for (const [, value] of xobjs.entries()) {
-        const stream = lookupRawStream(doc, value);
+      for (const value of xobjs.values()) {
+        const stream = lookupStream(doc, value);
         if (stream === undefined) continue;
-        if (stream.dict.get(PDFName.of("Subtype")) !== PDFName.of("Form")) {
-          continue;
-        }
-        const key = isRef(value)
-          ? value.objectNumber
-          : stream.dict.toString().length * 31 + stream.contents.length;
+        if (asName(stream.m.get("Subtype")) !== "Form") continue;
+        const key =
+          value.k === "ref"
+            ? value.num
+            : stream.m.size * 31 + stream.raw.length;
         if (seen.has(key)) continue;
         seen.add(key);
-        scopes.push(
-          ...resourceScopesOf(doc, stream.dict, seen, depth + 1)
-        );
+        scopes.push(...resourceScopesOf(doc, stream.m, seen, depth + 1));
       }
     }
   }
@@ -417,7 +427,7 @@ function resourceScopesOf(
  * streams and OCG content can reference a resource font with no plain Tf
  * in the page stream (the Ghostscript pdfa-device criterion).
  */
-function auditFonts(doc: PDFDocument): FontAudit {
+function auditFonts(doc: ParsedPdf, pages: PdfPageInfo[]): FontAudit {
   const audit: FontAudit = {
     embeddedPassed: 0,
     standardKept: 0,
@@ -426,39 +436,32 @@ function auditFonts(doc: PDFDocument): FontAudit {
     unembeddable: new Map(),
     pending: [],
   };
-  const seen = new Map<number, { pageIndex: number }>();
-  const pages = doc.getPages();
-
+  const seen = new Set<number>();
   for (let p = 0; p < pages.length; p += 1) {
-    const scopes = resourceScopesOf(doc, pages[p]!.node, new Set(), 0);
+    const scopes = resourceScopesOf(doc, pages[p]!.dict, new Set(), 0);
     for (const resources of scopes) {
-      const fonts = doc.context.lookupMaybe(
-        resources.get(PDFName.of("Font")),
-        PDFDict
-      );
+      const fonts = asDict(resolve(doc, resources.get("Font")));
       if (fonts === undefined) continue;
-      for (const [, value] of fonts.entries()) {
-        const dict = doc.context.lookupMaybe(value, PDFDict);
+      for (const value of fonts.values()) {
+        const dict = asDict(resolve(doc, value));
         if (dict === undefined) continue;
-        const subtype = dict.get(PDFName.of("Subtype"));
+        const subtype = dict.get("Subtype");
         if (subtype === undefined) continue; // not a usable font — nothing draws
-        const ref = isRef(value) ? value : null;
-        if (ref !== null && seen.has(ref.objectNumber)) continue;
-        if (ref !== null) seen.set(ref.objectNumber, { pageIndex: p });
+        const refNum = value.k === "ref" ? value.num : null;
+        if (refNum !== null && seen.has(refNum)) continue;
+        if (refNum !== null) seen.add(refNum);
 
         if (descriptorHasFile(fontDescriptorOf(doc, dict))) {
           audit.embeddedPassed += 1;
           continue;
         }
-        const baseRaw = dict.get(PDFName.of("BaseFont"));
-        const baseFont =
-          rawBaseFontOf(baseRaw);
+        const baseFont = rawBaseFontOf(dict.get("BaseFont"));
         if (baseFont === "") {
           pushUnembeddable(audit, "(unnamed font)", p);
           continue;
         }
         if (isStandard14BaseFont(baseFont)) {
-          audit.pending.push({ ref, dict, baseFont });
+          audit.pending.push({ refNum, dict, baseFont });
         } else {
           pushUnembeddable(audit, baseFont, p);
         }
@@ -468,14 +471,10 @@ function auditFonts(doc: PDFDocument): FontAudit {
   return audit;
 }
 
-/** PDFName.asString() keeps the leading "/" — every bare-name map/Set needs this. */
-function bareNameOf(raw: unknown): string {
-  return raw instanceof PDFName ? raw.asString().replace(/^\//, "") : "";
-}
-
-/** PDFName.asString() keeps the leading "/" — the standard-14 map is bare. */
-function rawBaseFontOf(raw: unknown): string {
-  if (raw instanceof PDFName) return raw.asString().replace(/^\//, "");
+/** The BaseFont name, bare (own names carry no leading slash). */
+function rawBaseFontOf(raw: PdfObj | undefined): string {
+  const n = asName(raw);
+  if (n !== undefined) return n;
   if (raw === undefined) return "";
   return String(raw).replace(/^\//, "");
 }
@@ -511,11 +510,20 @@ function unembeddableDetail(audit: FontAudit): string {
  * programs), and /Widths rewritten from the same AFM so the program and
  * the widths agree. Every resource ref survives — text strings keep
  * rendering with the same codes.
+ *
+ * The fresh objects ride rewriteDocument's extraObjects (numbered ABOVE
+ * every source object); the font dict itself is patched in place, so the
+ * rewrite serializes the patched graph.
  */
 async function embedStandard14(
-  doc: PDFDocument,
-  entry: { ref: PDFRef | null; dict: PDFDict; baseFont: string },
-  fileRefs: Map<string, PDFRef>
+  entry: {
+    refNum: number | null;
+    dict: Map<string, PdfObj>;
+    baseFont: string;
+  },
+  fileNums: Map<string, number>,
+  extras: Array<{ num: number; obj: PdfObj }>,
+  alloc: () => number
 ): Promise<void> {
   const asset = STANDARD14_ASSETS[entry.baseFont];
   if (asset === undefined) return;
@@ -525,58 +533,62 @@ async function embedStandard14(
   const program = await loadFontAsset(asset.file);
 
   // the font-file stream is shared between fonts with the same base
-  let fileRef = fileRefs.get(entry.baseFont);
-  if (fileRef === undefined) {
-    const fileDict = PDFDict.withContext(doc.context);
+  let fileNum = fileNums.get(entry.baseFont);
+  if (fileNum === undefined) {
+    const fileDict = newDict();
     if (asset.kind === "ttf") {
-      fileDict.set(PDFName.of("Length1"), PDFNumber.of(program.length));
+      fileDict.m.set("Length1", num(program.length));
     } else {
-      fileDict.set(
-        PDFName.of("Subtype"),
-        PDFName.of("Type1C")
-      );
-      fileDict.set(PDFName.of("Length1"), PDFNumber.of(program.length));
+      fileDict.m.set("Subtype", name("Type1C"));
+      fileDict.m.set("Length1", num(program.length));
     }
-    fileRef = doc.context.register(PDFRawStream.of(fileDict, program));
-    fileRefs.set(entry.baseFont, fileRef);
+    fileNum = alloc();
+    extras.push({
+      num: fileNum,
+      obj: { k: "stream", m: fileDict.m, raw: program },
+    });
+    fileNums.set(entry.baseFont, fileNum);
   }
 
-  const descriptor = PDFDict.withContext(doc.context);
-  descriptor.set(PDFName.of("Type"), PDFName.of("FontDescriptor"));
-  descriptor.set(PDFName.of("FontName"), PDFName.of(entry.baseFont));
-  descriptor.set(
-    PDFName.of("Flags"),
-    PDFNumber.of(
+  const descriptor = newDict();
+  descriptor.m.set("Type", name("FontDescriptor"));
+  descriptor.m.set("FontName", name(entry.baseFont));
+  descriptor.m.set(
+    "Flags",
+    num(
       entry.baseFont === "Symbol" || entry.baseFont === "ZapfDingbats"
         ? 4 // symbolic — they keep their built-in encodings
         : 32 // nonsymbolic — WinAnsi/Standard via /Encoding
     )
   );
-  const bbox = doc.context.obj(metrics.bbox);
-  descriptor.set(PDFName.of("FontBBox"), bbox);
-  descriptor.set(PDFName.of("ItalicAngle"), PDFNumber.of(metrics.italicAngle));
+  descriptor.m.set(
+    "FontBBox",
+    arr(...metrics.bbox.map((n) => num(n)))
+  );
+  descriptor.m.set("ItalicAngle", num(metrics.italicAngle));
   if (metrics.ascender !== null) {
-    descriptor.set(PDFName.of("Ascent"), PDFNumber.of(metrics.ascender));
+    descriptor.m.set("Ascent", num(metrics.ascender));
   }
   if (metrics.descender !== null) {
-    descriptor.set(PDFName.of("Descent"), PDFNumber.of(metrics.descender));
+    descriptor.m.set("Descent", num(metrics.descender));
   }
   if (metrics.capHeight !== null) {
-    descriptor.set(PDFName.of("CapHeight"), PDFNumber.of(metrics.capHeight));
+    descriptor.m.set("CapHeight", num(metrics.capHeight));
   }
   if (metrics.xHeight !== null) {
-    descriptor.set(PDFName.of("XHeight"), PDFNumber.of(metrics.xHeight));
+    descriptor.m.set("XHeight", num(metrics.xHeight));
   }
-  descriptor.set(
-    PDFName.of("StemV"),
-    PDFNumber.of(metrics.stdVW > 0 ? metrics.stdVW : 80)
+  descriptor.m.set(
+    "StemV",
+    num(metrics.stdVW > 0 ? metrics.stdVW : 80)
   );
-  descriptor.set(
-    PDFName.of(asset.kind === "ttf" ? "FontFile2" : "FontFile3"),
-    fileRef
+  descriptor.m.set(
+    asset.kind === "ttf" ? "FontFile2" : "FontFile3",
+    ref(fileNum)
   );
-  const descriptorRef = doc.context.register(descriptor);
-  entry.dict.set(PDFName.of("FontDescriptor"), descriptorRef);
+  const descriptorNum = alloc();
+  extras.push({ num: descriptorNum, obj: descriptor });
+  entry.dict.set("FontDescriptor", ref(descriptorNum));
 
   // /Widths from the SAME canonical AFM (the substitute programs are
   // metric-compatible with it — that is their whole purpose).
@@ -585,11 +597,12 @@ async function embedStandard14(
   const widths = isSymbolic
     ? afmWidthsBuiltin(entry.baseFont)
     : afmWidthsWinAnsi(entry.baseFont);
-  const arr = PDFArray.withContext(doc.context);
-  for (const w of widths.widths) arr.push(PDFNumber.of(w));
-  entry.dict.set(PDFName.of("FirstChar"), PDFNumber.of(widths.first));
-  entry.dict.set(PDFName.of("LastChar"), PDFNumber.of(widths.last));
-  entry.dict.set(PDFName.of("Widths"), arr);
+  entry.dict.set("FirstChar", num(widths.first));
+  entry.dict.set("LastChar", num(widths.last));
+  entry.dict.set(
+    "Widths",
+    arr(...widths.widths.map((w) => num(w)))
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -598,11 +611,12 @@ async function embedStandard14(
 
 /** Classifies one resource /ColorSpace entry for the normalizer map. */
 function csKindOfResource(
-  doc: PDFDocument,
-  value: RawKey
+  doc: ParsedPdf,
+  value: PdfObj | undefined
 ): CsKind | undefined {
-  if (value instanceof PDFName) {
-    switch (value.asString()) {
+  const nameV = asName(value);
+  if (nameV !== undefined) {
+    switch (nameV) {
       case "DeviceGray":
       case "G":
       case "CalGray":
@@ -618,20 +632,19 @@ function csKindOfResource(
         return undefined; // an unknown bare name — let csKindOf decide
     }
   }
-  if (value instanceof PDFArray || isRef(value)) {
-    const arr = doc.context.lookupMaybe(value, PDFArray);
-    if (arr === undefined || arr.size() < 1) return { special: "unknown" };
-    const family = arr.get(0);
-    const familyName =
-      family instanceof PDFName ? family.asString() : String(family);
+  const valueArr = asArr(resolve(doc, value));
+  if (valueArr !== undefined || value?.k === "ref") {
+    if (valueArr === undefined || valueArr.length < 1) {
+      return { special: "unknown" };
+    }
+    const familyName = asName(valueArr[0]) ?? String(valueArr[0]);
     if (familyName === "ICCBased") {
-      const stream = lookupRawStream(doc, arr.get(1));
-      const n = stream?.dict.get(PDFName.of("N"));
-      if (n instanceof PDFNumber) {
-        const count = n.asNumber();
-        if (count === 1) return { comps: 1, rgb: false };
-        if (count === 3) return { comps: 3, rgb: true };
-        if (count === 4) return { comps: 4, rgb: false };
+      const stream = lookupStream(doc, valueArr[1]);
+      const n = asNum(stream?.m.get("N"));
+      if (n !== undefined) {
+        if (n === 1) return { comps: 1, rgb: false };
+        if (n === 3) return { comps: 3, rgb: true };
+        if (n === 4) return { comps: 4, rgb: false };
       }
       return { special: "unknown" };
     }
@@ -649,35 +662,34 @@ function csKindOfResource(
   return undefined;
 }
 
-/** The page's resource colorspace map (page + inherited + form resources). */
-function csMapForPage(doc: PDFDocument, pageNode: PDFDict): CsMap {
+/**
+ * The page's resource colorspace map (page + inherited + form resources).
+ * KEYS ARE BARE names ("CS0") — the model tokenizer's name tokens strip
+ * the leading slash, and the smoke's model vectors lock that contract.
+ * (P6-v-b fix: the pdf-lib port built slash-prefixed keys via
+ * PDFName.asString(), so named-resource spaces never matched and were
+ * always classified "unknown".)
+ */
+function csMapForPage(doc: ParsedPdf, pageNode: Map<string, PdfObj>): CsMap {
   const map: CsMap = {};
-  const collect = (node: PDFDict, depth: number): void => {
+  const collect = (node: Map<string, PdfObj>, depth: number): void => {
     if (depth > MAX_FORM_DEPTH) return;
     const resources = resourcesOf(doc, node);
     if (resources === undefined) return;
-    const spaces = doc.context.lookupMaybe(
-      resources.get(PDFName.of("ColorSpace")),
-      PDFDict
-    );
+    const spaces = asDict(resolve(doc, resources.get("ColorSpace")));
     if (spaces !== undefined) {
       for (const [key, value] of spaces.entries()) {
         const kind = csKindOfResource(doc, value);
-        if (kind !== undefined) map[key.asString()] = kind;
+        if (kind !== undefined) map[key] = kind;
       }
     }
-    const xobjs = doc.context.lookupMaybe(
-      resources.get(PDFName.of("XObject")),
-      PDFDict
-    );
+    const xobjs = asDict(resolve(doc, resources.get("XObject")));
     if (xobjs !== undefined) {
-      for (const [, value] of xobjs.entries()) {
-        const stream = lookupRawStream(doc, value);
+      for (const value of xobjs.values()) {
+        const stream = lookupStream(doc, value);
         if (stream === undefined) continue;
-        if (stream.dict.get(PDFName.of("Subtype")) !== PDFName.of("Form")) {
-          continue;
-        }
-        collect(stream.dict, depth + 1);
+        if (asName(stream.m.get("Subtype")) !== "Form") continue;
+        collect(stream.m, depth + 1);
       }
     }
   };
@@ -688,11 +700,19 @@ function csMapForPage(doc: PDFDocument, pageNode: PDFDict): CsMap {
 interface ColorsOutcome {
   report: PdfaChangeReport["colors"];
   pageNotes: string[];
+  /** Rewritten content streams, by object number (rewriteDocument seam). */
+  replacements: Map<number, PdfObj>;
 }
 
-/** Normalizes every page + form stream of the document (in place). */
+/**
+ * Normalizes every page + form stream of the document. Rewritten streams
+ * ride the rewriteDocument replacements map (the stream's own dict is
+ * reused, so /Filter + /DecodeParms survive; the writer recomputes
+ * /Length from the new raw bytes).
+ */
 function normalizeColors(
-  doc: PDFDocument,
+  doc: ParsedPdf,
+  pages: PdfPageInfo[],
   locale: "en" | "hi",
   labels: Record<string, string>
 ): ColorsOutcome {
@@ -712,13 +732,13 @@ function normalizeColors(
       },
     },
     pageNotes: [],
+    replacements: new Map<number, PdfObj>(),
   };
-  const pages = doc.getPages();
   for (let p = 0; p < pages.length; p += 1) {
     const page = pages[p]!;
     const state: WalkState = { seenForms: new Set(), streamRefs: [] };
-    walkPageStreams(doc, page.node, state, 0);
-    const csMap = csMapForPage(doc, page.node);
+    walkPageStreams(doc, page.dict, state, 0);
+    const csMap = csMapForPage(doc, page.dict);
 
     // per-page tallies (the report's pageNotes name the page honestly)
     const pageTotals = {
@@ -727,26 +747,25 @@ function normalizeColors(
       csSwitches: 0,
       scOps: 0,
     };
-    for (const ref of state.streamRefs) {
-      const stream = doc.context.lookup(ref);
-      if (!(stream instanceof PDFRawStream)) continue;
+    for (const { num } of state.streamRefs) {
+      const stream = doc.getObject(num);
+      if (stream === undefined || stream.k !== "stream") continue;
       outcome.report.streamsScanned += 1;
 
-      const filter = stream.dict.get(PDFName.of("Filter"));
-      const isFlate =
-        filter instanceof PDFName && filter === PDFName.of("FlateDecode");
+      const filter = stream.m.get("Filter");
+      const filterName = asName(filter);
       let text: string;
       let reflate: boolean;
-      if (isFlate) {
+      if (filterName === "FlateDecode") {
         try {
-          text = latin1Of(unzlibSync(stream.contents));
+          text = latin1Of(unzlibSync(stream.raw));
           reflate = true;
         } catch {
           outcome.report.streamsSkipped += 1;
           continue;
         }
       } else if (filter === undefined) {
-        text = latin1Of(stream.contents);
+        text = latin1Of(stream.raw);
         reflate = false;
       } else {
         // DCT/JPX/LZW/… — out of honest scope for a rewrite
@@ -769,9 +788,14 @@ function normalizeColors(
       if (!result.changed) continue;
 
       const bytes = reflate
-        ? zlibSync(new TextEncoder().encode(result.text), { level: 9 })
-        : new TextEncoder().encode(result.text);
-      doc.context.assign(ref, PDFRawStream.of(stream.dict, bytes));
+        ? zlibSync(latin1BytesOf(result.text), { level: 9 })
+        : latin1BytesOf(result.text);
+      // same dict, new body — the writer recomputes /Length
+      outcome.replacements.set(num, {
+        k: "stream",
+        m: stream.m,
+        raw: bytes,
+      });
       outcome.report.streamsRewritten += 1;
     }
 
@@ -799,47 +823,68 @@ function normalizeColors(
 /* 4. Forbidden content removal                                         */
 /* ------------------------------------------------------------------ */
 
-/** Walks a name tree node, visiting every value slot. */
+/**
+ * Walks a name tree node, visiting every value slot. When `nodeNums` is
+ * given, every visited node's object number is collected — the DROP
+ * route deletes the whole emptied tree so the output carries no orphaned
+ * nodes with dangling refs (P6-v-b: the rewrite's deletions, the
+ * pdf-lib context.delete parity).
+ */
 function walkNameTree(
-  doc: PDFDocument,
-  node: PDFDict,
-  visit: (value: PDFObject) => void,
-  depth: number
+  doc: ParsedPdf,
+  nodeRaw: PdfObj | undefined,
+  visit: (value: PdfObj) => void,
+  depth: number,
+  nodeNums?: number[]
 ): void {
   if (depth > 32) return;
-  const names = doc.context.lookupMaybe(node.get(PDFName.of("Names")), PDFArray);
+  if (nodeRaw !== undefined && nodeRaw.k === "ref") nodeNums?.push(nodeRaw.num);
+  const node = mapOf(resolve(doc, nodeRaw));
+  if (node === undefined) return;
+  const names = asArr(resolve(doc, node.get("Names")));
   if (names !== undefined) {
-    for (let i = 1; i < names.size(); i += 2) visit(names.get(i));
+    for (let i = 1; i < names.length; i += 2) visit(names[i]!);
   }
-  const kids = doc.context.lookupMaybe(node.get(PDFName.of("Kids")), PDFArray);
+  const kids = asArr(resolve(doc, node.get("Kids")));
   if (kids !== undefined) {
-    for (let i = 0; i < kids.size(); i += 1) {
-      const kid = doc.context.lookupMaybe(kids.get(i), PDFDict);
-      if (kid !== undefined) walkNameTree(doc, kid, visit, depth + 1);
-    }
+    for (const kid of kids) walkNameTree(doc, kid, visit, depth + 1, nodeNums);
   }
 }
 
-/** Deletes a filespec + its EmbeddedFile streams from the context. */
-function deleteFilespec(doc: PDFDocument, raw: RawKey): void {
-  const ref = isRef(raw) ? raw : null;
-  const dict = doc.context.lookupMaybe(raw, PDFDict);
+/**
+ * Deletes a filespec + its EmbeddedFile streams (object-level — the
+ * rewrite omits them entirely).
+ */
+function deleteFilespec(
+  doc: ParsedPdf,
+  raw: PdfObj | undefined,
+  deletions: Set<number>
+): void {
+  const dict = asDict(resolve(doc, raw));
   if (dict === undefined) return;
-  const ef = doc.context.lookupMaybe(dict.get(PDFName.of("EF")), PDFDict);
+  const ef = asDict(resolve(doc, dict.get("EF")));
   if (ef !== undefined) {
-    for (const [, streamRaw] of ef.entries()) {
-      if (isRef(streamRaw)) doc.context.delete(streamRaw);
+    for (const streamRaw of ef.values()) {
+      if (streamRaw.k === "ref") deletions.add(streamRaw.num);
     }
   }
-  if (ref !== null) doc.context.delete(ref);
+  if (raw !== undefined && raw.k === "ref") deletions.add(raw.num);
 }
 
 interface ActionOutcome {
   report: PdfaChangeReport["actions"];
 }
 
-/** Strips every forbidden construct (types.ts §7), in place. */
-function stripForbiddenContent(doc: PDFDocument, target: PdfaTarget): ActionOutcome {
+/**
+ * Strips every forbidden construct (types.ts §7). In-place dict edits
+ * ride the rewrite; object-level drops ride the deletions set.
+ */
+function stripForbiddenContent(
+  doc: ParsedPdf,
+  pages: PdfPageInfo[],
+  target: PdfaTarget,
+  deletions: Set<number>
+): ActionOutcome {
   const report: PdfaChangeReport["actions"] = {
     jsTreeStripped: false,
     openActionStripped: [],
@@ -850,153 +895,160 @@ function stripForbiddenContent(doc: PDFDocument, target: PdfaTarget): ActionOutc
     embeddedFilesDropped: 0,
     embeddedFilesKept: 0,
   };
+  const catalog = catalogDict(doc);
+  if (catalog === null) return { report };
 
   // pdf-lib's attach() registers the SAME filespec in BOTH the
   // /Names/EmbeddedFiles tree and the catalog /AF array — count it once.
   const seenSpecs = new Set<number>();
-  const specKeyOf = (raw: RawKey): number => (isRef(raw) ? raw.objectNumber : -1);
 
   // --- the /Names dictionary (JavaScript tree + EmbeddedFiles) --------
-  const namesRaw = doc.catalog.get(PDFName.of("Names"));
-  const names = doc.context.lookupMaybe(namesRaw, PDFDict);
+  const namesRaw = catalog.get("Names");
+  const names = asDict(resolve(doc, namesRaw));
   if (names !== undefined) {
-    if (names.get(PDFName.of("JavaScript")) !== undefined) {
-      names.delete(PDFName.of("JavaScript"));
+    if (names.has("JavaScript")) {
+      names.delete("JavaScript");
       report.jsTreeStripped = true;
     }
-    if (names.get(PDFName.of("EmbeddedFiles")) !== undefined) {
-      const tree = doc.context.lookupMaybe(
-        names.get(PDFName.of("EmbeddedFiles")),
-        PDFDict
-      );
+    if (names.has("EmbeddedFiles")) {
+      const treeRaw = names.get("EmbeddedFiles");
+      const tree = mapOf(resolve(doc, treeRaw));
       if (tree !== undefined) {
         if (target === "3b") {
           walkNameTree(
             doc,
-            tree,
+            treeRaw,
             (value) => {
-              const key = specKeyOf(value);
+              const key = value.k === "ref" ? value.num : -1;
               if (key >= 0 && seenSpecs.has(key)) return;
               if (key >= 0) seenSpecs.add(key);
-              const spec = doc.context.lookupMaybe(value, PDFDict);
+              const spec = asDict(resolve(doc, value));
               if (spec === undefined) return;
-              if (spec.get(PDFName.of("AFRelationship")) === undefined) {
-                spec.set(
-                  PDFName.of("AFRelationship"),
-                  PDFName.of("Unspecified")
-                );
+              if (!spec.has("AFRelationship")) {
+                spec.set("AFRelationship", name("Unspecified"));
               }
               report.embeddedFilesKept += 1;
             },
             0
           );
         } else {
+          const treeNodeNums: number[] = [];
           walkNameTree(
             doc,
-            tree,
+            treeRaw,
             (value) => {
-              deleteFilespec(doc, value);
+              const key = value.k === "ref" ? value.num : -1;
+              if (key >= 0 && seenSpecs.has(key)) return;
+              if (key >= 0) seenSpecs.add(key);
+              deleteFilespec(doc, value, deletions);
               report.embeddedFilesDropped += 1;
             },
-            0
+            0,
+            treeNodeNums
           );
-          names.delete(PDFName.of("EmbeddedFiles"));
+          for (const n of treeNodeNums) deletions.add(n);
+          names.delete("EmbeddedFiles");
         }
       }
     }
-    // drop the now-empty /Names shell
-    if (names.entries().length === 0) doc.catalog.delete(PDFName.of("Names"));
+    // drop the now-empty /Names shell (object + catalog entry)
+    if (names.size === 0) {
+      if (namesRaw !== undefined && namesRaw.k === "ref") {
+        deletions.add(namesRaw.num);
+      }
+      catalog.delete("Names");
+    }
   }
 
   // --- catalog /AF (Factur-X route) -----------------------------------
-  const afRaw = doc.catalog.get(PDFName.of("AF"));
+  const afRaw = catalog.get("AF");
   if (afRaw !== undefined) {
-    const visitSpec = (raw: RawKey): void => {
-      const seenKey = specKeyOf(raw);
+    const visitSpec = (raw: PdfObj): void => {
+      const seenKey = raw.k === "ref" ? raw.num : -1;
       if (seenKey >= 0 && seenSpecs.has(seenKey)) return;
       if (seenKey >= 0) seenSpecs.add(seenKey);
-      const spec = doc.context.lookupMaybe(raw, PDFDict);
+      const spec = asDict(resolve(doc, raw));
       if (spec === undefined) return;
       if (target === "3b") {
-        if (spec.get(PDFName.of("AFRelationship")) === undefined) {
-          spec.set(PDFName.of("AFRelationship"), PDFName.of("Unspecified"));
+        if (!spec.has("AFRelationship")) {
+          spec.set("AFRelationship", name("Unspecified"));
         }
         report.embeddedFilesKept += 1;
       } else {
-        deleteFilespec(doc, raw);
+        deleteFilespec(doc, raw, deletions);
         report.embeddedFilesDropped += 1;
       }
     };
-    const afArr = doc.context.lookupMaybe(afRaw, PDFArray);
+    const afArr = asArr(resolve(doc, afRaw));
     if (afArr !== undefined) {
-      for (let i = 0; i < afArr.size(); i += 1) visitSpec(afArr.get(i));
+      for (const item of afArr) visitSpec(item);
     } else {
       visitSpec(afRaw);
     }
-    if (target !== "3b") doc.catalog.delete(PDFName.of("AF"));
+    if (target !== "3b") {
+      if (afRaw.k === "ref") deletions.add(afRaw.num);
+      catalog.delete("AF");
+    }
   }
 
   // --- catalog /OpenAction (forbidden action types only) ---------------
-  const oaRaw = doc.catalog.get(PDFName.of("OpenAction"));
-  const openAction = doc.context.lookupMaybe(oaRaw, PDFDict);
+  const openAction = asDict(resolve(doc, catalog.get("OpenAction")));
   if (openAction !== undefined) {
-    const s = openAction.get(PDFName.of("S"));
-    const sName = bareNameOf(s);
+    const sName = asName(openAction.get("S")) ?? "";
     if (FORBIDDEN_ACTIONS.has(sName)) {
-      doc.catalog.delete(PDFName.of("OpenAction"));
+      catalog.delete("OpenAction");
       report.openActionStripped.push(sName);
     }
   }
 
   // --- /AA additional-action dicts (catalog + pages) ---------------------
-  if (doc.catalog.get(PDFName.of("AA")) !== undefined) {
-    doc.catalog.delete(PDFName.of("AA"));
+  if (catalog.has("AA")) {
+    catalog.delete("AA");
     report.aaStripped += 1;
   }
-  for (const page of doc.getPages()) {
-    if (page.node.get(PDFName.of("AA")) !== undefined) {
-      page.node.delete(PDFName.of("AA"));
+  for (const page of pages) {
+    if (page.dict.has("AA")) {
+      page.dict.delete("AA");
       report.aaStripped += 1;
     }
   }
 
   // --- annotations ------------------------------------------------------
-  for (const page of doc.getPages()) {
-    const annots = page.node.Annots();
+  for (const page of pages) {
+    const annotsRaw = page.dict.get("Annots");
+    if (annotsRaw === undefined) continue;
+    const annots = asArr(resolve(doc, annotsRaw));
     if (annots === undefined) continue;
-    for (let i = annots.size() - 1; i >= 0; i -= 1) {
-      const raw = annots.get(i);
-      const dict = doc.context.lookupMaybe(raw, PDFDict);
+    for (let i = annots.length - 1; i >= 0; i -= 1) {
+      const raw = annots[i]!;
+      const dict = asDict(resolve(doc, raw));
       if (dict === undefined) continue;
-      const subtypeRaw = dict.get(PDFName.of("Subtype"));
-      const subtype =
-        bareNameOf(subtypeRaw);
+      const subtype = asName(dict.get("Subtype")) ?? "";
       if (MULTIMEDIA_SUBTYPES.has(subtype)) {
-        if (isRef(raw)) doc.context.delete(raw);
-        annots.remove(i);
+        if (raw.k === "ref") deletions.add(raw.num);
+        annots.splice(i, 1);
         report.annotsRemoved += 1;
         continue;
       }
-      const actionRaw = dict.get(PDFName.of("A"));
-      const action = doc.context.lookupMaybe(actionRaw, PDFDict);
+      const action = asDict(resolve(doc, dict.get("A")));
       if (action !== undefined) {
-        const s = action.get(PDFName.of("S"));
-        const sName = bareNameOf(s);
+        const sName = asName(action.get("S")) ?? "";
         if (FORBIDDEN_ACTIONS.has(sName)) {
-          dict.delete(PDFName.of("A"));
+          dict.delete("A");
           report.annotActionsStripped += 1;
         }
       }
       if (
         subtype === "Widget" &&
-        dict.get(PDFName.of("AP")) === undefined &&
-        dict.get(PDFName.of("AS")) === undefined
+        dict.get("AP") === undefined &&
+        dict.get("AS") === undefined
       ) {
         report.annotsNoAp += 1;
       }
     }
-    // pdf-lib materializes empty /Annots — drop the shell when unused
-    if (annots.size() === 0) page.node.delete(PDFName.of("Annots"));
+    // drop the shell when nothing remains (the rewrite never materializes
+    // an empty /Annots — the explicit delete keeps the output honest)
+    if (annots.length === 0) page.dict.delete("Annots");
   }
   return { report };
 }
@@ -1045,29 +1097,28 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 8, stage: "reading" });
 
-  let doc: PDFDocument;
+  let doc: ParsedPdf;
+  let pages: PdfPageInfo[];
   try {
-    doc = await PDFDocument.load(bytes, {
-      ignoreEncryption: false,
-      updateMetadata: false,
-    });
+    // strict: an /Encrypt dictionary refuses with the typed error
+    // (PDF/A forbids it); broken structures refuse "corrupt".
+    doc = parsePdf(bytes);
+    pages = listPages(doc);
   } catch (error) {
+    if (error instanceof PdfError && error.code === "encrypted") {
+      post({ type: "error", runId, code: "tool.errorEncrypted" });
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     post({
       type: "error",
       runId,
-      code: /encrypt/i.test(message) ? "tool.errorEncrypted" : "tool.errorCorrupt",
+      code: "tool.errorCorrupt",
       detail: message.slice(0, 160),
     });
     return;
   }
-  let pageCount: number;
-  try {
-    pageCount = doc.getPageCount();
-  } catch {
-    post({ type: "error", runId, code: "tool.errorCorrupt" });
-    return;
-  }
+  const pageCount = pages.length;
   if (pageCount < 1) {
     post({ type: "error", runId, code: "tool.errorCorrupt" });
     return;
@@ -1075,13 +1126,33 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   post({ type: "progress", runId, pct: 16, stage: "processing" });
 
+  const catalog = catalogDict(doc);
+  if (catalog === null) {
+    post({ type: "error", runId, code: "tool.errorCorrupt" });
+    return;
+  }
+
+  // fresh objects ride extraObjects, numbered ABOVE every source object
+  let nextNum = 0;
+  for (const numKey of doc.entries.keys()) nextNum = Math.max(nextNum, numKey);
+  nextNum += 1;
+  const alloc = (): number => {
+    const n = nextNum;
+    nextNum += 1;
+    return n;
+  };
+  const extras: Array<{ num: number; obj: PdfObj }> = [];
+  const deletions = new Set<number>();
+
   // --- transparency (PDF/A-1b forbids it — reject before touching) ----
-  const transparency = scanTransparency(doc);
+  const transparency = scanTransparency(doc, pages);
   if (
     target === "1b" &&
     (transparency.softMaskPages.length > 0 || transparency.alphaPages.length > 0)
   ) {
-    const pages = [...new Set([...transparency.softMaskPages, ...transparency.alphaPages])]
+    const pagesList = [
+      ...new Set([...transparency.softMaskPages, ...transparency.alphaPages]),
+    ]
       .map((p) => p + 1)
       .sort((a, b) => a - b)
       .join(", ");
@@ -1089,13 +1160,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
       type: "error",
       runId,
       code: PA_CODES.transparency,
-      detail: pages,
+      detail: pagesList,
     });
     return;
   }
 
   // --- fonts (audit first — a non-embeddable font is an honest reject) -
-  const fontAudit = auditFonts(doc);
+  const fontAudit = auditFonts(doc, pages);
   if (fontAudit.unembeddable.size > 0) {
     post({
       type: "error",
@@ -1120,10 +1191,10 @@ async function run(request: WorkerRunRequest): Promise<void> {
       fontReport.notes.push(`${entry.baseFont} (unembedded, PDF/A-1b allowance)`);
     }
   } else {
-    const fileRefs = new Map<string, PDFRef>();
+    const fileNums = new Map<string, number>();
     for (const entry of fontAudit.pending) {
       try {
-        await embedStandard14(doc, entry, fileRefs);
+        await embedStandard14(entry, fileNums, extras, alloc);
         fontReport.standardEmbedded += 1;
         fontReport.notes.push(
           `${entry.baseFont} → ${STANDARD14_ASSETS[entry.baseFont]!.substitute} (metric-compatible substitute)`
@@ -1144,88 +1215,112 @@ async function run(request: WorkerRunRequest): Promise<void> {
   post({ type: "progress", runId, pct: 48, stage: "processing" });
 
   // --- colors -----------------------------------------------------------
-  const colors = normalizeColors(doc, locale, labels);
+  const colors = normalizeColors(doc, pages, locale, labels);
 
   post({ type: "progress", runId, pct: 66, stage: "processing" });
 
   // --- forbidden content --------------------------------------------------
-  const actions = stripForbiddenContent(doc, target);
+  const actions = stripForbiddenContent(doc, pages, target, deletions);
 
   post({ type: "progress", runId, pct: 76, stage: "processing" });
 
   // --- metadata: XMP + OutputIntent + trailer ID + header ----------------
-  const infoDict = doc.context.lookupMaybe(
-    doc.context.trailerInfo.Info as never,
-    PDFDict
+  const infoDict = asDict(
+    resolveTrailerRef(doc, doc.trailer.get("Info"))
   );
   let docTitle = "";
   if (infoDict !== undefined) {
-    const titleRaw = infoDict.get(PDFName.of("Title"));
-    if (titleRaw instanceof PDFString) docTitle = titleRaw.asString();
-    else if (titleRaw instanceof PDFHexString) docTitle = titleRaw.decodeText();
+    const titleRaw = infoDict.get("Title");
+    if (titleRaw !== undefined && titleRaw.k !== "ref") {
+      const b =
+        titleRaw.k === "str" || titleRaw.k === "lstr" || titleRaw.k === "hstr"
+          ? titleRaw.b
+          : undefined;
+      if (b !== undefined) docTitle = decodeTextString(b);
+    }
   }
   docTitle = docTitle.slice(0, 512);
 
   // fresh XMP (a source /Metadata stream is dropped object-level)
-  const oldMeta = doc.catalog.get(PDFName.of("Metadata"));
-  if (isRef(oldMeta)) doc.context.delete(oldMeta);
-  const xmpDict = PDFDict.withContext(doc.context);
-  xmpDict.set(PDFName.of("Type"), PDFName.of("Metadata"));
-  xmpDict.set(PDFName.of("Subtype"), PDFName.of("XML"));
-  const xmpStream = PDFRawStream.of(
-    xmpDict,
-    new TextEncoder().encode(buildPdfaXmpPacket(target, docTitle, PRODUCER))
-  );
-  doc.catalog.set(PDFName.of("Metadata"), doc.context.register(xmpStream));
+  const oldMeta = catalog.get("Metadata");
+  if (oldMeta !== undefined && oldMeta.k === "ref") deletions.add(oldMeta.num);
+  const xmpDict = newDict();
+  xmpDict.m.set("Type", name("Metadata"));
+  xmpDict.m.set("Subtype", name("XML"));
+  const xmpNum = alloc();
+  extras.push({
+    num: xmpNum,
+    obj: {
+      k: "stream",
+      m: xmpDict.m,
+      raw: new TextEncoder().encode(
+        buildPdfaXmpPacket(target, docTitle, PRODUCER)
+      ),
+    },
+  });
+  catalog.set("Metadata", ref(xmpNum));
 
   // OutputIntent with the hand-rolled sRGB ICC v2.1 profile
   const icc = buildSrgbIccProfile();
-  const iccDict = PDFDict.withContext(doc.context);
-  iccDict.set(PDFName.of("N"), PDFNumber.of(3));
-  const iccRef = doc.context.register(PDFRawStream.of(iccDict, icc));
+  const iccDict = newDict();
+  iccDict.m.set("N", num(3));
+  const iccNum = alloc();
+  extras.push({
+    num: iccNum,
+    obj: { k: "stream", m: iccDict.m, raw: icc },
+  });
 
-  const intent = PDFDict.withContext(doc.context);
-  intent.set(PDFName.of("Type"), PDFName.of("OutputIntent"));
-  intent.set(PDFName.of("S"), PDFName.of("GTS_PDFA1"));
-  intent.set(
-    PDFName.of("OutputConditionIdentifier"),
-    PDFString.of("sRGB IEC61966-2.1")
+  const intent = newDict();
+  intent.m.set("Type", name("OutputIntent"));
+  intent.m.set("S", name("GTS_PDFA1"));
+  intent.m.set(
+    "OutputConditionIdentifier",
+    lstr(latin1BytesOf("sRGB IEC61966-2.1"))
   );
-  intent.set(
-    PDFName.of("Info"),
-    PDFString.of("sRGB IEC61966-2.1 (DocoPDF hand-rolled from IEC 61966-2-1)")
+  intent.m.set(
+    "Info",
+    lstr(
+      latin1BytesOf("sRGB IEC61966-2.1 (DocoPDF hand-rolled from IEC 61966-2.1)")
+    )
   );
-  intent.set(PDFName.of("DestOutputProfile"), iccRef);
-  const intents = PDFArray.withContext(doc.context);
-  intents.push(doc.context.register(intent));
-  doc.catalog.set(PDFName.of("OutputIntents"), intents);
+  intent.m.set("DestOutputProfile", ref(iccNum));
+  const intentNum = alloc();
+  extras.push({ num: intentNum, obj: intent });
+  catalog.set("OutputIntents", arr(ref(intentNum)));
 
   // trailer /ID (PDF/A requires one; overwrite any stale source ID)
   const idHex = [...crypto.getRandomValues(new Uint8Array(16))]
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-  const idArray = PDFArray.withContext(doc.context);
-  idArray.push(PDFHexString.of(idHex));
-  idArray.push(PDFHexString.of(idHex));
-  doc.context.trailerInfo.ID = idArray;
-
-  // header: %PDF-1.4 for -1b (PDF 1.4-based), %PDF-1.7 for -2b/-3b
-  doc.context.header = PDFHeader.forVersion(
-    1,
-    PDFA_TARGET_INFO[target].pdfVersion === "1.4" ? 4 : 7
-  );
+  doc.trailer.set("ID", arr(hstr(latin1BytesOf(idHex)), hstr(latin1BytesOf(idHex))));
 
   post({ type: "progress", runId, pct: 88, stage: "saving" });
 
   let saved: Uint8Array;
   try {
-    saved = new Uint8Array(await doc.save({ useObjectStreams: false }));
-    // pdf-lib's PDFWriter hardcodes %PDF-1.7 (computeBufferSize) and ignores
-    // context.header — patch the first 8 bytes for the PDF/A version rule
-    // (%PDF-1.4 for -1b, %PDF-1.7 for -2b/-3b).
+    saved = rewriteDocument(doc, {
+      deletions,
+      replacements:
+        colors.replacements.size > 0 ? colors.replacements : undefined,
+      extraObjects: extras,
+      objectStreams: false, // the -b flat xref layout (honest, verifiable)
+    });
+    // stamp the PDF/A version rule into the header: %PDF-1.4 for -1b
+    // (PDF 1.4-based), %PDF-1.7 for -2b/-3b — the patch keeps source
+    // headers honest regardless of the source's own version.
     const headerText = `%PDF-${PDFA_TARGET_INFO[target].pdfVersion}`;
+    saved = new Uint8Array(saved);
     saved.set(
-      new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, headerText.charCodeAt(5), headerText.charCodeAt(6), headerText.charCodeAt(7)]),
+      new Uint8Array([
+        0x25,
+        0x50,
+        0x44,
+        0x46,
+        0x2d,
+        headerText.charCodeAt(5),
+        headerText.charCodeAt(6),
+        headerText.charCodeAt(7),
+      ]),
       0
     );
   } catch (error) {

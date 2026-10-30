@@ -189,8 +189,8 @@ console.log("── 0. wiring sanity (source text) ─────────�
     !/from "node:/.test(workerSrc) && !/require\("node:/.test(workerSrc)
   );
   check(
-    "worker: object-stream-free save (the -b flat xref layout)",
-    workerSrc.includes("useObjectStreams: false")
+    "worker: object-stream-free rewrite (the -b flat xref layout)",
+    workerSrc.includes("objectStreams: false")
   );
 
   // i18n parity + referenced keys (prefix "pa." = 3 chars)
