@@ -1,5 +1,5 @@
 /**
- * Lock / Unlock PDF shared engine (PRD §8.4):
+ * Lock / Unlock PDF shared engine (PRD §8.4) — OWN-ENGINE PORT (P6-w-b).
  *
  *   Lock PDF:   "Open password (strength meter, show/hide, generate
  *               button), Owner password, permissions (print, copy, edit,
@@ -12,27 +12,34 @@
  *               restrictions hatana jab PDF bina open-password khulta ho."
  *               Policy: unknown-password cracking is NOT offered.
  *
- * Engine built on @cantoo/pdf-lib (pdf-lib fork with AES-256/V5/R6
- * encryption; MIT; actively maintained). Everything below runs inside
- * the tool workers — bytes in, bytes out, zero network.
+ * Runs on our own PDF engine (src/lib/own/pdf/security.ts — the standard
+ * security handler: AES-256 V5/R6 + AES-128 V4/R4 writer, V1-R6 reader).
+ * Everything runs inside the tool workers — bytes in, bytes out, zero
+ * network. The @cantoo/pdf-lib reload paths in scripts/smoke-lock.ts are
+ * the ORACLE only (devDependency).
  *
- * UNLOCK INSIGHT (prototype-verified, pin this): a naive
- * load(password)+save() keeps the ORIGINAL xref stream object in the
- * serialized output, so stale "/Encrypt N 0 R" trailer entries survive —
- * plain pdf-lib (and therefore most of our own chained tools) then
- * rejects the "unlocked" file as still-encrypted. The fix is the redact
- * rebuild pattern: fresh PDFDocument + copyPages + manual AcroForm/Info
- * copy via PDFObjectCopier. A fresh context writes its own trailer, so
- * nothing from the encryption world can leak.
+ * UNLOCK INSIGHT (still true, cheaper now): a re-encrypt-in-place of a
+ * loaded doc can never fully shake the encryption world, but a whole-
+ * document REWRITE through rewriteDocument writes its own trailer and
+ * xref — feeding it the decrypted replacement table + deleting the
+ * /Encrypt object rebuilds a structurally clean file. Custom Info keys
+ * now survive straight from OUR OWN decryption (no more two-parse
+ * recovery dance) — the audit R3-b semantics are kept exactly: the six
+ * editable standards come from `meta` when supplied, CreationDate/
+ * ModDate/Trapped stay dropped, everything non-standard rides through.
  */
 
 import {
-  PDFDict,
-  PDFDocument,
-  PDFName,
-  PDFObjectCopier,
-  type SecurityOptions,
-} from "@cantoo/pdf-lib";
+  encryptDocument,
+  listPages,
+  openEncrypted,
+  pdfInfoText,
+  PdfError,
+  parsePdf,
+  ref,
+  rewriteDocument,
+} from "@/lib/own/pdf";
+import type { PdfObj } from "@/lib/own/pdf";
 
 /* ------------------------------------------------------------------ */
 /* Option ids (values ride the shared options state; the surface owns  */
@@ -83,26 +90,18 @@ export function parseUnlockMeta(raw: unknown): UnlockMeta | null {
   }
 }
 
-/**
- * Standard Info keys (PDF 32000-1 §14.3.3): the rebuild re-applies the six
- * editable ones from the pdf.js snapshot (setters below); CreationDate/
- * ModDate/Trapped stay dropped (timestamps and layout state, no producer
- * identity — same as before). Everything NOT in this set is "custom" and
- * now survives the unlock (audit R3-b: producer workflows, IRP metadata,
- * PDF/X stamps). NOTE: PDFName.asString() keeps the leading slash — the
- * set carries the same shape.
- */
-const STANDARD_INFO_KEYS = new Set([
-  "/Title",
-  "/Author",
-  "/Subject",
-  "/Keywords",
-  "/Creator",
-  "/Producer",
-  "/CreationDate",
-  "/ModDate",
-  "/Trapped",
-]);
+/** Info keys that never ride through an unlock (pinned R3-b policy). */
+const DROP_INFO_KEYS = new Set(["CreationDate", "ModDate", "Trapped"]);
+
+/** The six editable fields → Info dict keys. */
+const EDITABLE_FIELDS: Array<[keyof UnlockMeta, string]> = [
+  ["title", "Title"],
+  ["author", "Author"],
+  ["subject", "Subject"],
+  ["keywords", "Keywords"],
+  ["creator", "Creator"],
+  ["producer", "Producer"],
+];
 
 /* ------------------------------------------------------------------ */
 /* Errors (thrown as coded payloads; the workers map them to i18n keys) */
@@ -166,49 +165,31 @@ export async function lockPdf(
   req: LockRequest
 ): Promise<{ bytes: Uint8Array; pageCount: number }> {
   validateLockPw(req.userPw);
-  let doc: PDFDocument;
+  let doc: ReturnType<typeof parsePdf>;
   try {
-    doc = await PDFDocument.load(bytes, { updateMetadata: false });
+    doc = parsePdf(bytes);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/encrypt/i.test(message)) {
+    if (error instanceof PdfError && error.code === "encrypted") {
       throw new SecurityError("tool.errorAlreadyEncrypted");
     }
     throw error;
   }
-  const pageCount = doc.getPageCount();
-  const options: SecurityOptions = {
+  const pageCount = listPages(doc).length;
+  const saved = encryptDocument(doc, {
     userPassword: req.userPw,
     ownerPassword: req.ownerPw.length > 0 ? req.ownerPw : req.userPw,
     algorithm: req.alg === "aes128" ? "AES-128" : "AES-256",
-    permissions: toUserPermissions(req.permissions),
-  };
-  await doc.encrypt(options);
-  const saved = await doc.save();
+    permissions: {
+      printing: req.permissions.printing ? "highResolution" : false,
+      copying: req.permissions.copying,
+      modifying: req.permissions.modifying,
+      annotating: req.permissions.annotating,
+      fillingForms: req.permissions.fillingForms,
+      contentAccessibility: req.permissions.contentAccessibility,
+      documentAssembly: false,
+    },
+  });
   return { bytes: saved, pageCount };
-}
-
-/** UserPermissions shape (the @cantoo type isn't re-exported — structural). */
-interface PermSet {
-  printing: boolean | "lowResolution" | "highResolution";
-  copying: boolean;
-  modifying: boolean;
-  annotating: boolean;
-  fillingForms: boolean;
-  contentAccessibility: boolean;
-  documentAssembly: boolean;
-}
-
-function toUserPermissions(p: LockRequest["permissions"]): PermSet {
-  return {
-    printing: p.printing ? "highResolution" : false,
-    copying: p.copying,
-    modifying: p.modifying,
-    annotating: p.annotating,
-    fillingForms: p.fillingForms,
-    contentAccessibility: p.contentAccessibility,
-    documentAssembly: false,
-  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -216,124 +197,117 @@ function toUserPermissions(p: LockRequest["permissions"]): PermSet {
 /* ------------------------------------------------------------------ */
 
 /**
- * Remove encryption: rebuild the document into a FRESH context
- * (copyPages + AcroForm copy; page streams parse cleanly through
- * @cantoo). Throws
+ * Remove encryption: open with the password, decrypt every object, and
+ * rebuild through rewriteDocument with the /Encrypt object deleted (the
+ * whole-document rewrite writes its own trailer — nothing from the
+ * encryption world can leak). Throws
  *   SecurityError("tool.errorNotEncrypted") — nothing to remove,
  *   SecurityError("tool.errorWrongPassword") — password wrong/missing.
  *
- * INFO INSIGHT (prototype-verified, pin this): @cantoo's re-parse of an
- * encrypted file returns GARBAGE for the trailer Info strings (the file
- * itself is fine — pdf.js reads Title/Author perfectly). So the standard
- * Info keys are NOT copied from the parsed doc; the caller passes `meta`
- * read via pdf.js on the main thread and we re-apply it with fresh setters
- * instead. Custom keys ARE recovered (audit R3-b) — see step 4 in
- * unlockPdf: the /Info ref comes from an ignoreEncryption parse, the
- * decrypted dict from the password parse.
+ * INFO POLICY (audit R3-b, unchanged semantics): the six editable
+ * standard fields come from the pdf.js `meta` snapshot when supplied,
+ * else from our own decryption; CreationDate/ModDate/Trapped stay
+ * dropped; every non-standard key rides through from the decrypted
+ * Info — custom workflows (IRP numbers, PDF/X stamps) survive.
  */
 export async function unlockPdf(
   bytes: Uint8Array,
   password: string,
   meta: UnlockMeta | null = null
 ): Promise<{ bytes: Uint8Array; pageCount: number }> {
-  // 1. Is it encrypted at all?
+  // 1. Is it encrypted at all? (a plain parse succeeding = nothing to do)
   try {
-    await PDFDocument.load(bytes, { updateMetadata: false });
+    parsePdf(bytes);
     throw new SecurityError("tool.errorNotEncrypted");
   } catch (error) {
     if (error instanceof SecurityError) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/encrypt/i.test(message)) throw error;
-    // EncryptedPDFError — fall through to the password attempt.
+    if (error instanceof PdfError && error.code === "encrypted") {
+      // Encrypted — fall through to the password attempt.
+    } else {
+      throw error; // corrupt/unsupported — honest passthrough
+    }
   }
 
   // 2. Open it with the user's password ("" works for owner-only files).
-  let src: PDFDocument;
-  try {
-    src = await PDFDocument.load(bytes, {
-      password,
-      updateMetadata: false,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/password/i.test(message)) {
-      throw new SecurityError("tool.errorWrongPassword");
-    }
-    throw error;
+  const opened = openEncrypted(bytes, password);
+  if (opened.kind === "wrong-password") {
+    throw new SecurityError("tool.errorWrongPassword");
   }
+  if (opened.kind === "not-encrypted") {
+    throw new SecurityError("tool.errorNotEncrypted");
+  }
+  const { doc, replacements, pageCount, encryptNum, infoNum, nextFreeNum } =
+    opened.opened;
 
-  // 3. Rebuild into a fresh context — the whole point (see header note).
-  const fresh = await PDFDocument.create();
-  const pages = await fresh.copyPages(src, src.getPageIndices());
-  for (const page of pages) fresh.addPage(page);
-  const copier = PDFObjectCopier.for(src.context, fresh.context);
-  const acroForm = src.catalog.get(PDFName.of("AcroForm"));
-  if (acroForm) {
-    fresh.catalog.set(PDFName.of("AcroForm"), copier.copy(acroForm));
-  }
-  // Info: re-applied from the pdf.js-read snapshot, never from the
-  // tainted @cantoo parse (see header note).
-  if (meta) {
-    if (meta.title !== undefined) fresh.setTitle(meta.title);
-    if (meta.author !== undefined) fresh.setAuthor(meta.author);
-    if (meta.subject !== undefined) fresh.setSubject(meta.subject);
-    if (meta.keywords !== undefined) fresh.setKeywords(meta.keywords.split(",").map((s) => s.trim()).filter(Boolean));
-    if (meta.creator !== undefined) fresh.setCreator(meta.creator);
-    if (meta.producer !== undefined) fresh.setProducer(meta.producer);
-  }
-
-  // 4. Custom Info entries survive too (audit R3-b). PINNED INSIGHT
-  // (probed against @cantoo-locked AND qpdf-locked AES-256 files):
-  //   - the with-password parse (src) holds every DECRYPTED object, even
-  //     the ones inside encrypted object streams, but its trailerInfo.Info
-  //     is EMPTY — only /Root survives the xref-stream parse in that pass;
-  //   - the ignoreEncryption parse keeps the /Info REF from the xref
-  //     stream but cannot materialize the object itself (the encrypted
-  //     ObjStm never parses — PDFInvalidObject instead).
-  // Two cheap parses of the same in-memory bytes: the REF from the
-  // ignoreEncryption probe, the DECRYPTED dict from the password parse.
-  // The spec keeps /Info indirect, so only a ref-shaped entry counts;
-  // anything unreadable degrades to the old honest scope (standard six).
-  let infoRef: unknown;
-  try {
-    const probe = await PDFDocument.load(bytes, {
-      ignoreEncryption: true,
-      updateMetadata: false,
-    });
-    infoRef = probe.context.trailerInfo.Info;
-  } catch {
-    infoRef = undefined;
-  }
-  if (
-    typeof infoRef === "object" &&
-    infoRef !== null &&
-    "objectNumber" in infoRef
-  ) {
-    try {
-      const srcInfo = src.context.lookupMaybe(infoRef as never, PDFDict);
-      if (srcInfo !== undefined) {
-        let outInfo = fresh.context.lookupMaybe(
-          fresh.context.trailerInfo.Info as never,
-          PDFDict
-        );
-        if (outInfo === undefined) {
-          outInfo = PDFDict.withContext(fresh.context);
-          fresh.context.trailerInfo.Info = fresh.context.register(outInfo);
+  // 3. Info surgery on the decrypted dict (the pinned R3-b semantics).
+  const extras: Array<{ num: number; obj: PdfObj }> = [];
+  let authoredInfoNum = -1;
+  if (infoNum !== null && replacements.has(infoNum)) {
+    const infoObj = replacements.get(infoNum)!;
+    if (infoObj.k === "dict" || infoObj.k === "stream") {
+      const rebuilt = new Map<string, PdfObj>();
+      for (const [key, value] of infoObj.m) {
+        if (DROP_INFO_KEYS.has(key)) {
+          continue; // timestamps/layout state — pinned drop
         }
-        for (const [key, value] of srcInfo.entries()) {
-          if (STANDARD_INFO_KEYS.has(key.asString())) continue;
-          // copier.copy clones the decrypted leaf (string/number/name —
-          // even an indirect value is followed and re-registered).
-          outInfo.set(key, copier.copy(value));
+        const field = EDITABLE_FIELDS.find((f) => f[1] === key);
+        if (field !== undefined && meta !== null) {
+          const v = meta[field[0]];
+          if (v !== undefined) {
+            rebuilt.set(key, key === "Keywords" ? keywordsObj(v) : pdfInfoText(v));
+          }
+          // absent from meta → dropped (the old fresh-setter parity)
+        } else {
+          rebuilt.set(key, value); // customs + decrypted standards (meta null)
         }
       }
-    } catch {
-      // Unreadable Info — the standard six still survive above.
+      if (meta !== null) {
+        for (const [field, key] of EDITABLE_FIELDS) {
+          if (rebuilt.has(key)) continue;
+          const v = meta[field];
+          if (v !== undefined) {
+            rebuilt.set(key, key === "Keywords" ? keywordsObj(v) : pdfInfoText(v));
+          }
+        }
+      }
+      replacements.set(infoNum, { k: "dict", m: rebuilt });
+    }
+  } else if (meta !== null) {
+    // No Info object in the source — author a fresh one (pdf-lib's
+    // fresh.setTitle parity) above every existing number.
+    const m = new Map<string, PdfObj>();
+    for (const [field, key] of EDITABLE_FIELDS) {
+      const v = meta[field];
+      if (v !== undefined) m.set(key, key === "Keywords" ? keywordsObj(v) : pdfInfoText(v));
+    }
+    if (m.size > 0) {
+      authoredInfoNum = nextFreeNum;
+      extras.push({ num: authoredInfoNum, obj: { k: "dict", m } });
+      doc.trailer.set("Info", ref(authoredInfoNum));
     }
   }
 
-  const saved = await fresh.save();
-  return { bytes: saved, pageCount: pages.length };
+  // 4. Whole-document rewrite — fresh trailer + xref, /Encrypt deleted.
+  const saved = rewriteDocument(doc, {
+    replacements,
+    deletions: new Set<number>([encryptNum]),
+    extraObjects: extras.length > 0 ? extras : undefined,
+  });
+  return { bytes: saved, pageCount };
+}
+
+/** pdf-lib setKeywords parity: comma-split into literal strings. */
+function keywordsObj(v: string): PdfObj {
+  const items = v
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const b = new Uint8Array(s.length);
+      for (let i = 0; i < s.length; i += 1) b[i] = s.charCodeAt(i) & 0xff;
+      return { k: "lstr" as const, b };
+    });
+  return { k: "arr", items };
 }
 
 /* ------------------------------------------------------------------ */
@@ -342,58 +316,56 @@ export async function unlockPdf(
 
 /**
  * Lock verify: the saved file must open with the password — and NOT
- * open without it (when there is one).
+ * open without it (when there is one). Runs the FULL own-engine crypto
+ * round-trip (parse + password validation + decrypt walk).
  */
 export async function verifyLocked(
   bytes: Uint8Array,
   userPw: string
 ): Promise<void> {
-  await PDFDocument.load(bytes, { password: userPw, updateMetadata: false });
+  const opened = openEncrypted(bytes, userPw);
+  if (opened.kind === "wrong-password") {
+    throw new SecurityError("tool.errorWrongPassword");
+  }
+  if (opened.kind === "not-encrypted") {
+    throw new SecurityError("tool.errorAlreadyEncrypted");
+  }
   if (userPw.length > 0) {
-    try {
-      await PDFDocument.load(bytes, { updateMetadata: false });
+    const noPw = openEncrypted(bytes, "");
+    if (noPw.kind === "ok") {
       throw new SecurityError("tool.errorAlreadyEncrypted");
-    } catch (error) {
-      if (error instanceof SecurityError) throw error;
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/encrypt/i.test(message)) throw error;
-      // EncryptedPDFError without the password — exactly what we want.
     }
   }
 }
 
 /**
  * Unlock verify: the rebuilt output must carry no /Encrypt in its TRAILER
- * (structural parse, the FIX-1b ocr-pdf probe pattern) + plain reopens.
+ * (structural parse — the parser refuses encrypted input) + plain
+ * reopens.
  *
- * Why structural: the old raw-bytes `text.includes("/Encrypt")` scan
+ * Why structural: a raw-bytes `text.includes("/Encrypt")` scan
  * false-positives when a document's TEXT literally contains "/Encrypt
  * 26 0 R" (this project's own docs do) — a perfectly unlocked file was
- * wrongly reported as still-encrypted. The parse reads the actual trailer
- * (`context.trailerInfo.Encrypt` via `isEncrypted`); only when pdf-lib
- * cannot parse the bytes at all do we fall back to the raw substring
- * scan, and the plain reload below stays the final authority either way.
+ * wrongly reported as still-encrypted. The parse reads the actual
+ * trailer; only when the bytes are unparseable at all do we fall back
+ * to the raw substring scan, and the structural refusal stays the
+ * final authority either way.
  */
 export async function verifyUnlocked(bytes: Uint8Array): Promise<void> {
-  let structural: boolean | null = null;
   try {
-    const probe = await PDFDocument.load(bytes, {
-      ignoreEncryption: true,
-      updateMetadata: false,
-    });
-    structural = probe.isEncrypted;
-  } catch {
-    structural = null; // unparseable — fall back to the raw scan below
-  }
-  if (structural === null) {
+    parsePdf(bytes);
+    return; // clean plain parse — nothing encrypted anywhere
+  } catch (error) {
+    if (error instanceof PdfError && error.code === "encrypted") {
+      throw new SecurityError("tool.errorAlreadyEncrypted");
+    }
+    // Unparseable — the pinned raw-substring fallback before failing.
     const text = new TextDecoder("latin1").decode(bytes);
     if (text.includes("/Encrypt")) {
       throw new SecurityError("tool.errorAlreadyEncrypted");
     }
-  } else if (structural) {
-    throw new SecurityError("tool.errorAlreadyEncrypted");
+    throw error; // genuinely corrupt — the honest parse error
   }
-  await PDFDocument.load(bytes, { updateMetadata: false });
 }
 
 /* ------------------------------------------------------------------ */

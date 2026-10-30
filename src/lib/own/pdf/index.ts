@@ -98,6 +98,15 @@ export {
   arrItems,
   type RewriteOptions,
 } from "./rewrite";
+export {
+  encryptDocument,
+  openEncrypted,
+  permissionsR3,
+  type EncryptParams,
+  type OpenedEncrypted,
+  type OpenResult,
+  type SecurityPermissions,
+} from "./security";
 export { serializePreserve } from "./writer";
 export { ParsedTtfFont, TtfSubsetter } from "./font-ttf";
 export { shapeText, type ShapedGlyph } from "./shape-deva";

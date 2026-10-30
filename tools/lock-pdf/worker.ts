@@ -13,9 +13,11 @@ import {
 
 /**
  * Lock PDF worker (PRD §8.4): encrypts with AES-256 (default) or
- * AES-128 via @cantoo/pdf-lib — open password, owner password and the
- * permission set. On-device only. Post-save verification: the output
- * must open with the password and must NOT open without it.
+ * AES-128 via the OWN PDF engine (P6-w-b — the standard security
+ * handler in src/lib/own/pdf/security.ts) — open password, owner
+ * password and the permission set. On-device only. Post-save
+ * verification: the output must open with the password and must NOT
+ * open without it.
  */
 
 function post(response: WorkerResponse): void {

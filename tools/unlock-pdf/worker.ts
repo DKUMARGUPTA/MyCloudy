@@ -15,7 +15,8 @@ import {
  * Unlock PDF worker (PRD §8.4): removes encryption for documents you can
  * open — either the open password is known (mode 1) or the file opens
  * freely and only owner restrictions get stripped (mode 2). The output
- * is REBUILT into a fresh context (copyPages + AcroForm/Info copy) so no
+ * is REBUILT through the OWN engine's whole-document rewriter (P6-w-b —
+ * the decrypted replacement table + a deleted /Encrypt object) so no
  * "/Encrypt" trailer remnant can survive; verified post-save. Unknown-
  * password cracking is not offered (and not possible) — honest errors
  * otherwise.

@@ -48,6 +48,17 @@ export interface RewriteOptions {
    * the ObjStm path accounts for it via the object table).
    */
   infoOverride?: { num: number; obj: PdfObj };
+  /**
+   * Brand-new objects written ABOVE the source numbering (P6-w-b): the
+   * security handler's /Encrypt dict rides here, unencrypted, while every
+   * source object goes through `replacements`. Classic output in BOTH
+   * modes (an unencrypted dict must never be packed into an ObjStm whose
+   * residents share the container's key). Numbers must be above every
+   * existing object number.
+   */
+  extraObjects?: Array<{ num: number; obj: PdfObj }>;
+  /** Raise the %PDF- header to at least this version (e.g. "1.6"/"1.7"). */
+  minVersion?: string;
   /** Extra trailer pairs (serialized inline; refs keep their numbers). */
   extraTrailer?: Array<[string, PdfObj]>;
   /** (done, total) — coarse progress for the worker's progress bar. */
@@ -149,6 +160,9 @@ export function collectRewriteObjects(
   if (opts.infoOverride !== undefined) {
     out.set(opts.infoOverride.num, opts.infoOverride.obj);
   }
+  for (const extra of opts.extraObjects ?? []) {
+    out.set(extra.num, extra.obj);
+  }
   for (const [num, entry] of doc.entries) {
     if (entry.type === 0) continue;
     if (opts.deletions?.has(num)) continue;
@@ -205,7 +219,7 @@ function writeClassic(
 ): Uint8Array {
   const trailer = readTrailer(doc, opts.dropInfo === true, opts.infoOverride);
   const sink = new Sink();
-  sink.text(`%PDF-${versionString(doc, "1.4")}\n`);
+  sink.text(`%PDF-${versionString(doc, opts.minVersion ?? "1.4")}\n`);
   sink.bytes(Uint8Array.from([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
 
   const nums = [...objects.keys()].sort((a, b) => a - b);
@@ -247,17 +261,20 @@ function writeObjStm(
 ): Uint8Array {
   const trailer = readTrailer(doc, opts.dropInfo === true, opts.infoOverride);
   const sink = new Sink();
-  sink.text(`%PDF-${versionString(doc, "1.5")}\n`);
+  sink.text(`%PDF-${versionString(doc, opts.minVersion ?? "1.5")}\n`);
   sink.bytes(Uint8Array.from([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
 
   const nums = [...objects.keys()].sort((a, b) => a - b);
   const maxNum = nums.length > 0 ? nums[nums.length - 1]! : 0;
 
   // Partition: streams stay classic; everything else is packable.
+  //    P6-w-b: caller-authored extraObjects also stay classic — the
+  //    security handler's /Encrypt dict must never ride an ObjStm.
   const classicNums: number[] = [];
   const packableNums: number[] = [];
+  const extraNums = new Set((opts.extraObjects ?? []).map((e) => e.num));
   for (const n of nums) {
-    if (objects.get(n)!.k === "stream") classicNums.push(n);
+    if (objects.get(n)!.k === "stream" || extraNums.has(n)) classicNums.push(n);
     else packableNums.push(n);
   }
 

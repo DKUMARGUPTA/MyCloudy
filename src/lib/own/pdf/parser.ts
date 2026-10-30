@@ -62,6 +62,14 @@ export interface ParsedPdf {
   readonly trailer: Map<string, PdfObj>;
   /** true when the xref chain was unusable and we brute-scanned. */
   readonly recovered: boolean;
+  /**
+   * Optional ObjStm stream decryptor (P6-w-b): set by the security
+   * handler AFTER an `encryptedOk` parse, BEFORE any object access —
+   * object streams are encrypted as a whole, so the container must be
+   * decrypted before the parser can inflate it. (num, gen) identify the
+   * ObjStm object itself; return the decrypted RAW stream body.
+   */
+  decryptStream: ((num: number, gen: number, raw: Uint8Array) => Uint8Array) | undefined;
   getObject(num: number): PdfObj | undefined;
 }
 
@@ -232,8 +240,10 @@ class ParserImpl {
   recovered = false;
   private bruteDone = false;
   readonly version: string;
+  /** ObjStm stream decryptor — see ParsedPdf.decryptStream (P6-w-b). */
+  decrypt: ((num: number, gen: number, raw: Uint8Array) => Uint8Array) | undefined;
 
-  constructor(readonly data: Uint8Array) {
+  constructor(readonly data: Uint8Array, private readonly encryptedOk = false) {
     this.version = sniffHeader(data);
   }
 
@@ -255,7 +265,7 @@ class ParserImpl {
     } else {
       this.bruteRecover();
     }
-    if (this.trailer.has("Encrypt")) {
+    if (this.trailer.has("Encrypt") && !this.encryptedOk) {
       throw new PdfError("encrypted", "document is encrypted — unlock it first");
     }
   }
@@ -594,7 +604,13 @@ class ParserImpl {
       const n = asNum(dget(obj, "N")) ?? -1;
       const first = asNum(dget(obj, "First")) ?? -1;
       if (n < 0 || first < 0) throw new PdfError("corrupt", "ObjStm missing N/First");
-      const data = decodeForParser(obj.raw, obj.m);
+      // P6-w-b: encrypted documents decrypt the CONTAINER stream before
+      // the filter decode (the pair table + residents live in the plaintext
+      // of the encrypted bytes). (num, gen) = the ObjStm object itself.
+      const streamRaw = this.decrypt !== undefined
+        ? this.decrypt(objstmNum, entry.b, obj.raw)
+        : obj.raw;
+      const data = decodeForParser(streamRaw, obj.m);
       const pairs: Array<[number, number]> = [];
       const lex = new Lexer(data, 0);
       for (let i = 0; i < n; i++) {
@@ -750,24 +766,42 @@ function findLastStartxref(data: Uint8Array): number {
 
 // ─── Public surface ─────────────────────────────────────────────────────────
 
+/** Parse options (P6-w-b). */
+export interface ParseOptions {
+  /**
+   * Do NOT refuse trailer-/Encrypt documents — return a structural parse
+   * whose strings/streams stay ENCRYPTED. The security handler installs
+   * ParsedPdf.decryptStream afterwards and re-walks the table.
+   */
+  encryptedOk?: boolean;
+}
+
 /**
  * Parse a PDF byte buffer into a lazily-resolving document.
  * Throws PdfError("encrypted"|"corrupt"|"unsupported").
  */
-export function parsePdf(data: Uint8Array): ParsedPdf {
+export function parsePdf(data: Uint8Array, opts?: ParseOptions): ParsedPdf {
   if (!(data instanceof Uint8Array) || data.length < 8) {
     throw new PdfError("corrupt", "not enough bytes for a PDF");
   }
-  const impl = new ParserImpl(data);
+  const impl = new ParserImpl(data, opts?.encryptedOk === true);
   impl.parse();
-  return {
+  const doc: ParsedPdf = {
     data: impl.data,
     version: impl.version,
     entries: impl.entries,
     trailer: impl.trailer,
     recovered: impl.recovered,
+    // live view onto the parser's ObjStm decrypt hook (set post-parse)
+    get decryptStream() {
+      return impl.decrypt;
+    },
+    set decryptStream(fn) {
+      impl.decrypt = fn;
+    },
     getObject: (num: number) => impl.getObject(num),
   };
+  return doc;
 }
 
 /**

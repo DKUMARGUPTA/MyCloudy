@@ -364,9 +364,15 @@ console.log("13. custom info preserved");
     irp?.toString() ?? "missing"
   );
   const gts = outInfo.get(PDFName.of("GTS_PDFXVersion"));
+  // P6-w-b: the own-engine unlock serializes parsed strings as HEX —
+  // engine-wide behavior since the P6-r whole-document rewriter (every
+  // rewriteDocument consumer does it); readers treat both forms
+  // identically. The VALUE must survive; the literal FORM need not.
+  const gtsText =
+    gts instanceof PDFHexString ? gts.decodeText() : gts instanceof PDFString ? gts.asString() : null;
   ok(
-    gts instanceof PDFString && gts.asString() === "PDF/X-1a",
-    "custom literal-string key survives unlock",
+    gtsText === "PDF/X-1a",
+    "custom literal-string key survives unlock (value; hex form per P6-r)",
     gts?.toString() ?? "missing"
   );
   const ver = outInfo.get(PDFName.of("DocVersion"));
@@ -457,9 +463,11 @@ console.log("13. custom info preserved");
       qIrp?.toString() ?? "missing"
     );
     const qGts = qInfo.get(PDFName.of("GTS_PDFXVersion"));
+    const qGtsText =
+      qGts instanceof PDFHexString ? qGts.decodeText() : qGts instanceof PDFString ? qGts.asString() : null;
     ok(
-      qGts instanceof PDFString && qGts.asString() === "PDF/X-1a",
-      "qpdf-locked: literal-string custom key survives",
+      qGtsText === "PDF/X-1a",
+      "qpdf-locked: literal-string custom key survives (value; hex form)",
       qGts?.toString() ?? "missing"
     );
     const qVer = qInfo.get(PDFName.of("DocVersion"));
@@ -471,6 +479,97 @@ console.log("13. custom info preserved");
       qInfo.get(PDFName.of("Trapped")) === undefined,
       "qpdf-locked: /Trapped still not copied"
     );
+  }
+}
+
+/* 14 — OWN-ENGINE INTEROP (P6-w-b): both directions against @cantoo.
+ * The old path produced AND read @cantoo; the port must WRITE files
+ * @cantoo validates cryptographically (password reload) and READ files
+ * @cantoo produces (classic AND ObjStm containers, AES-256 + AES-128). */
+console.log("14. own-engine interop (@cantoo oracle)");
+{
+  const makeCantooLocked = async (
+    alg: "AES-256" | "AES-128",
+    useObjStm: boolean
+  ): Promise<Uint8Array> => {
+    const d = await PDFDocument.create();
+    const font = await d.embedFont(StandardFonts.Helvetica);
+    const page = d.addPage([612, 792]);
+    page.drawText("interop", { x: 50, y: 700, size: 12, font });
+    const form = d.getForm();
+    const tf = form.createTextField("interop_field");
+    tf.setText(" carved value ");
+    tf.addToPage(page, { x: 50, y: 650, width: 200, height: 22 });
+    await d.encrypt({
+      userPassword: "open123",
+      ownerPassword: "owner999",
+      algorithm: alg,
+      permissions: { printing: "highResolution" },
+    });
+    return d.save({ useObjectStreams: useObjStm });
+  };
+
+  // 14a. @cantoo-produced → our unlockPdf (forms + values survive).
+  //      NOTE: @cantoo's writer encrypts STREAMS only — strings ride plain
+  //      inside ObjStm containers (their default save), which is exactly
+  //      the spec shape our reader handles. Their useObjectStreams:false
+  //      output is broken BY THEIR OWN WRITER (classic plain strings +
+  //      /Encrypt claiming AES — their own password reload corrupts them:
+  //      verified fields→[""]), so it is not a fixture here.
+  for (const [alg, stm] of [
+    ["AES-256", true],
+    ["AES-128", true],
+  ] as const) {
+    const bytes = await makeCantooLocked(alg, stm);
+    const { bytes: unlocked } = await unlockPdf(bytes, "open123");
+    await verifyUnlocked(unlocked);
+    const re = await PDFDocument.load(unlocked);
+    const fields = re.getForm().getFields().map((f) => f.getName());
+    const val = await re.getForm().getTextField("interop_field")?.getText();
+    ok(
+      fields.includes("interop_field") && val === " carved value ",
+      `@cantoo ${alg} objStm=${stm} → our unlock keeps form+value`,
+      JSON.stringify(fields)
+    );
+    let wrongCode: string | null = null;
+    try {
+      await unlockPdf(bytes, "nope-nope");
+    } catch (e) {
+      wrongCode = codeOf(e);
+    }
+    ok(
+      wrongCode === "tool.errorWrongPassword",
+      `@cantoo ${alg} objStm=${stm} → wrong pw honest`
+    );
+  }
+
+  // 14b. OUR locked output → @cantoo password reload (write-side
+  // oracle — their full CipherTransformFactory validation runs on it).
+  for (const req of [baseReq(), baseReq({ alg: "aes128" })]) {
+    const sample = await makeSample(true);
+    const { bytes: locked } = await lockPdf(sample, req);
+    await verifyLocked(locked, "open123");
+    const re = await PDFDocument.load(locked, {
+      password: "open123",
+      updateMetadata: false,
+    });
+    ok(
+      re.getPageCount() === 1,
+      `our ${req.alg} → @cantoo reload with password (${re.getPageCount()}p)`
+    );
+    let refused = false;
+    try {
+      await PDFDocument.load(locked, { updateMetadata: false });
+    } catch {
+      refused = true;
+    }
+    ok(refused, `our ${req.alg} → @cantoo WITHOUT password refused`);
+    const ownerOnly = await lockPdf(sample, baseReq({ userPw: "", ownerPw: "owner999" }));
+    const asOwner = await PDFDocument.load(ownerOnly.bytes, {
+      password: "owner999",
+      updateMetadata: false,
+    });
+    ok(asOwner.getPageCount() === 1, `our ${req.alg} owner-only → @cantoo owner-pw reload OK`);
   }
 }
 
