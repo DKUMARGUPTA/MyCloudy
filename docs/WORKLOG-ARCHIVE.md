@@ -3742,3 +3742,37 @@ Stage Summary:
 - Project state: 116 URLs / 100 live tools | tsc 0 + lint 0 | local E2E green | SHIPPED e3e8975 → Vercel dpl_pJaeY4NkxWK5RRBbgiXiauceqprW READY.
 - PRODUCTION LIVE-VERIFIED: / /hi /tools /tool/merge-pdf /tool/pdf-to-jpg all 200; gates 401/403/200 all application/json with exact forbidden bodies; branded 404 (HTTP 404 + buttons); Googlebot sitemap XML. (Mini-service changes run in the sandbox — the deploy validates the repo builds clean; API-route changes are live on Vercel.)
 - Next: Phase 4 (dead-code purge — PWA stack decision, sidocs/ dir, unimported panel.tsx + recipient-view, ~520 orphan sidecar keys) → Phase 5 (SEO/i18n polish).
+
+---
+Task ID: R19-PHASE-4-DEAD-CODE
+Agent: orchestrator (main session)
+Task: Phase 4 of the R19 audit — dead-code purge (PWA stack decision, sidocs/ dir, unimported panel.tsx + recipient-view, ~520 orphan sidecar keys).
+
+INVESTIGATION (import-graph verified before every deletion — rg -l module-specifier with self-exclusion, then a full tools/**/*.tsx sweep script):
+- PWA React island COMPLETELY DISCONNECTED: PwaProvider (providers/pwa-provider.tsx) 0 importers; ServiceWorkerRegister + PwaStatus (doco/pwa/) 0 importers; doco/pwa/pwa-store only imported by those two; use-pwa.ts only by pwa-status; sidocs/pwa/pwa-store only by use-pwa. Nothing ever mounts any of it — layout.tsx has no PwaProvider/ServiceWorkerRegister/PwaStatus.
+- public/sw.js is NOT dead: deliberate self-unregistering service worker (sandbox preview hygiene — browsers with a stale registration from an old experiment probe GET /sw.js; the script deletes all caches + unregisters on activate). KEPT.
+- public/offline.html: ZERO references in src/tools/scripts (sw.js has no fetch handler). Phase 1's rebrand of it was consistency work on an unreachable page. DELETED.
+- public/manifest.webmanifest: unreferenced (<link rel="manifest"> absent), stale "Sidocs" branding + legacy hash-route shortcuts (#/tool/x). REBRANDED + WIRED instead of deleted (see below).
+- request-signature recipient-view.tsx + api.ts: the ABANDONED server-link flow, triple-verified dead: (1) recipient-view 0 importers, api.ts imported only by it; (2) createRequest() ZERO callers anywhere; (3) the rsign.* keys it renders NEVER existed in the main dictionaries (the 7 "rsign" grep hits were false-positive substrings: errorSignNoPlacements, rSignature etc.) AND the router never handled #/sign|#/req (both fall through to home). The LIVE tool is the honest on-device "prepare & send" pack maker by documented design — config.ts: "There is NO server, NO expiring link, NO upload".
+- Legacy per-tool panels (lock-pdf, unlock-pdf, redact-pdf, sign-pdf, pdf-to-markdown panel.tsx): 0 importers, superseded by the config options schema; lock/unlock/redact panels referenced t() keys ABSENT from the main dicts (lock.panelTitle, redact.panelNote, unlock.policyNote …) — they could never have rendered translated.
+- Sidecar drift MEASURED: 260 orphan keys × 2 locales across 10 tools/*/i18n.json (lock 50, redact 47, scan 44, gpw 43, ocr 37, unlock 24, webp 5, tiff 4, c2s 4, imgconv 2) — ALL unused in live code (the only consumers were the dead panels); archives of the pre-schema string architecture, read only by one-time merge/smoke scripts. DEFERRED (documented), not purged — repo-hygiene-only, smoke-script risk not worth it this round.
+- Mini-service request-sign (:3032): now fully orphaned from the UI (createRequest had zero callers even BEFORE this purge). KEPT RUNNING (hardened in Phase 2/3, smoke-covered; removal/wiring is an owner decision — the tool's honest no-server design must not change casually).
+
+WORK LOG:
+- DELETED 14 files: pwa-provider.tsx, doco/pwa/{sw-register,pwa-status,pwa-store}, hooks/use-pwa.ts, sidocs/ dir (pwa-store), 5 legacy panels, recipient-view.tsx, api.ts, offline.html. Empty dirs (sidocs/, doco/pwa/) removed.
+- manifest.webmanifest: Sidocs→DocoPDF (name/short_name/description aligned with site metadata voice), shortcuts fixed to REAL paths (/tool/merge-pdf, /tool/jpg-to-pdf, /tool/edit-pdf, /tool/sign-pdf), icons unchanged (192/512 + maskable pair all exist).
+- layout.tsx metadata: manifest: "/manifest.webmanifest" added (Next Metadata API → <link rel="manifest">). viewport.themeColor was already set (light #FFFFFF / dark #0B1220); appleWebApp already configured. Result: Chrome fetches the manifest → installable (Add to Home Screen with proper name/icons); modern Chrome install criteria need no service worker — documented in the layout comment.
+
+QA (all green):
+- Gates: tsc 0, lint 0 (benign BABEL 500KB note only). Dev server reaped once mid-E2E (known pattern) — dev-daemon.py relaunch.
+- Local assets: home 200, manifest 200 + <link rel="manifest"> in head + browser network log shows GET /manifest.webmanifest (Manifest) 200; sw.js 200 (kept); offline.html 404 (deleted).
+- 7 affected tool pages (request-signature, lock-pdf, unlock-pdf, redact-pdf, sign-pdf, pdf-to-markdown, merge-pdf): correct SEO titles, 0 console errors.
+- Regressions: branded bilingual 404 ("This page took a wrong turn"); sitemap negotiation (Googlebot UA → XML urlset, browser Accept → HTML "Sitemap · DocoPDF"); palette "docx to png" → "2 steps" chip (plural engine intact); tofu regression FULL RITUAL — 253,230 B fixture injected via synthetic ClipboardEvent paste path, convert → download page1 (309,539 B JPEG) → VLM verdict "crisp and readable, no tofu boxes… READABLE"; mobile 390 no horizontal overflow; HI locale renders Hindi ("आपकी मर्ज़ी, आपका डेटा").
+- rg -rn pitfall pinned (again): -r REPLACES matches in output — corrupted two searches this round before being caught; always use -n without -r.
+
+ENVIRONMENT INCIDENT: the sandbox rollback wiped ALL token stores this time (/home/z/.tokens/docopdf.env AND repo .ops/token-backup.env AND .env.credentials AND ~/.mycloudy/secrets.env — none survived, full values never recorded in worklog by design). Commit 9ca55fa is safe locally; push/Vercel deploy BLOCKED until the owner re-provides GITHUB_TOKEN + VERCEL_TOKEN (a fresh rotated PAT recommended — the old one was chat-exposed).
+
+Stage Summary:
+- 14 verified-dead files purged (PWA island, legacy panels, abandoned recipient flow, orphan offline page); the dead manifest asset converted into a working installable-web-app feature; sidecar drift measured + documented (260×2, deferred); sw.js + mini-service kept with documented rationale.
+- Project state: 116 URLs / 100 live tools | tsc 0 + lint 0 | local E2E + full regression suite green | commit 9ca55fa local.
+- Next: owner re-provides tokens → push-github.sh → Vercel READY → production live-check (manifest fetch + tool pages + 404/sitemap) → Phase 5 (SEO/i18n polish: /hi FAQ JSON-LD, SSR locale links, GA4 taxonomy round 2).
