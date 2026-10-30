@@ -6000,3 +6000,39 @@ tsc 0 · eslint 0 · **battery 110/110** (a11y 9/9 with the new anchor handlers)
 - PUSH PENDING (token wiped — incident in VERSION-SAVE entry): local commit ready; push on token re-supply.
 
 NEXT: launch-ops remaining (analytics, GSC submission) + P7-c i18n VLM battery.
+
+## P7-SEO R2 — DEPLOY + PHASE 6 INFRA + KEYWORD DELIVERABLES (2025-10-31, "docopdf.com LIVE" round)
+
+**THE ROUND:** User attached docopdf.com on Vercel (apex 308→www) + supplied fresh GitHub PAT + Vercel token. The P7-SEO commit (b99cdc4) was LOCAL-ONLY — the live site was still serving the pre-SEO hash-route build. This round pushed everything live and hardened it.
+
+### Shipped
+- **Canonical host → www**: SITE.url https://docopdf.com → https://www.docopdf.com (apex 308s to www on Vercel — one host site-wide per master plan). layout.tsx now derives metadataBase + all 3 JSON-LD url/logo fields from SITE/absoluteUrl (single source of truth). robots/sitemap/canonicals/og:url all verified www on live.
+- **VERCEL BUILD FIXED (2 attempts)**: first deploy ERROR — prerender of /hi/tool/write-pdf died on "Missing getServerSnapshot" (useSyncExternalStore). Exhaustive codebase scan (comma-depth parser) found 3 real culprits: write-pdf/surface.tsx:186, edit-pdf/surface.tsx:451, imagegrid/image-grid-surface.tsx:146. Fixed with STABLE server snapshots (EMPTY_ASSETS const in both asset-stores + () => 0 in svg-raster — inline [] would break hydration identity). Then ran the sweep the previous session skipped: **100/100 EN + 100/100 HI tool routes SSR-200** with unique h1 + canonical + hrefLang(en/hi/x-default) + JSON-LD verified per-route.
+- **GA4 consent-gated analytics (Phase 6)**: src/lib/analytics/ga4.ts — Consent Mode v2 (all 4 fields default denied, wait_for_update 500), gtag.js injected ONLY after cookie-banner analytics grant (zero network before consent), revoke → denied update. Ga4Boot in layout. Events: tool_view (app-shell, tool_slug/category/mode/locale) + language_switch (language-switch.tsx). No-ops completely until NEXT_PUBLIC_GA_ID is set. cookie-banner.tsx exports readConsent/subscribeToConsent for the glue.
+- **Webmaster verification env support**: layout verification block reads NEXT_PUBLIC_GSC_VERIFICATION / NEXT_PUBLIC_BING_VERIFICATION (msvalidate.01) / NEXT_PUBLIC_YANDEX_VERIFICATION — values never touch git.
+- **meta keywords REMOVED everywhere** (master plan Phase 3: Google/Bing ignore it; root layout array deleted + baseMetadata keywords param dropped). Researched keyword DATA stays in tool-seo.ts feeding on-page copy + CSVs.
+- **/hi pre-hydration lang fix**: Hindi pages shipped <html lang="en"> in server HTML (root layout hardcodes en; client effect flipped it too late for crawlers). HINDI_LANG_SCRIPT inline blocking script now runs during parse — rendered lang="hi" verified, 0 hydration errors (suppressHydrationWarning contract, same as next-themes).
+- **Keyword deliverables (Phase 1)**: scripts/gen-keyword-map.ts → seo/keyword-map.csv (110 rows: 100 tools + 10 hubs; primary/secondary/question-from-FAQ/Hindi-Devanagari/Hinglish-Roman/intent/regions/tier T1=12+T2=30+T3=58) + seo/keyword-planner-seed.csv (756 keywords en/hi/hinglish) for the owner's Google Ads Keyword Planner upload.
+- **docs/seo/WEBMASTER-GUIDE.md**: Hinglish OWNER-ACTION guide — GSC URL-prefix + HTML-tag verification + sitemap submit + 20-URL request-indexing list; GA4 property/stream creation + retention/key-events/custom-dimensions checklist; Bing import + msvalidate; Vercel env-var click-paths.
+
+### Live-verified (curl + agent-browser on https://www.docopdf.com)
+- ALL new routes 200: /tool/merge-pdf, /about, /hi/tool/jpg-to-pdf, /tool/write-pdf (the prerender killer), /hi/tool/write-pdf
+- robots.txt dynamic (Host + Sitemap = www) ✓; sitemap.xml 116 URLs ✓; og-image.png 200 @ 62,655 B ✓
+- Homepage: unique title, "100 tools" description (60+ bug gone), canonical www, og:url/image, twitter summary_large_image, 9 JSON-LD types, NO keywords tag
+- /hi/tool/compress-pdf: lang=hi script present + rendered lang="hi" ✓; PROD console 0 hydration errors (the 4 seen earlier were dev-server fast-refresh artifacts — clean-tab prod test = 0)
+- Mobile 390×844: scrollWidth 390 = innerWidth (no overflow); tool workspace boots directly (h1 + dropzone + FAQ), Hindi UI full
+
+### Deploys
+- adb7aef (host fix) → ERROR (prerender) → fda64f5 (getServerSnapshot fix) → READY → live verified
+- c164732 (GA4 + lang + keywords + CSVs) → READY → live verified
+
+### Gates
+tsc 0 · eslint 0 · E2E agent-browser clean (home/tool/hi/mobile/console)
+
+### Pending — OWNER ACTIONS (asked in chat, guide committed)
+1. GSC verification content= value → NEXT_PUBLIC_GSC_VERIFICATION
+2. GA4 Measurement ID G-XXXX → NEXT_PUBLIC_GA_ID
+3. Bing msvalidate.01 → NEXT_PUBLIC_BING_VERIFICATION
+4. (opt) IndexNow key, Yandex
+
+NEXT: owner values → env wiring → GSC sitemap submit → P7-c i18n VLM battery → remaining GA4 event taxonomy (process_success/download_click/chain_next_tool + web-vitals) → Phase 5 technical SEO (headers, sw.js audit) → SMO kit (Phase 7).
