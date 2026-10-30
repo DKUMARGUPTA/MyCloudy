@@ -20,7 +20,10 @@
  * request envelope (PDF bytes + metadata + expiry) so a link can outlive the
  * requester's tab. Nothing is executed, no shell, zero npm deps
  * (node:crypto + node:fs/promises only). A 60 s sweeper deletes every
- * folder whose expiresAt is in the past — max 7 days, then deleted.
+ * folder whose expiresAt is in the past — max 7 days, then deleted; dirs
+ * whose meta.json is unreadable for over 6 h are treated as orphans and
+ * removed too. Tokens resolve through an in-memory index (O(1), rebuilt
+ * lazily after a restart).
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -47,6 +50,17 @@ const MESSAGE_MAX = 500;
 const PDF_MAGIC = "%PDF-";
 /** 24 random bytes hex — 48 chars, never path-relevant. */
 const TOKEN_RE = /^[0-9a-f]{48}$/;
+/** token → envelope id — O(1) resolution instead of a full DATA_DIR scan
+ * per call (R19 audit P3). Rebuilt lazily on miss after a restart; entries
+ * are dropped by the sweeper when an envelope expires. Bounded by
+ * MAX_LIVE_ENVELOPES × 2 tokens ≈ 1000 short strings. */
+const tokenIndex = new Map<string, string>();
+/** Min spacing between full index rebuilds (garbage-token DoS brake). */
+const INDEX_TTL_MS = 5_000;
+let indexScannedAt = 0;
+/** A dir whose meta.json stays unreadable this long is an orphan — a
+ * legit create writes meta.json seconds after mkdir (audit P3). */
+const ORPHAN_GRACE_MS = 6 * 3_600_000;
 
 interface Meta {
   id: string;
@@ -186,28 +200,60 @@ interface Found {
   role: "sign" | "view";
 }
 
-/** Linear meta.json scan — fine at this scale (short-lived envelopes only). */
-async function findRequest(token: string): Promise<Found | null> {
-  if (!TOKEN_RE.test(token)) return null;
+/** One linear pass over DATA_DIR filling tokenIndex (cold start after a
+ * service restart). The clear+refill is synchronous, so concurrent
+ * requests never observe a half-built index. */
+async function scanIndex(): Promise<void> {
+  indexScannedAt = Date.now();
   let entries: string[];
   try {
     entries = await readdir(DATA_DIR);
   } catch {
-    return null;
+    return;
   }
+  const fresh = new Map<string, string>();
   for (const id of entries) {
-    const dir = path.join(DATA_DIR, id);
     try {
       const meta = JSON.parse(
-        await readFile(path.join(dir, "meta.json"), "utf8")
+        await readFile(path.join(DATA_DIR, id, "meta.json"), "utf8")
       ) as Meta;
-      if (meta.signToken === token) return { dir, meta, role: "sign" };
-      if (meta.viewToken === token) return { dir, meta, role: "view" };
+      if (typeof meta.signToken === "string" && typeof meta.viewToken === "string") {
+        fresh.set(meta.signToken, id);
+        fresh.set(meta.viewToken, id);
+      }
     } catch {
-      // Unreadable half-written folder — skip, never crash the scan.
+      // Unreadable half-written folder — the sweeper owns those.
     }
   }
-  return null;
+  tokenIndex.clear();
+  for (const [token, id] of fresh) tokenIndex.set(token, id);
+}
+
+/** Resolve a token to its dir + FRESH meta (status may have changed since
+ * the last call). O(1) via tokenIndex; a miss triggers at most one index
+ * rebuild per INDEX_TTL_MS. */
+async function findRequest(token: string): Promise<Found | null> {
+  if (!TOKEN_RE.test(token)) return null;
+  let id = tokenIndex.get(token);
+  if (id === undefined) {
+    if (Date.now() - indexScannedAt > INDEX_TTL_MS) await scanIndex();
+    id = tokenIndex.get(token);
+    if (id === undefined) return null;
+  }
+  const dir = path.join(DATA_DIR, id);
+  try {
+    const meta = JSON.parse(
+      await readFile(path.join(dir, "meta.json"), "utf8")
+    ) as Meta;
+    if (meta.signToken !== token && meta.viewToken !== token) {
+      tokenIndex.delete(token); // stale entry — dir contents changed
+      return null;
+    }
+    return { dir, meta, role: meta.signToken === token ? "sign" : "view" };
+  } catch {
+    // Unreadable half-written folder — same honest answer as before.
+    return null;
+  }
 }
 
 /** Cap + %PDF magic BEFORE anything is written to disk. */
@@ -285,6 +331,8 @@ async function handleCreate(req: Request): Promise<Response> {
   };
   await writeFile(path.join(dir, "original.pdf"), bytes);
   await writeFile(path.join(dir, "meta.json"), JSON.stringify(meta), "utf8");
+  tokenIndex.set(meta.signToken, id);
+  tokenIndex.set(meta.viewToken, id);
   console.log(`[request-sign] created ${id} (${bytes.length} B, ${hours}h)`);
   return json(200, {
     signUrl: `#/sign/${meta.signToken}`,
@@ -478,10 +526,25 @@ async function sweep(): Promise<void> {
         ) as Meta;
         if (Date.now() > meta.expiresAt) {
           await rm(dir, { recursive: true, force: true });
+          tokenIndex.delete(meta.signToken);
+          tokenIndex.delete(meta.viewToken);
           console.log(`[request-sign] expired → deleted ${id}`);
         }
       } catch {
-        // Unreadable folder — not ours to delete blindly.
+        // Orphan (meta.json unreadable): leave brand-new dirs alone — a
+        // legit create writes meta.json seconds after mkdir — but remove
+        // anything stuck this way beyond the grace window. These used to
+        // accumulate forever AND count against MAX_LIVE_ENVELOPES
+        // (R19 audit P3).
+        try {
+          const st = await stat(dir);
+          if (Date.now() - st.mtimeMs > ORPHAN_GRACE_MS) {
+            await rm(dir, { recursive: true, force: true });
+            console.log(`[request-sign] orphan → deleted ${id}`);
+          }
+        } catch {
+          /* dir vanished mid-sweep — fine */
+        }
       }
     }
   } finally {

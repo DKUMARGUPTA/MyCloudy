@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
-import { audit, clearSessionCookieHeader, getSessionUser, verifyPassword } from "@/lib/auth";
+import { audit, clearSessionCookieHeader, verifyPassword } from "@/lib/auth";
+import { gateUser } from "@/lib/api-auth";
 
 /**
  * POST /api/auth/delete — self-service account deletion (soft delete).
@@ -19,10 +20,9 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const session = await getSessionUser(request);
-  if (!session) {
-    return NextResponse.json({ error: "forbidden" }, { status: 401 });
-  }
+  const gate = await gateUser(request);
+  if (gate.reject) return gate.reject;
+  const session = gate.user;
 
   let json: unknown;
   try {

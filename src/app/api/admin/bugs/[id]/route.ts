@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
-import { audit, getAdminUser } from "@/lib/auth";
+import { audit } from "@/lib/auth";
+import { gateAdmin } from "@/lib/api-auth";
 
 /**
  * PATCH /api/admin/bugs/[id] — triage a bug report (status / severity /
@@ -54,10 +55,9 @@ function toAdminBugRow(r: {
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: Request, ctx: Ctx) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  const gate = await gateAdmin(request);
+  if (gate.reject) return gate.reject;
+  const admin = gate.user;
 
   const { id } = await ctx.params;
 

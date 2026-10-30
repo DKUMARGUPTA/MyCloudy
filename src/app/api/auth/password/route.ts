@@ -4,12 +4,12 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import {
   audit,
-  getSessionUser,
   hashPassword,
   sessionCookieHeader,
   signSessionJwt,
   verifyPassword,
 } from "@/lib/auth";
+import { gateUser } from "@/lib/api-auth";
 
 /**
  * POST /api/auth/password — change password for the signed-in user.
@@ -27,10 +27,9 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const session = await getSessionUser(request);
-  if (!session) {
-    return NextResponse.json({ error: "forbidden" }, { status: 401 });
-  }
+  const gate = await gateUser(request);
+  if (gate.reject) return gate.reject;
+  const session = gate.user;
 
   let json: unknown;
   try {

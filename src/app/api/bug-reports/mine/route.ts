@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { db } from "@/lib/db";
-import { getSessionUser } from "@/lib/auth";
+import { gateUser } from "@/lib/api-auth";
 
 /**
  * GET /api/bug-reports/mine — the signed-in user's own reports, newest
@@ -12,10 +12,9 @@ import { getSessionUser } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const session = await getSessionUser(request);
-  if (!session) {
-    return NextResponse.json({ error: "forbidden" }, { status: 401 });
-  }
+  const gate = await gateUser(request);
+  if (gate.reject) return gate.reject;
+  const session = gate.user;
 
   try {
     const rows = await db.bugReport.findMany({

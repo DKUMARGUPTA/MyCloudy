@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
-import { audit, getAdminUser } from "@/lib/auth";
+import { audit } from "@/lib/auth";
+import { gateAdmin } from "@/lib/api-auth";
 
 /**
  * /api/admin/users/[id] — admin moderation actions on a single user.
@@ -32,10 +33,9 @@ const patchSchema = z
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: Request, ctx: Ctx) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  const gate = await gateAdmin(request);
+  if (gate.reject) return gate.reject;
+  const admin = gate.user;
 
   const { id } = await ctx.params;
 
@@ -97,10 +97,9 @@ export async function PATCH(request: Request, ctx: Ctx) {
 }
 
 export async function DELETE(request: Request, ctx: Ctx) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  const gate = await gateAdmin(request);
+  if (gate.reject) return gate.reject;
+  const admin = gate.user;
 
   const { id } = await ctx.params;
 

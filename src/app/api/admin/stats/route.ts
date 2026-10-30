@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { db } from "@/lib/db";
-import { getAdminUser } from "@/lib/auth";
+import { gateAdmin } from "@/lib/api-auth";
 
 /**
  * GET /api/admin/stats — dashboard overview for the admin console.
@@ -19,10 +19,9 @@ function dayString(offsetDays: number): string {
 }
 
 export async function GET(request: Request) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  const gate = await gateAdmin(request);
+  if (gate.reject) return gate.reject;
+  const admin = gate.user;
 
   try {
     const today = dayString(0);

@@ -45,19 +45,34 @@ function fail(code: SummarizeErrorCode): NextResponse {
   );
 }
 
-/** Race one attempt against the remaining wall-clock budget. */
+/**
+ * Race one attempt against the remaining wall-clock budget. The timer is
+ * cleared as soon as work settles, so a fast success does not leave a
+ * dangling deadline timer behind (R19 audit P3).
+ *
+ * Honest limit: the SDK's chat.completions.create() takes no AbortSignal,
+ * so a timed-out attempt's underlying fetch cannot be cancelled from here.
+ * The leak is bounded to ONE in-flight call per request — the deadline
+ * error short-circuits the retry loop — and the platform reaps it after
+ * the response is sent.
+ */
 async function withDeadline<T>(
   work: Promise<T>,
   deadline: number,
 ): Promise<T> {
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new Error("deadline");
-  return Promise.race([
-    work,
-    new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("deadline")), remaining);
-    }),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("deadline")), remaining);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function callModel(body: ValidBody): Promise<string> {

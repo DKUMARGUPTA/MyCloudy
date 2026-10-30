@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
-import { audit, getAdminUser } from "@/lib/auth";
+import { audit } from "@/lib/auth";
+import { gateAdmin } from "@/lib/api-auth";
 
 /**
  * /api/admin/settings — the three single-row JSON site settings.
@@ -109,10 +110,9 @@ async function readSetting(key: string): Promise<unknown> {
 /* -------------------------------- handlers -------------------------------- */
 
 export async function GET(request: Request) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  const gate = await gateAdmin(request);
+  if (gate.reject) return gate.reject;
+  const admin = gate.user;
 
   try {
     const [overridesRaw, announcementsRaw, flagsRaw] = await Promise.all([
@@ -132,10 +132,9 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  const gate = await gateAdmin(request);
+  if (gate.reject) return gate.reject;
+  const admin = gate.user;
 
   let json: unknown;
   try {

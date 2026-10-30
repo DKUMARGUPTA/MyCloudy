@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { db } from "@/lib/db";
-import { getAdminUser } from "@/lib/auth";
+import { gateAdmin } from "@/lib/api-auth";
 
 /**
  * GET /api/admin/users?q=&page=&pageSize= — paginated user list for the
@@ -13,10 +13,9 @@ import { getAdminUser } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  const gate = await gateAdmin(request);
+  if (gate.reject) return gate.reject;
+  const admin = gate.user;
 
   try {
     const url = new URL(request.url);
