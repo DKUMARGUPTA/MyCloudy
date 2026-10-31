@@ -50,7 +50,7 @@ import { getStoredLocale, type Locale } from "@/i18n";
  */
 
 export interface HashRoute {
-  view: "home" | "tools" | "tool" | "page" | "account";
+  view: "home" | "tools" | "tool" | "page" | "account" | "accounting";
   category?: string;
   query?: string;
   /** Enabled tool id for the "/tool/<id>" view. */
@@ -85,6 +85,7 @@ function parseLegacyHash(hash: string): HashRoute {
 
   if (path === "tools") return { view: "tools", query };
   if (path === "account") return { view: "account" };
+  if (path === "accounting") return { view: "accounting" };
   if (path.startsWith("tools/")) {
     return { view: "tools", category: path.slice("tools/".length), query };
   }
@@ -135,6 +136,7 @@ export function parseRouteKey(key: string): HashRoute {
   if (path === "/" || path === "") return { view: "home" };
   if (path === "/tools") return { view: "tools", query };
   if (path === "/account") return { view: "account" };
+  if (path === "/accounting") return { view: "accounting" };
   if (path.startsWith("/tools/")) {
     return { view: "tools", category: path.slice("/tools/".length), query };
   }
@@ -216,6 +218,8 @@ function legacyHashToPath(to: string): string {
       return `/${route.pageId ?? ""}`;
     case "account":
       return "/account";
+    case "accounting":
+      return "/accounting";
     default:
       return withQuery("/", route.query);
   }
@@ -326,6 +330,7 @@ export function localizedRoutes(urlLocale: UrlLocale) {
     tool: (toolId: string) => p(`/tool/${toolId}`),
     page: (pageId: string) => p(`/${pageId}`),
     account: p("/account"),
+    accounting: p("/accounting"),
     toolsWithQuery: (query: string) =>
       `${p("/tools")}?q=${encodeURIComponent(query)}`,
   } as const;
@@ -396,5 +401,7 @@ export const ROUTES = {
   page: (pageId: string) => `/${pageId}`,
   /** Account settings (private — noindex SSR shell). */
   account: "/account",
+  /** Accounting console (admin-only — noindex SSR shell). */
+  accounting: "/accounting",
   toolsWithQuery: (query: string) => `/tools?q=${encodeURIComponent(query)}`,
 } as const;

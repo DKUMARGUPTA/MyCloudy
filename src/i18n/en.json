@@ -5106,7 +5106,8 @@
     "proThanks": "Thanks for backing DocoPDF",
     "menuAdmin": "Admin",
     "menuLogout": "Log out",
-    "menuSettings": "Account settings"
+    "menuSettings": "Account settings",
+    "menuAccounting": "Accounting"
   },
   "account": {
     "loading": "Loading…",
@@ -5190,6 +5191,143 @@
       "rate_limited": "Too many attempts — try again in a bit.",
       "billingNotConfigured": "Payments aren't available yet.",
       "server_error": "Something went wrong. Please retry."
+    }
+  },
+  "accounting": {
+    "badge": "Admin console",
+    "title": "Accounting",
+    "lede": "Double-entry books, GST invoices and financial reports for the DocoPDF business — every rupee the product earns or spends, in one ledger.",
+    "signInTitle": "Sign in to view the books",
+    "signInDesc": "The accounting console is available to signed-in admins only.",
+    "forbiddenTitle": "Admins only",
+    "forbiddenDesc": "The accounting console needs an admin account. Your tools keep working — this page is just not for you.",
+    "loadFailed": "Could not load this report. Please retry.",
+    "noEntries": "No journal entries yet — run a sync to bring payments into the books.",
+    "lastEntry": "{count} journal entries in the books",
+    "prev": "Previous",
+    "next": "Next",
+    "page": "Page {current} of {total}",
+    "tab": {
+      "overview": "Overview",
+      "journal": "Journal",
+      "accounts": "Accounts",
+      "invoices": "Invoices",
+      "reports": "Reports"
+    },
+    "sync": {
+      "cta": "Sync payments → books",
+      "running": "Syncing…",
+      "done": "Books synced",
+      "failed": "Sync failed — please retry",
+      "result": "{payments} payments posted · {invoices} invoices issued · {recognized} recognition entries"
+    },
+    "overview": {
+      "cashInr": "Cash collected (INR)",
+      "cashUsd": "Cash collected (USD)",
+      "recognized": "Recognized revenue",
+      "deferred": "Deferred revenue",
+      "gstPayable": "GST payable",
+      "mrr": "MRR (estimate)",
+      "activeSubs": "Active subscriptions",
+      "proUsers": "Pro users",
+      "recent": "Recent journal entries",
+      "recentDesc": "The newest postings across all sources."
+    },
+    "journal": {
+      "desc": "The chronological double-entry record. Manual entries post here; payment and recognition entries arrive via sync.",
+      "new": "New entry",
+      "empty": "No journal entries yet.",
+      "entryNo": "Entry #",
+      "date": "Date",
+      "memo": "Description",
+      "source": "Source",
+      "debit": "Debit",
+      "credit": "Credit",
+      "account": "Account",
+      "newTitle": "New journal entry",
+      "newDesc": "Record an expense, owner's capital or adjustment. Debits must equal credits.",
+      "addLine": "Add line",
+      "removeLine": "Remove line",
+      "submit": "Post entry",
+      "posted": "Entry {no} posted",
+      "unbalanced": "Debits and credits must be equal and greater than zero.",
+      "errFields": "Fill the date, description and an account on every line.",
+      "memoPlaceholder": "e.g. Hosting bill — February"
+    },
+    "source": {
+      "manual": "Manual",
+      "payment": "Payment",
+      "refund": "Refund",
+      "recognition": "Recognition",
+      "adjustment": "Adjustment",
+      "opening": "Opening"
+    },
+    "accounts": {
+      "title": "Chart of accounts",
+      "desc": "The ledger accounts with live balances (books base currency: INR).",
+      "code": "Code",
+      "name": "Account",
+      "type": "Type",
+      "balance": "Balance"
+    },
+    "type": {
+      "asset": "Asset",
+      "liability": "Liability",
+      "equity": "Equity",
+      "revenue": "Revenue",
+      "expense": "Expense"
+    },
+    "invoices": {
+      "desc": "GST tax invoices issued for paid payments (one per payment).",
+      "empty": "No invoices yet.",
+      "invoiceNo": "Invoice #",
+      "date": "Date",
+      "customer": "Customer",
+      "taxType": "Tax type",
+      "taxable": "Taxable",
+      "tax": "Tax",
+      "total": "Total",
+      "status": "Status"
+    },
+    "taxtype": {
+      "cgst_sgst": "CGST + SGST",
+      "igst": "IGST",
+      "export": "Export"
+    },
+    "invstatus": {
+      "paid": "Paid",
+      "refunded": "Refunded",
+      "void": "Void"
+    },
+    "reports": {
+      "type": "Report",
+      "from": "From",
+      "to": "To",
+      "run": "Refresh",
+      "trialBalance": "Trial balance",
+      "pnl": "Profit & Loss",
+      "balanceSheet": "Balance sheet",
+      "gst": "GST summary",
+      "balanced": "Balanced",
+      "notBalanced": "Out of balance",
+      "tbTotal": "TOTAL",
+      "totalRevenue": "Total revenue",
+      "totalExpenses": "Total expenses",
+      "netProfit": "Net profit",
+      "assets": "Assets",
+      "liabilities": "Liabilities",
+      "equity": "Equity",
+      "netIncome": "Net income (to date)",
+      "totalAssets": "Total assets",
+      "totalLiabilities": "Total liabilities",
+      "totalEquity": "Total equity",
+      "gstTaxable": "Taxable value (INR)",
+      "gstExport": "Exports (USD)",
+      "gstDomestic": "Domestic invoices",
+      "gstInvoices": "Invoice register"
+    },
+    "export": {
+      "invoices": "Export CSV"
     }
   }
 }

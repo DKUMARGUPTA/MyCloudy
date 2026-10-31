@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  BookOpenCheck,
   CalendarDays,
   CreditCard,
   KeyRound,
@@ -26,6 +27,7 @@ import { PageShell } from "@/components/doco/page/page-shell";
 import { useI18n } from "@/components/providers/locale-provider";
 import { useToast } from "@/hooks/use-toast";
 import { track } from "@/lib/analytics/ga4";
+import { navigateToHash, ROUTES } from "@/hooks/use-hash-route";
 import {
   cancelPro,
   changePassword,
@@ -161,10 +163,22 @@ function ProfileCard() {
             </Badge>
           )}
           {user.role === "admin" ? (
-            <Badge variant="secondary" className="rounded-chip">
-              <ShieldCheck className="size-3" aria-hidden="true" />
-              {t("auth.menuAdmin")}
-            </Badge>
+            <>
+              <Badge variant="secondary" className="rounded-chip">
+                <ShieldCheck className="size-3" aria-hidden="true" />
+                {t("auth.menuAdmin")}
+              </Badge>
+              <Button
+                type="button"
+                variant="outline"
+                size="touch"
+                className="rounded-btn"
+                onClick={() => navigateToHash(ROUTES.accounting)}
+              >
+                <BookOpenCheck className="size-4" aria-hidden="true" />
+                {t("auth.menuAccounting")}
+              </Button>
+            </>
           ) : null}
         </div>
       </CardContent>

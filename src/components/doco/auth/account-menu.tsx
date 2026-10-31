@@ -1,6 +1,6 @@
 "use client";
 
-import { LogOut, Settings, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { BookOpenCheck, LogOut, Settings, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -120,6 +120,15 @@ export function AccountMenu() {
           <Settings className="size-4" aria-hidden="true" />
           {t("auth.menuSettings")}
         </DropdownMenuItem>
+        {user.role === "admin" ? (
+          <DropdownMenuItem
+            onClick={() => navigateToHash(ROUTES.accounting)}
+            className="min-h-11 cursor-pointer rounded-btn"
+          >
+            <BookOpenCheck className="size-4" aria-hidden="true" />
+            {t("auth.menuAccounting")}
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem
           onClick={handleLogout}
           className="min-h-11 cursor-pointer rounded-btn"

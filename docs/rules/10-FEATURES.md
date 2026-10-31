@@ -53,6 +53,13 @@ full tool implementations. Sitemap auto-drops the 3 URLs; live count =
   `BILLING_DEMO=1` sandbox mode completes the full activation) + bottom-tab
   Account tab. Admin panel
   (announcements, bug reports, contact, feedback, tool requests, audit log).
+- **Accounting console (R27, admin-only `/accounting`):** double-entry
+  books for the business — journal with expandable rows + balanced
+  manual-entry dialog, seeded chart of accounts with live balances, GST
+  tax invoices (CGST+SGST/IGST split, USD exports), sync sweep
+  (payments → books, accrual recognition, refund reversals — idempotent),
+  reports (trial balance, P&L, balance sheet, GST summary) + CSV exports.
+  EN/हिंदी, entry via account menu / account page (admins only).
 - **Feedback loop:** feedback modal, bug reports, tool requests + votes.
 - **Privacy beacons:** UsageEvent/AnonUsage aggregates only (metadata).
 - **Mini-services:** convert (office/webpage→pdf), request-sign envelopes.

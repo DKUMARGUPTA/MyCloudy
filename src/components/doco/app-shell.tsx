@@ -17,6 +17,7 @@ import { ToolsView } from "@/components/doco/tools/tools-view";
 import { ToolView } from "@/components/doco/tool/tool-view";
 import { StaticPageView } from "@/components/doco/page/static-page";
 import { AccountPage } from "@/components/doco/account/account-page";
+import { AccountingPage } from "@/components/doco/accounting/accounting-page";
 import { PricingModal } from "@/components/doco/billing/pricing-modal";
 import { SearchPalette } from "@/components/doco/search/search-palette";
 import { CookieBanner } from "@/components/doco/cookie-banner";
@@ -246,6 +247,8 @@ export function AppShell({
             <StaticPageView pageId={route.pageId ?? ""} />
           ) : route.view === "account" ? (
             <AccountPage onGetPro={openPro} />
+          ) : route.view === "accounting" ? (
+            <AccountingPage />
           ) : (
             <ToolsView categoryId={route.category} query={route.query} />
           )}

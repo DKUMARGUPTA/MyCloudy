@@ -29,6 +29,8 @@ karne hain — jo missing hai banao."*
 | 13 | `13-INTEGRATIONS.md` | GitHub/Vercel/GA4/gateway/mini-services |
 | 14 | `14-TESTING.md` | Quality gates, smokes, E2E, regressions |
 | 15 | `15-DEBUGGING.md` | Failure-mode runbook |
+| 16 | `16-BILLING-RESEARCH.md` | Competitor pricing research + 50%-below strategy (PROPOSAL — not implemented) |
+| 17 | `17-ACCOUNTING.md` | Accounting module: double-entry books, GST invoicing, reports |
 
 ## Update protocol (who edits these)
 

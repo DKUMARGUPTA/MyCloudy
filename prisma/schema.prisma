@@ -212,3 +212,110 @@ model BugReport {
   @@index([userId])
   @@map("bug_reports")
 }
+
+/* ------------------------------------------------------------------ */
+/* Accounting (R27) — double-entry books for the DocoPDF business.     */
+/* Metadata + money only: amounts are minor units (paise/cents),      */
+/* never file content. See docs/rules/17-ACCOUNTING.md.               */
+/* ------------------------------------------------------------------ */
+
+/// Chart of accounts — one row per ledger account. `code` is the
+/// human/accountant-facing key journal lines reference (stable, sequential
+/// 1000=assets … 5000=expenses). `isSystem` rows are seeded and cannot be
+/// deleted from the UI (manual expense accounts can be added).
+model Account {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  /// asset | liability | equity | revenue | expense
+  type      String
+  /// e.g. bank, current_asset, current_liability, operating_revenue,
+  /// operating_expense, tax_payable … (display grouping)
+  subtype   String   @default("other")
+  isSystem  Boolean  @default(false)
+  archived  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  lines JournalLine[]
+
+  @@index([type])
+  @@map("accounts")
+}
+
+/// A posted journal entry (immutable once posted — corrections are new
+/// reversing entries, never edits; standard bookkeeping practice that
+/// keeps the audit trail honest).
+model JournalEntry {
+  id        String   @id @default(uuid())
+  /// Sequential human number: JE-000001 …
+  entryNo   String   @unique
+  date      DateTime
+  memo      String
+  /// manual | payment | refund | recognition | adjustment | opening
+  source    String   @default("manual")
+  /// Free-form reference (payment id, invoice no, sweep batch …)
+  sourceRef String?
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  lines JournalLine[]
+
+  @@index([date])
+  @@index([source])
+  @@map("journal_entries")
+}
+
+/// One debit OR credit leg of a journal entry. Exactly one of debit/credit
+/// is non-zero (minor units); the entry's legs always sum debits = credits
+/// (validated in src/lib/accounting/post.ts before insert).
+model JournalLine {
+  id        String   @id @default(uuid())
+  entryId   String
+  accountId String
+  /// Minor units — debit side (0 when this leg is a credit).
+  debit     Int      @default(0)
+  /// Minor units — credit side (0 when this leg is a debit).
+  credit    Int      @default(0)
+  memo      String?
+
+  entry   JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  account Account      @relation(fields: [accountId], references: [id])
+
+  @@index([accountId])
+  @@index([entryId])
+  @@map("journal_lines")
+}
+
+/// GST-compliant tax invoice issued for a paid payment. One per payment.
+/// INR domestic sales split CGST+SGST (intra-state) or IGST (inter-state);
+/// USD sales are zero-rated exports (no GST). Amounts minor units.
+model Invoice {
+  id            String   @id @default(uuid())
+  /// Sequential tax-invoice number: DP-INV-000001 …
+  invoiceNo     String   @unique
+  paymentId     String?  @unique
+  userId        String?
+  customerEmail String
+  customerName  String?
+  customerGstin String?
+  /// ISO date on the invoice face.
+  issuedAt      DateTime
+  /// pro_monthly | pro_yearly | manual
+  itemCode      String
+  /// cgst_sgst | igst | export
+  taxType       String
+  /// Minor units — net taxable value.
+  taxableAmount Int
+  /// Minor units — total GST (== cgst+sgst or igst; 0 on exports).
+  taxAmount     Int
+  /// Minor units — taxable + tax (== payment amount).
+  totalAmount   Int
+  currency      String   @default("INR")
+  /// paid | refunded | void
+  status        String   @default("paid")
+  createdAt     DateTime @default(now())
+
+  @@index([issuedAt])
+  @@index([userId])
+  @@map("invoices")
+}
