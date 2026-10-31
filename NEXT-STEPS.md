@@ -33,8 +33,15 @@
   120 tools total / 117 live. Also fixed a pre-existing own-zip-engine bug
   (flatten hardcoded level 6 killed the archive-level option; pptx
   regression battery 104+162 green after fix).
-- **P1-d: page utils** — `duplex-collate`, `fix-page-size`, `page-dimensions`,
-  `remove-annotations`, `linearize-pdf`.
+- ~~**P1-d: page utils**~~ **DONE (R53)** — duplex-collate (4 layout×flip
+  combos + padBlank), remove-annotations (granular preserve-path strip:
+  markup/links/widgets + page-range + forms stay fillable), page-dimensions
+  (pt/mm/inch + paper-name + mixed detection) — live, smoke 75/75 + E2E
+  3 golden paths green. **fix-page-size → change-pdf-page-size COVERED,
+  linearize-pdf → web-optimize-pdf COVERED** (honest mapping, no duplicate
+  tools — see PHASE-PLAN.md). **123 tools / 120 live. P1 PHASE COMPLETE.**
+  Battery fix: r50 smoke missing process.exit since R50 (timeout-124 on
+  green) — fixed; r50/r51/r52 count assertions updated to 123/120.
 
 ### P2 — AI differentiators (self-dependent, on-device)
 - `summarize-pdf`: TextRank/TF-IDF sentence scoring in Web Worker, page
@@ -101,3 +108,9 @@
   view-metadata, change-permissions). 120 tools (117 live). Smoke 94/94 +
   E2E full (4 golden paths + mobile + Hindi + VLM rotate proof) + own-zip
   engine level bug fixed with pptx regression battery. See worklog R52.
+- **R53 (2026-10-31):** P1-d page utils — 3 tools (duplex-collate,
+  remove-annotations preserve-path, page-dimensions) + PHASE-PLAN.md
+  (formal phase plan + coverage table; fix-page-size/linearize mapped as
+  covered). 123 tools (120 live). Smoke 75/75 + regression r50/51/52
+  green + E2E 3 golden paths + Hindi + mobile. **P1 COMPLETE — next: P2.**
+  See worklog R53.

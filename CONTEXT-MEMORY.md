@@ -6,7 +6,7 @@
 > **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R52 — BENTOPDF BATCH 4 / P1-c OUTPUT PACK (2026-10-31)** — 4 naye own-engine tools LIVE: pdfs-to-zip (own zip engine, STORE default), rotate-custom (any angle, exact-AABB mixed plan), view-metadata (TXT/JSON inspector), change-permissions (perm-only lock, owner pw REQUIRED — engine both-empty refusal live pakda gaya). **120 tools total / 117 live / 3 AI deferred; smoke 94-check + E2E full (4 golden paths + mobile + Hindi + VLM rotate proof) green.** Bonus: pre-existing OWN-ZIP-ENGINE bug fix (flatten hardcoded level 6 → archive-level option dead; pptx regression battery 104+162 green). **Pichle:** **R51** P1-b raster color family (invert/greyscale/scanner/posterize, 116 tools, smoke 77 + VLM pixel-proof); **R50** P1-a batch (6 tools, 112) + P1–P6 phase roadmap (NEXT-STEPS rewrite). **Pichle:** **R49** agent system + auto-work queue — Scout/Builder/Auditor tiers, NEXT-STEPS.md priority queue, docopdf-autopilot skill, tool counts 106/103 corrected.
+> **Updated:** **R53 — BENTOPDF BATCH 5 / P1-d PAGE UTILS + PHASE-PLAN (2026-10-31)** — 3 naye own-engine tools LIVE: duplex-collate (two-block duplex scan → reading order, 4 layout×flip combos + padBlank), remove-annotations (GRANULAR strip — preserve path rewriteDocument: markup/links/widgets switches + page-range + form FILLABLE stays), page-dimensions (paper-size analyzer: pt/mm/inch + A4/Letter names + mixed detection). **123 tools total / 120 live / 3 AI deferred; smoke r53 75/75 + regression r50/51/52 green; E2E 3 golden paths + Hindi + mobile green.** NAYA: **PHASE-PLAN.md** (repo root) — formal phase-wise plan + honest coverage table (fix-page-size→change-pdf-page-size, linearize→web-optimize mapped, not duplicated). P1 phase COMPLETE (a/b/c/d). NEXT: **P2 AI differentiators** (summarize TextRank / chat BM25 / prepare-pdf-for-ai + re-enable flow). **Pichle:** **R52** P1-c output pack (120 tools, smoke 94 + VLM proof); **R51** P1-b raster color family; **R50** P1-a batch + roadmap; **R49** agent system + auto-work queue; **R48** batch-1 6 tools.
 > (archived chain) **R46 — TURSO/LIBSQL PRODUCTION DB LIVE (2026-10-31)** — owner ne Turso creds diye → driver-adapter wiring (`@prisma/adapter-libsql`), 20 tables apply (Mumbai region), Vercel env (TURSO_DATABASE_URL/TURSO_AUTH_TOKEN/AUTH_SECRET encrypted), prod E2E: limits 500→200, usage/analytics rows persist, signup+JWT session PASS (test rows cleaned). **Prod ab: sessions + analytics + limits counter + /admin sab persistent.** Pichle: **R45** production release (R24→R44 push + deploy + health verified); **R44** fill mode + watermark-free branding; **R43** security + governance; **R42** analytics; **R41** boot fix; **R29** admin console; **R28** billing shadow-mode.
 
 ---
@@ -15,10 +15,10 @@
 
 | Metric | Value |
 |---|---|
-| Registry | **120 tools registered — 117 LIVE + 3 AI DEFERRED** (R52: +4 P1-c output pack — pdfs-to-zip/rotate-custom/view-metadata/change-permissions; R51: +4 P1-b raster color family; R50: +6 P1-a; R48: 6 batch-1; R23: 3 AI enabled:false, phase P3; re-enable = NEXT-STEPS P2 self-dependent NLP) |
-| **LIVE tools** | **117** (3 AI deferred — R23 owner decision) |
+| Registry | **123 tools registered — 120 LIVE + 3 AI DEFERRED** (R53: +3 P1-d page utils — duplex-collate/remove-annotations/page-dimensions; R52: +4 P1-c output pack; R51: +4 P1-b raster color family; R50: +6 P1-a; R48: 6 batch-1; R23: 3 AI enabled:false — re-enable = P2 self-dependent path) |
+| **LIVE tools** | **120** (3 AI deferred — R23 owner decision) |
 | Own PDF engine (P6) | **P6-a..z + P6-v-b + P6-END — MIGRATION COMPLETE ✅** — ALL 60 tool families pdf-lib-free, **0 runtime importers** (pdf-lib = devDependency only: smoke fixtures + oracles) |
-| Master plan | **MASTER-PLAN-1** worklog mein recorded (P6-t..z → P7 → LAUNCH-OPS → P10 → P11) + discipline contract (worklog+memory+push+Vercel per phase; battery on EXACT commit tree) |
+| Master plan | **PHASE-PLAN.md (R53)** — formal phase-wise plan + honest coverage table; per-round queue = NEXT-STEPS.md; discipline contract (worklog+memory+push per batch; battery on EXACT commit tree) |
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |
 | Admin console | **/admin owner console LIVE (R29)** — 8 tabs: Overview/Users/Bugs/Messages/Feedback/**Analytics (R42)**/Audit/Settings; single-admin Deepak Kumar |
 | First-party analytics | **LIVE (R42)** — PageView beacon (privacy-first: no IP/UA, anonymous visitorId) + admin Analytics dashboard; GA4 consent-gated (needs NEXT_PUBLIC_GA_ID on Vercel) |
@@ -26,7 +26,7 @@
 | Server | Next.js 16.1.3, port 3000 (daemon: `python3 scripts/dev-daemon.py`), dev.log clean |
 | **Production** | **https://www.docopdf.com LIVE @ R46 (Turso wired)** — DB endpoints PERSISTENT (limits/usage/analytics/auth); Vercel env: TURSO_* + AUTH_SECRET encrypted |
 | GitHub | `DKUMARGUPTA/MyCloudy` — **SYNCED @ R46** (R45: 12 commits+28 tags; R46: Turso wiring); push ritual ready (`scripts/push-github.sh`, leak-guard built-in) |
-| Quality gates | tsc **0** errors · eslint 0 · battery **113/113** (R44 exact tree; 113 = current smoke-file count, R43 cleanup ke baad) · iOS-compat smoke **21/21** (R41) |
+| Quality gates | tsc **0** errors · eslint 0 · smoke-r53 **75/75** + r50 78 + r51 77 + r52 94 GREEN (R53 exact tree) · iOS-compat smoke **21/21** (R41) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
 | i18n | English + हिंदी — **5237 = 5237** flat-leaf keys parity (R52 +3 error keys, R29 admin +169, R42 analytics +35, R41 boot UI bilingual) |
 | Mini-services | convert (port 3031), request-sign (3032) — double-fork daemonizer se start |

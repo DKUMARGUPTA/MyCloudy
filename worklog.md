@@ -7231,3 +7231,120 @@ view-metadata + change-permissions — 100% own engine, zero bentopdf code.
 - detail {files,pages} pattern where honest (zip omits it deliberately).
 - Next: P1-d page utils — duplex-collate, fix-page-size, page-dimensions,
   remove-annotations, linearize-pdf.
+
+---
+
+## R53 — BENTOPDF BATCH 5 (P1-d): page utils + PHASE-PLAN.md — 3 new own-engine tools (2026-10-31)
+
+Owner directive: "Phase wise plan banao, skill + discipline ka use kar ke
+sab kuch implement karo — zero mistake ke saath." Two deliverables this
+round: (1) the FORMAL phase plan document, (2) P1-d executed with the
+honest-coverage decisions verified up front.
+
+### PHASE-PLAN.md (new, repo root)
+- Formal phase-wise plan: discipline contract (check→verify→implement→
+  document→push), honest coverage table (bentopdf tools ALREADY covered by
+  our existing tools — mapped, not duplicated), phase status board
+  (P1-a..d ✅, P2 next, P3-P6 queued), per-phase scope + acceptance
+  criteria. Scope changes only in this file; per-round status lives in
+  NEXT-STEPS DONE log.
+
+### Honest coverage decisions (P1-d scope, zero-duplication discipline)
+- **fix-page-size → COVERED by `change-pdf-page-size`** (unify mixed sizes
+  + scale fit/fill/none + A3/A4/A5/Letter/Legal/custom — superset).
+- **linearize-pdf → COVERED by `web-optimize-pdf`** (object-stream packing
+  + recompression + unreferenced-object removal = the practical fast-web-
+  viewing benefit; true /Linearized hint tables stay a P5 big rock).
+- BUILD: duplex-collate, remove-annotations, page-dimensions (below).
+
+### Tool 1 — duplex-collate (organize category)
+- Job: manual-duplex scans produce two blocks (all fronts, then all
+  backs); order of the backs depends on the physical flip. This tool
+  interleaves them back into 1,2,3,4 reading order.
+- `worker-lib.ts` PURE plan builder (smoke tests exactly what ships):
+  layout (fronts-first|backs-first) × flip (short-edge|long-edge) = 4
+  combos, odd page count handling, optional padBlank (blank back sized
+  like its front via `blank-from`), identity detection → honest refusal.
+- Engine: `organizePages` plan — byte-exact page copies.
+- Refusals: <3 pages or identity plan → errorNothingToDo; encrypted/
+  corrupt typed. Result: `-collated.pdf`, detail {files,pages}.
+
+### Tool 2 — remove-annotations (edit category) — the GRANULAR strip
+- Distinct from sanitize (one-tap privacy bundle that REBUILDS and drops
+  everything interactive): this tool runs the PRESERVE path
+  (`rewriteDocument` replacements) — page dicts are patched, everything
+  else survives untouched.
+- Groups: markup (comments/highlights/underlines/drawings/stamps/media,
+  default ON), links (default OFF), widgets/form fields (default OFF).
+  Unknown subtypes classify as markup (cleanup semantics).
+- Page-range targeting via `pages` option + parsePageSpec. Widgets option
+  requires whole-doc (form registry is document-level — honest FAQ copy
+  explains why) and additionally nulls catalog /AcroForm when every page
+  is processed.
+- Preserve-path proof: kept form fields STAY FILLABLE (pdf-lib oracle
+  reads field values after the run), kept links stay clickable.
+
+### Tool 3 — page-dimensions (view category) — the size analyzer
+- "What paper is this PDF?" — every page's visible box (CropBox with
+  MediaBox fallback — same materialized values listPages computes) in
+  pt/mm/inch, orientation (portrait/landscape/square), standard paper
+  name matching ±2pt (A3/A4/A5/A6/B4/B5/Letter/Legal/Tabloid/Statement/
+  Executive), mixed-size grouping with dominant-size callout + "also
+  present" page runs (compact 1, 3-5 lists).
+- TXT spec-sheet or JSON (pt+mm+in together); unit switch for TXT;
+  includePages off = summary only. Read-only, `-dimensions.txt/json`.
+
+### Wiring (R48 anatomy, sab complete)
+- registry.ts: 3 def() entries (duplex ArrowRightLeft organize,
+  remove-annotations MessageSquareOff edit — NEW lucide import,
+  page-dimensions Ruler view) + counts now **123 total / 120 live / 3 AI
+  deferred**.
+- configs.ts: 3 imports + TOOL_CONFIGS entries. tool-seo.ts: 3 curated
+  entries. i18n: NO new keys needed (all error codes pre-existing —
+  parity stays 5237=5237). chainToolIds verified against live ids
+  (merge-pdf not organize — it's a category).
+
+### Smoke: scripts/smoke-r53-tools.ts — **75/75 GREEN (0.73s)**
+- 0. Wiring: registry/configs/seo + own-engine discipline (no pdf-lib in
+  workers) + counts 123/120/3.
+- 1. duplex: 4 pure combo plans + odd+padBlank + identity refusal; worker
+  E2E with distinct-width pages proving output order 1..6 (pdf-lib
+  reload); odd scan + padBlank → 6 pages with blank back; 2-page refusal.
+- 2. remove-annotations: default strips Text+Square keeps Link (oracle
+  subtype counts); links switch; page-range "1" leaves page 2 UNTOUCHED;
+  bad spec → errorInvalidPages; form fixture default run KEEPS widget +
+  FILLABLE field ("Ramesh" readable via pdf-lib) — widgets ON strips
+  widget + nulls /AcroForm (PDFNull); annotation-free file honest refusal.
+- 3. page-dimensions: 11 pure classification checks; TXT report content
+  (mixed flag, dominant A4 2/4, per-page rows incl. 317.5×176.4 landscape);
+  JSON structure (groups/pages pt+mm+in); includePages off; pt/in units.
+- **Battery maintenance:** r50/r51/r52 smokes' count assertions updated
+  to 123/120 (test maintenance — the counts legitimately grew each batch;
+  r50 was also missing process.exit(0) → `timeout bun` returned 124 even
+  on GREEN since R50 — fixed with the R52 convention).
+
+### E2E (agent-browser, sab green — pinned DataTransfer+change IIFE recipe)
+- 3 golden paths (fixtures /tmp via base64 eval): duplex-collate
+  (annotated-scan upload → options (Scan layout/flip/pad switches) → run
+  → "Your file is ready!" + What-next Merge/Rotate/Extract chain);
+  remove-annotations (switches render correct defaults → run → ready);
+  page-dimensions (run → ready → preview shows the TXT report:
+  Dominant A4 210.0×297.0mm 2/4, Letter, custom landscape — exact).
+- Hindi: full tool UI in Devanagari (डुप्लेक्स कोलेट + FAQ + features).
+- Mobile 390×844: no horizontal overflow (scrollW 390).
+- Category surfaces: View=पेज साइज़ पहचानें ✓, Edit=एनोटेशन हटाएँ ✓,
+  Organize=डुप्लेक्स कोलेट ✓; home "All 123 tools are live" ✓.
+- Console/page errors 0 (pdf.js Helvetica standard-font load warning on
+  preview thumbnails = pre-existing, not an error). dev.log clean.
+
+### Gates
+- tsc --noEmit: **0 errors**. eslint: **0**. smoke-r53: **75/75**;
+  regression r50 78/78 + r51 77/77 + r52 94/94 GREEN.
+
+### Discipline
+- ZERO code/dep from bentopdf (AGPL) — ideas only, own engine throughout
+  (rewriteDocument preserve path is the novel seam this round).
+- Billing freeze untouched; all 3 tools free-tier, no Pro gating.
+- Next: **P2 — AI differentiators** (summarize-pdf TextRank, chat-with-pdf
+  BM25, prepare-pdf-for-ai LlamaIndex JSON, re-enable flow) per
+  PHASE-PLAN.md.

@@ -55,6 +55,7 @@ import {
   Lock,
   Minimize2,
   MessageSquare,
+  MessageSquareOff,
   Newspaper,
   Palette,
   PanelTop,
@@ -476,6 +477,25 @@ export const ALL_TOOLS: ToolDef[] = [
     tags: {
       en: ["reverse order", "flip pages", "backwards"],
       hi: ["उल्टा", "reverse", "ulta"],
+    },
+  }),
+  def({
+    id: "duplex-collate",
+    category: "organize",
+    mode: "D",
+    phase: "P2",
+    icon: ArrowRightLeft,
+    popularity: 24,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Duplex collate", hi: "डुप्लेक्स कोलेट" },
+    description: {
+      en: "Two-block duplex scan (fronts then backs) back into 1, 2, 3 order.",
+      hi: "दो-हिस्सों वाला डुप्लेक्स स्कैन (पहले अगले, फिर पिछले) वापस 1, 2, 3 क्रम में।",
+    },
+    tags: {
+      en: ["duplex scan", "collate pages", "double sided scan fix"],
+      hi: ["डुप्लेक्स स्कैन", "duplex", "collate"],
     },
   }),
   def({
@@ -1215,6 +1235,25 @@ export const ALL_TOOLS: ToolDef[] = [
     tags: { en: ["flatten forms", "annotations"], hi: ["फ़्लैटन", "flatten"] },
   }),
   def({
+    id: "remove-annotations",
+    category: "edit",
+    mode: "D",
+    phase: "P2",
+    icon: MessageSquareOff,
+    popularity: 26,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Remove annotations", hi: "एनोटेशन हटाएँ" },
+    description: {
+      en: "Strip comments, highlights and drawings — keep links and form fields alive.",
+      hi: "टिप्पणियाँ, हाइलाइट और ड्रॉइंग हटाएँ — लिंक और फ़ॉर्म फ़ील्ड ज़िंदा रहें।",
+    },
+    tags: {
+      en: ["remove comments pdf", "delete highlights", "clean markup"],
+      hi: ["एनोटेशन हटाएँ", "टिप्पणियाँ हटाएँ", "clean pdf"],
+    },
+  }),
+  def({
     id: "pdf-to-pdfa",
     category: "optimize",
     mode: "D",
@@ -1757,6 +1796,25 @@ export const ALL_TOOLS: ToolDef[] = [
     tags: {
       en: ["pdf metadata viewer", "document info", "pdf inspector"],
       hi: ["मेटाडेटा देखें", "metadata", "inspector"],
+    },
+  }),
+  def({
+    id: "page-dimensions",
+    category: "view",
+    mode: "D",
+    phase: "P2",
+    icon: Ruler,
+    popularity: 14,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Page dimensions", hi: "पेज साइज़ पहचानें" },
+    description: {
+      en: "What paper is this PDF? Sizes in mm/inch/pt, orientation, mixed-page detection.",
+      hi: "यह PDF किस पेपर की है? साइज़ mm/इंच/पॉइंट में, दिशा, मिक्स-पेज पहचान।",
+    },
+    tags: {
+      en: ["pdf page size", "check paper size", "a4 or letter"],
+      hi: ["पेज साइज़", "page size", "a4 letter"],
     },
   }),
   def({

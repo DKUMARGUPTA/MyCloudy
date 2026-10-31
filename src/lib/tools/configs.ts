@@ -64,6 +64,9 @@ import { config as rotateCustom } from "../../../tools/rotate-custom/config";
 import { config as pdfsToZip } from "../../../tools/pdfs-to-zip/config";
 import { config as viewMetadata } from "../../../tools/view-metadata/config";
 import { config as changePermissions } from "../../../tools/change-permissions/config";
+import { config as duplexCollate } from "../../../tools/duplex-collate/config";
+import { config as removeAnnotations } from "../../../tools/remove-annotations/config";
+import { config as pageDimensions } from "../../../tools/page-dimensions/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
@@ -194,6 +197,9 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [pdfsToZip.toolId]: pdfsToZip,
   [viewMetadata.toolId]: viewMetadata,
   [changePermissions.toolId]: changePermissions,
+  [duplexCollate.toolId]: duplexCollate,
+  [removeAnnotations.toolId]: removeAnnotations,
+  [pageDimensions.toolId]: pageDimensions,
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,

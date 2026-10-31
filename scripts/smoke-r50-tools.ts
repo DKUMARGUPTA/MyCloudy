@@ -784,3 +784,6 @@ if (fail > 0) {
   console.error("FAILED:", failures);
   process.exit(1);
 }
+// Battery-runner fix (R53): the worker shim keeps the event loop alive —
+// exit explicitly so `timeout bun …` returns 0 on green runs.
+process.exit(0);

@@ -555,6 +555,42 @@ const CURATED: Record<string, CuratedSeo> = {
       "protect pdf from editing",
     ],
   },
+  "duplex-collate": {
+    title: "Duplex Collate PDF Online Free — Fix Double-Sided Scans",
+    description:
+      "Turn a two-block duplex scan (all fronts, then all backs) back into 1, 2, 3 order — book or calendar flip, odd-page blank pad. Free, private, on-device.",
+    keywords: [
+      "duplex collate pdf",
+      "fix double sided scan",
+      "combine front back pages",
+      "pdf collate tool",
+      "reorder duplex scan",
+    ],
+  },
+  "remove-annotations": {
+    title: "Remove Annotations from PDF Online Free — Clean Markup",
+    description:
+      "Strip comments, highlights and drawings from PDF — keep links and form fields alive. Page-range targeting, up to 5 files. Free and fully on-device.",
+    keywords: [
+      "remove annotations from pdf",
+      "delete pdf comments",
+      "remove highlights from pdf",
+      "clean pdf markup",
+      "strip pdf annotations",
+    ],
+  },
+  "page-dimensions": {
+    title: "PDF Page Dimensions Checker Online Free — Size in mm/inch",
+    description:
+      "What paper is this PDF? Every page's size in mm, inches and points, orientation, A4/Letter/Legal detection and mixed-size report. Free, read-only, on-device.",
+    keywords: [
+      "pdf page size checker",
+      "check pdf dimensions",
+      "pdf paper size a4 or letter",
+      "pdf page dimensions in mm",
+      "measure pdf page size",
+    ],
+  },
   "add-page-numbers": {
     title: "Add Page Numbers to PDF Online Free",
     description:
