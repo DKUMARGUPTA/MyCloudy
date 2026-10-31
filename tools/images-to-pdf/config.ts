@@ -1,4 +1,5 @@
 import type { ToolConfig } from "@/lib/tools/config-types";
+import { FIT_MODE_OPTION } from "../imagegrid/fit-mode-option";
 
 /**
  * Images to PDF (PRD §8.6) — the flagship create tool of the ImageGrid
@@ -61,6 +62,7 @@ export const config: ToolConfig = {
       ],
       default: "small",
     },
+    FIT_MODE_OPTION,
     {
       kind: "select",
       id: "layout",
@@ -99,8 +101,8 @@ export const config: ToolConfig = {
       hi: "खींचकर क्रम बदलें, कोई भी तस्वीर 90° घुमाएँ, A→Z से IMG_101/IMG_100 वाली गड़बड़ ठीक करें।",
     },
     {
-      en: "A4, Letter or fit-to-image pages, margins, two-per-page grid, background colour and page numbers.",
-      hi: "A4, लेटर या तस्वीर-अनुसार पेज, मार्जिन, दो-प्रति-पेज ग्रिड, बैकग्राउंड रंग और पेज नंबर।",
+      en: "A4, Letter or fit-to-image pages, margins, fill-page cropping, two-per-page grid, background colour and page numbers.",
+      hi: "A4, लेटर या तस्वीर-अनुसार पेज, मार्जिन, फ़िल-पेज क्रॉपिंग, दो-प्रति-पेज ग्रिड, बैकग्राउंड रंग और पेज नंबर।",
     },
     {
       en: "Unrotated JPG/PNG files are embedded byte-for-byte — no re-compression, no quality loss.",
@@ -130,6 +132,16 @@ export const config: ToolConfig = {
       a: {
         en: "HEIC decoding depends on your browser: Safari reads iPhone photos natively, some Chrome setups cannot. If it fails, convert to JPG first (Photos → Export, or any converter) — everything else works the same.",
         hi: "HEIC डिकोडिंग ब्राउज़र पर निर्भर है: Safari iPhone तस्वीरें सीधे पढ़ता है, कुछ Chrome सेटअप नहीं कर पाते। अगर न बने, तो पहले JPG में बदलें (Photos → Export या कोई कन्वर्टर) — बाक़ी सब वैसा ही चलेगा।",
+      },
+    },
+    {
+      q: {
+        en: "Why do my pages have blank side borders?",
+        hi: "मेरे पेजों के किनारे खाली क्यों दिखते हैं?",
+      },
+      a: {
+        en: "Phone photos are taller than A4, so fitting the whole photo inside the page leaves side bands. Pick “Fill page (crop edges)” under Image fit to cover the page completely, or switch Page size to “Fit to image” for borderless pages.",
+        hi: "फ़ोन की तस्वीरें A4 से लंबी होती हैं, इसलिए पूरी तस्वीर पेज में रखने पर किनारों पर पट्टियाँ बचती हैं। “तस्वीर फ़िट” में “पेज भरें (किनारे कटें)” चुनें — पेज पूरा ढक जाएगा; या पेज साइज़ “तस्वीर के अनुसार” कर दें — बिना किनारों वाले पेज मिलेंगे।",
       },
     },
     {

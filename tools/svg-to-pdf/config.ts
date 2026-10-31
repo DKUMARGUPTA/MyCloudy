@@ -1,4 +1,5 @@
 import type { ToolConfig } from "@/lib/tools/config-types";
+import { FIT_MODE_OPTION } from "../imagegrid/fit-mode-option";
 import { getSvgRastersInOrder } from "../imagegrid/svg-raster";
 
 /**
@@ -58,6 +59,7 @@ export const config: ToolConfig = {
       ],
       default: "small",
     },
+    FIT_MODE_OPTION,
   ],
   features: [
     {

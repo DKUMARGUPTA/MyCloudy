@@ -6513,3 +6513,78 @@ Ye diagnostic SCREEN ki original purpose (iPhone white-screens) intact hai — f
 ### Pending for owner (blockers noted in CONTEXT-MEMORY)
 - GitHub PAT (fine-grained, Contents R+W) + Vercel token → push ritual (21+1 commits + tags). 
 - GA4: Vercel env NEXT_PUBLIC_GA_ID (first-party analytics already live bina iske).
+
+---
+
+## R44 — IMAGE→PDF DEEP AUDIT + FILL MODE + WATERMARK-FREE BRANDING (2026-10-31)
+
+**THE ROUND:** Owner tested images-to-pdf with 11 phone photos (uploaded
+217148.pdf) — result theek aaya par do asks: (1) "page me side area blank
+hai — deep and advance audit karo", (2) "file name me branding ho sakta hai
+kyunki doc me watermark nahi dena — kya kiya jaye?". Saath me poori app ka
+status report.
+
+### Audit findings (217148.pdf, pypdf/pymupdf pixel-level)
+- 11 pages, A4 + small margin, sab images correctly CENTERED — koi
+  placement bug nahi. Blank bands INHERENT the: 9:16 photos (aspect 0.56)
+  A4 (0.707) pe contain-fit hote hi side bands bachte hain — measured
+  **12–12% per side (pages 1–4), 19.4% per side (page 5, 0.45-aspect),
+  7–10% top/bottom (landscape pages 6/9)**. Page 1 CTM: 70.98pt left +
+  70.99pt right waste.
+- **Metadata EMPTY** — koi /Info hi nahi (Producer/Title nothing) —
+  branding opportunity miss (office converters already set karte the).
+- **Output filename** `${base}.pdf` — no branding (user ko 217148.pdf mila).
+- **Page numbers on dark background** — fixed 0.45 gray on 0.09 dark page
+  = invisible-adjacent contrast.
+
+### Shipped (code)
+1. **Engine: `CreateImageOptions.clip`** (`src/lib/own/pdf/create.ts`) —
+   page-space clip rect (`x y w h re W n` before the image's cm chain,
+   inside the same q/Q). Positive-box validation. Additive — default
+   paths byte-identical.
+2. **imagegrid worker `fitMode` (contain|fill)** — `coverInto()` (max
+   scale) + clip on the cell, one-up AND two-up cells. Original bytes
+   still embed untouched (fill crop = clip, NEVER re-encode — fast path
+   preserved). Fill on "fit" pages degrades to contain math (harmless).
+3. **`tools/imagegrid/fit-mode-option.ts`** NEW — shared OptionField,
+   wired into images-to-pdf + jpg/png/webp/heic/tiff/svg-to-pdf configs
+   (select + bilingual hint). Feature bullet + blank-borders FAQ added.
+4. **Branding (watermark-free, owner rule):** imagegrid outputs now
+   `setProducer/setCreator("DocoPDF") + setTitle(base) +
+   setCreationDate` + output name `${base}-docopdf.pdf`.
+5. **Create-family metadata parity** (same one-liner policy rolled
+   where genuinely authored): txt-to-pdf, markdown-to-pdf, create-pdf,
+   write-pdf, create-card, create-photo-collage, passport-photo,
+   scan-pdf (base computation hoisted above write), ocr (both routes —
+   StampContext route via setInfo/pdfInfoText/pdfInfoDate), translate-pdf,
+   create-invoice (Producer was the only missing field).
+6. **Page-number contrast fix** — light ink (0.72/0.72/0.78) when
+   background=dark.
+
+### QA evidence
+- **smoke-images-to-pdf extended: 131/131** (was ~97) — naye runs: 12
+  (fill: exact clip rect `18 18 805.89 559.28 re W n` + cover cm
+  1118.56 + original-bytes byte-equal), 12b (contain default: NO clip),
+  13 (branding: name holiday-docopdf.pdf + Producer/Creator/Title/
+  CreationDate + zero Tj ops = watermark-free), 14 (dark-bg number ink),
+  part3 wiring (7 configs × FIT_MODE_OPTION + worker reads fitMode +
+  Producer stamp). ⚠️ pdf-lib oracle: `load()` default updateMetadata
+  clobbers Producer — assert with `{updateMetadata:false}`.
+- **Real-engine visual proof (scripts/verify-r44-fill.ts + pixel
+  measure):** 900×1600 photo on A4 — contain 70+71pt side blank (24%
+  side waste) vs fill 18+18pt (sirf margin, 6%) — user ka exact scenario
+  fixed. PDFs: download/r44-contain.pdf, r44-fill.pdf.
+- Targeted smokes GREEN: scan 225/225, passport 332/332, txt2pdf 76/76,
+  md2pdf 57/57, collage 266/266, card 215/215, create-pdf 86/86,
+  write-pdf 109/109, translate 73/73, ocr-invisible 11, ocr-deskew 33,
+  ocr-encrypted 13, ocr-invoice-extract 134, create-invoice all-vectors.
+- Gates: `bunx tsc --noEmit` 0 · full battery r6b (125 smokes) pass.
+- Live E2E (agent-browser): images-to-pdf golden path fill mode +
+  branded download verified (qa-r44-*.png).
+
+### Decisions locked (owner ask #2 ka jawab)
+- **Doc me watermark NAHI** (owner rule) — branding rides metadata +
+  filename (`-docopdf` suffix, user ka naam pehle). Industry-par: iLovePDF
+  bhi filename-brand karta hai (iLovePDF_merged.pdf).
+- Contain hi DEFAULT rahta hai (fill opt-in) — photos ka kuch bhi kaat
+  na paye bina user ke bole.

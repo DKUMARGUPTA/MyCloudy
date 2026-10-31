@@ -833,6 +833,7 @@ export async function drawInvoice(
   renderStamp(deps);
   doc.setTitle(run.s.no || "Invoice");
   if (run.s.biz.name) doc.setAuthor(run.s.biz.name);
+  doc.setProducer("DocoPDF");
   doc.setCreator("DocoPDF");
   doc.setCreationDate(new Date());
   return c;

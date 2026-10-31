@@ -150,6 +150,11 @@ async function run(request: WorkerRunRequest): Promise<void> {
       });
     }
 
+    // R44 branding — metadata + filename only; the document stays clean.
+    ctx.setProducer("DocoPDF");
+    ctx.setCreator("DocoPDF");
+    ctx.setTitle(file.base);
+    ctx.setCreationDate(new Date());
     const saved = ctx.write();
     outputs.push({
       name: `${file.base}.pdf`,

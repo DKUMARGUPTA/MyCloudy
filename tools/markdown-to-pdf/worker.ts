@@ -368,6 +368,11 @@ async function run(request: WorkerRunRequest): Promise<void> {
     totalEmbedded += result.imageCount;
     totalSkipped += result.imagesSkipped;
 
+    // R44 branding — metadata + filename only; the document stays clean.
+    doc.setProducer("DocoPDF");
+    doc.setCreator("DocoPDF");
+    doc.setTitle(file.base);
+    doc.setCreationDate(new Date());
     const saved = doc.write();
     outputs.push({
       name: `${file.base}.pdf`,

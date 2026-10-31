@@ -2,6 +2,8 @@ import {
   CreateContext,
   PdfError,
   StampContext,
+  pdfInfoDate,
+  pdfInfoText,
 } from "@/lib/own/pdf";
 
 import {
@@ -491,6 +493,11 @@ async function runOcrPdf(request: WorkerRunRequest): Promise<void> {
       totalPages += 1;
     }
     post({ type: "progress", runId, pct: 95, stage: "saving" });
+    // R44 branding — metadata only; the document stays clean.
+    pdf.setProducer("DocoPDF");
+    pdf.setCreator("DocoPDF");
+    pdf.setTitle(`${sanitizeBase(files[imageInputs[0].fileIndex].name)}-ocr`);
+    pdf.setCreationDate(new Date());
     const saved = pdf.write();
     outputs.push({
       name: `${sanitizeBase(files[imageInputs[0].fileIndex].name)}-ocr.pdf`,
@@ -541,6 +548,14 @@ async function runOcrPdf(request: WorkerRunRequest): Promise<void> {
         );
         totalPages += 1;
       }
+      // R44 branding — metadata only; the document stays clean. The
+      // StampContext route authors the Info dict through setInfo (P6-u).
+      ctx.setInfo([
+        ["Producer", pdfInfoText("DocoPDF")],
+        ["Creator", pdfInfoText("DocoPDF")],
+        ["Title", pdfInfoText(`${sanitizeBase(files[input.fileIndex].name)}-ocr`)],
+        ["CreationDate", pdfInfoDate(new Date())],
+      ]);
       const saved = ctx.write();
       outputs.push({
         name: `${sanitizeBase(files[input.fileIndex].name)}-ocr.pdf`,

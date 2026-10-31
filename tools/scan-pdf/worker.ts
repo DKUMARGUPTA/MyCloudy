@@ -249,7 +249,6 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   post({ type: "progress", runId, pct: 95, stage: "saving" });
-  const saved = pdf.write();
 
   // Name: the user's document name (Round-7 "Doc name"), else the first
   // source's base name, unless it is one of our own camera captures
@@ -263,6 +262,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
     if (/^scan(-|_)|^page(-|_)/i.test(base)) base = "scan";
   }
   const safeBase = base.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 120) || "scan";
+
+  // R44 branding — metadata only; the document stays clean.
+  pdf.setProducer("DocoPDF");
+  pdf.setCreator("DocoPDF");
+  pdf.setTitle(safeBase);
+  pdf.setCreationDate(new Date());
+  const saved = pdf.write();
 
   post({
     type: "result",

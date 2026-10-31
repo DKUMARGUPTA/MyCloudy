@@ -72,6 +72,18 @@ full tool implementations. Sitemap auto-drops the 3 URLs; live count =
   referrer buckets) + admin Analytics dashboard (30-day series, top pages,
   traffic sources, devices, locales, tool health from UsageEvent). GA4
   consent-gated via `NEXT_PUBLIC_GA_ID` (owner sets on Vercel).
+- **Image→PDF fill mode + branding (R44):** "Image fit" option
+  (`fitMode`) on images-to-pdf + every imagegrid preset (jpg/png/webp/
+  heic/tiff/svg) — contain (default) or fill. Fill = cover-crop via a
+  page-space clip (`re W n`) ahead of the image cm chain, so A4 pages with
+  9:16 phone photos lose their 12–24% blank side bands while the ORIGINAL
+  image bytes still embed untouched (crop = clip, never a re-encode).
+  Create-side outputs brand watermark-free (owner rule): PDF metadata
+  (Producer/Creator "DocoPDF", Title = original base, CreationDate) +
+  `-docopdf` output-name suffix — rolled across the whole create family
+  (imagegrid, txt/markdown/create/write-pdf, card, collage, passport,
+  scan, ocr, translate, invoice; ocr's StampContext route uses
+  `setInfo`). Page numbers now use light ink on the dark background.
 - **Privacy beacons:** UsageEvent/AnonUsage aggregates + PageView — all
   metadata-only, no file content ever.
 - **Mini-services:** convert (office/webpage→pdf), request-sign envelopes.

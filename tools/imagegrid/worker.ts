@@ -400,6 +400,22 @@ function fitInto(
   return { x: cell.x + (cell.w - w) / 2, y: cell.y + (cell.h - h) / 2, w, h };
 }
 
+/**
+ * Cover-fit `image` into a cell, centered — the LARGER scale wins, so the
+ * image fully covers the cell and the overflowing edges crop away. The
+ * caller pairs this with a page-space clip on the cell (drawImage clip),
+ * which keeps the original bytes embedded (no re-encode for a crop).
+ */
+function coverInto(
+  image: { width: number; height: number },
+  cell: { x: number; y: number; w: number; h: number }
+): { x: number; y: number; w: number; h: number } {
+  const scale = Math.max(cell.w / image.width, cell.h / image.height);
+  const w = image.width * scale;
+  const h = image.height * scale;
+  return { x: cell.x + (cell.w - w) / 2, y: cell.y + (cell.h - h) / 2, w, h };
+}
+
 /** Maps a TiffError to the honest i18n code (detail = file name). */
 function tiffErrorCode(error: TiffError): string {
   if (error.kind === "tiff-corrupt") return "tool.images.errorTiffCorrupt";
@@ -428,8 +444,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const margin = MARGIN_PT[String(options.margin ?? "small")] ?? 18;
   const twoUp = String(options.layout ?? "one") === "two";
   const background = BG_RGB[String(options.background ?? "white")] ?? BG_RGB.white;
+  const backgroundKey = String(options.background ?? "white");
   const pageNumbers = options.pageNumbers === true;
   const pagesSpec = String(options.pages ?? "all");
+  // "fill" = cover the whole cell and crop the overflow (clip-based — the
+  // original bytes still embed untouched). On "fit" pages the cell already
+  // matches the image shape, so fill degrades to the same math as contain.
+  const fill = String(options.fitMode ?? "contain") === "fill";
 
   /* ---------------- file classification (bytes, once) ---------------- */
 
@@ -631,26 +652,34 @@ async function run(request: WorkerRunRequest): Promise<void> {
           w: cellW,
           h: cellH,
         };
-        const box = fitInto(prepared[i], cell);
+        const box = fill ? coverInto(prepared[i], cell) : fitInto(prepared[i], cell);
         const img = embed(prepared[i]);
         // width/height are explicit — w/h from fitInto would otherwise draw
-        // the image at its native pixel size (the P4.4 rule, kept).
+        // the image at its native pixel size (the P4.4 rule, kept). Fill
+        // mode adds a page-space clip on the cell so the cover overflow
+        // crops instead of spilling over the page/margins.
         page.drawImage(img, {
           x: box.x,
           y: box.y,
           width: box.w,
           height: box.h,
+          ...(fill
+            ? { clip: { x: cell.x, y: cell.y, width: cell.w, height: cell.h } }
+            : {}),
         });
       }
     } else {
       const cell = { x: margin, y: margin, w: pageW - margin * 2, h: pageH - margin * 2 };
-      const box = fitInto(prepared[0], cell);
+      const box = fill ? coverInto(prepared[0], cell) : fitInto(prepared[0], cell);
       const img = embed(prepared[0]);
       page.drawImage(img, {
         x: box.x,
         y: box.y,
         width: box.w,
         height: box.h,
+        ...(fill
+          ? { clip: { x: cell.x, y: cell.y, width: cell.w, height: cell.h } }
+          : {}),
       });
     }
 
@@ -665,6 +694,10 @@ async function run(request: WorkerRunRequest): Promise<void> {
 
   if (pageNumbers) {
     const total = ctx.pageCount;
+    // Light ink on the dark background, dark ink everywhere else — the
+    // fixed 0.45 gray vanished into the 0.09 dark page.
+    const numberColor =
+      backgroundKey === "dark" ? { r: 0.72, g: 0.72, b: 0.78 } : { r: 0.45, g: 0.45, b: 0.5 };
     for (let i = 0; i < created.length; i += 1) {
       const label = `${i + 1} / ${total}`;
       const size = ctx.measure(label, "helvetica", 9);
@@ -674,22 +707,32 @@ async function run(request: WorkerRunRequest): Promise<void> {
         text: label,
         size: 9,
         font: "helvetica",
-        color: { r: 0.45, g: 0.45, b: 0.5 },
+        color: numberColor,
       });
     }
   }
 
   post({ type: "progress", runId, pct: 95, stage: "saving" });
-  const saved = ctx.write();
   const base = files[entries[0].source].name.replace(/\.[^.]+$/, "") || "images";
   const safeBase = base.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 120) || "images";
+
+  // Branding (R44): the DOCUMENT stays watermark-free (owner rule), the
+  // branding rides the metadata + filename instead — same policy the
+  // office converters already follow (Producer/Creator/Title/CreationDate
+  // + a lowercase -docopdf suffix on the output name).
+  ctx.setProducer("DocoPDF");
+  ctx.setCreator("DocoPDF");
+  ctx.setTitle(safeBase);
+  ctx.setCreationDate(new Date());
+
+  const saved = ctx.write();
 
   post({
     type: "result",
     runId,
     outputs: [
       {
-        name: `${safeBase}.pdf`,
+        name: `${safeBase}-docopdf.pdf`,
         mime: "application/pdf",
         blob: new Blob([saved as unknown as BlobPart], {
           type: "application/pdf",

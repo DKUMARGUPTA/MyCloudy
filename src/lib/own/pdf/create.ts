@@ -168,6 +168,13 @@ export interface CreateImageOptions {
   height: number;
   opacity?: number;
   rotate?: number;
+  /**
+   * Page-space clip applied around the image draw — cover/fill layouts
+   * place the image larger than its cell and crop the overflow. The rect
+   * is expressed in UNTRANSFORMED page coordinates (the `re W n` pair is
+   * emitted before the image's own `cm` chain, inside the same q/Q).
+   */
+  clip?: { x: number; y: number; width: number; height: number };
 }
 
 /**
@@ -1193,6 +1200,17 @@ class CreatePageImpl implements CreatePage {
     ) {
       throw new PdfError("corrupt", "drawImage box must be positive");
     }
+    if (opts.clip !== undefined) {
+      const c = opts.clip;
+      if (
+        typeof c.x !== "number" || typeof c.y !== "number" ||
+        typeof c.width !== "number" || typeof c.height !== "number" ||
+        !Number.isFinite(c.width) || !Number.isFinite(c.height) ||
+        c.width <= 0 || c.height <= 0
+      ) {
+        throw new PdfError("corrupt", "drawImage clip box must be positive");
+      }
+    }
     if (!image || !this.ctx.hasToken(image.token)) {
       throw new PdfError("corrupt", "drawImage: unknown image handle");
     }
@@ -1204,11 +1222,21 @@ class CreatePageImpl implements CreatePage {
     const angle = ((opts.rotate ?? 0) * Math.PI) / 180;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
+    const clip = opts.clip;
 
     this.ctx.push(
       this.rec,
       [
         "q",
+        // The clip rect lives in page space — it must precede the image's
+        // own cm chain so the crop window is exactly the cell, not the
+        // transformed image box. `re W n` = rect → clip → no-paint end.
+        ...(clip
+          ? [
+              `${pdfNumToString(clip.x)} ${pdfNumToString(clip.y)} ` +
+                `${pdfNumToString(clip.width)} ${pdfNumToString(clip.height)} re W n`,
+            ]
+          : []),
         ...(gsKey ? [`/${gsKey} gs`] : []),
         `1 0 0 1 ${pdfNumToString(opts.x)} ${pdfNumToString(opts.y)} cm`,
         `${pdfNumToString(cos)} ${pdfNumToString(sin)} ${pdfNumToString(-sin)} ${pdfNumToString(cos)} 0 0 cm`,

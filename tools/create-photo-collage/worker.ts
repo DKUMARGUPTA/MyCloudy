@@ -346,6 +346,11 @@ async function run(request: WorkerRunRequest): Promise<void> {
   }
 
   post({ type: "progress", runId, pct: 96, stage: "saving" });
+  // R44 branding — metadata only; the document stays clean.
+  pdf.setProducer("DocoPDF");
+  pdf.setCreator("DocoPDF");
+  pdf.setTitle(baseName.replace(/\.[^.]+$/, ""));
+  pdf.setCreationDate(new Date());
   const saved = pdf.write();
   post({
     type: "result",

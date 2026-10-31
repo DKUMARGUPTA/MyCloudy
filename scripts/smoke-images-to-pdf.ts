@@ -964,6 +964,113 @@ async function part2(): Promise<void> {
       text.slice(0, 120)
     );
   }
+
+  /* ---- 12. R44: fill mode — cover-fit + page-space clip, no re-encode ---- */
+  {
+    // 40×20 image on A4 (auto → landscape 841.89×595.28, margin 18):
+    // cell 805.89×559.28; cover scale = 559.28/20 → drawn width 1118.56
+    // EXCEEDS the cell and must be clipped to it — the blank side bands die.
+    const run = await runWorker(
+      [new FakeFile("wide.jpg", plainJpeg)],
+      { pageSize: "a4", fitMode: "fill" }
+    );
+    assert(run.error === null, "run 12 (fill): no error", run.error);
+    const { pages, images } = await openAndInspect(run);
+    assert(
+      Math.abs(pages[0].w - 841.89) < 0.5 && Math.abs(pages[0].h - 595.28) < 0.5,
+      "run 12: A4 landscape page",
+      pages[0]
+    );
+    const doc = await PDFDocument.load(
+      new Uint8Array(await run.result!.outputs![0].blob.arrayBuffer())
+    );
+    const text = (await libPageText(doc, 0)).join(" ");
+    assert(
+      /18 18 805\.89 559\.28 re W n/.test(text),
+      "run 12: clip rect on the exact cell (re W n)",
+      text.slice(0, 300)
+    );
+    assert(
+      /1118\.5\d* 0 0 559\.2\d* 0 0 cm/.test(text),
+      "run 12: cover scale — drawn width exceeds the cell",
+      text.slice(0, 300)
+    );
+    assert(
+      Buffer.from(images[0].contents).equals(Buffer.from(plainJpeg)),
+      "run 12: fill crops by CLIP — original bytes still embedded"
+    );
+  }
+
+  /* ---- 12b. R44: default contain — NO clip op in the stream ---- */
+  {
+    const run = await runWorker(
+      [new FakeFile("wide.jpg", plainJpeg)],
+      { pageSize: "a4" }
+    );
+    assert(run.error === null, "run 12b (contain): no error", run.error);
+    const doc = await PDFDocument.load(
+      new Uint8Array(await run.result!.outputs![0].blob.arrayBuffer())
+    );
+    const text = (await libPageText(doc, 0)).join(" ");
+    assert(
+      !/ re W n/.test(text),
+      "run 12b: contain default emits no clip",
+      text.slice(0, 300)
+    );
+  }
+
+  /* ---- 13. R44: branding — metadata + output filename, no watermark ---- */
+  {
+    const run = await runWorker(
+      [new FakeFile("holiday.jpg", plainJpeg)],
+      { pageSize: "fit", margin: "none" }
+    );
+    assert(run.error === null, "run 13 (branding): no error", run.error);
+    assert(
+      run.result?.outputs?.[0]?.name === "holiday-docopdf.pdf",
+      "run 13: output filename carries the -docopdf suffix",
+      run.result?.outputs?.[0]?.name
+    );
+    const doc = await PDFDocument.load(
+      new Uint8Array(await run.result!.outputs![0].blob.arrayBuffer()),
+      // updateMetadata:false — pdf-lib's load() otherwise clobbers Producer
+      // with its own default before we can read OUR Info dict.
+      { updateMetadata: false }
+    );
+    assertEqual(doc.getProducer(), "DocoPDF", "run 13: Producer");
+    assertEqual(doc.getCreator(), "DocoPDF", "run 13: Creator");
+    assertEqual(doc.getTitle(), "holiday", "run 13: Title = original base");
+    assert(
+      doc.getCreationDate() !== undefined,
+      "run 13: CreationDate stamped"
+    );
+    // The document body itself stays watermark-free: only ONE image XObject
+    // and no extra text draws beyond the page content already asserted.
+    const text = (await libPageText(doc, 0)).join(" ");
+    assert(
+      !/ Tj/.test(text),
+      "run 13: no text ops — zero watermark on the page",
+      text.slice(0, 200)
+    );
+  }
+
+  /* ---- 14. R44: page numbers on dark bg — light ink contrast ---- */
+  {
+    const run = await runWorker(
+      [new FakeFile("a.jpg", plainJpeg)],
+      { pageSize: "a4", background: "dark", pageNumbers: true }
+    );
+    assert(run.error === null, "run 14 (numbers on dark): no error", run.error);
+    const doc = await PDFDocument.load(
+      new Uint8Array(await run.result!.outputs![0].blob.arrayBuffer())
+    );
+    const text = (await libPageText(doc, 0)).join(" ");
+    assert(
+      /0\.72 0\.72 0\.78 rg/.test(text),
+      "run 14: light number ink on the dark background",
+      text.slice(0, 400)
+    );
+  }
 }
 
 /* ================================================================== */
@@ -998,6 +1105,41 @@ async function part3(): Promise<void> {
       ocrCfg
     ),
     "ocr-pdf chains to edit-pdf first"
+  );
+  // R44 wiring: every imagegrid preset carries the shared fitMode option
+  // (contain vs fill) and the worker actually reads it.
+  const fitModeConfigs: Array<[string, string]> = [
+    ["images-to-pdf", imagesCfg],
+    ["jpg-to-pdf", jpgCfg],
+    ["png-to-pdf", read("tools/png-to-pdf/config.ts")],
+    ["webp-to-pdf", read("tools/webp-to-pdf/config.ts")],
+    ["heic-to-pdf", read("tools/heic-to-pdf/config.ts")],
+    ["tiff-to-pdf", read("tools/tiff-to-pdf/config.ts")],
+    ["svg-to-pdf", read("tools/svg-to-pdf/config.ts")],
+  ];
+  for (const [slug, cfg] of fitModeConfigs) {
+    assert(
+      cfg.includes("FIT_MODE_OPTION,"),
+      `${slug}: FIT_MODE_OPTION wired into options`
+    );
+  }
+  const fitModeShared = read("tools/imagegrid/fit-mode-option.ts");
+  assert(
+    /id: "fitMode"/.test(fitModeShared),
+    "fit-mode-option exports the fitMode id"
+  );
+  assert(
+    /value: "fill"/.test(fitModeShared),
+    "fit-mode-option offers the fill choice"
+  );
+  const imagegridWorker = read("tools/imagegrid/worker.ts");
+  assert(
+    imagegridWorker.includes("options.fitMode"),
+    "imagegrid worker reads options.fitMode"
+  );
+  assert(
+    imagegridWorker.includes('setProducer("DocoPDF")'),
+    "imagegrid worker stamps the DocoPDF Producer"
   );
   // Every chain target must be a real registered tool id.
   for (const id of [

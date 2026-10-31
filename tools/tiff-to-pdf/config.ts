@@ -1,4 +1,5 @@
 import type { ToolConfig } from "@/lib/tools/config-types";
+import { FIT_MODE_OPTION } from "../imagegrid/fit-mode-option";
 
 /**
  * TIFF to PDF — ImageGrid preset over the shared images→PDF worker, built
@@ -59,6 +60,7 @@ export const config: ToolConfig = {
       ],
       default: "small",
     },
+    FIT_MODE_OPTION,
     {
       kind: "pages",
       id: "pages",
