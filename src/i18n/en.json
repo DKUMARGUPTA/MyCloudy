@@ -401,7 +401,8 @@
     "errorTranslateTimeout": "A translation batch took too long and the run was stopped. Check your connection and retry — or translate fewer pages.",
     "errorTranslateAi": "The translation service is not answering right now. Check your connection and try again.",
     "errorTranslateNotConfigured": "The translation service is not enabled on the server yet. Please check back soon.",
-    "errorNoFile": "No file was received — add one and try again."
+    "errorNoFile": "No file was received — add one and try again.",
+    "errorNothingToDo": "There's nothing to do for this file — try a document with more pages, or pick at least one option."
   },
   "result": {
     "title": "Your file is ready!",

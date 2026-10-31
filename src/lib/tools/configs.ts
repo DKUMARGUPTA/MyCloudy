@@ -44,6 +44,12 @@ import { config as ocrPdf } from "../../../tools/ocr-pdf/config";
 import { config as compressPdfToSize } from "../../../tools/compress-pdf-to-size/config";
 import { config as pagesPerSheet } from "../../../tools/pages-per-sheet/config";
 import { config as halvePdfPages } from "../../../tools/halve-pdf-pages/config";
+import { config as reversePdfPages } from "../../../tools/reverse-pdf-pages/config";
+import { config as addBlankPage } from "../../../tools/add-blank-page/config";
+import { config as dividePage } from "../../../tools/divide-page/config";
+import { config as combineSinglePage } from "../../../tools/combine-single-page/config";
+import { config as bookletPdf } from "../../../tools/booklet-pdf/config";
+import { config as sanitizePdf } from "../../../tools/sanitize-pdf/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
@@ -154,6 +160,12 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [compressPdfToSize.toolId]: compressPdfToSize,
   [pagesPerSheet.toolId]: pagesPerSheet,
   [halvePdfPages.toolId]: halvePdfPages,
+  [reversePdfPages.toolId]: reversePdfPages,
+  [addBlankPage.toolId]: addBlankPage,
+  [dividePage.toolId]: dividePage,
+  [combineSinglePage.toolId]: combineSinglePage,
+  [bookletPdf.toolId]: bookletPdf,
+  [sanitizePdf.toolId]: sanitizePdf,
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,

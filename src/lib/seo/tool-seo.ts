@@ -315,6 +315,78 @@ const CURATED: Record<string, CuratedSeo> = {
       "pdf cut and paste pages",
     ],
   },
+  "reverse-pdf-pages": {
+    title: "Reverse PDF Pages Online Free — Flip Page Order",
+    description:
+      "Reverse the page order of any PDF in one tap — last page becomes first. Free PDF page reverser, processed entirely on your device.",
+    keywords: [
+      "reverse pdf pages",
+      "flip pdf page order",
+      "invert pdf pages",
+      "reverse page order pdf",
+      "backwards pdf",
+    ],
+  },
+  "add-blank-page": {
+    title: "Add Blank Page to PDF Online Free",
+    description:
+      "Insert blank pages into a PDF — at the start, end or after any page, sized to match. Free, instant and on-device.",
+    keywords: [
+      "add blank page to pdf",
+      "insert empty page pdf",
+      "add page to pdf",
+      "blank page insert pdf",
+      "insert page in pdf free",
+    ],
+  },
+  "divide-page": {
+    title: "Divide PDF Page Online Free — Split into Columns or Grid",
+    description:
+      "Cut PDF pages into 2, 3 or 4 pieces — columns, rows or a grid. Content stays sharp and selectable. Free, on-device.",
+    keywords: [
+      "divide pdf page",
+      "split pdf page into parts",
+      "cut pdf page in half",
+      "pdf page splitter columns",
+      "divide pdf into sections",
+    ],
+  },
+  "combine-single-page": {
+    title: "Combine PDF into One Page Online Free",
+    description:
+      "Stitch every page of a PDF into one long page — vertical scroll or horizontal strip. Text stays selectable. Free and on-device.",
+    keywords: [
+      "combine pdf into one page",
+      "merge pdf pages into single page",
+      "pdf one long page",
+      "stitch pdf pages together",
+      "pdf continuous page",
+    ],
+  },
+  "booklet-pdf": {
+    title: "Create PDF Booklet Online Free — Saddle-Stitch Order",
+    description:
+      "Turn any PDF into a print-ready booklet: pages rearranged for fold-and-staple, blanks padded automatically. Free, on-device.",
+    keywords: [
+      "pdf booklet maker",
+      "create booklet from pdf",
+      "saddle stitch pdf",
+      "pdf booklet printing",
+      "fold and staple pdf",
+    ],
+  },
+  "sanitize-pdf": {
+    title: "Sanitize PDF Online Free — Remove Hidden Data",
+    description:
+      "One tap strips comments, links, form fields, metadata, hidden page data and embedded scripts from a PDF. Free and on-device.",
+    keywords: [
+      "sanitize pdf",
+      "clean pdf metadata and annotations",
+      "remove hidden data pdf",
+      "strip pdf annotations",
+      "pdf privacy clean",
+    ],
+  },
   "add-page-numbers": {
     title: "Add Page Numbers to PDF Online Free",
     description:

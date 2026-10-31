@@ -6777,3 +6777,87 @@ upgrade CTA ya limit nudge nahi dikhega.
 - Billing API routes / plans.ts / limits server route UNTOUCHED (billing
   freeze respected — sirf frontend display logic).
 - QA JWT scripts (scripts/make-session*.ts) post-E2E deleted — repo clean.
+
+## R48 — BENTOPDF-INSPIRED BATCH 1: 6 NEW OWN-ENGINE TOOLS (2026-10-31)
+
+**Trigger:** owner ne reference repo diya (github.com/alam00000/bentopdf) —
+"dekhо isme kya kya hai tumhare kaam ka, par kuch bhi COPY ya DEPENDENT
+nahi — sab khud ka own code, zero risk, upgrade only." Pehle current
+state push kiya (31d3092..1883198 + 28 tags), phir audit, phir Batch 1.
+
+### Audit (inspection only — /tmp clone, ZERO code copied)
+- BentoPDF = AGPL-3.0 + commercial dual-license, Vite static SPA, 375MB,
+  CDN-loaded AGPL engines (PyMuPDF/Ghostscript/CPDF), 50+ tools, 13
+  translations, Docker/airgap deploys, workflow builder, SW offline.
+- **License conclusion:** AGPL code copy STRICTLY forbidden (humara
+  proprietary repo) — sirf feature/UX ideas, sab kuch apne own micro-engine
+  (src/lib/own/pdf) pe likha gaya. Zero new npm deps.
+- Gaps hamare paas nahi the (selected): reverse pages, add blank page,
+  divide page (N-way), combine-to-single-page, booklet imposition,
+  sanitize PDF, + future: bates numbering, pdfs-to-zip, CBZ, EML→PDF,
+  table extraction, raster color tools (invert/greyscale/scanner effect),
+  programmatic SEO pages (compress-to-100kb style), SW/PWA, settings
+  modal, workflow builder.
+- Humara edge (unke paas nahi): invoice/GST suite, photo tools, accounts
+  + admin + analytics + accounting, bilingual EN/HI Devanagari.
+
+### Shipped — 6 tools, 100% own engine, zero new deps
+1. **reverse-pdf-pages** (organize) — one-tap order flip. organizePages
+   reversed plan; <2 pages → honest `tool.errorNothingToDo` refusal.
+2. **add-blank-page** (organize) — start/end/after/before N, count 1–20;
+   blanks sized via `blank-from` (neighbour page ka size). Invalid anchor
+   → errorInvalidPages.
+3. **divide-page** (organize) — halve engine ko generalize kiya: 2/3/4
+   pieces, vertical/horizontal/grid; display-space planning +
+   displayToUser /Rotate-aware mapping (halve ka proven math reuse);
+   MediaBox/CropBox window + Bleed/Trim/Art clamp overrides; page-range
+   pick, non-selected pages pass through whole.
+4. **combine-single-page** (organize) — ComposeContext stitching: har page
+   Form XObject (embed once), width-fill scale, vertical scroll /
+   horizontal strip, optional hairline gap; 14,400pt PDF page cap pe
+   automatic strip pagination (kabhi kuch cut nahi hota); N-up wala
+   /Rotate-aware anchor quadrant math verbatim.
+5. **booklet-pdf** (organize) — saddle-stitch imposition: pad to ×4
+   trailing blanks + order n,1,2,n−1,n−2,3,… (pure `bookletOrder`,
+   smoke-pinned). Reorder-only design (zero-risk) — print instructions
+   features/FAQ me.
+6. **sanitize-pdf** (security) — batch 5: rebuild hi sanitization hai —
+   fresh catalog (no /OpenAction//Names//AcroForm), no Info/XMP passed,
+   per-page /Annots + /PieceInfo + /Metadata null overrides (spec-absent).
+   Content byte-exact. All-switches-off → honest refusal.
+
+### Central wiring
+- registry.ts ×6 def() (organize ×5 after halve, security sanitize;
+  icons sab already imported the), configs.ts ×6, tool-seo.ts ×6 curated
+  (title/desc/keywords), sitemap auto (registry-driven — verified).
+- i18n: `tool.errorNothingToDo` (en+hi) via scripts/merge-r48-i18n.ts —
+  parity 5229/5229 ✓.
+- Banner count: 100 → **106 tools live** (auto-computed).
+
+### Gates + E2E (sab green)
+- `bunx tsc --noEmit` = 0 · `bun run lint` = 0 · dev.log clean.
+- **scripts/smoke-r48-tools.ts (NEW, 57 checks):** real workers driven
+  via self-shimmed globalThis (smoke-split convention), pdf-lib dev-oracle
+  only. Verified: reversed widths, blank size+emptiness+positions, divide
+  12/7/54-piece modes + exact sizes, combine stitched height ≈ 490
+  (width-fill formula) + 2-page single sheet + 1-page refusal, booklet
+  saddle order widths [600,100,200,600,600,300,400,500] + empty padding
+  blanks, sanitize annotations+metadata stripped (raw-bytes UTF-8/UTF-16
+  hex scan — pdf-lib load Info default pitfall documented) + content
+  widths kept + refusals.
+- **agent-browser E2E:** 6/6 golden paths — reversed(5p) → with-blanks(6p)
+  → divided(10p) → combined(1p) → booklet(8p) → sanitized(5p), "Your file
+  is ready!" sab pe; homepage 200 + 106 tools; merge-pdf regression ok;
+  mobile 390px no-overflow + 44px CTA touch target; console 0 errors.
+  Screenshots: download/qa-r48-*.png.
+- Post-E2E fix: sanitize result detail pages count (outputs.length →
+  totalPages) — display-only.
+
+### Discipline
+- ZERO code/dep from bentopdf (AGPL) — sirf ideas. Own engine everywhere.
+- Billing freeze untouched. Sab 6 tools free-tier, no Pro gating.
+
+### Next (Batch 2 candidates)
+bates-numbering · pdfs-to-zip · raster color family (invert/greyscale/
+scanner effect) · programmatic SEO landing pages · SW/PWA offline ·
+CBZ/EML importers · workflow builder (phase-wise).
