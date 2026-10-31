@@ -908,6 +908,42 @@ const CURATED: Record<string, CuratedSeo> = {
       "excel to pdf converter free",
     ],
   },
+  "csv-to-pdf": {
+    title: "CSV to PDF Converter Online Free — Table from Data",
+    description:
+      "Turn CSV data into a clean table PDF — comma, semicolon or tab, quoted cells and line breaks honoured. Free, on-device, no signup.",
+    keywords: [
+      "csv to pdf",
+      "csv to pdf converter",
+      "convert csv to pdf online",
+      "tsv to pdf",
+      "comma separated to pdf",
+    ],
+  },
+  "json-to-pdf": {
+    title: "JSON to PDF Converter Online Free — Data to Table",
+    description:
+      "JSON exports and NDJSON logs as table PDFs — records, arrays and key/value shapes auto-detected. Free, private, no upload.",
+    keywords: [
+      "json to pdf",
+      "json to pdf converter",
+      "convert json to pdf online",
+      "ndjson to pdf",
+      "json array to pdf table",
+    ],
+  },
+  "xml-to-pdf": {
+    title: "XML to PDF Converter Online Free — Feeds and Configs",
+    description:
+      "XML feeds and config files as table PDFs — repeated records or a flattened path view, namespaces handled. Free, on-device.",
+    keywords: [
+      "xml to pdf",
+      "xml to pdf converter",
+      "convert xml to pdf online",
+      "xml to table pdf",
+      "sitemap xml to pdf",
+    ],
+  },
   "pdf-to-excel": {
     title: "PDF to Excel Converter — Extract Tables Free",
     description:

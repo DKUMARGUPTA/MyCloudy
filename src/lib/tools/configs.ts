@@ -100,6 +100,9 @@ import { config as createResume } from "../../../tools/create-resume/config";
 import { config as wordToPdf } from "../../../tools/word-to-pdf/config";
 import { config as pdfToWord } from "../../../tools/pdf-to-word/config";
 import { config as excelToPdf } from "../../../tools/excel-to-pdf/config";
+import { config as csvToPdf } from "../../../tools/csv-to-pdf/config";
+import { config as jsonToPdf } from "../../../tools/json-to-pdf/config";
+import { config as xmlToPdf } from "../../../tools/xml-to-pdf/config";
 import { config as pdfToExcel } from "../../../tools/pdf-to-excel/config";
 import { config as powerpointToPdf } from "../../../tools/powerpoint-to-pdf/config";
 import { config as rtfToPdf } from "../../../tools/rtf-to-pdf/config";
@@ -237,6 +240,9 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [wordToPdf.toolId]: wordToPdf,
   [pdfToWord.toolId]: pdfToWord,
   [excelToPdf.toolId]: excelToPdf,
+  [csvToPdf.toolId]: csvToPdf,
+  [jsonToPdf.toolId]: jsonToPdf,
+  [xmlToPdf.toolId]: xmlToPdf,
   [pdfToExcel.toolId]: pdfToExcel,
   [powerpointToPdf.toolId]: powerpointToPdf,
   [rtfToPdf.toolId]: rtfToPdf,

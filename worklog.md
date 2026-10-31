@@ -7554,3 +7554,92 @@ CSV; pdfs-to-zip = PDFs passthrough ≠ pdf-to-cbz = raster page archive).
   CBZ = own zip + own render pipeline, JSON = own schema.
 - Billing freeze untouched; all 3 tools free-tier.
 - Next: P3-b import pack (csv/json/xml-to-pdf) per PHASE-PLAN.md.
+
+## R56 — P3-b import pack: csv-to-pdf + json-to-pdf + xml-to-pdf (2026-10-31)
+
+Owner directive continue: "phase-wise sab kuch, zero mistake" — P3-b
+per PHASE-PLAN.md (import pack 1, text-ish data → tabular render).
+Discipline check first: registry grep confirmed NONE of the three ids
+existed (genuine gaps: excel-to-pdf = XLSX workbook ≠ csv-to-pdf =
+plain RFC 4180 text; xml-invoice-to-pdf = UBL/CII formatted invoice
+≠ xml-to-pdf = format-agnostic data table; json-to-pdf net-new).
+
+### Shared core — tools/data-table-common/render.ts (PURE)
+The excel-to-pdf vector painter lifted to plain string grids:
+DataTable {title, header[], rows[][]} + drawDataTablesPdf on the OWN
+engine (CreateContext). Same proven geometry (margins, 5.6pt/char
+column heuristic clamped [40,200], fit-scaling, wrap + char-break +
+ellipsis clip, header 60% page cap, repeated headers on continuation
+pages, zebra, hairline grid, "Page {n} of {m}" footers, faux-bold
+double-draw for Noto). tablesNeedNoto (isWinAnsiText reused from
+excel model). Excel tool UNTOUCHED — zero regression risk.
+
+### Tool 1 — csv-to-pdf (convert-to, accepts text)
+- worker-lib PURE: parseCsvDocument — FULL RFC 4180 (quoted commas,
+  embedded CRLF/LF in quotes, doubled quotes, lone CR, ragged grids,
+  no phantom trailing row); sniffDelimiter (first 50 lines, outside-
+  quotes counting, mode×agreement score, single-column → comma);
+  csvGrid clamps 100 cols / 2000 rows REPORTED; csvBaseName.
+- worker: multi-file (5) → one DataTable per file, UTF-8+BOM decode,
+  DELIMITERS map, face pick, one PDF output titled by first file.
+- Options: delimiter (auto/comma/semicolon/tab), header switch,
+  orientation, pageSize, fit, zebra.
+
+### Tool 2 — json-to-pdf (convert-to, accepts text)
+- worker-lib PURE: six shapes auto-detected — records (union keys
+  first-seen, missing → empty, null → ""), matrix, values, mixed →
+  values, object → Key/Value, scalar. parseNdjson (blank-skipping,
+  any broken line → null) + parseJsonDocument (strict first, NDJSON
+  fallback needs ≥2 lines). jsonCell: nested → compact JSON.
+- Options: orientation, pageSize, fit, zebra (shape is data's own).
+
+### Tool 3 — xml-to-pdf (convert-to, accepts text)
+- Parser REUSED: xml-invoice-to-pdf/xml.ts (our own namespace-aware
+  UBL/CII-grade parser — prolog, CDATA, DOCTYPE skip, entities,
+  prefixed + default ns, BOM). Zero new parsing code.
+- worker-lib PURE: findRecordParent (deepest element with ≥2
+  like-named children — RSS <item>, sitemap <url> cases; deeper
+  wins); recordsTable (@attr columns first, child-name columns
+  first-seen union, text-only records → own name, nested → compact
+  XML via nodeToCompactXml with escaping); leavesTable fallback
+  (Path/Value flattened view for configs); clamps 100/2000.
+
+### Wiring
+- registry: 3 convert-to defs (Table / Braces / FileCode icons,
+  accepts text, enabled, popularity 26/24/22) — **130 total / 129
+  live / 1 deferred (translate only)**. configs.ts 3 imports + map
+  entries. tool-seo 3 honest entries.
+- Count assertions updated: p3a 71/71, r51 77/77, r52 94/94, r53
+  75/75, p2-ai 77/77 (130/129/1).
+- i18n: ZERO new keys — errorNoFile / errorCorrupt / errorGeneric
+  pre-existing in tool.* (en+hi asserted in smoke).
+
+### Gates
+- smoke-p3b-imports NEW: **108/108** (wiring 18 + CSV RFC4180 22 +
+  JSON shapes 21 + XML records/leaves 24 + render pdf-lib-oracle 11
+  + worker discipline 12). tsc: **0**. eslint: **0**.
+- Regression: p3a 71/71 + r51 77/77 + r52 94/94 + r53 75/75 + p2-ai
+  77/77 + excel 27/27 + i18n-params 26/26 GREEN.
+
+### E2E (agent-browser, upload recipe)
+- csv-to-pdf: fixture with quoted commas ("Sharma, Ravi"), doubled
+  quotes (Meera "MJ" Joshi), "East, Zone" cell → Convert → Download
+  → pdf-lib oracle: 1 page, title p3b-csv, ALL quoted cells VERBATIM
+  in the PDF text.
+- json-to-pdf: 3-record fixture incl. vip key only on record 3 →
+  union columns, Anaya/Vikram/Zoya/1250.5/Jaipur verified.
+- xml-to-pdf: product feed with @sku/@stock attrs + <tag> only on
+  P2 → @sku column + Chai/Biroti/Haldi/42.50/new verified.
+- Hindi: /hi/tool/csv-to-pdf full Devanagari (डेलिमिटर, पहली पंक्ति
+  हेडर है, ज़ेबरा स्ट्राइप), search "जेसन" → JSON से पीडीएफ़
+  discoverable, Hindi-UI conversion run green.
+- Mobile 390 (set viewport): upload + options, scrollW 390, NO
+  overflow. Fresh-visits console/page errors: **0** on all three
+  tool pages. dev.log clean (all 200/202). /tools/convert-to lists
+  all three; footer "See all 130 tools".
+
+### Discipline
+- ZERO bentopdf code (AGPL) — shared painter is our excel-render
+  lineage, CSV/XML/JSON engines all hand-rolled per RFC/spec.
+- Billing freeze untouched; all 3 tools free-tier.
+- Next: P3-c import pack 2 (bmp/psd/cbz-to-pdf, EML) per PHASE-PLAN.md.

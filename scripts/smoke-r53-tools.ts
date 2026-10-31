@@ -320,9 +320,9 @@ console.log("── 0. Wiring sanity ──────────────�
   const live = ALL_TOOLS.filter((t) => t.enabled).length;
   const deferred = ALL_TOOLS.filter((t) => !t.enabled).map((t) => t.id);
   check(
-    "tool counts: 127 total / 126 live / 1 deferred AI",
-    ALL_TOOLS.length === 127 &&
-      live === 126 &&
+    "tool counts: 130 total / 129 live / 1 deferred AI",
+    ALL_TOOLS.length === 130 &&
+      live === 129 &&
       JSON.stringify(deferred) ===
         JSON.stringify(["translate-pdf"]),
     { total: ALL_TOOLS.length, live, deferred },
