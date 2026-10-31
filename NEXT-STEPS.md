@@ -22,9 +22,10 @@
 - ~~**P1-a: 6 tools**~~ **DONE (R50)** — bates-numbering, add-stamps,
   background-color, remove-blank-pages, alternate-merge, add-page-labels —
   all live, smoke 78-check + E2E 7/7 green. 112 tools total.
-- **P1-b: raster color family** — `invert-pdf-colors`, `pdf-to-greyscale`,
-  `scanner-effect`, `posterize-pdf` (pdf.js render → pixel transform →
-  rebuild; reuse rasterize-pdf path).
+- ~~**P1-b: raster color family**~~ **DONE (R51)** — invert-pdf-colors,
+  pdf-to-greyscale, scanner-effect, posterize-pdf — live via shared
+  `tools/raster-color-common/` core, smoke 77-check + E2E + VLM
+  pixel-proof green. 116 tools total / 113 live.
 - **P1-c: output pack** — `pdfs-to-zip` (own STORE-zip writer, zero deps)
   + `rotate-custom` (arbitrary angle, not just 90°) + `view-metadata`
   (read-only inspector) + `change-permissions` (perm-only lock).
@@ -88,3 +89,7 @@
 - **R50-plan (2026-10-31):** bentopdf fresh audit → P1-P6 phase roadmap (this rewrite). Owner approved "phase-wise sab kuch implement karo".
 - **R50 (2026-10-31):** P1-a batch — 6 tools (bates/stamps/background/
   blank-pages/alt-merge/page-labels) + P1-P6 roadmap. 112 tools. See worklog R50.
+- **R51 (2026-10-31):** P1-b raster color family — 4 tools (invert/greyscale/
+  scanner/posterize) via new `tools/raster-color-common/` shared core (pure
+  transforms + render pipeline). 116 tools (113 live). Smoke 77/77 + E2E 5/5
+  + VLM pixel-proof (invert = cyan/magenta verified). See worklog R51.

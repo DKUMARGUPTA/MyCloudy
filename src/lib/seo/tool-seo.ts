@@ -459,6 +459,54 @@ const CURATED: Record<string, CuratedSeo> = {
       "pdf page label prefix",
     ],
   },
+  "invert-pdf-colors": {
+    title: "Invert PDF Colors Online Free — Negative PDF",
+    description:
+      "Flip every color in your PDF — white pages turn black, text turns light — the photographic negative. Pick DPI and pages. Free, on-device.",
+    keywords: [
+      "invert pdf colors",
+      "negative pdf",
+      "invert colors pdf online",
+      "dark mode pdf",
+      "flip pdf colors",
+    ],
+  },
+  "pdf-to-greyscale": {
+    title: "Convert PDF to Grayscale Online Free",
+    description:
+      "Turn color PDF pages into clean eye-weighted greyscale — printer-friendly, ink-saving, text stays sharp. Free and fully on-device.",
+    keywords: [
+      "convert pdf to grayscale",
+      "pdf to greyscale",
+      "black and white pdf",
+      "make pdf grayscale online",
+      "remove color from pdf",
+    ],
+  },
+  "scanner-effect": {
+    title: "Make PDF Look Scanned — Free Scanner Effect",
+    description:
+      "Give crisp digital pages a flatbed-scanner look — grain, contrast crunch, optional warm lamp tint. Free, on-device, never uploaded.",
+    keywords: [
+      "make pdf look scanned",
+      "scanner effect pdf",
+      "fake scanned pdf",
+      "pdf scan filter online",
+      "scanned document look",
+    ],
+  },
+  "posterize-pdf": {
+    title: "Posterize PDF Online Free — Flat Color Levels",
+    description:
+      "Snap PDF colors to 2-8 flat levels per channel — the bold screen-print poster look. PNG mode keeps exact levels. Free and on-device.",
+    keywords: [
+      "posterize pdf",
+      "reduce colors pdf",
+      "flat colors pdf",
+      "poster effect pdf online",
+      "posterization tool",
+    ],
+  },
   "add-page-numbers": {
     title: "Add Page Numbers to PDF Online Free",
     description:

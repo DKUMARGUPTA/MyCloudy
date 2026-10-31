@@ -56,6 +56,10 @@ import { config as backgroundColor } from "../../../tools/background-color/confi
 import { config as removeBlankPages } from "../../../tools/remove-blank-pages/config";
 import { config as alternateMerge } from "../../../tools/alternate-merge/config";
 import { config as addPageLabels } from "../../../tools/add-page-labels/config";
+import { config as invertPdfColors } from "../../../tools/invert-pdf-colors/config";
+import { config as pdfToGreyscale } from "../../../tools/pdf-to-greyscale/config";
+import { config as scannerEffect } from "../../../tools/scanner-effect/config";
+import { config as posterizePdf } from "../../../tools/posterize-pdf/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
@@ -178,6 +182,10 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [removeBlankPages.toolId]: removeBlankPages,
   [alternateMerge.toolId]: alternateMerge,
   [addPageLabels.toolId]: addPageLabels,
+  [invertPdfColors.toolId]: invertPdfColors,
+  [pdfToGreyscale.toolId]: pdfToGreyscale,
+  [scannerEffect.toolId]: scannerEffect,
+  [posterizePdf.toolId]: posterizePdf,
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,

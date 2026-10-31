@@ -6999,3 +6999,102 @@ roadmap se rewrite kiya (bentopdf: 125 tools vs humare 107 — ~45 tool gaps
 - Billing freeze untouched. Sab 6 tools free-tier, no Pro gating.
 - Next: P1-b raster color family (invert/greyscale/scanner/posterize) →
   P1-c (pdfs-to-zip, rotate-custom, view-metadata, change-permissions).
+
+## R51 — BENTOPDF BATCH 3 (P1-b): raster color family — 4 tools + shared core (2026-10-31)
+
+**Trigger:** NEXT-STEPS P1-b (owner-approved phase-wise roadmap; R50
+ne P1-a ship kiya tha). Goal: bentopdf ke raster color tools (invert/
+greyscale/scanner/posterize) — 100% own engine, zero bentopdf code.
+
+### Architecture (NEW: tools/raster-color-common/)
+- **transforms.ts** — PURE pixel transforms (Uint8ClampedArray RGBA,
+  in-place, alpha NEVER touched): `invertPixels` (255−v per channel),
+  `greyscalePixels` (Rec. 601 luma 0.299/0.587/0.114),
+  `posterizePixels` (levels 2-8, step=255/(n−1), double-round snap,
+  clamp defence-in-depth), `scannerPixels` (luma → contrast S-curve
+  pivot 128 → uniform ±noise → optional cream tint r×1.08/g×1.04/
+  b×0.90; rng injected for determinism) + `mulberry32` seeded RNG +
+  `SCANNER_NOISE` presets (light 8 / medium 16 / heavy 28).
+- **worker-core.ts** — render→transform→rebuild pipeline: exact
+  rasterize-pdf recipe (pdf.js fake-worker render on OffscreenCanvas,
+  white opaque base, 40MP per-page cap clamp, /Rotate-aware visible
+  size, CreateContext rebuild full-bleed) + THE COLOR STEP
+  (getImageData → pure transform → putImageData → JPEG/PNG encode).
+  Exports `buildImageOnlyDoc` (smoke oracle ke liye) +
+  `postRasterColorError` (render fail → reused `rasterize.errorRender`
+  i18n key — copy word-for-word fits). `runRasterColor(request, spec)`
+  — har tool sirf suffix + quality default + transformFor factory
+  deta hai.
+
+### Shipped (4 tools, category edit, mode D, phase P2)
+1. **invert-pdf-colors** (Contrast icon, pop 15) — photographic
+   negative; dpi/format/quality/pages options; `-inverted.pdf`.
+2. **pdf-to-greyscale** (Blend, 18) — Rec. 601 eye-weighted luma;
+   `-greyscale.pdf`.
+3. **scanner-effect** (ScanLine, 13) — flatbed look: intensity
+   (light/medium/heavy) + tint (none/cream) + dpi/format/quality
+   (default 75, "lower looks more scanned") + pages; contrast 1.15
+   locked; `-scanned.pdf`.
+4. **posterize-pdf** (LayoutGrid, 12) — levels 2/3/4/6/8 (default 4)
+   + core options; PNG hint "exact levels"; `-posterized.pdf`.
+
+### Wiring
+- Registry: +4 def() (icons Blend/Contrast naye imports, ScanLine/
+  LayoutGrid pehle se), sab enabled, category "edit", mode D, P2.
+- configs.ts: +4 imports + map. tool-seo.ts: +4 curated entries
+  (titles ≤48 — smoke ne 3 lambi pakdi, fix: "Convert PDF to
+  Grayscale Online Free" 36 / "Make PDF Look Scanned — Free Scanner
+  Effect" 43 / "Posterize PDF Online Free — Flat Color Levels" 45).
+- i18n: ZERO new keys — sab reuse (tool.errorCorrupt/errorEncrypted/
+  errorInvalidPages/errorGeneric + rasterize.errorRender). en=hi
+  parity untouched.
+- Banner: 112 → **116 tools** (totalToolCount auto-computed; live
+  113 + 3 AI deferred).
+
+### Smoke (scripts/smoke-r51-tools.ts — NEW, 77 checks, sab green)
+- Transforms: invert (values/involution/alpha), greyscale (pure RGB
+  luma 76/150/29, white 255, r=g=b, alpha, grey-idempotent),
+  posterize (levels 2/3/4/8 exact ladders, 0/99 clamp no-crash,
+  alpha), scanner (seeded determinism byte-identical, r=g=b, alpha,
+  noise+contrast bound, 8/8 pixels moved, cream warm ordering,
+  noise-0+contrast-1 ≡ greyscale, presets ordered).
+- Discipline: 4 workers + core me pdf-lib import ZERO (source scan),
+  core use mandatory.
+- Wiring: configs (pdf/single-file/dpi+format+pages), scanner
+  intensity+tint, posterize levels, registry (present/enabled/edit/D),
+  SEO (curated + title ≤48 + desc 120-160), i18n keys en+hi,
+  counts 116/113/3-exact-ids.
+- Rebuild oracle: buildImageOnlyDoc + tiny JPEG → pdf-lib reload:
+  page count/sizes, 1 DCT XObject/page (16×8), byte-identical
+  payload, no AcroForm.
+- **Pitfalls smoke ne pakde:** (1) 3 SEO titles >48 chars, (2) count
+  assertion 112-live galat tha — 112 TOTAL tha (109 live + 3
+  deferred; R50 worklog "112 tools" = total). Dono fix, re-run green.
+
+### E2E (agent-browser, sab green)
+- Homepage: "All 116 tools are live" ✓.
+- 4 golden paths (fixtures: 4-page RED/GREEN/BLUE/YELLOW 400×300):
+  upload → run → **"Your file is ready!"** sab pe ✓.
+- **VLM pixel-proof:** invert output preview → VLM ne "cyan, magenta,
+  yellow, light blue — inversion happened" confirm kiya (RED→cyan,
+  GREEN→magenta exact negatives). (Pehla attempt galat page tha —
+  posterize result pe preview khula tha; sequence correction ke baad
+  sahi verify. Posterize output red/green dikha — 4-level posterize
+  ke liye CORRECT.)
+- Rasterize regression (core ka source recipe): "Your file is
+  ready!" ✓.
+- Mobile 390×844 scanner-effect: scrollW=390, **no overflow** ✓.
+- Console/page errors: **0** ✓. Screenshots:
+  download/qa-r51-{invert,greyscale,scanner,posterize, invert-preview2,mobile}.png.
+
+### Gates
+- `bunx tsc --noEmit` = 0 (1 fix: postRasterColorError runId string→
+  number — protocol runId number hai) · `bun run lint` = 0 ·
+  dev.log clean (no errors/warns) · smoke 77/77 GREEN.
+
+### Discipline
+- ZERO code/dep from bentopdf (AGPL) — sirf ideas, own engine.
+- Billing freeze untouched. Sab 4 tools free-tier, no Pro gating.
+- Detail {files,pages} pattern (R50 RunDetail discipline).
+- Next: P1-c output pack (pdfs-to-zip STORE writer, rotate-custom,
+  view-metadata, change-permissions).
