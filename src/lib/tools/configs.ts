@@ -60,6 +60,10 @@ import { config as invertPdfColors } from "../../../tools/invert-pdf-colors/conf
 import { config as pdfToGreyscale } from "../../../tools/pdf-to-greyscale/config";
 import { config as scannerEffect } from "../../../tools/scanner-effect/config";
 import { config as posterizePdf } from "../../../tools/posterize-pdf/config";
+import { config as rotateCustom } from "../../../tools/rotate-custom/config";
+import { config as pdfsToZip } from "../../../tools/pdfs-to-zip/config";
+import { config as viewMetadata } from "../../../tools/view-metadata/config";
+import { config as changePermissions } from "../../../tools/change-permissions/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
@@ -186,6 +190,10 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [pdfToGreyscale.toolId]: pdfToGreyscale,
   [scannerEffect.toolId]: scannerEffect,
   [posterizePdf.toolId]: posterizePdf,
+  [rotateCustom.toolId]: rotateCustom,
+  [pdfsToZip.toolId]: pdfsToZip,
+  [viewMetadata.toolId]: viewMetadata,
+  [changePermissions.toolId]: changePermissions,
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,

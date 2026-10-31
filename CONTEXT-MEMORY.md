@@ -6,7 +6,7 @@
 > **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R51 — BENTOPDF BATCH 3 / P1-b RASTER COLOR FAMILY (2026-10-31)** — 4 naye own-engine tools LIVE: invert-pdf-colors, pdf-to-greyscale, scanner-effect, posterize-pdf (116 tools total / 113 live / 3 AI deferred; smoke 77-check + E2E 5/5 + VLM pixel-proof green). Naya shared core: `tools/raster-color-common/` (pure transforms + render→transform→rebuild pipeline, rasterize recipe reuse). **Pichle:** **R50** P1-a batch — bates-numbering, add-stamps, background-color, remove-blank-pages, alternate-merge, add-page-labels (112 tools; smoke 78-check + E2E 7/7 green) + P1–P6 phase roadmap (NEXT-STEPS rewrite). **Pichle:** **R49** agent system + auto-work queue — Scout/Builder/Auditor tiers, NEXT-STEPS.md priority queue, docopdf-autopilot skill, tool counts 106/103 corrected.
+> **Updated:** **R52 — BENTOPDF BATCH 4 / P1-c OUTPUT PACK (2026-10-31)** — 4 naye own-engine tools LIVE: pdfs-to-zip (own zip engine, STORE default), rotate-custom (any angle, exact-AABB mixed plan), view-metadata (TXT/JSON inspector), change-permissions (perm-only lock, owner pw REQUIRED — engine both-empty refusal live pakda gaya). **120 tools total / 117 live / 3 AI deferred; smoke 94-check + E2E full (4 golden paths + mobile + Hindi + VLM rotate proof) green.** Bonus: pre-existing OWN-ZIP-ENGINE bug fix (flatten hardcoded level 6 → archive-level option dead; pptx regression battery 104+162 green). **Pichle:** **R51** P1-b raster color family (invert/greyscale/scanner/posterize, 116 tools, smoke 77 + VLM pixel-proof); **R50** P1-a batch (6 tools, 112) + P1–P6 phase roadmap (NEXT-STEPS rewrite). **Pichle:** **R49** agent system + auto-work queue — Scout/Builder/Auditor tiers, NEXT-STEPS.md priority queue, docopdf-autopilot skill, tool counts 106/103 corrected.
 > (archived chain) **R46 — TURSO/LIBSQL PRODUCTION DB LIVE (2026-10-31)** — owner ne Turso creds diye → driver-adapter wiring (`@prisma/adapter-libsql`), 20 tables apply (Mumbai region), Vercel env (TURSO_DATABASE_URL/TURSO_AUTH_TOKEN/AUTH_SECRET encrypted), prod E2E: limits 500→200, usage/analytics rows persist, signup+JWT session PASS (test rows cleaned). **Prod ab: sessions + analytics + limits counter + /admin sab persistent.** Pichle: **R45** production release (R24→R44 push + deploy + health verified); **R44** fill mode + watermark-free branding; **R43** security + governance; **R42** analytics; **R41** boot fix; **R29** admin console; **R28** billing shadow-mode.
 
 ---
@@ -15,8 +15,8 @@
 
 | Metric | Value |
 |---|---|
-| Registry | **116 tools registered — 113 LIVE + 3 AI DEFERRED** (R51: +4 P1-b raster color family; R50: +6 P1-a; R48: 6 batch-1; R23: 3 AI enabled:false, phase P3; re-enable = NEXT-STEPS P2 self-dependent NLP) |
-| **LIVE tools** | **113** (3 AI deferred — R23 owner decision) |
+| Registry | **120 tools registered — 117 LIVE + 3 AI DEFERRED** (R52: +4 P1-c output pack — pdfs-to-zip/rotate-custom/view-metadata/change-permissions; R51: +4 P1-b raster color family; R50: +6 P1-a; R48: 6 batch-1; R23: 3 AI enabled:false, phase P3; re-enable = NEXT-STEPS P2 self-dependent NLP) |
+| **LIVE tools** | **117** (3 AI deferred — R23 owner decision) |
 | Own PDF engine (P6) | **P6-a..z + P6-v-b + P6-END — MIGRATION COMPLETE ✅** — ALL 60 tool families pdf-lib-free, **0 runtime importers** (pdf-lib = devDependency only: smoke fixtures + oracles) |
 | Master plan | **MASTER-PLAN-1** worklog mein recorded (P6-t..z → P7 → LAUNCH-OPS → P10 → P11) + discipline contract (worklog+memory+push+Vercel per phase; battery on EXACT commit tree) |
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |
@@ -28,7 +28,7 @@
 | GitHub | `DKUMARGUPTA/MyCloudy` — **SYNCED @ R46** (R45: 12 commits+28 tags; R46: Turso wiring); push ritual ready (`scripts/push-github.sh`, leak-guard built-in) |
 | Quality gates | tsc **0** errors · eslint 0 · battery **113/113** (R44 exact tree; 113 = current smoke-file count, R43 cleanup ke baad) · iOS-compat smoke **21/21** (R41) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
-| i18n | English + हिंदी — **5218 = 5218** flat-leaf keys parity (R29 admin +169, R42 analytics +35, R41 boot UI bilingual) |
+| i18n | English + हिंदी — **5237 = 5237** flat-leaf keys parity (R52 +3 error keys, R29 admin +169, R42 analytics +35, R41 boot UI bilingual) |
 | Mini-services | convert (port 3031), request-sign (3032) — double-fork daemonizer se start |
 | Tokens | R45 me owner ne fresh PAT + Vercel token diye — **push + deploy complete ho gaya**. Agar future me wipe ho jaye to wapas maango. **Har batch ke baad push karo** (disk ephemeral, push = durable) |
 

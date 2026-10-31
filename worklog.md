@@ -7098,3 +7098,136 @@ greyscale/scanner/posterize) — 100% own engine, zero bentopdf code.
 - Detail {files,pages} pattern (R50 RunDetail discipline).
 - Next: P1-c output pack (pdfs-to-zip STORE writer, rotate-custom,
   view-metadata, change-permissions).
+
+## R52 — BENTOPDF BATCH 4 (P1-c): output pack — 4 own-engine tools + zip-engine fix (2026-10-31)
+
+**Trigger:** NEXT-STEPS P1-c (owner-approved phase-wise roadmap; R50/R51
+ne P1-a/P1-b ship kiya tha). Goal: pdfs-to-zip + rotate-custom +
+view-metadata + change-permissions — 100% own engine, zero bentopdf code.
+
+### Shipped (4 tools, R48 anatomy, mode D, phase P2)
+1. **pdfs-to-zip** (organize, FileArchive, pop 14) — pure packager: 2–20
+   PDFs → one ZIP via the OWN zip engine (`src/lib/own/zip`), STORE
+   default (method 0, instant, byte-exact — PDFs are already deflated
+   inside) + Deflate option (level 6); `%PDF-` magic re-check per file;
+   same-name dedupe (a.pdf, a-2.pdf, a-3.pdf); encrypted/signed PDFs ride
+   through untouched (no parsing at all); `-batch.zip` naming. detail
+   omitted (a "N files • 0 pages" chip would lie — the tool never counts).
+2. **rotate-custom** (organize, DraftingCompass, pop 13) — ANY angle,
+   not just 90°: `tools/rotate-custom/worker-lib.ts` (the
+   change-pdf-page-size mixed-plan precedent) — selected pages embed as
+   crop-box Form XObjects (pageFormEmbed) and re-draw through
+   `q · translate · rotate · /PgN Do · Q` on an EXACT AABB sheet
+   (`rotatedBounds(w,h,φ)` from the 4 rotated corners; anchor = −minX/−minY
+   keeps every corner ≥ 0); φ composes with the page's own /Rotate
+   (90°+5° → 95°, smoke-pinned 333.72 × 424.63); angle wraps to (−180,180]
+   (`normalizeAngle`); |angle| < 0.05 → errorNothingToDo refusal; 14,400pt
+   sheet cap → errorPageTooLarge; unselected pages are source-anchored
+   copies (cloneDict + materializeInheritable — links/forms survive,
+   smoke-asserted); rotated pages honestly DROP annotations (embedPage
+   parity, FAQ says so); angle-0 default teaches via refusal.
+3. **view-metadata** (view, Info, pop 15) — read-only inspector:
+   `tools/view-metadata/worker-lib.ts` builds a MetaSnapshot (Info dict
+   6 standards + dates + custom keys via UTF-16BE-BOM/Latin-1 decoder +
+   PDF-date parser; page count; per-page crop sizes pt+mm+rotation; unique
+   size-shape summary; XMP /Metadata presence+bytes; version; file size),
+   rendered as TXT spec-sheet or JSON (options: format + includePages);
+   ENCRYPTED input → honest limited report ("Yes — password-protected",
+   name/size only), never an error; `-metadata.txt/.json` output; chain →
+   remove-pdf-metadata / change-pdf-doc-info.
+4. **change-permissions** (security, UserCog, pop 16) — the
+   restrictions-only lock: opens with NO password but carries the perm
+   set. Talks to `encryptDocument` DIRECTLY (lockPdf would flatten the
+   lowResolution printing choice) with full SecurityPermissions fidelity:
+   printing high/low/off, copy, modify, annotate, forms, accessibility
+   (default on), assembly — 7 rights; AES-256 default / AES-128;
+   **owner password REQUIRED** (engine refuses both-empty encryption —
+   discovered live; empty → errorNoPassword, <6 → errorOwnerPwShort,
+   AES-128 + non-Latin → errorPwChars; AES-256 takes Devanagari fine);
+   post-save verify: output must open with "" (perm-only guarantee);
+   `-restricted.pdf` naming.
+
+### ENGINE FIX (pre-existing bug, R52's STORE mode exposed it)
+- `src/lib/own/zip/zip.ts` flatten() hardcoded `level: 6` for plain
+  Uint8Array entries → the ARCHIVE-level `zipSync(files, { level })`
+  option was silently dead for non-default levels (every prior caller
+  used 6, so nothing showed). Fix: per-entry level OPTIONAL (fflate
+  semantics — tuple overrides, else archive default). Regression-proven:
+  smoke-powerpoint-to-pdf **104/104** + smoke-pdf-to-powerpoint
+  **162/162** (both zipSync writers) re-run GREEN after the fix.
+
+### Wiring
+- Registry: +4 def() (icons FileArchive/DraftingCompass/UserCog new
+  imports, Info existing), all enabled, mode D, P2. organize +2
+  (rotate-custom, pdfs-to-zip), security +1 (change-permissions), view +1
+  (view-metadata).
+- configs.ts +4 imports/map; tool-seo.ts +4 curated entries (titles 41–46
+  chars, descs 120–160).
+- i18n: `scripts/merge-r52-i18n.ts` — +3 error keys (errorPageTooLarge,
+  errorOwnerPwShort, errorPwChars), en=hi=**5237** parity ✓. Reused:
+  errorNeedTwoFiles, errorNothingToDo, errorNoPassword,
+  errorAlreadyEncrypted, errorCorrupt/errorEncrypted/errorGeneric,
+  errorInvalidPages.
+- Banner: 116 → **120 tools** (totalToolCount auto-computed; live 117 +
+  3 AI deferred).
+- ZERO lock-common changes (reverted after finding lockPdf's printing
+  flattening — direct encryptDocument instead).
+
+### Gates + Smoke (sab green)
+- `bunx tsc --noEmit` = 0 · `bun run lint` = 0 · dev.log clean.
+- **scripts/smoke-r52-tools.ts (NEW, 94 checks):** real workers via
+  self-shimmed globalThis; pdf-lib dev-oracle. pdfs-to-zip: store
+  roundtrip byte-identical + method-0 local headers (located by sig+name
+  — naive byte-walking misaligns on PK\x03\x04 inside PDF data), deflate
+  roundtrip, dedupe (same.pdf+same-2.pdf+other.pdf), one-file refusal,
+  non-PDF refusal with detail. rotate-custom: pure bounds (90° exact,
+  45° = 494.9747), normalizeAngle vectors, 90° all pages (300×400 exact,
+  no /Rotate flag, annots dropped), subset 45° (page 1 untouched +
+  Link annot SURVIVES the copy, page 2 AABB), composed /Rotate90+5° =
+  333.72×424.63, angle-0 refusal, 30° = 496.41×459.81. view-metadata:
+  TXT carries title/author/subject/keywords (pdf-lib joins with SPACES —
+  first-run catch)/producer/date/pages/mm, JSON parses (pageCount, pages
+  rotation, documentInfo), includePages off omits section, encrypted →
+  honest report. change-permissions: AES-256 result + plain parse refuses
+  + opens with NO password + /P EQUALS permissionsR3(request) exactly;
+  AES-128 + low-res print + assembly bit (also exact); empty owner pw →
+  errorNoPassword; 3-char → errorOwnerPwShort; AES-128 Devanagari →
+  errorPwChars; AES-256 Devanagari accepted; already-encrypted → refusal.
+  Wiring: registry/configs/seo/i18n + counts 120/117/3-exact + workers
+  pdf-lib-free (source scan).
+- **Pitfalls smoke ne pakde:** (1) zip-engine flatten level hardcode
+  (method 8 despite level 0) → engine fix + pptx regression battery;
+  (2) pdf-lib keywords = single space-joined string (not array) → reader
+  handles both, expectation fixed; (3) both-empty-passwords refused by
+  the engine → owner password REQUIRED (honest product call, Acrobat
+  parity); (4) STORE-header check false-negative from naive PK-walk →
+  sig+name location.
+
+### E2E (agent-browser, sab green — pinned DataTransfer+change eval recipe)
+- Homepage: "All 120 tools are live" ✓.
+- 4 golden paths (fixtures in download/qa-r52-*): upload → options →
+  run → **"Your file is ready!"** — rotate-custom 45°
+  (`-rotated.pdf`), pdfs-to-zip (`qa-r52-zip-a-batch.zip`),
+  view-metadata (`-metadata.txt`), change-permissions (owner pw +
+  `-restricted.pdf`) ✓.
+- **VLM pixel-proof:** rotate 45° result preview → "red page tilted
+  diagonally (diamond orientation), text rotated 45 degrees" ✓.
+- **Live refusal verified:** change-permissions run WITHOUT owner
+  password → errorNoPassword toast (mobile attempt caught it, then the
+  filled run passed).
+- Mobile 390×844: change-permissions no-overflow (scrollW 390) + options
+  bottom-sheet + full run to "Your file is ready!" ✓.
+- Hindi: view-metadata full UI (रिपोर्ट फ़ॉर्मैट, हर पेज की पंक्ति) +
+  run → **"आपकी फ़ाइल तैयार है!"** ✓.
+- Regression: merge-pdf 2-file golden path ✓. Console/page errors **0**
+  throughout (pdf.js standard-font load *warnings* on thumbnails are
+  pre-existing, not errors). Screenshots: download/qa-r52-{rotate,
+  rotate-result,zip,metadata,permissions,mobile,mobile-run,hindi,
+  merge-regression}.png.
+
+### Discipline
+- ZERO code/dep from bentopdf (AGPL) — sirf ideas, own engine.
+- Billing freeze untouched. Sab 4 tools free-tier, no Pro gating.
+- detail {files,pages} pattern where honest (zip omits it deliberately).
+- Next: P1-d page utils — duplex-collate, fix-page-size, page-dimensions,
+  remove-annotations, linearize-pdf.

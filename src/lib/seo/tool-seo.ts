@@ -507,6 +507,54 @@ const CURATED: Record<string, CuratedSeo> = {
       "posterization tool",
     ],
   },
+  "rotate-custom": {
+    title: "Rotate PDF by Any Angle Online Free — Custom",
+    description:
+      "Turn PDF pages by any fraction of a degree — straighten tilted scans with 2.5° or angle pages for layouts. Free, private, on-device.",
+    keywords: [
+      "rotate pdf custom angle",
+      "straighten pdf scan",
+      "tilt pdf pages",
+      "rotate pdf 45 degrees",
+      "fix skewed pdf",
+    ],
+  },
+  "pdfs-to-zip": {
+    title: "Combine PDFs Into One ZIP File Online Free",
+    description:
+      "Bundle 2-20 PDFs into a single ZIP archive — one download instead of many. Exact bytes, instant store mode. Free and fully on-device.",
+    keywords: [
+      "pdf to zip",
+      "combine pdfs into zip",
+      "bundle pdf files",
+      "zip multiple pdfs",
+      "pdf archive online",
+    ],
+  },
+  "view-metadata": {
+    title: "View PDF Metadata Online Free — Inspector",
+    description:
+      "See everything a PDF says about itself — title, author, dates, page sizes, XMP packet — exported as TXT or JSON. Free, read-only, on-device.",
+    keywords: [
+      "view pdf metadata",
+      "pdf metadata viewer",
+      "pdf document info",
+      "inspect pdf properties",
+      "pdf metadata extractor",
+    ],
+  },
+  "change-permissions": {
+    title: "Change PDF Permissions — Restrict Print & Copy",
+    description:
+      "Set what readers may print, copy, edit or fill — the PDF still opens for everyone. Optional owner password. Free and fully on-device.",
+    keywords: [
+      "change pdf permissions",
+      "restrict pdf printing",
+      "disable copy pdf",
+      "pdf owner password",
+      "protect pdf from editing",
+    ],
+  },
   "add-page-numbers": {
     title: "Add Page Numbers to PDF Online Free",
     description:

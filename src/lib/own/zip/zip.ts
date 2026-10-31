@@ -19,22 +19,25 @@ export interface Zippable {
 }
 export type Unzipped = Record<string, Uint8Array>;
 
-/** Flatten a Zippable into path → bytes (level per entry). */
+/** Flatten a Zippable into path → bytes (level per entry, when set). */
 function flatten(
   obj: Zippable,
   prefix = "",
-  out: Array<{ path: string; data: Uint8Array; level: number }> = []
-): Array<{ path: string; data: Uint8Array; level: number }> {
+  out: Array<{ path: string; data: Uint8Array; level?: number }> = []
+): Array<{ path: string; data: Uint8Array; level?: number }> {
   for (const key of Object.keys(obj)) {
     const value = obj[key];
     const path = prefix ? `${prefix}/${key}` : key;
     if (value instanceof Uint8Array) {
-      out.push({ path, data: value, level: 6 });
+      // No per-entry level — falls back to the ARCHIVE-level default in
+      // zipSync (fflate semantics). (R52: this was hardcoded 6, which
+      // silently killed the archive-level option — STORE mode needs 0.)
+      out.push({ path, data: value });
     } else if (Array.isArray(value)) {
       out.push({
         path,
         data: value[0],
-        level: value[1]?.level ?? 6,
+        level: value[1]?.level,
       });
     } else {
       flatten(value, path, out);

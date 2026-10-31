@@ -26,9 +26,13 @@
   pdf-to-greyscale, scanner-effect, posterize-pdf — live via shared
   `tools/raster-color-common/` core, smoke 77-check + E2E + VLM
   pixel-proof green. 116 tools total / 113 live.
-- **P1-c: output pack** — `pdfs-to-zip` (own STORE-zip writer, zero deps)
-  + `rotate-custom` (arbitrary angle, not just 90°) + `view-metadata`
-  (read-only inspector) + `change-permissions` (perm-only lock).
+- ~~**P1-c: output pack**~~ **DONE (R52)** — pdfs-to-zip (own zip engine,
+  STORE default), rotate-custom (any angle, exact AABB mixed plan),
+  view-metadata (TXT/JSON inspector), change-permissions (perm-only lock,
+  owner pw required) — live, smoke 94-check + E2E + VLM pixel-proof green.
+  120 tools total / 117 live. Also fixed a pre-existing own-zip-engine bug
+  (flatten hardcoded level 6 killed the archive-level option; pptx
+  regression battery 104+162 green after fix).
 - **P1-d: page utils** — `duplex-collate`, `fix-page-size`, `page-dimensions`,
   `remove-annotations`, `linearize-pdf`.
 
@@ -93,3 +97,7 @@
   scanner/posterize) via new `tools/raster-color-common/` shared core (pure
   transforms + render pipeline). 116 tools (113 live). Smoke 77/77 + E2E 5/5
   + VLM pixel-proof (invert = cyan/magenta verified). See worklog R51.
+- **R52 (2026-10-31):** P1-c output pack — 4 tools (pdfs-to-zip, rotate-custom,
+  view-metadata, change-permissions). 120 tools (117 live). Smoke 94/94 +
+  E2E full (4 golden paths + mobile + Hindi + VLM rotate proof) + own-zip
+  engine level bug fixed with pptx regression battery. See worklog R52.
