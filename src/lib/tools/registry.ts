@@ -804,6 +804,25 @@ export const ALL_TOOLS: ToolDef[] = [
     },
   }),
   def({
+    id: "prepare-pdf-for-ai",
+    category: "convert-from",
+    mode: "D",
+    phase: "P2",
+    icon: Bot,
+    popularity: 22,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Prepare PDF for AI", hi: "AI के लिए PDF तैयार करें" },
+    description: {
+      en: "LlamaIndex-ready JSON — one { text, metadata } document per page.",
+      hi: "LlamaIndex-तैयार JSON — हर पेज का { text, metadata } दस्तावेज़।",
+    },
+    tags: {
+      en: ["ai", "llamaindex", "rag", "json", "llm", "chunking"],
+      hi: ["एआई", "रैग", "json", "llm"],
+    },
+  }),
+  def({
     id: "bookmark-pdf",
     category: "organize",
     mode: "D",

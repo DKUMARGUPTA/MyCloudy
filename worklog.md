@@ -6435,3 +6435,26 @@ tsc 0 · eslint 0 · smoke-c 42/42 · routes ×6 200 · sitemap 131 · **Browser
 - pdf-to-zip JPG quality fixed 0.87 (option future).
 
 NEXT: Phase 2 — prepare-pdf-for-ai (LlamaIndex JSON export) per PHASE-PLAN.md.
+
+## R30 — PHASE-2: prepare-pdf-for-ai LIVE (2025-11-02)
+
+**THE ROUND:** PHASE-PLAN.md Phase 2 — bentopdf ka flagship AI-prep tool humare paas. **Live count 119.**
+
+### 1. Tool
+- **prepare-pdf-for-ai** (convert-from, batch 5): PDF → **LlamaIndex-ready JSON** — `[{ id_, text, metadata }]` per page (ya whole-doc mode). Text extraction = pdfjs getTextContent + pdf-to-txt ka flow-layout `pageText` reuse (paragraph order). Metadata: file_path/page_id (0-based)/total_pages/format/type + docInfo (title/author/subject/creation_date/last_modified — apne parser se). granularity (page/document) + includeMetadata + pages options. outputKind "text" (.json). `_llm.json` naming (bentopdf convention).
+- **buildLlamaDocs** pure fn (smoke-testable) + **docInfo** exported.
+
+### 2. Wiring
+- Registry +1 (Bot icon — already imported; category convert-from; popularity 22 — AI-parity flagship). configs +1. i18n: koi naya key nahi. Sitemap 131→132.
+
+### 3. Smoke (NEW smoke-prepare-ai.ts — 23 checks ALL PASS)
+per-page shape (id stability, page_id sequence, saare metadata fields, JSON round-trip) · document mode (join + no page_id) · includeMeta off (core fields kept) · docInfo (pdf-lib fixture Title/Author + plain + raw crafted literal /Title + literal date).
+
+### 4. Gates + E2E
+tsc 0 · eslint 0 · smoke 23/23 · route 200 · **Browser E2E golden**: ai-prep.pdf → `_llm.json` — PREVIEW ME JSON VERIFIED: `"text": "PAGE 1"`, metadata (file_path/page_id/total_pages/format/type/creation_date/last_modified) sab sahi. Dev server 1× reaped.
+
+### Known / Deferred
+- Push PENDING (token wipe #3 — 4 commits local: R27 R28 R29 R30).
+- Document mode mein subset pages ka page_id metadata nahi (by design).
+
+NEXT: Phase 3 — chhote tools (attachments family ×3 → colors ×4 → converters ×6 → finishing ×7) per PHASE-PLAN.md.
