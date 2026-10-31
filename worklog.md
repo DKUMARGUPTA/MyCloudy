@@ -6405,3 +6405,33 @@ tsc 0 · eslint 0 · smoke-a 80/80 + smoke-b 60/60 · tool routes ×6 200 · sit
 - add-page-labels: multi-SECTION schemes (roman→arabic switch) future option.
 
 NEXT: Phase 1 Batch C — pdf-to-zip, duplex-collate, remove-annotations (+ background-color, add-stamps, change-permissions as PHASE-PLAN.md C-set) — 6 tools → Phase 1 COMPLETE.
+
+## R29 — PHASE-1 BATCH C: 6 tools + PHASE 1 COMPLETE (2025-11-02)
+
+**THE ROUND:** PHASE-PLAN.md Batch C — Phase 1 ka final set. Sab apne own engine pe, smoke 42/42. **Phase 1 TOTAL: 18 tools (A+B+C), 100→118 live.**
+
+### 1. Tools (6 × config+worker)
+- **background-color** (edit): StampContext stampRect **behind:true** — full-page tint UNDER content (watermark underlay seam); 8 curated colours (ivory→black dark-mode); opacity 10-100%; pages subset.
+- **add-stamps** (edit): StampContext stampText — DRAFT/CONFIDENTIAL/PAID; diagonal-centre + 9 positions; 6 colours; opacity/size/rotation (-90..90°); text-matrix rotation (Tm).
+- **change-permissions** (security): owner-only **AES-256** encryption (encryptDocument) — file opens WITHOUT password, restrictions ride the handler; printing high/low/none + copying/modifying/annotating/forms switches (assembly follows modifying); empty owner pw → crypto-random 20-char; resolvePermissions pure fn.
+- **duplex-collate** (organize): planDuplex — manual (odds + REVERSED evens — the flip trick), odd-even, even-odd; pages subset; organize plan.
+- **pdf-to-zip** (convert-from, batch 5): pdfjs rasterize (shared pdf-to-images pipeline: fake-worker, ownerDocument shim, RenderPixelBudget) → PNG (level 6) / JPG (level 1, q0.87) → **apna zipSync** → one .zip per file; page-NNN naming.
+- **remove-annotations** (edit): rewriteDocument page replacements — /Annots filtered: keepForms (Widget subtype), keepLinks (Link + /Dest ya /A GoTo/Named — internal only); empty → /Annots dropped; content untouched.
+
+### 2. Wiring
+- Registry +6 (view-metadata ke baad): icons Palette/Stamp/Lock/Printer/FileArchive/Eraser (4 naye imports).
+- configs.ts +6. i18n: koi naya key nahi (sab shared tool.* — errorRenderBudget already tha). Parity 4917=4917.
+- **Live count: 118** (100 + 18). Sitemap 125→131 URLs.
+
+### 3. Smoke (NEW smoke-pageops-c.ts — 42 checks ALL PASS)
+bg-color (colour op + path-fill rect + BEHIND order proof + subset) · add-stamps (hex + red rg + 45° Tm matrix + subset) · change-permissions (switch mapping + AES-256 E2E: empty-pw opens "ok", wrong pw refused, random pw ≥20, pdf-lib refuses + OWN engine opens with owner pw) · duplex (3 pure plans + E2E marker order P1P3P4P2) · zip (PK magic + round-trip + padStart naming) · remove-annotations (crafted 4-annot fixture: internal-link/URI-link/widget/highlight → keep-matrix 3 combos).
+**Fixes**: unzipSync/zipSync @/lib/own/zip se import (pdf index nahi); OpenResult kind "ok" (not "opened"); pdf-lib load PASSWORD support NAHI karta — own engine se verify; rect = path m/l/h/f (pdf-lib drawRectangle parity) + rotation = Tm 10-decimal.
+
+### 4. Gates + E2E
+tsc 0 · eslint 0 · smoke-c 42/42 · routes ×6 200 · sitemap 131 · **Browser E2E**: pdf-to-zip golden (4 pages → 53 KB ZIP) + remove-annotations golden (clean.pdf) + mobile 390 change-permissions no-overflow. Dev server 1× reaped (daemon restart).
+
+### Known / Deferred
+- Push PENDING (token wipe #3 — R27+R28+R29 teen commits local ready).
+- pdf-to-zip JPG quality fixed 0.87 (option future).
+
+NEXT: Phase 2 — prepare-pdf-for-ai (LlamaIndex JSON export) per PHASE-PLAN.md.

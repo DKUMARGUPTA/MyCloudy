@@ -78,7 +78,7 @@ deskew-pdf (raster rotation detection + content transform) · text-color (existi
 ## Status
 
 - [x] Phase 0 — PHASE-PLAN.md (ye file)
-- [ ] Phase 1 — 18 tools (A / B / C)
+- [x] Phase 1 — 18 tools (A / B / C) — COMPLETE 2025-11-02 (smokes 80+60+42, live count 118)
 - [ ] Phase 2 — prepare-pdf-for-ai
 - [ ] Phase 3 — chhote tools
 - [ ] Phase 4 — SEO landing pages

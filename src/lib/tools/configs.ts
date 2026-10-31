@@ -56,6 +56,12 @@ import { config as alternateMerge } from "../../../tools/alternate-merge/config"
 import { config as addPageLabels } from "../../../tools/add-page-labels/config";
 import { config as rotateCustom } from "../../../tools/rotate-custom/config";
 import { config as viewMetadata } from "../../../tools/view-metadata/config";
+import { config as backgroundColor } from "../../../tools/background-color/config";
+import { config as addStamps } from "../../../tools/add-stamps/config";
+import { config as changePermissions } from "../../../tools/change-permissions/config";
+import { config as duplexCollate } from "../../../tools/duplex-collate/config";
+import { config as pdfToZip } from "../../../tools/pdf-to-zip/config";
+import { config as removeAnnotations } from "../../../tools/remove-annotations/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
@@ -178,6 +184,12 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [addPageLabels.toolId]: addPageLabels,
   [rotateCustom.toolId]: rotateCustom,
   [viewMetadata.toolId]: viewMetadata,
+  [backgroundColor.toolId]: backgroundColor,
+  [addStamps.toolId]: addStamps,
+  [changePermissions.toolId]: changePermissions,
+  [duplexCollate.toolId]: duplexCollate,
+  [pdfToZip.toolId]: pdfToZip,
+  [removeAnnotations.toolId]: removeAnnotations,
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,
