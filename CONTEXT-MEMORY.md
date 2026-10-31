@@ -6,7 +6,7 @@
 > **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R45 — PRODUCTION RELEASE (2026-10-31)** — R24→R44 (12 commits + 28 tags) GitHub pe push + Vercel auto-deploy **READY** → **www.docopdf.com ab R44 code par LIVE** (health verified: pages/assets 200, R43 security headers on, R44 fill-mode+branding live, API graceful bina DB). Pichle: **R44** image→pdf fill mode (`fitMode` contain|fill, 24%→6% side waste) + watermark-free branding (metadata + `-docopdf` suffix, create-family roll); **R43** governance sync + pentagi security skill (94→27 vulns, headers, /_next/image kill) + sandbox-resilience; **R42** first-party analytics + admin Analytics tab; **R41** boot-watchdog adaptive fix; **R29** admin console 8-tab; **R28** billing ₹1,499/yr + ₹49 week pass; **R27** accounting console.
+> **Updated:** **R46 — TURSO/LIBSQL PRODUCTION DB LIVE (2026-10-31)** — owner ne Turso creds diye → driver-adapter wiring (`@prisma/adapter-libsql`), 20 tables apply (Mumbai region), Vercel env (TURSO_DATABASE_URL/TURSO_AUTH_TOKEN/AUTH_SECRET encrypted), prod E2E: limits 500→200, usage/analytics rows persist, signup+JWT session PASS (test rows cleaned). **Prod ab: sessions + analytics + limits counter + /admin sab persistent.** Pichle: **R45** production release (R24→R44 push + deploy + health verified); **R44** fill mode + watermark-free branding; **R43** security + governance; **R42** analytics; **R41** boot fix; **R29** admin console; **R28** billing shadow-mode.
 
 ---
 
@@ -23,8 +23,8 @@
 | First-party analytics | **LIVE (R42)** — PageView beacon (privacy-first: no IP/UA, anonymous visitorId) + admin Analytics dashboard; GA4 consent-gated (needs NEXT_PUBLIC_GA_ID on Vercel) |
 | Static pages (PRD §9) | **LIVE** — about/contact/privacy/terms wired end-to-end (footer + `#/page/<id>` + i18n 166×2) |
 | Server | Next.js 16.1.3, port 3000 (daemon: `python3 scripts/dev-daemon.py`), dev.log clean |
-| **Production** | **https://www.docopdf.com LIVE @ R44 code (R45 deploy, 388b39c7)** — Vercel git-integration (main→prod auto); DB endpoints degrade gracefully — Turso future |
-| GitHub | `DKUMARGUPTA/MyCloudy` — **SYNCED @ 388b39c (R45 push: 12 commits + 28 tags)**; push ritual ready (`scripts/push-github.sh`, leak-guard built-in) |
+| **Production** | **https://www.docopdf.com LIVE @ R46 (Turso wired)** — DB endpoints PERSISTENT (limits/usage/analytics/auth); Vercel env: TURSO_* + AUTH_SECRET encrypted |
+| GitHub | `DKUMARGUPTA/MyCloudy` — **SYNCED @ R46** (R45: 12 commits+28 tags; R46: Turso wiring); push ritual ready (`scripts/push-github.sh`, leak-guard built-in) |
 | Quality gates | tsc **0** errors · eslint 0 · battery **113/113** (R44 exact tree; 113 = current smoke-file count, R43 cleanup ke baad) · iOS-compat smoke **21/21** (R41) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
 | i18n | English + हिंदी — **5218 = 5218** flat-leaf keys parity (R29 admin +169, R42 analytics +35, R41 boot UI bilingual) |

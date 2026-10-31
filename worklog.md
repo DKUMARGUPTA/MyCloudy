@@ -6654,3 +6654,65 @@ round: audit → gates → E2E → push → deploy → prod verify.
   chahiye (AI_BASE_URL/AI_API_KEY/AI_MODEL).
 - Optional: limits route ko honest shadow-mode JSON dena (500 → graceful
   snapshot) — BILLING FREEZE hai, owner approval ke bina touch nahi.
+
+## R46 — TURSO/LIBSQL PRODUCTION DB LIVE (2026-10-31)
+
+**THE ROUND:** Owner ne Turso credentials diye (R45 ka recommended next
+step) — `docopdf-deepakkumar` @ aws-ap-south-1 (Mumbai). Pura production
+DB wiring + end-to-end verification.
+
+### Shipped (code)
+1. **Deps:** `@libsql/client@0.18.0` + `@prisma/adapter-libsql@6.19.3`
+   (version-locked to prisma 6.19.3).
+2. **`prisma/schema.prisma`:** `previewFeatures = ["driverAdapters"]` —
+   adapter opt-in per constructor, sandbox plain-SQLite path untouched
+   (`prisma db push` still works on file: URLs).
+3. **`src/lib/db.ts` rewrite:** branch on `TURSO_DATABASE_URL`
+   (libsql://) → `PrismaLibSQL({url, authToken})`; else plain client.
+   Env names per 13-INTEGRATIONS documented contract.
+4. **`scripts/turso-init.ts` NEW:** DDL apply + verify + per-table smoke
+   counts; idempotent (skips DDL when core tables exist). No secrets
+   (env-based) — safe to commit.
+5. **Docs sync:** 13-INTEGRATIONS §Turso planned→LIVE (full runbook),
+   08-PLAN item 2 struck done, README stack line, .env.example Turso
+   section + AUTH_SECRET note.
+
+### Schema apply (Turso)
+- DDL via `prisma migrate diff --from-empty --to-schema-datamodel
+  --script` → 43 statements → 20 tables live (snake_case @@map, PRD §2.5
+  names). All smoke counts read back 0.
+
+### Vercel env (encrypted, production+preview)
+- `TURSO_DATABASE_URL` · `TURSO_AUTH_TOKEN` · **`AUTH_SECRET`**
+  (generated 63-char — REQUIRED in prod since JWT signing throws
+  without it; earlier deploys ran with graceful no-auth only).
+- BILLING_DEMO NOT set (hard rule).
+
+### Production verification (www.docopdf.com @ 7befb76, READY ~2min)
+- **Adapter probe (pre-deploy, sandbox script → Turso):** anonUsage
+  upsert+aggregate, pageView create+count, siteSetting read, user count
+  — ALL PASS, probe rows cleaned.
+- **Prod API:** `/api/limits` **500 → 200** `{"plan":"free",…}` ·
+  usage beacon (mode:"D") → anon_usage + usage_events rows landed ·
+  limits counter round-trip `usedToday: 0→1` · page_views landing from
+  REAL visitors (3 rows post-cleanup).
+- **Auth E2E:** signup 201 (test account) → httpOnly JWT session cookie
+  → `/api/auth/me` returns user → test rows deleted (users/audit/
+  usage). Owner admin bootstrap: signup with ADMIN_EMAILS
+  (araj.dkg@gmail.com) auto-claims role=admin — no seed needed.
+- agent-browser prod visual: title/hero render, 0 console errors
+  (qa-r46-prod-turso.png).
+- Note (my test artifacts, NOT bugs): usage beacon needs `mode:"D"|"S"`
+  + `anonId` in BODY; analytics/view needs visitorId in body — pehle do
+  probes galat shape bhejke silent-202 dekha (best-effort by contract).
+
+### What this unlocks on prod
+- Sign-up/sign-in sessions · /account settings · usage counter +
+  shadow-mode limits · first-party analytics (admin Analytics tab) ·
+  contact/feedback/bug-report storage · /admin owner console (owner
+  signup se) — sab ab persistent.
+
+### Followups
+- AI re-enable (08-PLAN §Deferred) — owner env keys chahiye.
+- GA4 NEXT_PUBLIC_GA_ID optional.
+- Turso token rotation kabhi leak lage to (Vercel env + turso dashboard).
