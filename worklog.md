@@ -6588,3 +6588,69 @@ status report.
   bhi filename-brand karta hai (iLovePDF_merged.pdf).
 - Contain hi DEFAULT rahta hai (fill opt-in) — photos ka kuch bhi kaat
   na paye bina user ke bole.
+
+## R45 — PRODUCTION RELEASE: R24→R44 PUSHED + VERCEL DEPLOY + HEALTH VERIFIED (2026-10-31)
+
+**THE ROUND:** Owner ne fresh GitHub PAT + Vercel token diye — "local par
+kya impliment hua hai dekho, production par carefully push karo, Vercel
+par deploy karo, sabhi skill aur discipline use karo." Full release
+round: audit → gates → E2E → push → deploy → prod verify.
+
+### Pre-push audit (kya locally implemented tha)
+- Git: working tree CLEAN, HEAD = 388b39c (R44), remote 19a9a6a (R23)
+  pe atka tha — **12 commits + 28 tags pending** (R24 i18n URL-wins →
+  R25 e-invoice rotation/auth UI → R26 /account+pricing → R29 admin
+  console → R42 analytics → R43 security+governance → R44 fill-mode
+  +branding).
+- README already DocoPDF-branded (R43 governance sync); `.gitignore`
+  airtight (.env / db/*.db / tokens / dev.log sab ignored; sirf
+  .env.example tracked); token-leak guard in push script.
+- Build-critical diff R23→R44: scripts UNCHANGED (same build jo R23 me
+  successfully deploy hua), next.config +12 lines (R43 headers — safe),
+  prisma schema +133 (generate-only, koi build-time DB query nahi —
+  verified: koi bhi page.tsx db import nahi karta).
+
+### Gates (re-verified on exact tree)
+- `bunx tsc --noEmit` **0** · `bun run lint` **0**.
+- Agent-browser local E2E: homepage (title/hero/0 errors) +
+  **images-to-pdf fill-mode golden path PASS** — upload qa-r44-a.jpg
+  (8.6 KB, 900×1600) → "तस्वीर फ़िट = पेज भरें (किनारे कटें)" → run →
+  "आपकी फ़ाइल तैयार है!" → **`qa-r44-a-docopdf.pdf`** (R44 branding
+  live) + privacy line + chaining suggestions. Screenshots:
+  qa-r45-deploy-check.png / -check2 / -check3.
+- Note: pehle attempt me long-lived stale tab ka "0 B" ghost file-entry
+  dikha (purani session ka artifact) — fresh reload par 8.6 KB sahi;
+  code bug NAHI (clean-flow E2E pass).
+
+### Push (canonical ritual)
+- `MYCLOUDY_GH_TOKEN=*** bash scripts/push-github.sh`:
+  leak-guard clean → `19a9a6a..388b39c main -> main` (fast-forward) →
+  28 tags verified on remote (`ls-remote` confirm).
+
+### Vercel deploy (git-integration auto)
+- Project `mycloudy` (prj_LokfKsLAxLbzuAlq6P17Evx9csn2), GitHub-linked,
+  prod branch main, Node 24.x. Push ne auto-deploy trigger kiya:
+  **388b39c7 BUILDING → READY (~2 min)** —
+  `mycloudy-kpj58rg6c-…vercel.app` → aliases www.docopdf.com +
+  mycloudy-beta.vercel.app.
+- **Production health (www.docopdf.com):** home 200 · /tools 200 ·
+  /tool/images-to-pdf 200 · /tool/merge-pdf 200 · vendored assets
+  (pdfjs worker, tesseract) 200 · R44 content confirmed live ("Fill
+  page" option ×2 + blank-borders FAQ + 100-tools banner).
+- **API posture (bina DATABASE_URL — as designed):** auth/me 200
+  `{user:null}` (graceful) · analytics/view 202 (swallow-by-contract) ·
+  usage 202 · **limits 500** — CLIENT-TOLERATED by design (R28
+  limits-client: "All failures are silent — limits must never break a
+  tool run"; `!res.ok → null`). Server-DB surfaces (sessions, usage
+  persistence, /admin) dormant until Turso/libSQL lands — documented
+  production plan (README §Stack).
+- **R43 security headers LIVE on prod:** full CSP (zero third-party
+  origins), HSTS preload, X-Frame-Options DENY, Permissions-Policy
+  locked, COOP same-origin.
+
+### Followups (next rounds)
+- Turso/libSQL wiring → auth/admin/analytics/limits persistence on prod.
+- AI tools re-enable plan (08-PLAN §Deferred) — owner Vercel env keys
+  chahiye (AI_BASE_URL/AI_API_KEY/AI_MODEL).
+- Optional: limits route ko honest shadow-mode JSON dena (500 → graceful
+  snapshot) — BILLING FREEZE hai, owner approval ke bina touch nahi.

@@ -6,7 +6,7 @@
 > **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R44 — IMAGE→PDF FILL MODE + WATERMARK-FREE BRANDING (2026-10-31)** — owner tested images-to-pdf (217148.pdf, 11 phone photos): side-blank audit → `fitMode` option (contain|fill) on images-to-pdf + all 6 imagegrid presets; fill = clip-based cover-crop (`re W n` engine extension, original bytes untouched) — 24% side waste → 6% (margin only). Branding (owner: doc me watermark NAHI): Producer/Creator/Title/CreationDate metadata + `-docopdf` output suffix, rolled across the create family (imagegrid, txt/md/create/write-pdf, card, collage, passport, scan, ocr, translate, invoice). Page-number light ink on dark bg. smoke-images-to-pdf 131/131. Pichle: **R43** governance sync + pentagi security skill (deps 94→27 vulns, rate-limit order fix, headers, /_next/image kill) + sandbox-resilience doc/restore script; **R42** first-party analytics (PageView beacon + admin Analytics tab) + contact-form re-verified; **R41** boot-watchdog adaptive fix; **R29** admin console 8-tab (single-admin Deepak Kumar); **R28** billing ₹1,499/yr + ₹49 week pass; **R27** accounting console.
+> **Updated:** **R45 — PRODUCTION RELEASE (2026-10-31)** — R24→R44 (12 commits + 28 tags) GitHub pe push + Vercel auto-deploy **READY** → **www.docopdf.com ab R44 code par LIVE** (health verified: pages/assets 200, R43 security headers on, R44 fill-mode+branding live, API graceful bina DB). Pichle: **R44** image→pdf fill mode (`fitMode` contain|fill, 24%→6% side waste) + watermark-free branding (metadata + `-docopdf` suffix, create-family roll); **R43** governance sync + pentagi security skill (94→27 vulns, headers, /_next/image kill) + sandbox-resilience; **R42** first-party analytics + admin Analytics tab; **R41** boot-watchdog adaptive fix; **R29** admin console 8-tab; **R28** billing ₹1,499/yr + ₹49 week pass; **R27** accounting console.
 
 ---
 
@@ -23,13 +23,13 @@
 | First-party analytics | **LIVE (R42)** — PageView beacon (privacy-first: no IP/UA, anonymous visitorId) + admin Analytics dashboard; GA4 consent-gated (needs NEXT_PUBLIC_GA_ID on Vercel) |
 | Static pages (PRD §9) | **LIVE** — about/contact/privacy/terms wired end-to-end (footer + `#/page/<id>` + i18n 166×2) |
 | Server | Next.js 16.1.3, port 3000 (daemon: `python3 scripts/dev-daemon.py`), dev.log clean |
-| **Production** | **https://mycloudy-beta.vercel.app** LIVE (Vercel; DB endpoints degrade gracefully — Turso future) |
-| GitHub | `DKUMARGUPTA/MyCloudy` — ⚠️ **21 commits UNPUSHED (R19→R43, tokens wiped)**; 26 local tags; push ritual ready (`scripts/push-github.sh`) |
+| **Production** | **https://www.docopdf.com LIVE @ R44 code (R45 deploy, 388b39c7)** — Vercel git-integration (main→prod auto); DB endpoints degrade gracefully — Turso future |
+| GitHub | `DKUMARGUPTA/MyCloudy` — **SYNCED @ 388b39c (R45 push: 12 commits + 28 tags)**; push ritual ready (`scripts/push-github.sh`, leak-guard built-in) |
 | Quality gates | tsc **0** errors · eslint 0 · battery **113/113** (R44 exact tree; 113 = current smoke-file count, R43 cleanup ke baad) · iOS-compat smoke **21/21** (R41) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
 | i18n | English + हिंदी — **5218 = 5218** flat-leaf keys parity (R29 admin +169, R42 analytics +35, R41 boot UI bilingual) |
 | Mini-services | convert (port 3031), request-sign (3032) — double-fork daemonizer se start |
-| Tokens | ⚠️ **WIPED (dono baar — sandbox artifact).** **21 commits unpushed hain (R19→R42) — user se fresh GitHub PAT (fine-grained, Contents RW) + Vercel token maango.** Mile to: `MYCLOUDY_GH_TOKEN=<pat> bash scripts/push-github.sh` (leak-guard built-in) + tags. Disk files pe durability mat maano |
+| Tokens | R45 me owner ne fresh PAT + Vercel token diye — **push + deploy complete ho gaya**. Agar future me wipe ho jaye to wapas maango. **Har batch ke baad push karo** (disk ephemeral, push = durable) |
 
 ---
 
