@@ -14,8 +14,8 @@ optimize · create · invoices · view), English + हिंदी, files proces
 | File | Purpose |
 |------|---------|
 | [`AGENTS.md`](AGENTS.md) | **Master protocol** — mandatory entry point for every agent/session/update |
-| [`docs/rules/INDEX.md`](docs/rules/INDEX.md) | Catalog of 16 binding rule docs |
-| `docs/rules/01…15` | PRD · Design · Architecture · Folders · Relations · API · Agent · Plan · Steps · Features · Auth · MCP · Integration · Testing · Debugging |
+| [`docs/rules/INDEX.md`](docs/rules/INDEX.md) | Catalog of 18 binding rule docs |
+| `docs/rules/01…18` | PRD · Design · Architecture · Folders · Relations · API · Agent · Plan · Steps · Features · Auth · MCP · Integration · Testing · Debugging · Billing-research · Accounting · Sandbox-resilience |
 | [`CONTEXT-MEMORY.md`](CONTEXT-MEMORY.md) | Live short-term memory (session start file) |
 | [`worklog.md`](worklog.md) | Full round-by-round history |
 | [`docs/PRD-v2.md`](docs/PRD-v2.md) | Product requirements (v2.0, canonical) |
@@ -78,9 +78,8 @@ services/worker/     reserved for Phase-11 LibreOffice worker
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 0–6 | Foundation, 100 tools, own engine migration, editor, statics, PWA | ✅ shipped |
-| 7 | SEO layer + GA4 + GSC + i18n hardening (P7-c VLM battery next) | 🟡 in progress |
+| 0–7 | Foundation, 100 tools, own engine, editor, statics, PWA, SEO/i18n hardening (P7-c VLM battery) | ✅ shipped |
 | 8 | Editor family | ✅ complete |
 | 9 | Advanced tools + R19 hardening (5 phases) | ✅ shipped |
-| 10 | Accounts + Pro gating | planned |
+| 10 | Accounts + Pro gating + billing surface (R25–R28) + admin console (R29) + analytics (R42) | 🟡 in progress |
 | 11 | services/worker (LibreOffice formats) | planned |

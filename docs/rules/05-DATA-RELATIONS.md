@@ -20,12 +20,25 @@ User  1─n  Subscription      (provider razorpay|stripe, plan, periodEnd)
 User  1─n  Payment           (amount in minor units, currency INR default)
 User  1─n? BugReport         (optional userId → SetNull)
 ToolRequest  1─n  RequestVote (composite PK requestId+voterHash, cascade)
+Account  1─n  JournalLine     (chart-of-accounts entry; FK no-delete)
+JournalEntry  1─n  JournalLine (cascade delete; entry immutable once posted)
+Invoice  1─1  Payment         (GST tax invoice, one per payment)
 ```
 
 Standalone tables (no FK): `AnonUsage` (PK anonId+toolId+day),
 `UsageEvent` (toolId,mode,success,durationMs,sizeBucket,locale,day),
+`PageView` (R42 first-party analytics: path, locale, device, referrer
+bucket, anonymous visitorId, day — **no IP, no raw UA, no cross-site id**),
 `Feedback`, `ContactMessage`, `BlogPost` (PK slug+locale), `Job`,
 `AuditLog`, `SiteSetting` (PK key).
+
+Accounting set (R27, `/accounting` console): `Account` (code, type
+asset|liability|equity|revenue|expense, subtype, isSystem), `JournalEntry`
+(entryNo JE-000001…, source manual|payment|refund|recognition|adjustment,
+immutable once posted — corrections are reversing entries), `JournalLine`
+(exactly one of debit/credit non-zero, minor units, debits=credits
+validated in `src/lib/accounting/post.ts`), `Invoice` (GST CGST+SGST/IGST
+split, USD zero-rated exports).
 
 ## Conventions
 
@@ -36,7 +49,8 @@ Standalone tables (no FK): `AnonUsage` (PK anonId+toolId+day),
 - Indexes: every FK + every hot query path (`toolId+day`, `status`).
 - Soft delete: `deletedAt` on User; hard deletes cascade from User only.
 - Privacy: `AnonUsage.anonId` and `RequestVote.voterHash` are salted
-  hashes, never raw identifiers.
+  hashes, never raw identifiers. `PageView.visitorId` reuses the anonymous
+  usage-beacon localStorage id — coarse referrer buckets only, no IP/UA.
 
 ## Workflow
 

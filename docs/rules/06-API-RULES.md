@@ -6,22 +6,25 @@ the two mini-services. Client always calls **relative** URLs only
 QUERY STRING, never a port in the hostname (gateway rule; see
 `13-INTEGRATIONS.md`).
 
-## Route inventory (stable as of R19)
+## Route inventory (stable as of R42)
 
 | Route | Auth | Notes |
 |-------|------|-------|
-| `/api/auth/*` | public | signup/login/logout/me (sidocs session JWT) |
-| `/api/admin/*` | **gateAdmin** | admin panel actions; AuditLog writes |
+| `/api/admin/*` | **gateAdmin** | admin panel actions; AuditLog writes. R29 console set: `stats`, `users(+[id])`, `bugs(+[id])`, `messages(+[id])`, `feedback`, `audit`, `settings`, `analytics` (R42) |
+| `/api/admin/accounting/*` | **gateAdmin + rate limit (mutators)** | R27 console: `overview`, `accounts`, `journal`, `invoices`, `reports`, `export`, `sync` (payments→books sweep, idempotent) |
+| `/api/analytics/view` | public + rate limit | R42 first-party PageView beacon — zod-validated, **always 202** (fire-and-forget, usage-api contract), 60/min/visitor, owner surfaces (/admin, /accounting) rejected server-side |
 | `/api/announcements` | public | site announcements |
+| `/api/auth/*` | public | signup/login/logout/me/delete/password (sidocs session JWT) |
 | `/api/billing/*` | **gateUser** | Phase-10 stub: checkout/confirm/cancel/status (R26) — checkout honest `billingNotConfigured` 503 unless `BILLING_DEMO=1`; confirm demo-guards BEFORE the auth gate |
 | `/api/bug-reports` | public + rate limit | files BugReport rows |
 | `/api/chat` | public + rate limit | chat-with-pdf (AI adapter `src/lib/ai/zai-client.ts`) |
 | `/api/contact` | public + rate limit | ContactMessage |
 | `/api/feedback` | public + rate limit | inline limiter pattern |
 | `/api/fetch-page` | public | Mode-S page fetch **with SSRF guard** (reference implementation, `route.ts:124-141,223`) |
+| `/api/limits` | public + rate limit | R28 free-tier daily counter (shadow mode until provider keys); `{plan, usedToday, maxToday, remaining, hard}` |
 | `/api/summarize` | public + rate limit | summarize-pdf (AI adapter) |
+| `/api/tools/status` | public | per-tool enable overrides (R29 admin settings) — the registry itself is a client-side lib, no bare `/api/tools` route exists |
 | `/api/translate` | public + rate limit | translate (AI adapter) |
-| `/api/tools` | public | registry metadata |
 | `/api/usage` | public | beacon (UsageEvent / AnonUsage) |
 
 Mini-services (gateway-proxied, own JSON envelope):

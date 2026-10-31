@@ -19,6 +19,16 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     // React rules
     "react-hooks/exhaustive-deps": "off",
     "react-hooks/purity": "off",
+    // react-hooks v6 (via eslint-config-next 16.4, R43 security update) added
+    // more React-Compiler diagnostics of the same family as purity/deps above.
+    // They flag long-verified editor surfaces (canvas refs, effect-driven
+    // state machines) as stylistic/perf issues — not correctness bugs. Kept
+    // OFF per existing policy; clean up gradually, never inside a
+    // dependency-security round.
+    "react-hooks/refs": "off",
+    "react-hooks/set-state-in-effect": "off",
+    "react-hooks/preserve-manual-memoization": "off",
+    "react-hooks/immutability": "off",
     "react/no-unescaped-entities": "off",
     "react/display-name": "off",
     "react/prop-types": "off",

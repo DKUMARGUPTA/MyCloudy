@@ -59,6 +59,8 @@ Read the docs relevant to your task — all of them at least once:
 | `docs/rules/13-INTEGRATIONS.md` | GitHub, Vercel, GA4, gateway, mini-services |
 | `docs/rules/14-TESTING.md` | Battery, E2E, regression suite |
 | `docs/rules/15-DEBUGGING.md` | Runbook for the known failure modes |
+| `docs/rules/16-18` | Billing research · Accounting · Sandbox resilience (wipe-recovery) |
+| `docs/skills/*/SKILL.md` | Reusable in-repo skills (security-audit: pentagi-derived) |
 
 ## 3. Minimum Viable Round (even small fixes)
 

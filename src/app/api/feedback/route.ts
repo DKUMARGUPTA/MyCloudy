@@ -53,6 +53,17 @@ function rateLimited(ip: string): boolean {
 }
 
 export async function POST(request: Request) {
+  // R43 security order: throttle BEFORE parsing — every attempt counts
+  // toward the window (DoS hardening; was: 400 short-circuited first).
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  if (rateLimited(ip)) {
+    return NextResponse.json(
+      { ok: false, error: "rate-limited" },
+      { status: 429 }
+    );
+  }
+
   let json: unknown;
   try {
     json = await request.json();
@@ -68,15 +79,6 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { ok: false, error: "invalid-body" },
       { status: 400 }
-    );
-  }
-
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
-  if (rateLimited(ip)) {
-    return NextResponse.json(
-      { ok: false, error: "rate-limited" },
-      { status: 429 }
     );
   }
 

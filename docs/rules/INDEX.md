@@ -31,6 +31,13 @@ karne hain — jo missing hai banao."*
 | 15 | `15-DEBUGGING.md` | Failure-mode runbook |
 | 16 | `16-BILLING-RESEARCH.md` | Competitor pricing research + 50%-below strategy (PROPOSAL — not implemented) |
 | 17 | `17-ACCOUNTING.md` | Accounting module: double-entry books, GST invoicing, reports |
+| 18 | `18-SANDBOX-RESILIENCE.md` | Wipe-recovery protocol: memory chain, restore script, token handling |
+
+## Skills (in-repo, wipe-proof)
+
+| Skill | Purpose |
+|---|---|
+| `docs/skills/security-audit/SKILL.md` | Pentest-style audit of our own app (pentagi-derived pipeline, OWASP-mapped) |
 
 ## Update protocol (who edits these)
 

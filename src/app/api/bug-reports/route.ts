@@ -26,6 +26,17 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  // R43 security order: throttle BEFORE parsing — every attempt counts
+  // toward the window (DoS hardening; was: bad_request short-circuited
+  // first, letting invalid traffic bypass the limiter entirely).
+  const rl = rateLimit(`bugr:${clientIp(request)}`, 5, 10 * 60_000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "rate_limited" },
+      { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }
+    );
+  }
+
   let json: unknown;
   try {
     json = await request.json();
@@ -49,14 +60,6 @@ export async function POST(request: Request) {
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
-
-  const rl = rateLimit(`bugr:${clientIp(request)}`, 5, 10 * 60_000);
-  if (!rl.ok) {
-    return NextResponse.json(
-      { error: "rate_limited" },
-      { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }
-    );
   }
 
   try {

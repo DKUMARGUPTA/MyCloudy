@@ -40,6 +40,11 @@ const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  // R43 security round: isolate the browsing context (defends against
+  // window.opener attacks / cross-window snooping) and block legacy
+  // cross-domain policy files (Flash/PDF embed era headers).
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+  { key: "X-Permitted-Cross-Domain-Policies", value: "none" },
   {
     key: "Permissions-Policy",
     // camera=(self) for the future Scan-to-PDF tool; everything else locked
@@ -58,6 +63,13 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   typescript: {
     ignoreBuildErrors: false,
+  },
+  // R43 security round: the app renders 100% plain <img> (no next/image),
+  // so the /_next/image optimization endpoint is dead surface — it has a
+  // history of critical advisories (AVIF/SVG RCE, SSRF). Disable it
+  // outright; nothing in the app calls it.
+  images: {
+    unoptimized: true,
   },
   // Next 16 removed the `eslint` config key — linting runs via
   // `bun run lint` (eslint) in CI instead.

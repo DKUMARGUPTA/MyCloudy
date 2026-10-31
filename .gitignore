@@ -27,6 +27,7 @@
 .claude
 .env
 .env*
+!.env.example
 .github-token
 .ops/
 .pnp.*

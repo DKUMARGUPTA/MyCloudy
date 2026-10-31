@@ -61,7 +61,19 @@ full tool implementations. Sitemap auto-drops the 3 URLs; live count =
   reports (trial balance, P&L, balance sheet, GST summary) + CSV exports.
   EN/हिंदी, entry via account menu / account page (admins only).
 - **Feedback loop:** feedback modal, bug reports, tool requests + votes.
-- **Privacy beacons:** UsageEvent/AnonUsage aggregates only (metadata).
+- **Admin console (R29, `/admin` owner-only, 8 tabs):** overview stats +
+  top tools + recent signups, users (search/ban/unban/role/delete with
+  self-guard), bug triage, contact-message inbox (new/read/done), feedback
+  totals, **analytics (R42)**, audit log, settings (registration toggle,
+  announcements, per-tool enable overrides). Single admin: Deepak Kumar
+  (araj.dkg@gmail.com).
+- **First-party analytics (R42):** privacy-first PageView beacon (no IP,
+  no raw UA, no cross-site id — anonymous visitorId, coarse device class,
+  referrer buckets) + admin Analytics dashboard (30-day series, top pages,
+  traffic sources, devices, locales, tool health from UsageEvent). GA4
+  consent-gated via `NEXT_PUBLIC_GA_ID` (owner sets on Vercel).
+- **Privacy beacons:** UsageEvent/AnonUsage aggregates + PageView — all
+  metadata-only, no file content ever.
 - **Mini-services:** convert (office/webpage→pdf), request-sign envelopes.
 
 ## Out of scope until Phase 10/11
