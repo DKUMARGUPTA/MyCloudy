@@ -44,6 +44,11 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
   const routes = useLocalizedRoutes();
   const [menuOpen, setMenuOpen] = useState(false);
 
+  /* R46 logical audit: the Get Pro CTA sells the plan ladder — the owner
+   * (single-admin site, role "admin") already has everything unlocked, so
+   * the upsell button is pure noise for them. Customers keep seeing it. */
+  const isOwner = user?.role === "admin";
+
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border bg-background/85 backdrop-blur-md supports-[backdrop-filter]:bg-background/70">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-2 px-4">
@@ -106,15 +111,17 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
             <ThemeToggle />
           </div>
           <AccountMenu />
-          <Button
-            type="button"
-            variant="cta"
-            size="touch"
-            className="hidden rounded-btn xl:inline-flex"
-            onClick={onGetPro}
-          >
-            {t("header.getPro")}
-          </Button>
+          {isOwner ? null : (
+            <Button
+              type="button"
+              variant="cta"
+              size="touch"
+              className="hidden rounded-btn xl:inline-flex"
+              onClick={onGetPro}
+            >
+              {t("header.getPro")}
+            </Button>
+          )}
           <Button
             type="button"
             variant="ghost"
@@ -207,7 +214,11 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
                     {user.name?.trim() || user.email}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {user.plan === "pro" ? t("auth.menuPlanPro") : t("auth.menuPlanFree")}{" — "}
+                    {user.role === "admin"
+                      ? t("auth.menuOwner")
+                      : user.plan === "pro"
+                        ? t("auth.menuPlanPro")
+                        : t("auth.menuPlanFree")}{" — "}
                     {t("auth.menuSettings")}
                   </p>
                 </div>
@@ -254,18 +265,20 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
               </span>
               <ThemeToggle />
             </div>
-            <Button
-              type="button"
-              variant="cta"
-              size="touch"
-              className="w-full rounded-btn"
-              onClick={() => {
-                setMenuOpen(false);
-                onGetPro();
-              }}
-            >
-              {t("header.getPro")}
-            </Button>
+            {isOwner ? null : (
+              <Button
+                type="button"
+                variant="cta"
+                size="touch"
+                className="w-full rounded-btn"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onGetPro();
+                }}
+              >
+                {t("header.getPro")}
+              </Button>
+            )}
           </div>
         </SheetContent>
       </Sheet>

@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import {
   BookOpenCheck,
   CalendarDays,
+  CheckCircle2,
   CreditCard,
+  Crown,
   KeyRound,
   Loader2,
   LogIn,
@@ -152,7 +154,17 @@ function ProfileCard() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {user.plan === "pro" ? (
+          {/* R46 logical audit: the owner carries the Owner identity, never
+           * a plan-ladder badge — the ladder is a customer concept. */}
+          {user.role === "admin" ? (
+            <Badge
+              variant="default"
+              className="rounded-chip border-primary/30 bg-primary/15 text-primary"
+            >
+              <Crown className="size-3" aria-hidden="true" />
+              {t("auth.menuOwner")}
+            </Badge>
+          ) : user.plan === "pro" ? (
             <Badge variant="pro" className="rounded-chip">
               <Sparkles className="size-3" aria-hidden="true" />
               {t("auth.menuPlanPro")}
@@ -164,9 +176,9 @@ function ProfileCard() {
           )}
           {user.role === "admin" ? (
             <>
-              <Badge variant="secondary" className="rounded-chip">
+              <Badge variant="outline" className="rounded-chip text-muted-foreground">
                 <ShieldCheck className="size-3" aria-hidden="true" />
-                {t("auth.menuAdmin")}
+                {t("admin.ownerAccessChip")}
               </Badge>
               <Button
                 type="button"
@@ -210,6 +222,7 @@ function PlanCard({ onGetPro }: { onGetPro: () => void }) {
   }, [user, user?.plan]);
 
   if (!user) return null;
+  const isOwner = user.role === "admin";
   const isPro = user.plan === "pro";
 
   const handleCancel = async () => {
@@ -237,11 +250,37 @@ function PlanCard({ onGetPro }: { onGetPro: () => void }) {
           {t("account.sectionPlan")}
         </CardTitle>
         <CardDescription>
-          {isPro ? t("account.planProDesc") : t("account.planFreeDesc")}
+          {isOwner
+            ? t("account.ownerPlanDesc")
+            : isPro
+              ? t("account.planProDesc")
+              : t("account.planFreeDesc")}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        {isPro ? (
+        {isOwner ? (
+          /* R46: the owner already has everything — no upgrade CTA, no
+           * cancel flow. A quiet full-access confirmation is all that's
+           * logically honest on this card. */
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge
+                variant="default"
+                className="rounded-chip border-primary/30 bg-primary/15 text-primary"
+              >
+                <Crown className="size-3" aria-hidden="true" />
+                {t("auth.menuOwner")}
+              </Badge>
+              <Badge variant="outline" className="rounded-chip text-muted-foreground">
+                <CheckCircle2 className="size-3" aria-hidden="true" />
+                {t("account.ownerPlanChip")}
+              </Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {t("account.ownerPlanNote")}
+            </p>
+          </>
+        ) : isPro ? (
           <>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="pro" className="rounded-chip">

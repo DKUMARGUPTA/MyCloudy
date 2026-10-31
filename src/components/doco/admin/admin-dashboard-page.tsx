@@ -5,6 +5,7 @@ import {
   Activity,
   BookOpenCheck,
   Bug,
+  Crown,
   Inbox,
   Landmark,
   LayoutDashboard,
@@ -16,7 +17,6 @@ import {
   Settings2,
   ShieldAlert,
   ShieldCheck,
-  Sparkles,
   TrendingUp,
   UserRound,
   Users,
@@ -119,6 +119,11 @@ export function AdminDashboardPage() {
 
 /* ------------------------------------------------------------------ */
 /* Owner identity — the single-admin banner                            */
+/*                                                                     */
+/* R46 logical audit: the owner IS the site owner — no "Pro"/"Free"    */
+/* plan badge belongs here. One "Owner" identity badge plus the        */
+/* full-access chip says everything the plan ladder would, without     */
+/* selling the owner their own product.                                */
 /* ------------------------------------------------------------------ */
 
 function OwnerIdentityCard() {
@@ -135,27 +140,37 @@ function OwnerIdentityCard() {
     .toUpperCase();
 
   return (
-    <Card className="overflow-hidden border-primary/20 bg-gradient-to-br from-primary/5 via-surface to-surface">
+    <Card className="overflow-hidden border-primary/25 bg-gradient-to-br from-primary/[0.08] via-surface to-surface">
       <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
-          <Avatar className="size-14 border-2 border-primary/25">
-            <AvatarFallback className="bg-primary/10 text-base font-bold text-primary">
-              {initials || "DK"}
-            </AvatarFallback>
-          </Avatar>
+          <div className="relative">
+            <Avatar className="size-14 border-2 border-primary/30">
+              <AvatarFallback className="bg-primary/15 text-base font-bold text-primary">
+                {initials || "DK"}
+              </AvatarFallback>
+            </Avatar>
+            <span
+              className="absolute -bottom-1 -right-1 flex size-6 items-center justify-center rounded-full border-2 border-surface bg-primary text-primary-foreground"
+              aria-hidden="true"
+            >
+              <Crown className="size-3" />
+            </span>
+          </div>
           <div className="min-w-0">
             <p className="truncate text-lg font-bold tracking-tight text-foreground">
               {user.name?.trim() || user.email}
             </p>
             <p className="truncate text-sm text-muted-foreground">{user.email}</p>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <Badge variant="default" className="rounded-chip">
-                <ShieldCheck className="size-3" aria-hidden="true" />
+              <Badge
+                variant="default"
+                className="rounded-chip border-primary/30 bg-primary/15 text-primary"
+              >
+                <Crown className="size-3" aria-hidden="true" />
                 {t("admin.ownerBadge")}
               </Badge>
-              <Badge variant="pro" className="rounded-chip">
-                <Sparkles className="size-3" aria-hidden="true" />
-                {t("auth.menuPlanPro")}
+              <Badge variant="outline" className="rounded-chip text-muted-foreground">
+                {t("admin.ownerAccessChip")}
               </Badge>
             </div>
           </div>
@@ -180,6 +195,7 @@ function Console() {
   const [refreshing, setRefreshing] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [tab, setTab] = useState("overview");
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -188,6 +204,7 @@ function Console() {
       if (data) {
         setStats(data);
         setFailed(false);
+        setUpdatedAt(new Date());
       } else {
         setFailed(true);
       }
@@ -210,7 +227,17 @@ function Console() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+        {updatedAt && !refreshing ? (
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {t("admin.lastUpdated", {
+              time: updatedAt.toLocaleTimeString(
+                undefined,
+                { hour: "2-digit", minute: "2-digit" }
+              ),
+            })}
+          </span>
+        ) : null}
         <Button
           type="button"
           variant="outline"

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Loader2, Sparkles, X, Zap } from "lucide-react";
+import { Check, Crown, Loader2, Sparkles, X, Zap } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -79,6 +79,7 @@ function PricingBody({
 
   const plan = cycle === "monthly" ? PRO_PLANS.pro_monthly : PRO_PLANS.pro_yearly;
   const week = PRO_PLANS.pro_week;
+  const isOwner = user?.role === "admin";
   const isPro = user?.plan === "pro";
 
   const freeFeatures = [
@@ -104,7 +105,7 @@ function PricingBody({
   };
 
   const handleUpgrade = async (planId: ProPlanId) => {
-    if (busy || isPro) return;
+    if (busy || isPro || isOwner) return;
     if (!user) {
       openAuthModal("signup");
       return;
@@ -143,6 +144,25 @@ function PricingBody({
 
   return (
     <>
+      {/* R46: the owner already owns everything — an honest notice instead
+       * of upgrade CTAs selling them their own product. */}
+      {isOwner ? (
+        <div
+          role="note"
+          className="mt-2 flex items-start gap-3 rounded-card border border-primary/30 bg-primary/[0.07] p-4"
+        >
+          <Crown className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">
+              {t("pricing.ownerTitle")}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t("pricing.ownerBody")}
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       {/* Cycle toggle */}
       <div className="mt-2 inline-flex rounded-btn border border-border bg-muted p-1" role="group" aria-label={t("pricing.cycleLabel")}>
         {(["monthly", "yearly"] as const).map((option) => (
@@ -174,9 +194,11 @@ function PricingBody({
         <div className="rounded-card border border-border bg-background p-4">
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm font-semibold text-foreground">{t("pricing.freeName")}</p>
-            <Badge variant="outline" className="rounded-chip">
-              {isPro ? t("pricing.proIncludesFree") : t("pricing.currentPlan")}
-            </Badge>
+            {!isOwner ? (
+              <Badge variant="outline" className="rounded-chip">
+                {isPro ? t("pricing.proIncludesFree") : t("pricing.currentPlan")}
+              </Badge>
+            ) : null}
           </div>
           <p className="mt-2 text-2xl font-bold tracking-tight text-foreground">
             ₹0
@@ -201,7 +223,15 @@ function PricingBody({
               <Sparkles className="size-4 text-primary" aria-hidden="true" />
               {t("pricing.proName")}
             </p>
-            {isPro ? (
+            {isOwner ? (
+              <Badge
+                variant="default"
+                className="rounded-chip border-primary/30 bg-primary/15 text-primary"
+              >
+                <Crown className="size-3" aria-hidden="true" />
+                {t("auth.menuOwner")}
+              </Badge>
+            ) : isPro ? (
               <Badge variant="pro" className="rounded-chip">
                 {t("pricing.currentPlan")}
               </Badge>
@@ -228,17 +258,19 @@ function PricingBody({
             variant="cta"
             size="touch"
             className="mt-5 w-full rounded-btn"
-            disabled={busy !== null || isPro}
+            disabled={busy !== null || isPro || isOwner}
             onClick={() => void handleUpgrade(plan.id)}
           >
             {busy === plan.id ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             ) : null}
-            {isPro
-              ? t("pricing.proActive")
-              : user
-                ? t("pricing.upgradeCta")
-                : t("pricing.signUpCta")}
+            {isOwner
+              ? t("pricing.ownerTitle")
+              : isPro
+                ? t("pricing.proActive")
+                : user
+                  ? t("pricing.upgradeCta")
+                  : t("pricing.signUpCta")}
           </Button>
           {!user ? (
             <p className="mt-2 text-center text-xs text-muted-foreground">
@@ -275,13 +307,13 @@ function PricingBody({
             variant="outline"
             size="touch"
             className="rounded-btn"
-            disabled={busy !== null || isPro}
+            disabled={busy !== null || isPro || isOwner}
             onClick={() => void handleUpgrade("pro_week")}
           >
             {busy === "pro_week" ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             ) : null}
-            {isPro ? t("pricing.proActive") : t("pricing.weekCta")}
+            {isOwner ? t("pricing.ownerTitle") : isPro ? t("pricing.proActive") : t("pricing.weekCta")}
           </Button>
         </div>
       </div>

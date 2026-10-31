@@ -68,6 +68,7 @@ import {
   type LimitsSnapshot,
 } from "@/lib/limits-client";
 import { openProModal } from "@/lib/pro-modal";
+import { useAuth } from "@/lib/auth-client";
 import {
   toolRunner,
   RunCancelledError,
@@ -107,6 +108,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   const { t, locale } = useI18n();
   const routes = useLocalizedRoutes();
   const { toast } = useToast();
+  const { user } = useAuth();
   const category = getCategory(tool.category);
   // Viewer tools (PRD §6.5) never process anything: no run CTA, no options
   // aside, no processing/result phases — the workspace surface IS the tool.
@@ -207,7 +209,10 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   // Post-run soft nudge (decision D3): one toast per kind per day —
   // "near" at ≥80% primes Pro pricing, "at" is informational in shadow
   // mode (beta stays unlimited) and celebratory rather than punishing.
+  // R46: the owner (single-admin site) has no quota — never nudged.
+  const isOwner = user?.role === "admin";
   const maybeNudge = useCallback(() => {
+    if (isOwner) return;
     const snap = limitsRef.current;
     const kind = nudgeKind(snap);
     if (!snap || !kind || nudgeAlreadyShown(kind)) return;
@@ -226,7 +231,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
         description: t("tool.limitAtDesc", { max: snap.maxToday }),
       });
     }
-  }, [t, toast]);
+  }, [t, toast, isOwner]);
 
   // Optional custom options panel (PRD §2.6 Panel.tsx pattern). Direct
   // map lookup — a stable module-level reference, never created in render.
@@ -362,7 +367,8 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
     // R28 hard gate (dormant in shadow mode): only bites when payment
     // providers are live AND the free quota is exhausted — then it is an
     // upsell, never a dead end (pricing modal opens alongside the toast).
-    if (runBlockedByLimits(limitsRef.current)) {
+    // R46: the owner is never gated — full access by definition.
+    if (!isOwner && runBlockedByLimits(limitsRef.current)) {
       toast({
         title: t("tool.limitBlockedTitle"),
         description: t("tool.limitBlockedDesc", {
@@ -435,7 +441,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           variant: "destructive",
         });
       });
-  }, [collectAssets, config.minFiles, files, maybeNudge, options, runBlockedKey, t, toast, tool.id, tool.mode]);
+  }, [collectAssets, config.minFiles, files, isOwner, maybeNudge, options, runBlockedKey, t, toast, tool.id, tool.mode]);
 
   const cancelRun = useCallback(() => {
     runHandleRef.current?.cancel();

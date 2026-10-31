@@ -70,7 +70,8 @@ export function bugSeverityVariant(severity: string): "default" | "destructive" 
   }
 }
 
-/** Small stat card used on the overview tab. */
+/** Small stat card used on the overview tab (R46 polish: tone-tinted top
+ *  accent, hover lift + ring, tabular numerals for scannable dashboards). */
 export function StatCard({
   label,
   value,
@@ -88,13 +89,27 @@ export function StatCard({
     success: "border-success/30 bg-success/10 text-success",
     muted: "border-border bg-muted/50 text-muted-foreground",
   };
+  const accents: Record<string, string> = {
+    primary: "from-primary/50",
+    accent: "from-cat-optimize/50",
+    success: "from-success/50",
+    muted: "from-muted-foreground/40",
+  };
   return (
-    <div className="rounded-card border border-border bg-surface p-4">
+    <div className="group relative overflow-hidden rounded-card border border-border bg-surface p-4 outline-none transition-all duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-md focus-visible:ring-[3px] focus-visible:ring-ring/50">
+      {/* Tone accent — a whisper of color along the top edge. */}
+      <span
+        className={cn(
+          "absolute inset-x-0 top-0 h-px bg-gradient-to-r to-transparent",
+          accents[tone]
+        )}
+        aria-hidden="true"
+      />
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-medium text-muted-foreground">{label}</span>
         <span
           className={cn(
-            "flex size-8 shrink-0 items-center justify-center rounded-full border",
+            "flex size-8 shrink-0 items-center justify-center rounded-full border transition-transform duration-200 group-hover:scale-110",
             tones[tone]
           )}
           aria-hidden="true"

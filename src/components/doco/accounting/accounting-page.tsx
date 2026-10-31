@@ -52,6 +52,7 @@ import { PageShell } from "@/components/doco/page/page-shell";
 import { useI18n } from "@/components/providers/locale-provider";
 import { useToast } from "@/hooks/use-toast";
 import { track } from "@/lib/analytics/ga4";
+import { cn } from "@/lib/utils";
 import { openAuthModal, useAuth } from "@/lib/auth-client";
 import {
   fetchAccounts,
@@ -294,6 +295,63 @@ function Console() {
 /* Overview tab                                                        */
 /* ------------------------------------------------------------------ */
 
+/** KPI tile (R46 polish) — same visual language as the admin StatCard:
+ *  tone-tinted top accent, hover lift, icon micro-interaction. */
+function KpiCard({
+  label,
+  value,
+  icon: Icon,
+  tone = "primary",
+}: {
+  label: string;
+  value: string;
+  icon: typeof Wallet;
+  tone?: "primary" | "accent" | "success" | "muted";
+}) {
+  const tones: Record<string, string> = {
+    primary: "border-primary/20 bg-primary/5 text-primary",
+    accent: "border-cat-optimize/25 bg-cat-optimize/10 text-cat-optimize",
+    success: "border-success/30 bg-success/10 text-success",
+    muted: "border-border bg-muted/50 text-muted-foreground",
+  };
+  const accents: Record<string, string> = {
+    primary: "from-primary/50",
+    accent: "from-cat-optimize/50",
+    success: "from-success/50",
+    muted: "from-muted-foreground/40",
+  };
+  return (
+    <div className="group relative overflow-hidden rounded-card border border-border bg-surface outline-none transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-[3px] focus-visible:ring-ring/50">
+      <span
+        className={cn(
+          "absolute inset-x-0 top-0 h-px bg-gradient-to-r to-transparent",
+          accents[tone]
+        )}
+        aria-hidden="true"
+      />
+      <div className="flex items-start justify-between gap-2 p-4">
+        <div className="min-w-0">
+          <p className="truncate text-xs font-medium text-muted-foreground">
+            {label}
+          </p>
+          <p className="mt-1.5 truncate text-xl font-bold tabular-nums text-foreground">
+            {value}
+          </p>
+        </div>
+        <span
+          className={cn(
+            "flex size-9 shrink-0 items-center justify-center rounded-full border transition-transform duration-200 group-hover:scale-110",
+            tones[tone]
+          )}
+          aria-hidden="true"
+        >
+          <Icon className="size-4" />
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function OverviewTab({ overview }: { overview: OverviewDto | null }) {
   const { t, locale } = useI18n();
 
@@ -309,38 +367,21 @@ function OverviewTab({ overview }: { overview: OverviewDto | null }) {
 
   const m = overview.metrics;
   const stats = [
-    { label: t("accounting.overview.cashInr"), value: fmtInr(m.cashCollectedInr), icon: Wallet },
-    { label: t("accounting.overview.cashUsd"), value: fmtUsd(m.cashCollectedUsd), icon: Wallet },
-    { label: t("accounting.overview.recognized"), value: fmtInr(m.recognizedRevenue), icon: TrendingUp },
-    { label: t("accounting.overview.deferred"), value: fmtInr(m.deferredBalance), icon: Clock3 },
-    { label: t("accounting.overview.gstPayable"), value: fmtInr(m.gstPayable), icon: Landmark },
-    { label: t("accounting.overview.mrr"), value: fmtInr(m.mrrInr), icon: TrendingUp },
-    { label: t("accounting.overview.activeSubs"), value: String(m.activeSubscriptions), icon: ReceiptText },
-    { label: t("accounting.overview.proUsers"), value: String(m.proUsers), icon: BookOpenCheck },
+    { label: t("accounting.overview.cashInr"), value: fmtInr(m.cashCollectedInr), icon: Wallet, tone: "primary" as const },
+    { label: t("accounting.overview.cashUsd"), value: fmtUsd(m.cashCollectedUsd), icon: Wallet, tone: "primary" as const },
+    { label: t("accounting.overview.recognized"), value: fmtInr(m.recognizedRevenue), icon: TrendingUp, tone: "success" as const },
+    { label: t("accounting.overview.deferred"), value: fmtInr(m.deferredBalance), icon: Clock3, tone: "muted" as const },
+    { label: t("accounting.overview.gstPayable"), value: fmtInr(m.gstPayable), icon: Landmark, tone: "accent" as const },
+    { label: t("accounting.overview.mrr"), value: fmtInr(m.mrrInr), icon: TrendingUp, tone: "success" as const },
+    { label: t("accounting.overview.activeSubs"), value: String(m.activeSubscriptions), icon: ReceiptText, tone: "muted" as const },
+    { label: t("accounting.overview.proUsers"), value: String(m.proUsers), icon: BookOpenCheck, tone: "accent" as const },
   ];
 
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => (
-          <Card key={stat.label} className="rounded-card">
-            <CardContent className="flex items-start justify-between gap-2 p-4">
-              <div className="min-w-0">
-                <p className="truncate text-xs font-medium text-muted-foreground">
-                  {stat.label}
-                </p>
-                <p className="mt-1.5 truncate text-xl font-bold tabular-nums text-foreground">
-                  {stat.value}
-                </p>
-              </div>
-              <span
-                className="flex size-9 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary/10 text-primary"
-                aria-hidden="true"
-              >
-                <stat.icon className="size-4" />
-              </span>
-            </CardContent>
-          </Card>
+          <KpiCard key={stat.label} {...stat} />
         ))}
       </div>
 
@@ -351,7 +392,7 @@ function OverviewTab({ overview }: { overview: OverviewDto | null }) {
         </CardHeader>
         <CardContent>
           {overview.recentEntries.length === 0 ? (
-            <p className="py-2 text-sm text-muted-foreground">{t("accounting.noEntries")}</p>
+            <p className="py-2 text-sm text-muted-foreground">{t("accounting.recentEmpty")}</p>
           ) : (
             <ul className="divide-y divide-border">
               {overview.recentEntries.map((entry) => (

@@ -1,6 +1,14 @@
 "use client";
 
-import { BookOpenCheck, LayoutDashboard, LogOut, Settings, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import {
+  BookOpenCheck,
+  Crown,
+  LayoutDashboard,
+  LogOut,
+  Settings,
+  Sparkles,
+  UserRound,
+} from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { track } from "@/lib/analytics/ga4";
 import { logout, openAuthModal, useAuth, type SafeUser } from "@/lib/auth-client";
 import { navigateToHash, ROUTES } from "@/hooks/use-hash-route";
+import { cn } from "@/lib/utils";
 
 /** Two-letter avatar initials from the name, falling back to the email. */
 function initialsOf(user: SafeUser): string {
@@ -32,8 +41,12 @@ function initialsOf(user: SafeUser): string {
  * AccountMenu (Phase-10 foundation) — the header's session surface.
  * Guests get a Log in button (opens the store-driven AuthModal); signed-in
  * users get an avatar dropdown with their identity, plan badge and logout.
- * The menu is intentionally account-scoped: tool settings stay on the
- * device, the account only carries preferences (PRD: no signup wall).
+ *
+ * Logical plan/role contract (R46 audit — single-admin site, role "admin"
+ * IS the owner): the owner never carries a "Free"/"Pro" plan badge. The
+ * plan ladder only exists for customers; the owner sees a single "Owner"
+ * identity badge with the full-access note. Non-admin users keep the
+ * Free/Pro ladder exactly as before.
  */
 export function AccountMenu() {
   const { t } = useI18n();
@@ -56,6 +69,7 @@ export function AccountMenu() {
     );
   }
 
+  const isOwner = user.role === "admin";
   const isPro = user.plan === "pro";
 
   const handleLogout = async () => {
@@ -70,27 +84,82 @@ export function AccountMenu() {
         <button
           type="button"
           aria-label={t("auth.openMenuLabel")}
-          className="flex size-11 items-center justify-center rounded-btn outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          className={cn(
+            "flex size-11 items-center justify-center rounded-btn outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50",
+            isOwner && "group"
+          )}
         >
-          <Avatar className="size-8 border border-border">
-            <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">
+          <Avatar
+            className={cn(
+              "size-8 border border-border",
+              isOwner && "border-primary/40 ring-2 ring-primary/15"
+            )}
+          >
+            <AvatarFallback
+              className={cn(
+                "text-xs font-semibold",
+                isOwner
+                  ? "bg-primary/15 text-primary"
+                  : "bg-primary/10 text-primary"
+              )}
+            >
               {initialsOf(user)}
             </AvatarFallback>
           </Avatar>
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64 rounded-card">
-        <DropdownMenuLabel className="flex flex-col gap-1">
-          <span className="truncate text-sm font-semibold text-foreground">
-            {user.name?.trim() || user.email}
-          </span>
-          <span className="truncate text-xs font-normal text-muted-foreground">
-            {user.email}
+      <DropdownMenuContent align="end" className="w-72 rounded-card">
+        {/* Identity header — owner gets the crowned gradient treatment. */}
+        <DropdownMenuLabel
+          className={cn(
+            "flex items-center gap-3 py-3",
+            isOwner &&
+              "border-b border-primary/15 bg-gradient-to-br from-primary/10 via-transparent to-transparent"
+          )}
+        >
+          <Avatar
+            className={cn(
+              "size-10 border border-border",
+              isOwner && "border-primary/30"
+            )}
+          >
+            <AvatarFallback
+              className={cn(
+                "text-sm font-semibold",
+                isOwner
+                  ? "bg-primary/15 text-primary"
+                  : "bg-primary/10 text-primary"
+              )}
+            >
+              {initialsOf(user)}
+            </AvatarFallback>
+          </Avatar>
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="truncate text-sm font-semibold text-foreground">
+              {user.name?.trim() || user.email}
+            </span>
+            <span className="truncate text-xs font-normal text-muted-foreground">
+              {user.email}
+            </span>
           </span>
         </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel className="flex flex-wrap items-center gap-2 py-1.5">
-          {isPro ? (
+
+        {/* Status line — the plan ladder for customers, Owner for the owner. */}
+        <DropdownMenuLabel className="flex flex-col items-start gap-1.5 py-2">
+          {isOwner ? (
+            <>
+              <Badge
+                variant="default"
+                className="rounded-chip border-primary/30 bg-primary/15 text-primary"
+              >
+                <Crown className="size-3" aria-hidden="true" />
+                {t("auth.menuOwner")}
+              </Badge>
+              <span className="text-xs text-muted-foreground">
+                {t("auth.ownerNote")}
+              </span>
+            </>
+          ) : isPro ? (
             <>
               <Badge variant="pro" className="rounded-chip">
                 <Sparkles className="size-3" aria-hidden="true" />
@@ -105,14 +174,9 @@ export function AccountMenu() {
               {t("auth.menuPlanFree")}
             </Badge>
           )}
-          {user.role === "admin" ? (
-            <Badge variant="secondary" className="rounded-chip">
-              <ShieldCheck className="size-3" aria-hidden="true" />
-              {t("auth.menuAdmin")}
-            </Badge>
-          ) : null}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+
         <DropdownMenuItem
           onClick={() => navigateToHash(ROUTES.account)}
           className="min-h-11 cursor-pointer rounded-btn"
@@ -120,7 +184,7 @@ export function AccountMenu() {
           <Settings className="size-4" aria-hidden="true" />
           {t("auth.menuSettings")}
         </DropdownMenuItem>
-        {user.role === "admin" ? (
+        {isOwner ? (
           <>
             <DropdownMenuItem
               onClick={() => navigateToHash(ROUTES.admin)}
@@ -138,9 +202,10 @@ export function AccountMenu() {
             </DropdownMenuItem>
           </>
         ) : null}
+        <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={handleLogout}
-          className="min-h-11 cursor-pointer rounded-btn"
+          className="min-h-11 cursor-pointer rounded-btn text-muted-foreground focus:text-destructive"
         >
           <LogOut className="size-4" aria-hidden="true" />
           {t("auth.menuLogout")}

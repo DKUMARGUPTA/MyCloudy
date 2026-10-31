@@ -6716,3 +6716,64 @@ DB wiring + end-to-end verification.
 - AI re-enable (08-PLAN §Deferred) — owner env keys chahiye.
 - GA4 NEXT_PUBLIC_GA_ID optional.
 - Turso token rotation kabhi leak lage to (Vercel env + turso dashboard).
+
+## R47 — OWNER LOGICAL AUDIT: FREE/PRO BADGES REMOVED + UX POLISH (2026-10-31)
+
+**Trigger:** owner (Deepak) ne 3 screenshots bheje — account dropdown par
+"Free plan"+"Admin" badges, admin dashboard par "Owner · Super Admin"+"Pro"
+badges, header par "Get Pro" CTA. Complaint: "owner par free ya pro likhne
+ki zaroorat hi nahi ye to owner hai" + UX/UI/layout pasand nahi.
+
+**Logical contract (single-admin site: role "admin" IS the owner):**
+plan ladder (Free/Pro) sirf CUSTOMERS ke liye hai. Owner ko ek hi identity
+milegi — "Owner" (Crown) + "Full access" — aur usse kabhi plan badge,
+upgrade CTA ya limit nudge nahi dikhega.
+
+### Fixes (10 files)
+1. **account-menu.tsx** — redesigned dropdown: avatar header (owner gradient
+   ring), single Crown "Owner" badge + "Everything unlocked — no limits"
+   note; Free/Pro/Admin ladder sirf non-owner ke liye intact.
+2. **site-header.tsx** — "Get Pro" CTA (desktop + mobile sheet) owner ke
+   liye hidden; mobile sheet identity line ab "Owner — Account settings".
+3. **admin-dashboard-page.tsx** — OwnerIdentityCard: "Pro" badge REMOVED,
+   "Owner · Super Admin" → clean "Owner" + "Full access" chip; crown
+   avatar notch; stronger gradient. Console: "Updated {time}" last-refresh
+   indicator (stale-data UX note ka fix).
+4. **account-page.tsx** — ProfileCard owner branch (Crown Owner + Full
+   access + Accounting btn); PlanCard owner state: "You own DocoPDF…"
+   desc + Owner/Full-access chips + honest note — NO upgrade CTA, NO
+   cancel flow (jo pehle illogically tha).
+5. **pricing-modal.tsx** — owner state: Crown "You're the owner" notice,
+   upgrade buttons disabled+relabeled, Free-card "Current plan" badge
+   hidden for owner (defense-in-depth — owner ke liye modal ab reachable
+   hi nahi hai).
+6. **tool-shell.tsx** — limit nudges + hard gate dono owner ke liye
+   suppressed (maybeNudge/startRun isOwner check, deps updated).
+7. **shared.tsx StatCard + accounting KpiCard** — tone-tinted top accent
+   bar, hover lift + shadow, icon scale micro-interaction, focus ring.
+8. **accounting-page.tsx** — 8 KPI cards ab tone-coded (primary/success/
+   accent/muted); duplicate empty-state message fix (banner = noEntries,
+   recent card = new recentEmpty key).
+9. **i18n en+hi** — naye keys: auth.menuOwner/ownerNote,
+   account.ownerPlanDesc/Chip/Note, pricing.ownerTitle/ownerBody,
+   admin.ownerAccessChip/lastUpdated, accounting.recentEmpty;
+   admin.ownerBadge "Owner · Super Admin" → "Owner".
+
+### Gates + E2E (agent-browser, crafted dev JWT sessions)
+- tsc --noEmit = 0 · eslint = 0 · dev.log clean (sab routes 200).
+- **Owner session:** dropdown = "Owner | Everything unlocked — no limits"
+  (no Free/Pro/Admin) · Get Pro GONE (desktop+mobile) · admin dashboard =
+  "Owner | Full access" + "Updated 10:29 AM" · accounting KPIs live data ·
+  account page = owner PlanCard (no CTA) · mobile sheet = "Owner — Account
+  settings" · mobile admin no overflow · console 0 errors.
+- **Regression:** guest = Get Pro visible + Log in · free user (dev@example
+  .com) = "Free plan" badge + Get Pro + pricing modal golden path (Current
+  plan / Upgrade to Pro / 7-day pass) · pro user (asha) = "Pro | Thanks
+  for backing DocoPDF". Footer natural push verify.
+- Screenshots: download/qa-r47-*.png (dropdown, admin, accounting,
+  account, pricing, mobile×3).
+
+### Discipline
+- Billing API routes / plans.ts / limits server route UNTOUCHED (billing
+  freeze respected — sirf frontend display logic).
+- QA JWT scripts (scripts/make-session*.ts) post-E2E deleted — repo clean.
