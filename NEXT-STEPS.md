@@ -74,3 +74,4 @@ already — an app-shell SW would make repeat visits instant.
 - **R48 (2026-10-31):** 6 tools batch 1 (reverse/add-blank/divide/
   combine-single/booklet/sanitize) — prod live, 106 tools. `081ab67`
 - **R48-pre (2026-10-31):** pre-batch push + bentopdf audit. `1883198`
+- **R49 (2026-10-31):** agent system + auto-work queue shipped (Scout/Builder/Auditor + NEXT-STEPS + autopilot skill). Docs-only, dry-run verified. See worklog.
