@@ -6387,3 +6387,35 @@ NEXT: Phase-10 continue — real Razorpay/Stripe wiring (owner keys) or account 
 
 ### Next (08-PLAN updated)
 Phase-10 remaining: Razorpay/Stripe real wiring (owner keys at launch; D6 checklist), demo-sub expiry sweep (D7), account name edit, Turso → Phase-11 services/worker.
+
+## R29 — ADMIN DASHBOARD: owner console at /admin, single-admin Deepak Kumar (2026-10-31)
+
+**THE ROUND:** Owner directive: "Ok ab admin dashboard ka setup banao. Admin, owner, super admin bas mai hi hun araj.dkg@gmail.com Deepak Kumar according setup karo." — Backend admin APIs (R19-era) pehle se the par koi UI nahi tha; ye round unhe jodne wala full owner console hai. Auth already ADMIN_EMAILS=["araj.dkg@gmail.com"] auto-claim karta hai (signup) — role=admin single-owner model.
+
+### Shipped (code)
+1. **Route**: HashRoute + "admin" view (`use-hash-route.ts` — parseLegacyHash/parseRouteKey/legacyHashToPath/ROUTES/localizedRoutes); SSR shell `src/app/admin/page.tsx` (noindex, AppShell initialRoute) — accounting console ke pattern par.
+2. **`src/lib/admin-client.ts`** (NEW): typed fetchers/mutators for stats, users (list+ban/unban/role+delete), bugs (triage), messages (status), feedback, audit, settings (GET+PUT). **Fix during QA: bugs API `{reports}` return karta hai `{bugs}` nahi** — client corrected; AdminUsersPageDto se `pages` field hataya (API total/pageSize se compute hota hai).
+3. **`src/components/doco/admin/`** (NEW folder): admin-dashboard-page.tsx (gate: loading→sign-in prompt→forbidden→console; OwnerIdentityCard — DK avatar, "Deepak Kumar · araj.dkg@gmail.com", Owner·Super Admin + Pro badges; 7 tabs) + users-tab (debounced search, paginated table desktop / cards mobile, ban/delete confirm modals, self-guard "You" badge + disabled self-actions) + bugs-tab (status filter chips, triage modal: status/severity/adminNote) + messages-tab (inbox + read modal, mark new/read/done) + feedback-tab (up/down totals + items table) + audit-tab (pretty JSON meta) + settings-tab (registration switch, announcements editor max-5, tool overrides search+toggles, sticky save bar) + shared.tsx (StatCard/badges/fmt).
+4. **Account menu**: "Admin Dashboard" item (LayoutDashboard icon) admin role ke liye; accounting item ke saath.
+5. **i18n EN+HI**: full `admin.*` section (~120 keys dono locales, key-parity) + `auth.menuAdminDash`.
+6. **DB**: owner user ka naam "DocoPDF Owner" → **"Deepak Kumar"** update (same account, role=admin, plan=pro).
+
+### Bugs found & fixed during QA (agent-browser E2E)
+- **React strict-mode debounce wipe**: firstRun-ref guard double-invoke survive karta hai → mount+350ms pe spurious setData(null) fetched page ko wipe karti tha (skeletons forever). Fix: proper committed-query debounce (qInput live / q debounced state — sirf q/page fetches trigger karta hai).
+- **Bugs tab empty**: client `{bugs}` vs API `{reports}` field mismatch (upar #2).
+- **`pages` NaN**: API pages field nahi bhejta → Math.ceil(total/pageSize) compute.
+
+### QA evidence
+- **E2E golden path (agent-browser, owner session)**: /admin render + all 7 tabs; Overview stats (5 users, 28 runs today, top tools merge-pdf 28, recent signups) + quick links (accounting nav + tab switch); Users — search "deepak" → 1 row "Deepak Kumar [You] Admin Pro", clear → 5 rows, **ban Dev Patel → "Banned" badge live**, unban restore; self-row actions disabled (Ban/Make user/Delete greyed); Bugs — test report create (curl) → list + filter chips, **triage: New→Confirmed + internal note save** ("Bug report updated" toast, badge live); Messages — Riya Sharma billing query, **New→Read mark**; Settings — **tool override toggle merge-pdf off → save → /api/tools/status {enabled:false} verified → revert → enabled**; registration switch + announcements editor render.
+- **Gates**: guest → "Sign in required"; non-admin (dev@example.com JWT) → "Not authorized — reserved for the site owner".
+- **i18n**: Hindi full render (एडमिन डैशबोर्ड, ओनर कंसोल, दीपक कुमार lede) ✓.
+- **Mobile 390px**: 7 scrollable tabs, users = cards (table hidden), VLM visual pass (desktop + mobile no glitches).
+- **tsc via lint 0 · eslint 0**; dev.log clean (sirf AUTH_SECRET dev-fallback warn).
+- Screenshots: qa/admin-desktop-final.png, qa/admin-mobile.png, qa/admin-mobile-users.png, qa/admin-overview-final.png.
+
+### Infra notes
+- Session token QA ke liye hand-rolled JWT (dev fallback secret + owner sub) — password nahi chahiye; browser cookie set karke poora admin flow verified.
+- Test data intentionally rakha: 1 bug report (split-pdf "Confirmed" + note) + 1 contact message (Riya Sharma, billing, "Read") — dashboard populated dikhta hai owner ko.
+
+### Next (08-PLAN)
+Phase-10 remaining + admin dashboard polish: billing overview card (MRR/active subs accounting-overview se), users → plan override (manual pro grant), bug CSV export.
