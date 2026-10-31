@@ -176,11 +176,18 @@ export function AppShell({
 
   /*
    * Boot marker for the iOS compatibility watchdog (boot-script.ts): once
-   * the shell has mounted, the fallback screen must never appear, and
-   * later errors route to the React error boundary instead.
+   * the shell has mounted, the fallback screen must never appear, and any
+   * fallback a slow start already put on screen is removed via the
+   * __DP_BOOT_OK__ self-heal hook — a slow load must never permanently
+   * cover a working app. Later errors route to the React error boundary.
    */
   useEffect(() => {
-    (window as unknown as { __DP_BOOTED__?: boolean }).__DP_BOOTED__ = true;
+    const w = window as unknown as {
+      __DP_BOOTED__?: boolean;
+      __DP_BOOT_OK__?: () => void;
+    };
+    w.__DP_BOOTED__ = true;
+    if (typeof w.__DP_BOOT_OK__ === "function") w.__DP_BOOT_OK__();
   }, []);
 
   /*

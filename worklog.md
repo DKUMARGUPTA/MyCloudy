@@ -6419,3 +6419,30 @@ Phase-10 remaining: Razorpay/Stripe real wiring (owner keys at launch; D6 checkl
 
 ### Next (08-PLAN)
 Phase-10 remaining + admin dashboard polish: billing overview card (MRR/active subs accounting-overview se), users → plan override (manual pro grant), bug CSV export.
+
+---
+
+## R41 — Boot watchdog false-positive fix ("did not finish starting within 10 seconds")
+
+**THE ROUND:** User report (Chrome/Windows, preview panel): "DocoPDF diagnostic report — The app did not finish starting within 10 seconds… aksar aata hai, kya wajh hai, permanent fix?" — iOS-compat boot watchdog (boot-script.ts) ka fallback false-positive fire ho raha tha, aur ek baar dikha toh hamesha ke liye page cover kar leta tha (reload hi option tha).
+
+### Root causes
+1. **Dev cold compile**: dev.log me `GET / 200 in 12.4s (compile: 11.8s)` — har restart/edit ke baad pehla load 10s+ leta hai; watchdog HTML-parse pe 10s timer chala deta tha jabki chunks abhi compile ho rahe the. Preview panel har edit pe reload karta hai → "aksar".
+2. **Fixed 10s patience**: slow network (2G/saveData) ya dev ke liye koi adaptation nahi.
+3. **Real bug — no self-heal**: overlay `position:fixed; z-index:2147483000` dikhne ke baad kabhi hatata hi nahi tha — app 12-15s me boot ho jaati thi par overlay working app ko permanently cover karta rehta tha.
+
+### Fix (permanent) — src/lib/compat/boot-script.ts + layout.tsx + app-shell.tsx
+1. **Adaptive patience** (`limitMs()`): 10s base → 40s on `navigator.connection` 2g/slow-2g/saveData → 45s min jab `window.__DP_DEV__` (layout.tsx dev-only inline flag, boot script se pehle) — Turbopack cold compiles cover.
+2. **readyState deferral**: jab tak `document.readyState !== "complete"` (chunks streaming/compiling), tick har 2.5s defer karta hai, 90s hard cap tak — genuinely dead boot hi report hota hai.
+3. **Self-heal (the killer fix)**: naya `window.__DP_BOOT_OK__()` — AppShell mount pe `__DP_BOOTED__` set karke call karta hai; overlay 200ms fade me remove. Plus fallback ke andar 800ms poll (90s tak) — late-boot hone par overlay khud hat jaata hai. Slow start ab kabhi working app ko cover nahi kar sakta.
+4. **Timeout UI redesign**: crash UI → friendly bilingual "The app is taking longer than usual / ऐप शुरू होने में अधिक समय लग रहा है" screen with ⏳, auto-close note, [Continue waiting] (dismiss) + [Reload] buttons; error-path crash UI unchanged (par wo bhi self-heal karta hai agar boot complete ho gaya).
+5. **Richer report**: ReadyState, Network (effectiveType/downlink/saveData), Boot status, Dev flag — next diagnostic me wajh turant dikhegi.
+
+### QA evidence
+- **Mock harness (13/13)**: base 10s arm; dev→45s; 2g→40s; readyState "loading" pe defer (no show); limit+complete pe timeout show; friendly UI + reason me elapsed seconds; heal poll 800ms; **late boot → overlay removed**; report me naye fields; error-path crash UI; BOOT_OK removes error overlay; idempotent.
+- **Existing smoke `scripts/smoke-ios-compat.ts`: 21/21 ALL GREEN** (10s arm, 1.2s grace, booted no-op, report header intact).
+- **agent-browser E2E (live)**: / loads booted + `__DP_BOOT_OK__` fn + `__DP_DEV__` true + 0 fallbacks; fake error dispatch (unbooted) → crash UI → BOOT_OK → overlay gone (screenshot qa-boot-watchdog-healed.png); **real timeout simulation** — boot script fresh iframe me inject (app kabhi boot nahi) → 10s pe friendly timeout UI + Continue-waiting btn + correct reason → `__DP_BOOTED__=true` → heal poll ne overlay hataya (qa-boot-timeout-healed.png); reload clean, 0 page errors; dev.log clean.
+- `bun run lint` 0 problems.
+
+### Note
+Ye diagnostic SCREEN ki original purpose (iPhone white-screens) intact hai — fatal errors ab bhi 1.2s grace ke saath dikhte hain; sirf slow-start false-positives aur permanent-overlay bug khatam.

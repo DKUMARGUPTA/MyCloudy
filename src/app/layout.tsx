@@ -215,6 +215,16 @@ export default function RootLayout({
         className={`${inter.variable} ${notoSansDevanagari.variable} font-sans antialiased bg-background text-foreground`}
       >
         {/*
+         * Dev-only watchdog patience flag — MUST precede the boot script so
+         * it is visible when the watchdog arms. Turbopack cold compiles
+         * (after every restart/edit) can exceed the production 10s boot
+         * watchdog; __DP_DEV__ raises its patience to 45s in development.
+         * See src/lib/compat/boot-script.ts (limitMs).
+         */}
+        {process.env.NODE_ENV === "development" && (
+          <script dangerouslySetInnerHTML={{ __html: "window.__DP_DEV__=true;" }} />
+        )}
+        {/*
          * iOS/Safari compatibility boot script — MUST be the first thing in
          * <body> so polyfills exist before every app chunk parses. See
          * src/lib/compat/boot-script.ts (error capture, polyfills, watchdog).
