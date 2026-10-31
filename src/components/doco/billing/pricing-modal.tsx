@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Loader2, Sparkles, X } from "lucide-react";
+import { Check, Loader2, Sparkles, X, Zap } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,13 +15,14 @@ import {
   startCheckout,
   useAuth,
 } from "@/lib/auth-client";
-import { PRO_PLANS } from "@/lib/billing/plans";
+import { PRO_PLANS, type ProPlanId } from "@/lib/billing/plans";
 import { cn } from "@/lib/utils";
 
 /**
- * PricingModal (Phase-10 R26) — the real "Get Pro" surface: Free vs Pro
- * comparison with a monthly/yearly toggle (INR first, USD alongside, per
- * the PRD pricing spec). The checkout button is HONEST by design:
+ * PricingModal (Phase-10 R26; R28 decided prices) — the real "Get Pro"
+ * surface: Free vs Pro comparison with a monthly/yearly toggle plus the
+ * ₹49 7-day pass (decision D2), INR first + USD alongside, GST-inclusive
+ * display (decision D5). The checkout button is HONEST by design:
  *
  *  - Guest → opens the signup modal (account needed to subscribe).
  *  - Signed-in, providers not configured (production today) → the
@@ -69,7 +70,7 @@ function PricingBody({
   const { user } = useAuth();
 
   const [cycle, setCycle] = useState<Cycle>("monthly");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<ProPlanId | null>(null);
   const [notConfigured, setNotConfigured] = useState(false);
 
   useEffect(() => {
@@ -77,6 +78,7 @@ function PricingBody({
   }, []);
 
   const plan = cycle === "monthly" ? PRO_PLANS.pro_monthly : PRO_PLANS.pro_yearly;
+  const week = PRO_PLANS.pro_week;
   const isPro = user?.plan === "pro";
 
   const freeFeatures = [
@@ -84,6 +86,7 @@ function PricingBody({
     t("pricing.freeF2"),
     t("pricing.freeF3"),
     t("pricing.freeF4"),
+    t("pricing.freeF5"),
   ];
   const proFeatures = [
     t("pricing.proF1"),
@@ -100,19 +103,19 @@ function PricingBody({
     });
   };
 
-  const handleUpgrade = async () => {
+  const handleUpgrade = async (planId: ProPlanId) => {
     if (busy || isPro) return;
     if (!user) {
       openAuthModal("signup");
       return;
     }
-    setBusy(true);
+    setBusy(planId);
     setNotConfigured(false);
-    track("begin_checkout", { plan: plan.id });
+    track("begin_checkout", { plan: planId });
 
-    const checkout = await startCheckout(plan.id);
+    const checkout = await startCheckout(planId);
     if (!checkout.ok) {
-      setBusy(false);
+      setBusy(null);
       if (checkout.code === "billingNotConfigured") {
         setNotConfigured(true);
         return;
@@ -124,9 +127,9 @@ function PricingBody({
     /* Demo mode: complete the activation immediately. */
     if (checkout.mode === "demo" && checkout.subscriptionId) {
       const confirmed = await confirmCheckout(checkout.subscriptionId);
-      setBusy(false);
+      setBusy(null);
       if (confirmed.ok) {
-        track("upgrade_success", { plan: plan.id });
+        track("upgrade_success", { plan: planId });
         onOpenChange(false);
         toast({ title: t("pricing.upgradedToast") });
         return;
@@ -135,7 +138,7 @@ function PricingBody({
       return;
     }
 
-    setBusy(false);
+    setBusy(null);
   };
 
   return (
@@ -225,10 +228,10 @@ function PricingBody({
             variant="cta"
             size="touch"
             className="mt-5 w-full rounded-btn"
-            disabled={busy || isPro}
-            onClick={() => void handleUpgrade()}
+            disabled={busy !== null || isPro}
+            onClick={() => void handleUpgrade(plan.id)}
           >
-            {busy ? (
+            {busy === plan.id ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             ) : null}
             {isPro
@@ -242,6 +245,44 @@ function PricingBody({
               {t("pricing.guestHint")}
             </p>
           ) : null}
+        </div>
+      </div>
+
+      {/* 7-day pass (decision D2) — the occasional-user SKU: one-time,
+       * no subscription; Sejda sells this at $5, we are at ₹49/$0.99. */}
+      <div className="mt-4 flex flex-col gap-3 rounded-card border border-dashed border-border bg-muted/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <Zap className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">
+              {t("pricing.weekTitle")}
+            </p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {t("pricing.weekDesc")}
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-3 sm:flex-col sm:items-end">
+          <p className="whitespace-nowrap text-sm font-semibold text-foreground">
+            ₹{week.priceInr.toLocaleString("en-IN")}
+            <span className="font-normal text-muted-foreground"> / ${week.priceUsd.toFixed(2)}</span>
+            <span className="ml-1 text-xs font-normal text-muted-foreground">
+              {t("pricing.weekOnce")}
+            </span>
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="touch"
+            className="rounded-btn"
+            disabled={busy !== null || isPro}
+            onClick={() => void handleUpgrade("pro_week")}
+          >
+            {busy === "pro_week" ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : null}
+            {isPro ? t("pricing.proActive") : t("pricing.weekCta")}
+          </Button>
         </div>
       </div>
 
@@ -264,6 +305,9 @@ function PricingBody({
       ) : null}
 
       <p className="mt-4 text-center text-xs text-muted-foreground">
+        {t("pricing.gstNote")}
+      </p>
+      <p className="mt-2 text-center text-xs text-muted-foreground">
         {t("pricing.promise")}
       </p>
     </>

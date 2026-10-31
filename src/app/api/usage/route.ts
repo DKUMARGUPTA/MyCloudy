@@ -59,11 +59,16 @@ export async function POST(request: Request) {
           day,
         },
       });
-      await db.anonUsage.upsert({
-        where: { anonId_toolId_day: { anonId, toolId, day } },
-        update: { count: { increment: 1 } },
-        create: { anonId, toolId, day, count: 1 },
-      });
+      /* Quota counter (R28 limit system): SUCCESSFUL runs only — a failed
+       * run must never eat a free user's daily task. Analytics (UsageEvent)
+       * still records failures for the admin dashboard. */
+      if (success) {
+        await db.anonUsage.upsert({
+          where: { anonId_toolId_day: { anonId, toolId, day } },
+          update: { count: { increment: 1 } },
+          create: { anonId, toolId, day, count: 1 },
+        });
+      }
     } catch {
       // Swallow: usage analytics are never worth a client-visible error.
     }

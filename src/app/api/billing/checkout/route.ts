@@ -8,9 +8,10 @@ import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { billingDemoMode, isProPlanId, PRO_PLANS } from "@/lib/billing/plans";
 
 /**
- * POST /api/billing/checkout — start a Pro upgrade (Phase-10 R26).
+ * POST /api/billing/checkout — start a Pro upgrade (Phase-10 R26; R28
+ * added the pro_week 7-day pass SKU).
  *
- * Body: { plan: "pro_monthly" | "pro_yearly" }.
+ * Body: { plan: "pro_monthly" | "pro_yearly" | "pro_week" }.
  *
  * Real providers (Razorpay/Stripe) are not wired yet — this is the stub
  * that keeps the flow honest:

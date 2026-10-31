@@ -1,10 +1,12 @@
 # 08 · Plan (Roadmap & Current Priorities)
 
-Status snapshot: R27 shipped the accounting module (double-entry books,
-GST invoicing, reports, admin console /accounting) + billing research
-doc (16-BILLING-RESEARCH.md — PROPOSAL, awaiting owner decisions).
-R26 complete: account + billing surface. R25: e-invoice rotation 5/5.
-Update this file whenever a phase lands.
+Status snapshot: R28 shipped the DECIDED billing prices (§7 of
+16-BILLING-RESEARCH.md answered — owner delegated the 7 decisions):
+₹1,499 yearly / $1.99–22.99 USD alignment / ₹49 7-day pass SKU /
+GST-inclusive display / free-tier limit system (shadow mode) + the
+accounting payment→own-subscription recognition fix. R27 shipped the
+accounting module + billing research doc. R26: account + billing surface.
+R25: e-invoice rotation 5/5. Update this file whenever a phase lands.
 
 ## ✅ Done (do not redo)
 
@@ -24,21 +26,19 @@ Update this file whenever a phase lands.
 | R26 Phase-10 account + billing surface: /account view (profile, plan, billing history, password change, self-delete), PricingModal v2 (Free vs Pro, monthly/yearly, INR+USD), /api/billing stub APIs (checkout/confirm/cancel/status) with honest billingNotConfigured 503 + BILLING_DEMO sandbox mode, bottom-tab Account tab, account-menu settings item; smoke-billing 125/125 | shipped |
 | R27 accounting module: double-entry books for the business (Account/JournalEntry/JournalLine/Invoice models, posting engine with balance validation, accrual recognition 1/12-per-month catch-up safe, refund reversals, GST 18% tax-inclusive split CGST+SGST/IGST, USD exports zero-rated, sequential DP-INV invoices backfilling Payment.invoiceNo), idempotent sync sweep, admin console /accounting (5 tabs EN/हिंदी: overview stats + journal with expandable rows + manual-entry dialog + chart + invoices + 4 reports + CSV exports), audit-logged, browser-verified (TB/BS balanced, sync idempotent, refund reversal, 403 gating) | shipped |
 | R27 billing research: competitor pricing landscape (iLovePDF/Smallpdf/Sejda/Adobe/Soda/pdfFiller), 50%-below rule analysis, free-vs-pro feature matrix proposal, limit-check system design (3 enforcement layers) — docs/rules/16-BILLING-RESEARCH.md, DISCUSSION ONLY (owner: "abhi implement nahi karna") | delivered for review |
+| R28 billing DECIDED + implemented (owner delegated: "tum hi jawab do, mai fresher hun"): 7 decisions recorded in 16-BILLING-RESEARCH §7 (D1 ₹1,499 yearly + USD $1.99/$22.99 realignment, D2 ₹49/$0.99 7-day pass SKU, D3 free 25 tasks/day with shadow-mode enforcement until provider keys, D4 keep 50/200MB free caps, D5 GST-inclusive display, D6 keys at launch + owner env checklist, D7 grandfather demo-pro till periodEnd); live price re-verification (iLovePDF $4/$47, PDF Candy $4–6, Smallpdf $9/$108); plans.ts + pricing modal 3-SKU UI + i18n EN/HI; /api/limits + limits-client + tool-shell beacon/nudge/hard-gate + usage success-only quota; accounting pro_week posting + payment→own-sub recognition fix (yearly-as-week bug); smoke-billing 155/155 (price asserts + week journey + limits) | shipped |
 
 ## 🔜 Next (priority order)
 
-1. **Phase-10 Accounts + Pro — continue** — R26 shipped the account
-   surface + billing stubs (checkout honest 503 until providers are
-   configured). Remaining: owner decisions on 16-BILLING-RESEARCH.md
-   (prices, free limits, SKUs), real Razorpay/Stripe wiring (owner keys),
-   account polish (name edit), Turso, then Phase-11.
-2. **Billing decisions (owner)** — answer the 7 open questions in
-   16-BILLING-RESEARCH.md §7 (yearly ₹1,499 vs ₹1,999, 7-day pass,
-   free limits 25 tasks/100MB, GST-inclusive display, provider keys,
-   grandfathering). NOTHING ships until then.
-3. **Turso production DB** — swap datasource; graceful-degrade already
+1. **Phase-10 Accounts + Pro — continue** — R28 shipped the decided
+   prices + SKUs + shadow-mode limits. Remaining: real Razorpay/Stripe
+   wiring (owner keys at launch — env checklist in 16-BILLING-RESEARCH
+   D6; hard limits auto-activate with the keys), demo-sub expiry sweep
+   (D7 grandfathering at provider-wiring time), account polish (name
+   edit), Turso, then Phase-11.
+2. **Turso production DB** — swap datasource; graceful-degrade already
    proven; keep table names identical.
-4. **Phase-11 services/worker** — server-side LibreOffice (266-format gap,
+3. **Phase-11 services/worker** — server-side LibreOffice (266-format gap,
    Filee comparison positioning).
 
 ## ⏸ Deferred (owner decisions pending)

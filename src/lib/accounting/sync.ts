@@ -61,22 +61,31 @@ export async function runAccountingSync(): Promise<SyncResult> {
     }
   }
 
-  /* ---- 2+3. Recognition (plan-aware, catch-up safe) ---------------- */
-  const activeSubs = await db.subscription.findMany({
+  /* ---- 2+3. Recognition (payment → its OWN subscription's plan) ----
+   * R28 fix: the plan must come from the subscription the payment was
+   * created with (checkout writes sub, then payment milliseconds later;
+   * QA seeds use identical timestamps), NOT from a user-level "latest
+   * plan" map — a user who buys yearly and later a 7-day pass would
+   * otherwise get the pass treatment on the yearly payment (full
+   * recognition instead of 1/12 per month). */
+  const allSubs = await db.subscription.findMany({
     where: { status: { in: ["active", "cancelled", "pending", "expired"] } },
-    select: { userId: true, plan: true, status: true },
+    select: { userId: true, plan: true, status: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
   });
-  const planByUser = new Map<string, "pro_monthly" | "pro_yearly">();
-  for (const sub of activeSubs) {
-    if (sub.plan === "pro_monthly" || sub.plan === "pro_yearly") {
-      planByUser.set(sub.userId, sub.plan);
-    }
-  }
 
   for (const payment of paidPayments) {
     if (payment.status !== "paid") continue;
-    const plan = planByUser.get(payment.userId);
-    if (plan !== "pro_monthly" && plan !== "pro_yearly") continue;
+    /* Own subscription = the LATEST sub of this user created at-or-before
+     * the payment (strict — a later checkout's sub is never this
+     * payment's own; the checkout order sub→payment guarantees it). */
+    const own = allSubs.findLast(
+      (s) =>
+        s.userId === payment.userId &&
+        s.createdAt.getTime() <= payment.createdAt.getTime()
+    );
+    const plan = own?.plan;
+    if (plan !== "pro_monthly" && plan !== "pro_yearly" && plan !== "pro_week") continue;
     const recognized = await recognizeForPayment(payment, plan);
     if (recognized > 0) {
       result.recognizedTotal += recognized;

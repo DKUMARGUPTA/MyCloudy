@@ -28,6 +28,7 @@ import { useHashRoute, navigateToHash, urlLocaleOf, UrlLocaleContext, type HashR
 import { anchorClickHandler } from "@/lib/anchor";
 import { track } from "@/lib/analytics/ga4";
 import { bootstrapAuth } from "@/lib/auth-client";
+import { subscribeOpenPro } from "@/lib/pro-modal";
 import { ALL_TOOLS } from "@/lib/tools/registry";
 import { LOCALE_STORAGE_KEY, setSessionLocale } from "@/i18n";
 
@@ -143,6 +144,10 @@ export function AppShell({
     setProOpen(true);
     track("pro_open", { locale });
   }, [locale]);
+
+  // R28: deep surfaces (tool limit nudges) open the pricing modal through
+  // the pub/sub helper instead of prop-drilling onGetPro into ToolShell.
+  useEffect(() => subscribeOpenPro(openPro), [openPro]);
 
   const toolId = route.view === "tool" ? route.toolId : undefined;
   useEffect(() => {

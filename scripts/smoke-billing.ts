@@ -73,9 +73,10 @@ check(
 const pricingKeys = [
   "title", "desc", "cycleLabel", "monthly", "yearly", "save", "freeName",
   "currentPlan", "proIncludesFree", "forever", "freeF1", "freeF2", "freeF3",
-  "freeF4", "proName", "perMonth", "perYear", "proF1", "proF2", "proF3",
-  "proF4", "proF5", "proActive", "upgradeCta", "signUpCta", "guestHint",
-  "notConfiguredTitle", "notConfiguredBody", "promise", "upgradedToast",
+  "freeF4", "freeF5", "proName", "perMonth", "perYear", "proF1", "proF2",
+  "proF3", "proF4", "proF5", "proActive", "upgradeCta", "signUpCta",
+  "guestHint", "notConfiguredTitle", "notConfiguredBody", "weekTitle",
+  "weekDesc", "weekOnce", "weekCta", "gstNote", "promise", "upgradedToast",
 ];
 const enPricing = en.pricing as Dict;
 const hiPricing = hi.pricing as Dict;
@@ -129,6 +130,84 @@ for (const code of codes) {
     typeof hiBillErr[code] === "string" && (hiBillErr[code] as string).length > 0
   );
 }
+
+const toolI18n = readFileSync(`${root}src/i18n/en.json`, "utf8");
+const toolEn = JSON.parse(toolI18n) as Record<string, Dict>;
+const toolHi = JSON.parse(readFileSync(`${root}src/i18n/hi.json`, "utf8")) as Record<string, Dict>;
+for (const key of [
+  "limitNearTitle", "limitNearDesc", "limitAtTitle", "limitAtDesc",
+  "limitBlockedTitle", "limitBlockedDesc",
+]) {
+  check(
+    `tool.${key} in en+hi`,
+    typeof (toolEn.tool as Dict)[key] === "string" &&
+      typeof (toolHi.tool as Dict)[key] === "string"
+  );
+}
+check(
+  "tool.limitNearTitle carries {used}+{max} in both",
+  ((toolEn.tool as Dict).limitNearTitle as string)?.includes("{used}") &&
+    ((toolEn.tool as Dict).limitNearTitle as string)?.includes("{max}") &&
+    ((toolHi.tool as Dict).limitNearTitle as string)?.includes("{used}") &&
+    ((toolHi.tool as Dict).limitNearTitle as string)?.includes("{max}")
+);
+
+/* ------------------------------------------------------------------ */
+console.log("B2. R28 price catalog (decided 16-BILLING-RESEARCH §2)");
+
+const plansSrc = readFileSync(`${root}src/lib/billing/plans.ts`, "utf8");
+check(
+  "pro_yearly INR is ₹1,499 (149900 paise)",
+  plansSrc.includes("priceInr: 1499") && plansSrc.includes("amountInrMinor: 149900")
+);
+check(
+  "pro_monthly USD is $1.99",
+  plansSrc.includes("priceUsd: 1.99") && plansSrc.includes("amountUsdMinor: 199,")
+);
+check(
+  "pro_yearly USD is $22.99",
+  plansSrc.includes("priceUsd: 22.99") && plansSrc.includes("amountUsdMinor: 2299")
+);
+check(
+  "pro_week SKU exists (₹49 / $0.99 / 7 days)",
+  plansSrc.includes('"pro_week"') && plansSrc.includes("priceInr: 49") &&
+    plansSrc.includes("periodDays: 7")
+);
+check(
+  "limits constants + billingLimitsActive() shipped",
+  plansSrc.includes("FREE_DAILY_TASKS = 25") &&
+    plansSrc.includes("PRO_DAILY_TASKS = 1000") &&
+    plansSrc.includes("billingLimitsActive")
+);
+
+const postSrc = readFileSync(`${root}src/lib/accounting/post.ts`, "utf8");
+check(
+  "accounting recognizes pro_week immediately (monthly treatment)",
+  postSrc.includes('plan === "pro_monthly" || plan === "pro_week"')
+);
+const limitsRoute = readFileSync(`${root}src/app/api/limits/route.ts`, "utf8");
+check(
+  "/api/limits route exists with shadow-mode hard flag",
+  limitsRoute.includes("billingLimitsActive") && limitsRoute.includes("demoHard")
+);
+const usageRoute = readFileSync(`${root}src/app/api/usage/route.ts`, "utf8");
+check(
+  "/api/usage counts quota on success only",
+  usageRoute.includes("if (success)")
+);
+const toolShellSrc = readFileSync(`${root}src/components/doco/tool/tool-shell.tsx`, "utf8");
+check(
+  "tool-shell wires beacon + hard gate + nudge",
+  toolShellSrc.includes("sendUsageBeacon") &&
+    toolShellSrc.includes("runBlockedByLimits") &&
+    toolShellSrc.includes("maybeNudge")
+);
+const pricingModalSrc = readFileSync(`${root}src/components/doco/billing/pricing-modal.tsx`, "utf8");
+check(
+  "pricing modal carries the week pass + GST note",
+  pricingModalSrc.includes('handleUpgrade("pro_week")') &&
+    pricingModalSrc.includes("gstNote") && pricingModalSrc.includes("weekTitle")
+);
 
 /* ------------------------------------------------------------------ */
 console.log("C. Source wiring");
@@ -209,11 +288,17 @@ const stamp = Date.now().toString(36);
 const email = `billing-qa-${stamp}@docopdf.test`;
 const password = "test-password-123";
 
+/* Distinct client IP per run — the rate limiter is proxy-aware
+ * (x-forwarded-for), so every QA run gets fresh buckets and leftover
+ * state from a previous run can never flake the journey. */
+const qaIp = `10.42.${1 + (Date.now() % 250)}.${1 + (Math.random() * 250 | 0)}`;
+
 async function post(url: string, body?: unknown, cookie?: string) {
   const res = await fetch(BASE + url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "x-forwarded-for": qaIp,
       ...(cookie ? { cookie } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -224,7 +309,7 @@ async function post(url: string, body?: unknown, cookie?: string) {
 }
 async function get(url: string, cookie?: string) {
   const res = await fetch(BASE + url, {
-    headers: cookie ? { cookie } : {},
+    headers: { "x-forwarded-for": qaIp, ...(cookie ? { cookie } : {}) },
     cache: "no-store",
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -254,7 +339,7 @@ async function journey(): Promise<void> {
   r = await post("/api/billing/checkout", { nope: 1 }, cookie);
   check("checkout malformed body → 400 bad_request", r.status === 400 && r.data.error === "bad_request");
 
-  /* Demo checkout. */
+  /* Demo checkout — yearly (R28 decided ₹1,499). */
   r = await post("/api/billing/checkout", { plan: "pro_yearly" }, cookie);
   check(
     "demo checkout → ok + subscriptionId",
@@ -284,10 +369,10 @@ async function journey(): Promise<void> {
       sub?.plan === "pro_yearly"
   );
   check(
-    "status → one paid INR payment (199900 paise)",
+    "status → one paid INR payment (149900 paise = ₹1,499)",
     payments.length === 1 &&
       payments[0].status === "paid" &&
-      payments[0].amount === 199900 &&
+      payments[0].amount === 149900 &&
       payments[0].currency === "INR"
   );
 
@@ -313,6 +398,75 @@ async function journey(): Promise<void> {
       r.data.subscription === null &&
       ((r.data.payments ?? []) as unknown[]).length >= 1
   );
+
+  /* R28: the 7-day pass SKU — checkout, confirm, 4900 paise, +7d period. */
+  r = await post("/api/billing/checkout", { plan: "pro_week" }, cookie);
+  check(
+    "week-pass checkout → ok",
+    r.status === 200 && r.data.ok === true && typeof r.data.subscriptionId === "string"
+  );
+  const weekSubId = r.data.subscriptionId as string;
+  r = await post("/api/billing/confirm", { subscriptionId: weekSubId }, cookie);
+  const weekConfirm = r.data as Record<string, unknown>;
+  check(
+    "week-pass confirm → plan pro + ~7-day periodEnd",
+    r.status === 200 &&
+      weekConfirm.plan === "pro" &&
+      typeof weekConfirm.periodEnd === "string" &&
+      new Date(weekConfirm.periodEnd as string).getTime() - Date.now() >
+        6 * 24 * 60 * 60 * 1000
+  );
+  const weekCookie = r.cookie.includes("sidocs_session") ? r.cookie : cookie;
+  r = await get("/api/billing/status", weekCookie);
+  const weekPayments = (r.data.payments ?? []) as Array<Record<string, unknown>>;
+  check(
+    "week-pass payment → 4900 paise paid",
+    weekPayments.some(
+      (p) => p.status === "paid" && p.amount === 4900 && p.currency === "INR"
+    )
+  );
+
+  /* R28: /api/limits — shadow-mode counter (success-only quota). */
+  const anonId = `smoke-anon-${stamp}-${Math.random().toString(36).slice(2, 8)}`;
+  const usageBody = (success: boolean) => ({
+    toolId: "merge-pdf",
+    mode: "D",
+    success,
+    durationMs: 120,
+    sizeBucket: "small",
+    anonId,
+  });
+  await post("/api/usage", usageBody(true));
+  await post("/api/usage", usageBody(true));
+  await post("/api/usage", usageBody(false)); // failures never eat quota
+  await new Promise((res) => setTimeout(res, 400));
+  let lr = await get(`/api/limits?anonId=${anonId}`);
+  check(
+    "limits (guest) → free, 2 used, max 25, hard=false",
+    lr.status === 200 &&
+      lr.data.plan === "free" &&
+      lr.data.usedToday === 2 &&
+      lr.data.maxToday === 25 &&
+      lr.data.remaining === 23 &&
+      lr.data.hard === false,
+    JSON.stringify(lr.data)
+  );
+  lr = await get(`/api/limits?anonId=short`);
+  check("limits bad anonId → 400", lr.status === 400);
+  /* Pro session lifts the cap (same anonId, pro cookie). */
+  const res = await fetch(BASE + `/api/limits?anonId=${anonId}`, {
+    headers: { "x-forwarded-for": qaIp, cookie: weekCookie },
+    cache: "no-store",
+  });
+  const proLimits = (await res.json()) as Record<string, unknown>;
+  check(
+    "limits (pro session) → max 1000",
+    res.status === 200 && proLimits.plan === "pro" && proLimits.maxToday === 1000
+  );
+
+  /* Cancel the week pass so the QA account ends clean. */
+  r = await post("/api/billing/cancel", undefined, weekCookie);
+  check("week-pass cancel → plan free", r.status === 200 && r.data.plan === "free");
 
   /* Password change: wrong current → 401; real change → 200 + fresh cookie. */
   r = await post("/api/auth/password", { currentPassword: "wrong-pass", newPassword: "new-password-456" }, proCookie);

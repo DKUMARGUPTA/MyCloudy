@@ -25,6 +25,12 @@ function anonId(): string {
   }
 }
 
+/** The shared anonymous id (R28 limit system) — same key the beacon uses,
+ * so /api/limits counts exactly the runs /api/usage recorded. */
+export function readAnonId(): string {
+  return anonId();
+}
+
 function sizeBucket(bytes: number): "tiny" | "small" | "medium" | "large" {
   if (bytes < 1_048_576) return "tiny"; // < 1 MB
   if (bytes < 5_242_880) return "small"; // < 5 MB

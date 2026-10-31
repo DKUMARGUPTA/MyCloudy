@@ -52,6 +52,15 @@ webhook-ready: seeds chart → posts receipts for unposted paid payments →
 issues missing invoices (backfills `Payment.invoiceNo`) → recognition →
 refund reversals. All lookups keyed on `source`+`sourceRef`.
 
+**R28 fix — payment → its OWN subscription:** recognition maps each
+payment to the latest subscription of that user created **at-or-before the
+payment** (checkout writes sub→payment; QA seeds use equal timestamps) —
+NOT a user-level "latest plan" map, which mis-treated a yearly payment as
+a 7-day pass (full recognition instead of 1/12) when one user holds
+multiple subscription rows (yearly then week pass). The 7-day pass SKU
+(R28) recognizes fully at payment time, like monthly — a pass never spans
+a month boundary.
+
 ## Config (SiteSetting keys, defaults in parens)
 
 - `acct.gstRatePercent` (18) — SaaS GST rate

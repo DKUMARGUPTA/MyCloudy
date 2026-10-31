@@ -6338,3 +6338,52 @@ tsc 0 · eslint 0 · smoke-billing **125/125** · auth-ui 88/88 · a11y-names 9/
 `BILLING_DEMO` unset on Vercel → checkout 503 billingNotConfigured → pricing modal shows the honest "Payments aren't live yet" note. Re-enable = set provider keys + replace the demo branch with real Razorpay/Stripe order creation (route contracts + i18n already locked by smoke-billing).
 
 NEXT: Phase-10 continue — real Razorpay/Stripe wiring (owner keys) or account polish (name edit) → Turso → Phase-11 worker.
+
+## R28 — BILLING DECIDED + IMPLEMENTED: the 7 decisions, ₹1,499 yearly, ₹49 week pass, shadow-mode limits (2026-10-31)
+
+**THE ROUND:** Owner directive: "Mai chahta hu ki tum hi in sabhi sawal ka jawab deep and advance research kar k do kyuki mai isme fresher hun. Aapke 7 decisions chahiye (doc §7). Jab tak aap haan nahi bologe, billing mein kuch change nahi hua hai." — R27 ke 7 open questions ka jawab maine (delegated authority se) research-backed diya aur turant implement kar diya. Doc 16-BILLING-RESEARCH.md ab PROPOSAL → **DECIDED** hai.
+
+### Research (live re-verification, agent-browser)
+- **iLovePDF** (anchor/floor): Premium **$4/mo, $47/yr** (live) — India store ₹399/mo, ~₹3,000/yr India-visible.
+- **PDF Candy**: web monthly $6, Desktop+Web yearly $4/mo ($48/yr) + $99 lifetime (live).
+- **Smallpdf**: Pro $9/mo billed $108/yr, free = daily download limit (live).
+- **Sejda**: ASN-blocked (Cloudflare 1005) — Feb 2026 snapshot use kiya ($7.50/mo, **$5/7-day pass**, ~$60/yr).
+- Soda/pdfFiller/Adobe: snapshot values (all far above the floor).
+
+### The 7 DECISIONS (16-BILLING-RESEARCH.md §7, D1–D7)
+1. **Yearly ₹1,499** (₹1,999 stub dropped) — ₹1,999 only FX-50% tha, India-visible ₹3,000 ka 67%; ₹1,499 = exact 50% of ₹3,000 + 37% of ₹4,000 → "half the price of iLovePDF" har price point pe literally true. USD realigned: **$1.99/mo, $22.99/yr** (≤50% of $4/$47).
+2. **7-day pass ₹49 / $0.99** — Sejda $5 pass ka ~12%; impulse-zone entry SKU, zero cannibalization (4× ₹49/wk ≈ monthly), accounting full-immediate recognition.
+3. **Free 25 successful tasks/day, 10x market floor** — enforcement payments ke SAATH live hota hai (shadow mode pehle: counter + nudges, no block); Pro fair-use 1,000/day.
+4. **Free file cap: current 50MB mobile / 200MB desktop KEPT** (13x iLovePDF; 100MB proposal se better — regression kabhi nahi); Pro 2GB Phase-11 server tools ke saath.
+5. **GST-inclusive display CONFIRMED** — ₹199/₹1,499/₹49 sab "incl. 18% GST" (splits: 168.64+30.36 / 1,268.64+230.36 / 41.53+7.47); USD zero-rated export.
+6. **Razorpay/Stripe keys AT LAUNCH** (DocoPDF.com attach) — checkout honest-503 tab tak; owner env checklist doc mein (RAZORPAY_KEY_ID/KEY_SECRET/WEBHOOK_SECRET + STRIPE_SECRET_KEY/WEBHOOK_SECRET); keys land → hard limits AUTO-activate.
+7. **Grandfathering: demo-pro keeps Pro till periodEnd, then Free** — bounded goodwill, no lifetime freebies; expiry sweep provider-wiring round mein.
+
+### Shipped (code)
+1. **plans.ts**: pro_yearly ₹1,499/149900p · $22.99/2299c; pro_monthly $1.99/199c; **pro_week ₹49/4900p · $0.99/99c · periodDays 7**; FREE_DAILY_TASKS=25, PRO_DAILY_TASKS=1000; `billingLimitsActive()` = RAZORPAY_KEY_ID || STRIPE_SECRET_KEY present.
+2. **PricingModal**: 3-SKU UI (monthly/yearly toggle + dashed week-pass strip with Zap icon, ₹49 one-time CTA); GST note line; freeF5 "25 tasks/day when Pro launches — unlimited in beta"; busy state per-planId.
+3. **/api/limits** (NEW): public GET, anonId-keyed (same localStorage id as beacon), plan from optional session (pro → 1000), usedToday = AnonUsage sum (UTC day), hard = billingLimitsActive() || (BILLING_DEMO && ?demoHard=1); rate-limit 60/min/IP; zod-free regex gate.
+4. **limits-client.ts** (NEW): 30s module cache, bumpLocalUsage (optimistic + cache invalidate), nudgeKind (near ≥80% / at =max), once-per-day localStorage flags, runBlockedByLimits (hard-only).
+5. **tool-shell.tsx**: P12 usage beacon (pehle ORPHAN — koi caller nahi tha) ab run finish pe fire (success + non-cancel failure); 80% near-nudge toast; 100% at-toast (shadow mein informational); hard gate startRun pe (dormant till keys) + openProModal() upsell.
+6. **pro-modal.ts** (NEW pub/sub) + app-shell subscribe — deep surfaces se pricing modal opens bina prop-drilling.
+7. **/api/usage**: AnonUsage upsert ab **success-only** (failed run kabhi quota nahi khaata); UsageEvent always (analytics).
+8. **Accounting**: post.ts recognizeForPayment accepts pro_week (immediate, monthly treatment, "7-day pass" memo); **sync.ts FIX — payment→OWN subscription mapping** (findLast: latest sub createdAt ≤ payment.createdAt, STRICT; pehle user→latest-plan last-wins map tha jo multi-sub user pe yearly ko week treat karta — smoke journey ne pakda: JE-000032 pe ₹1,499 yearly full-recognize ho gaya tha).
+9. **i18n** EN+HI: pricing.{freeF5,weekTitle,weekDesc,weekOnce,weekCta,gstNote} + tool.{limitNearTitle,limitNearDesc,limitAtTitle,limitAtDesc,limitBlockedTitle,limitBlockedDesc} + freeF2/proF1 copy updates (unlimited-claim replaced — post-launch copy honesty).
+10. **.env (sandbox)**: BILLING_DEMO=1 add — demo checkout/confirm sandbox mein testable; prod Vercel untouched = honest 503.
+
+### QA evidence
+- **smoke-billing 155/155** (125 → 155): B2 section (price catalog asserts: 149900/1499, 199c, 2299c, pro_week, limits constants, accounting treatment, /api/limits route, success-only usage, tool-shell wiring, modal wiring); LIVE journey + yearly 149900p assert + **week-pass journey** (checkout→confirm→+7d→4900p paid→cancel) + **/api/limits journey** (2 success + 1 fail → usedToday=2; bad anonId 400; pro session → max 1000) + saare R26 regressions.
+- **Battery 113/113** (112 smokes + 0 fail) — smoke-billing IP-isolation fix: x-forwarded-for random per run (limiter proxy-aware) — pehle back-to-back runs checkout/signup buckets kha jaate the.
+- **tsc 0 · eslint 0.**
+- **Browser E2E (agent-browser):** pricing modal — monthly ₹199/$1.99, yearly toggle → **₹1,499/$22.99**, week strip ₹49/$0.99, GST note, freeF5; **week-pass demo purchase live** (signed-in QA user → click → plan=pro, sub pro_week active periodEnd +7d, payment 4900p paid INV-6FC0006B, "Pro is active" state); **Hindi modal** full Devanagari (weekTitle/weekDesc/gstNote/freeF5/proF1 sab); mobile 390 no-overflow; **tool-run beacon loop**: merge-pdf real run (DataTransfer injection) → POST /api/usage 202 → /api/limits usedToday 0→1.
+- **Accounting verify (admin API):** sandbox books purged + re-synced with fix — week passes 4153p full immediate (×5), monthlies 16864p full (×4), USD yearly "month 2/12" catch-up 33186p (= 199117×2/12 exact), today's yearlies correctly deferred (0 months); 15/15 paid payments apne OWN sub se mapped; refunded rows excluded + reversal posted. (Purge QA-only action — prod books untouched, bug wahan kabhi fire nahi hui.)
+- Screenshots: download/qa-r28-pricing-{pro-active,hindi,mobile}.png.
+
+### Infra notes / lessons
+- **pkill -f "bun run dev" node child ko nahi maarta** — `next dev` / `next-server` alag processes hain; stale server polluted rate-limit state ke saath serve karta rehta hai. Fix: pkill "next dev" + "next-server" dono, phir port check.
+- **agent-browser research ke liye kaam karta hai** — competitor pricing pages readable (Sejda exception: ASN ban). DevTools overlay button ("Open Next.js Dev Tools") dev mode mein snapshot mein aata hai — QA me ignore.
+- Beacon pehle orphan tha (P12 se wiring lost) — ab ToolShell se wired; admin usage dashboard ko real data milne laga.
+- Smoke rate-limit isolation: per-run random `x-forwarded-for` (limiter is proxy-aware by design) — repeated smoke runs kabhi flake nahi karenge.
+
+### Next (08-PLAN updated)
+Phase-10 remaining: Razorpay/Stripe real wiring (owner keys at launch; D6 checklist), demo-sub expiry sweep (D7), account name edit, Turso → Phase-11 services/worker.

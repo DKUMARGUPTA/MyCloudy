@@ -202,14 +202,15 @@ export async function postPaymentEntry(payment: {
 }
 
 /**
- * Recognize deferred revenue for one payment. Monthly plans: the whole
- * taxable value moves at payment time. Yearly plans: 1/12 per elapsed
- * calendar month — the sweep posts the cumulative delta, so a lapsed
- * sweep run catches up automatically and re-runs never double-post.
+ * Recognize deferred revenue for one payment. Monthly plans and 7-day
+ * passes (R28): the whole taxable value moves at payment time — a pass
+ * never spans a month boundary. Yearly plans: 1/12 per elapsed calendar
+ * month — the sweep posts the cumulative delta, so a lapsed sweep run
+ * catches up automatically and re-runs never double-post.
  */
 export async function recognizeForPayment(
   payment: { id: string; amount: number; currency: string; createdAt: Date },
-  plan: "pro_monthly" | "pro_yearly"
+  plan: "pro_monthly" | "pro_yearly" | "pro_week"
 ): Promise<number> {
   const cfg = await getAccountingConfig();
   const { taxable } = payment.currency === "INR"
@@ -218,7 +219,7 @@ export async function recognizeForPayment(
 
   /* How much of the deferred value should be earned by now? */
   const monthsElapsed =
-    plan === "pro_monthly"
+    plan === "pro_monthly" || plan === "pro_week"
       ? 12
       : wholeMonthsBetween(payment.createdAt, new Date());
   const target = Math.min(taxable, Math.round((taxable * monthsElapsed) / 12));
@@ -239,7 +240,13 @@ export async function recognizeForPayment(
 
   await postEntry({
     date: new Date(),
-    memo: `Revenue recognition — ${plan === "pro_monthly" ? "monthly plan" : `yearly plan, month ${Math.min(monthsElapsed, 12)}/12`} (${payment.id.slice(0, 8)})`,
+    memo: `Revenue recognition — ${
+      plan === "pro_monthly"
+        ? "monthly plan"
+        : plan === "pro_week"
+          ? "7-day pass"
+          : `yearly plan, month ${Math.min(monthsElapsed, 12)}/12`
+    } (${payment.id.slice(0, 8)})`,
     source: "recognition",
     sourceRef: payment.id,
     lines: [

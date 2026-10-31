@@ -57,6 +57,17 @@ import {
 } from "@/lib/storage/opfs";
 import { makeFileThumbnail } from "@/lib/files/thumbnail";
 import { formatBytes } from "@/lib/storage/recent-files";
+import { sendUsageBeacon } from "@/lib/usage-beacon";
+import {
+  bumpLocalUsage,
+  fetchLimits,
+  markNudgeDone,
+  nudgeAlreadyShown,
+  nudgeKind,
+  runBlockedByLimits,
+  type LimitsSnapshot,
+} from "@/lib/limits-client";
+import { openProModal } from "@/lib/pro-modal";
 import {
   toolRunner,
   RunCancelledError,
@@ -182,6 +193,40 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
   }, [chainIn, recentKind, tool.id]);
 
   const runHandleRef = useRef<RunHandle | null>(null);
+
+  // R28 limit system: latest /api/limits snapshot (ref, not state — the
+  // gate + nudges read it at event time; a re-render is never needed).
+  const limitsRef = useRef<LimitsSnapshot | null>(null);
+  const runStartedAtRef = useRef(0);
+  useEffect(() => {
+    void fetchLimits().then((snap) => {
+      if (snap) limitsRef.current = snap;
+    });
+  }, []);
+
+  // Post-run soft nudge (decision D3): one toast per kind per day —
+  // "near" at ≥80% primes Pro pricing, "at" is informational in shadow
+  // mode (beta stays unlimited) and celebratory rather than punishing.
+  const maybeNudge = useCallback(() => {
+    const snap = limitsRef.current;
+    const kind = nudgeKind(snap);
+    if (!snap || !kind || nudgeAlreadyShown(kind)) return;
+    markNudgeDone(kind);
+    if (kind === "near") {
+      toast({
+        title: t("tool.limitNearTitle", {
+          used: snap.usedToday,
+          max: snap.maxToday,
+        }),
+        description: t("tool.limitNearDesc"),
+      });
+    } else {
+      toast({
+        title: t("tool.limitAtTitle", { max: snap.maxToday }),
+        description: t("tool.limitAtDesc", { max: snap.maxToday }),
+      });
+    }
+  }, [t, toast]);
 
   // Optional custom options panel (PRD §2.6 Panel.tsx pattern). Direct
   // map lookup — a stable module-level reference, never created in render.
@@ -314,8 +359,23 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
 
   const startRun = useCallback(() => {
     if (files.length < config.minFiles || runBlockedKey !== null) return;
+    // R28 hard gate (dormant in shadow mode): only bites when payment
+    // providers are live AND the free quota is exhausted — then it is an
+    // upsell, never a dead end (pricing modal opens alongside the toast).
+    if (runBlockedByLimits(limitsRef.current)) {
+      toast({
+        title: t("tool.limitBlockedTitle"),
+        description: t("tool.limitBlockedDesc", {
+          max: limitsRef.current?.maxToday ?? 25,
+        }),
+        variant: "destructive",
+      });
+      openProModal();
+      return;
+    }
     trackToolUse(tool.id);
     setInputBytes(files.reduce((sum, item) => sum + item.file.size, 0));
+    runStartedAtRef.current = Date.now();
     setProgress({ pct: 0, stage: "reading" });
     setPhase("processing");
     // Extra in-memory assets (watermark logo etc.) ride the worker message.
@@ -337,9 +397,28 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
         setRunSummary(result.detail ?? null);
         setPhase("result");
         void clearWorkingFiles().catch(() => undefined);
+        // R28: successful runs feed the usage analytics + the free-tier
+        // daily counter (failures never eat quota), then maybe nudge.
+        sendUsageBeacon({
+          toolId: tool.id,
+          mode: tool.mode,
+          success: true,
+          durationMs: Date.now() - runStartedAtRef.current,
+          inputBytes: files.reduce((sum, item) => sum + item.file.size, 0),
+        });
+        bumpLocalUsage();
+        maybeNudge();
       })
       .catch((error: unknown) => {
         runHandleRef.current = null;
+        // Failed runs are analytics-only (never quota) — best-effort beacon.
+        sendUsageBeacon({
+          toolId: tool.id,
+          mode: tool.mode,
+          success: false,
+          durationMs: Date.now() - runStartedAtRef.current,
+          inputBytes: files.reduce((sum, item) => sum + item.file.size, 0),
+        });
         if (error instanceof RunCancelledError) {
           setPhase("workspace");
           toast({ title: t("tool.cancelledToast") });
@@ -356,7 +435,7 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
           variant: "destructive",
         });
       });
-  }, [collectAssets, config.minFiles, files, options, runBlockedKey, t, toast, tool.id]);
+  }, [collectAssets, config.minFiles, files, maybeNudge, options, runBlockedKey, t, toast, tool.id, tool.mode]);
 
   const cancelRun = useCallback(() => {
     runHandleRef.current?.cancel();
