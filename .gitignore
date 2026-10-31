@@ -55,3 +55,4 @@ tool-results/
 yarn-debug.log*
 yarn-error.log*
 probe/
+upload/
