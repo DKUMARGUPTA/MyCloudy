@@ -6458,3 +6458,32 @@ tsc 0 · eslint 0 · smoke 23/23 · route 200 · **Browser E2E golden**: ai-prep
 - Document mode mein subset pages ka page_id metadata nahi (by design).
 
 NEXT: Phase 3 — chhote tools (attachments family ×3 → colors ×4 → converters ×6 → finishing ×7) per PHASE-PLAN.md.
+
+## R31 — PHASE-3 BATCH 1: attachments + colors + dimensions (5 tools) (2025-11-02)
+
+**THE ROUND:** PHASE-PLAN Phase 3 ka pehla batch. **Live count 124.**
+
+### 1. Tools
+- **add-attachments** (organize, accepts "any"): files[0]=PDF + baaki attachments. rewriteDocument extraObjects surgery — EmbeddedFile stream (byte-exact raw) + Filespec per attachment, FLAT /Names /EmbeddedFiles tree (numbers above source max), catalog replacement. keepExisting merge / replace mode.
+- **extract-attachments** (convert-from, batch 5): Kids-aware tree walk → Filespec /EF /F streams → byte-exact outputs; dedupe; honest et.errorNoAttachments.
+- **invert-colors** (edit): pdfjs raster → 255-channel pixel invert → full-bleed PNG pages via CreateContext (lossless negatives); DPI 96/150/300; pages subset.
+- **pdf-to-greyscale** (convert-from): same raster pipeline, luminance formula (0.299R+0.587G+0.114B).
+- **page-dimensions** (view, batch 20): read-only report — MediaBox/CropBox pt+mm+in, rotation, crop-differs detection. renderReport+pageFacts pure fns.
+
+### 2. Wiring
+- Registry +5: icons Paperclip/FileOutput/Contrast/Droplets/Ruler (2 naye imports). add-attachments accepts "any" (DropZone any-kind path).
+- configs +5. i18n: +at (2 keys) +et (1 key). Parity 4920=4920.
+
+### 3. Smoke (NEW smoke-attachments.ts — 25 checks ALL PASS)
+add→extract ROUND-TRIP (2 files: text + binary byte-exact, names, payload markers, oracle reload) · merge (first+second) + replace mode · no-attachments honesty · page-dimensions (facts + report pt/mm/in + rotation + CropBox-when-differs).
+**Fix**: mm expectation (300pt = 105.83mm — 25.4/72 conversion).
+
+### 4. Gates + E2E
+tsc 0 · lint 0 · smoke 25/25 · routes ×5 200 · sitemap 132→137 · **Browser E2E**: pdf-to-greyscale golden (4 pages → 20 KB) + screenshot. Dev server 1× reaped.
+- Raster tools (invert/greyscale) browser-E2E covered (pdfjs DOM shim bun-smoke nahi).
+
+### Known / Deferred
+- Push PENDING (5 commits local: R27-R31).
+- add-attachments /Names replacement drops other name trees (Dests) — sanitize covers JS/EF; documented trade-off.
+
+NEXT: Phase 3 batch 2 — converters (csv-to-pdf, json-to-pdf, xml-to-pdf, bmp-to-pdf) + finishing (table-of-contents, timestamp-pdf) per PHASE-PLAN.md.

@@ -63,6 +63,11 @@ import { config as duplexCollate } from "../../../tools/duplex-collate/config";
 import { config as pdfToZip } from "../../../tools/pdf-to-zip/config";
 import { config as removeAnnotations } from "../../../tools/remove-annotations/config";
 import { config as preparePdfForAi } from "../../../tools/prepare-pdf-for-ai/config";
+import { config as addAttachments } from "../../../tools/add-attachments/config";
+import { config as extractAttachments } from "../../../tools/extract-attachments/config";
+import { config as invertColors } from "../../../tools/invert-colors/config";
+import { config as pdfToGreyscale } from "../../../tools/pdf-to-greyscale/config";
+import { config as pageDimensions } from "../../../tools/page-dimensions/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
@@ -192,6 +197,11 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [pdfToZip.toolId]: pdfToZip,
   [removeAnnotations.toolId]: removeAnnotations,
   [preparePdfForAi.toolId]: preparePdfForAi,
+  [addAttachments.toolId]: addAttachments,
+  [extractAttachments.toolId]: extractAttachments,
+  [invertColors.toolId]: invertColors,
+  [pdfToGreyscale.toolId]: pdfToGreyscale,
+  [pageDimensions.toolId]: pageDimensions,
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,

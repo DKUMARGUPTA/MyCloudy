@@ -846,6 +846,13 @@
   "rb": {
     "errorAllBlank": "Every page would be removed — the tool keeps at least one page. Turn off strict mode or check the file."
   },
+  "at": {
+    "errorNeedAttachment": "Add the PDF first, then the files to attach.",
+    "errorFirstMustBePdf": "The FIRST file must be the PDF — the rest are the attachments."
+  },
+  "et": {
+    "errorNoAttachments": "No embedded files found in this PDF."
+  },
   "crop": {
     "previewTitle": "Live preview — crop",
     "previewNote": "Drag the box or its handles — or type exact margins in the panel. Arrow keys nudge the box.",
