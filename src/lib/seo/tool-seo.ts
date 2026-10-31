@@ -387,6 +387,78 @@ const CURATED: Record<string, CuratedSeo> = {
       "pdf privacy clean",
     ],
   },
+  "bates-numbering": {
+    title: "Bates Numbering PDF Online Free — Legal Page Stamps",
+    description:
+      "Stamp legal Bates numbers (DOC-000001…) across your PDF — prefix, padding, start number and position. Free, on-device, never uploaded.",
+    keywords: [
+      "bates numbering pdf",
+      "bates stamp online",
+      "legal pdf numbering",
+      "add bates numbers",
+      "law firm pdf stamp",
+    ],
+  },
+  "add-stamps": {
+    title: "Add Stamp to PDF Online Free — APPROVED, DRAFT, CONFIDENTIAL",
+    description:
+      "Rubber-stamp your PDF — APPROVED, DRAFT, CONFIDENTIAL or your own word, in any corner, tilted and translucent. Free and on-device.",
+    keywords: [
+      "add stamp to pdf",
+      "approved stamp pdf",
+      "draft stamp pdf",
+      "confidential stamp pdf",
+      "pdf rubber stamp online",
+    ],
+  },
+  "background-color": {
+    title: "PDF Background Color Online Free — Fill Page Background",
+    description:
+      "Fill PDF pages with ivory, yellow, mint or any hex color — placed behind the text so it stays readable. Free and on-device.",
+    keywords: [
+      "pdf background color",
+      "change pdf page background",
+      "add background to pdf",
+      "color pdf pages online",
+      "pdf page fill color",
+    ],
+  },
+  "remove-blank-pages": {
+    title: "Remove Blank Pages from PDF Online Free",
+    description:
+      "Detect and delete truly blank PDF pages — no text, no drawings, no images — in one pass. Free, on-device, never uploaded.",
+    keywords: [
+      "remove blank pages from pdf",
+      "delete empty pdf pages",
+      "blank page remover",
+      "clean blank pages pdf",
+      "strip blank pages",
+    ],
+  },
+  "alternate-merge": {
+    title: "Alternate Merge PDF Online Free — Interleave Two PDFs",
+    description:
+      "Weave two PDFs page by page (A1, B1, A2, B2…) — the fix for front/back duplex scans. Free, on-device, byte-exact pages.",
+    keywords: [
+      "alternate merge pdf",
+      "interleave pdf pages",
+      "merge two pdfs alternately",
+      "odd even pdf merge",
+      "front back scan combine",
+    ],
+  },
+  "add-page-labels": {
+    title: "Add Page Labels to PDF Online Free — Logical Numbering",
+    description:
+      "Set the logical page labels viewers display — 1, 2, 3 or i, ii, iii or A, B, C — with a prefix and start number. Free and on-device.",
+    keywords: [
+      "pdf page labels",
+      "add page labels pdf",
+      "pdf logical numbering",
+      "roman numerals pdf pages",
+      "pdf page label prefix",
+    ],
+  },
   "add-page-numbers": {
     title: "Add Page Numbers to PDF Online Free",
     description:

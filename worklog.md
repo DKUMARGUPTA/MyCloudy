@@ -6930,3 +6930,72 @@ Pehle plan+improvements present kiye, phir implement.
 ### Discipline
 - codebase-memory-mcp MIT hai, par zero code copy — sirf concepts
   (bentopdf/pentagi pattern follow). App code untouched.
+
+## R50 — BENTOPDF BATCH 2 (P1-a): 6 new own-engine tools + phase roadmap (2026-10-31)
+
+**Trigger:** Owner — "Phase wise plan banao, skill/discipline use karke sab
+kuch implement karo zero mistake ke saath." NEXT-STEPS ko P1–P6 bentopdf
+roadmap se rewrite kiya (bentopdf: 125 tools vs humare 107 — ~45 tool gaps
++ 6 platform gaps documented), phir P1-a implement.
+
+### Shipped (6 tools, R48 anatomy, 100% own engine)
+1. **bates-numbering** (edit) — legal sequential stamps: prefix (latin
+   guard), zero-padding 4–8, start number, 6 positions, size, page range.
+   StampContext.stampText per target.
+2. **add-stamps** (edit) — APPROVED/DRAFT/CONFIDENTIAL/REVIEWED/PAID/
+   URGENT/COPY/custom; color (4), size, opacity, rotate (±30/45), 7
+   positions, page range. helveticaBold.
+3. **background-color** (edit) — 6 presets + custom hex; opacity; behind
+   (default) / over layering via StampRect.behind; page range.
+4. **remove-blank-pages** (organize) — own content-stream token scanner
+   (strings/hex/arrays/inline-dicts skipped, bare keywords tested against
+   marking-op set: Tj TJ ' " f F f* B B* b b* S s sh Do BI); undecodable →
+   non-blank (conservative); honest refusals (no blanks / all blank).
+   organizePages rebuild byte-exact.
+5. **alternate-merge** (organize) — exactly 2 files, A1,B1,A2,B2 weave;
+   lead first/second; tail append / blank-pad (rhythm kept, no trailing
+   blank). organizeMerge with MergePlanEntry + blank-from sizing.
+6. **add-page-labels** (organize) — /PageLabels catalog injection (PDF
+   32000-1 §12.4.2): single Nums[0] entry (/S scheme D/r/R/a/A, /St start,
+   /P optional prefix); rewriteDocument catalog replacement; pages
+   untouched.
+
+### Wiring
+- Registry: +6 def() (icons: Hash/BadgeCheck/Palette/FileMinus/
+  ArrowRightLeft/ListOrdered), all enabled, phase P2, mode D.
+- configs.ts imports + map; tool-seo.ts +6 curated entries.
+- i18n: `scripts/merge-r50-i18n.ts` — +5 error keys (errorCustomTextEmpty,
+  errorBadHex, errorNeedTwoFiles, errorNoBlankFound, errorAllBlank),
+  en=hi=5234 parity ✓. Reused: errorInvalidPages, errorWatermarkChars,
+  errorNothingToDo, errorEncrypted, errorCorrupt.
+- Banner: 106 → **112 tools live** (auto-computed).
+
+### Gates + E2E (sab green)
+- `bunx tsc --noEmit` = 0 · `bun run lint` = 0 · dev.log clean (no
+  errors/warns).
+- **scripts/smoke-r50-tools.ts (NEW, 78 checks):** real workers via
+  self-shimmed globalThis; pdf-lib dev-oracle. Verified: bates hex-stamps
+  (DOC-000001..5) + page-subset (CASE-0042/43 sirf p2/p3) + Devanagari
+  refusal; stamps APPROVED/FINAL v2 per-page + empty-custom refusal;
+  background yellow rg fill (1 0.95 0.6) per-page + custom hex + bad-hex
+  refusal; blank-mix (text/blank/qQ-only/text/text) → 3 kept widths
+  100/300/500 + no-blank + all-blank refusals; alternate-merge append
+  [A,B,A,B,B] + blank-pad [A,B,A,B,blank(B-size),B] + lead=second
+  [B,A,B,A,B] + one-file refusal; page-labels catalog Nums (S=r/St=5/
+  P="Page ") + (S=D/St=1/no P) + Devanagari refusal.
+  - **pdf-lib pitfall documented:** `.size` METHOD hai property nahi
+    (function → JSON.stringify → undefined crash); Contents array join
+    for stamped pages; engine hex lowercase; engine number serialization
+    = toFixed(10) trimmed.
+- **agent-browser E2E: 7/7** — bates → stamps → background → blankpages →
+  altmerge → labels golden paths ("Your file is ready!" sab pe) +
+  merge-pdf regression; homepage 200 + "112 tools"; mobile 390px
+  NO-OVERFLOW; console 0 errors. Screenshots: download/qa-r50-*.png.
+- Post-fix: workers' `detail` simplified to {files,pages} (RunDetail type
+  discipline — R48 pattern).
+
+### Discipline
+- ZERO code/dep from bentopdf (AGPL) — sirf ideas. Own engine everywhere.
+- Billing freeze untouched. Sab 6 tools free-tier, no Pro gating.
+- Next: P1-b raster color family (invert/greyscale/scanner/posterize) →
+  P1-c (pdfs-to-zip, rotate-custom, view-metadata, change-permissions).

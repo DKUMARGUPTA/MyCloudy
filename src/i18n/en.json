@@ -402,7 +402,12 @@
     "errorTranslateAi": "The translation service is not answering right now. Check your connection and try again.",
     "errorTranslateNotConfigured": "The translation service is not enabled on the server yet. Please check back soon.",
     "errorNoFile": "No file was received — add one and try again.",
-    "errorNothingToDo": "There's nothing to do for this file — try a document with more pages, or pick at least one option."
+    "errorNothingToDo": "There's nothing to do for this file — try a document with more pages, or pick at least one option.",
+    "errorCustomTextEmpty": "Custom text is empty — type your stamp word, or pick a preset.",
+    "errorBadHex": "That hex color doesn't look right — use 6 digits, e.g. FFF3C4.",
+    "errorNeedTwoFiles": "This tool needs exactly two PDFs — add the second file first.",
+    "errorNoBlankFound": "No blank pages were found — this document is already clean.",
+    "errorAllBlank": "Every page in this document is blank — there would be nothing left to keep."
   },
   "result": {
     "title": "Your file is ready!",

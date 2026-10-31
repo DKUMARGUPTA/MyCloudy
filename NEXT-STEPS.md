@@ -12,53 +12,63 @@
 > 4. Never delete DONE entries — they are the queue's memory.
 > 5. Items tagged `[owner]` need owner approval BEFORE starting — skip them.
 
-## Queue (top = highest priority)
+## Bentopdf-inspired master roadmap (2026-10-31, owner-approved "phase-wise sab kuch")
 
-### 1. AI tools re-enable — Phase 1: zero-dependency NLP (summarize + chat)
-**Context:** Owner (2026-10-31): "3 AI tools ke liye self-dependent banna hai,
-koi AI par dependency nahi." Plan approved direction: classical on-device NLP.
-**Work:**
-- `summarize-pdf`: TextRank/TF-IDF sentence scoring in a Web Worker (own
-  code), page citations from the existing page-marked extract; honest
-  "extractive summary" UX copy (no LLM claims).
-- `chat-with-pdf` → reposition "Ask PDF (smart search)": BM25 search +
-  snippet + page-number answers, 100% on-device.
+> Source: fresh bentopdf audit R50 (125 tools + 80 workflow nodes vs our 107).
+> Discipline: bentopdf is AGPL — ZERO code/dep copy, ideas only, own engine
+> (`src/lib/own/pdf`) everywhere. R48 anatomy for every new tool.
+
+### P1 — Quick-win tool batches (highest ROI, own-engine, R48 anatomy)
+- ~~**P1-a: 6 tools**~~ **DONE (R50)** — bates-numbering, add-stamps,
+  background-color, remove-blank-pages, alternate-merge, add-page-labels —
+  all live, smoke 78-check + E2E 7/7 green. 112 tools total.
+- **P1-b: raster color family** — `invert-pdf-colors`, `pdf-to-greyscale`,
+  `scanner-effect`, `posterize-pdf` (pdf.js render → pixel transform →
+  rebuild; reuse rasterize-pdf path).
+- **P1-c: output pack** — `pdfs-to-zip` (own STORE-zip writer, zero deps)
+  + `rotate-custom` (arbitrary angle, not just 90°) + `view-metadata`
+  (read-only inspector) + `change-permissions` (perm-only lock).
+- **P1-d: page utils** — `duplex-collate`, `fix-page-size`, `page-dimensions`,
+  `remove-annotations`, `linearize-pdf`.
+
+### P2 — AI differentiators (self-dependent, on-device)
+- `summarize-pdf`: TextRank/TF-IDF sentence scoring in Web Worker, page
+  citations, honest "extractive summary" copy (no LLM claims).
+- `chat-with-pdf` → "Ask PDF (smart search)": BM25 + snippet + page numbers.
+- `prepare-pdf-for-ai`: PDF → LlamaIndex-style JSON export for RAG pipelines
+  (pdf.js text extraction + JSON formatter; AI-first positioning).
 - Re-enable flow per 08-PLAN §Deferred (registry flips + SEO + i18n) —
-  but WITHOUT any provider env (self-dependent).
-**Done-when:** both tools live on prod, smoke script green, SEO pages 200.
-**Est:** 2–3 cron rounds (split: summarize first, chat second).
+  WITHOUT any provider env.
 
-### 2. BentoPDF Batch 2 — 4 low-risk own-engine tools
-**Context:** R48 pattern is proven (registry+config+worker+seo+i18n+smoke).
-**Candidates (in order):** `bates-numbering` (stamp family, legal use-case,
-India angle) → `pdfs-to-zip` (fflate zip output, outputKind "zip") →
-`invert-pdf-colors` + `pdf-to-greyscale` (raster family via existing
-pdf.js render path) → `scanner-effect` (raster + noise/rotate — fun).
-**Done-when:** each tool: smoke + E2E golden path + prod 200 (R48 anatomy).
-**Est:** 1 round per 1–2 tools.
+### P3 — Format expansion (importers/exporters/attachments)
+- Importers: csv/json/xml-to-pdf, bmp/psd, cbz (comics), email-to-pdf (EML),
+  mobi, fb2, odg/odp/ods (LibreOffice family), wpd/wps, vsd, xps.
+- Exporters: pdf-to-bmp, pdf-to-json, pdf-to-csv, pdf-to-cbz.
+- Attachments cluster: add/edit/extract-attachments (embedded files).
 
-### 3. UX/UI polish continuation (owner dissatisfaction follow-through)
-**Context:** R47 fixed owner-badge logic + card polish; owner's broader
-"UX/UI/layout pasand nahi" needs a systematic pass, not one-off fixes.
-**Work:** pick ONE surface per round: tool landing states → result view →
-category pages → homepage hero. Details bar (R47 §7-8 pattern): hover
-states, focus rings, spacing rhythm, empty states, mobile sheet.
-**Done-when:** agent-browser before/after screenshots + console clean.
-**Est:** continuous, 1 surface per round, low priority when queue busy.
+### P4 — Programmatic SEO + traffic
+- Compress-size landing routes (`compress-pdf-to-100kb` style, 7 variants)
+  reusing the real `compress-pdf-to-size` tool + canonical links.
+- Blog seed (3 competitor-alternative posts pattern).
+- seo-audit-style script (own implementation).
 
-### 4. Programmatic SEO landing pages (compress-to-100KB style)
-**Context:** BentoPDF ranks on "compress pdf to 100kb" style queries via
-static pages. We have `compress-pdf-to-size` — make curated landing
-routes (`/tool/compress-pdf-to-100kb` etc.) that reuse the real tool.
-**Watch:** Next.js route discipline (only `/` renders in sandbox — verify
-via agent-browser + prod). Canonical links to the real tool.
-**Est:** 1 round for 5 variants + SEO entries.
+### P5 — Big rocks (phase-wise, longest game)
+- `pdf-multi-tool` (unified organize grid UI) → `pdf-workflow` (visual
+  node pipeline; start: linear step-chain, then nodes).
+- `deskew-pdf` (skew detect + straighten), `extract-tables` (tables→CSV),
+  `edit-pdf-text` (in-place paragraph edit — hardest), `font-to-outline`,
+  `pdf-layers` (OCG), `table-of-contents` (auto TOC + links),
+  `timestamp-pdf` (RFC 3161).
 
-### 5. PWA / Service Worker offline shell
-**Context:** BentoPDF ships SW offline; our engines are all self-hosted
-already — an app-shell SW would make repeat visits instant.
-**Watch:** CSP rules doc (02), no third-party origins; cache versioning.
-**Est:** 1–2 rounds. `[owner]` — needs owner OK (storage/UX tradeoffs).
+### P6 — Platform
+- PWA / Service Worker offline shell `[owner]` (storage/UX tradeoffs).
+- `config.json` runtime tool-disable (no-rebuild on/off).
+- More languages (24 in bentopdf vs our en+hi) `[owner]` — effort heavy.
+
+### Continuous
+- UX/UI polish: ONE surface per round (landing states → result view →
+  category pages → hero). Details bar: hover, focus rings, spacing rhythm,
+  empty states, mobile sheet.
 
 ## Blocked / Waiting
 
@@ -67,7 +77,7 @@ already — an app-shell SW would make repeat visits instant.
 - **Real billing (Razorpay/Stripe)** — `[owner]` explicitly frozen
   (2026-10-31: "abhi nahi lagna hai"). Do NOT touch.
 - **GA4** — optional, needs `NEXT_PUBLIC_GA_ID` from owner.
-- **AI provider env keys** — superseded by item 1 (self-dependent path).
+- **AI provider env keys** — superseded by P2 (self-dependent path).
 
 ## DONE (append-only log)
 
@@ -75,3 +85,6 @@ already — an app-shell SW would make repeat visits instant.
   combine-single/booklet/sanitize) — prod live, 106 tools. `081ab67`
 - **R48-pre (2026-10-31):** pre-batch push + bentopdf audit. `1883198`
 - **R49 (2026-10-31):** agent system + auto-work queue shipped (Scout/Builder/Auditor + NEXT-STEPS + autopilot skill). Docs-only, dry-run verified. See worklog.
+- **R50-plan (2026-10-31):** bentopdf fresh audit → P1-P6 phase roadmap (this rewrite). Owner approved "phase-wise sab kuch implement karo".
+- **R50 (2026-10-31):** P1-a batch — 6 tools (bates/stamps/background/
+  blank-pages/alt-merge/page-labels) + P1-P6 roadmap. 112 tools. See worklog R50.

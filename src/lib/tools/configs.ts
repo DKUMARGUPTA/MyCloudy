@@ -50,6 +50,12 @@ import { config as dividePage } from "../../../tools/divide-page/config";
 import { config as combineSinglePage } from "../../../tools/combine-single-page/config";
 import { config as bookletPdf } from "../../../tools/booklet-pdf/config";
 import { config as sanitizePdf } from "../../../tools/sanitize-pdf/config";
+import { config as batesNumbering } from "../../../tools/bates-numbering/config";
+import { config as addStamps } from "../../../tools/add-stamps/config";
+import { config as backgroundColor } from "../../../tools/background-color/config";
+import { config as removeBlankPages } from "../../../tools/remove-blank-pages/config";
+import { config as alternateMerge } from "../../../tools/alternate-merge/config";
+import { config as addPageLabels } from "../../../tools/add-page-labels/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
@@ -166,6 +172,12 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [combineSinglePage.toolId]: combineSinglePage,
   [bookletPdf.toolId]: bookletPdf,
   [sanitizePdf.toolId]: sanitizePdf,
+  [batesNumbering.toolId]: batesNumbering,
+  [addStamps.toolId]: addStamps,
+  [backgroundColor.toolId]: backgroundColor,
+  [removeBlankPages.toolId]: removeBlankPages,
+  [alternateMerge.toolId]: alternateMerge,
+  [addPageLabels.toolId]: addPageLabels,
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,
