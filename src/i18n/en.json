@@ -843,6 +843,9 @@
   "dv": {
     "errorGrid": "Pick a grid of at least 2 pieces — raise columns or rows."
   },
+  "rb": {
+    "errorAllBlank": "Every page would be removed — the tool keeps at least one page. Turn off strict mode or check the file."
+  },
   "crop": {
     "previewTitle": "Live preview — crop",
     "previewNote": "Drag the box or its handles — or type exact margins in the panel. Arrow keys nudge the box.",

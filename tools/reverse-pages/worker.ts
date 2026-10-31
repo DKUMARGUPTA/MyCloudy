@@ -1,5 +1,4 @@
 import {
-  listPages,
   organizePages,
   parseForOrganize,
   PdfError,
@@ -66,10 +65,10 @@ export async function runReverse(
   }
 }
 
-/** Cheap page count of the output (parse once, list only). */
+/** Cheap page count of the output (parse once, count only). */
 function countPages(bytes: Uint8Array): number {
   try {
-    return listPages(parseForOrganize(bytes)).length;
+    return parseForOrganize(bytes).pages.length;
   } catch {
     return 0;
   }

@@ -6374,3 +6374,34 @@ tsc 0 · eslint 0 · smoke-pageops-a 80/80 · tool routes ×6 200 · sitemap 113
 - Cosmetic: reverse detail "1 files, 1 pages" FIXED (totalPages now real count).
 
 NEXT: Phase 1 Batch B — bates-numbering, remove-blank-pages, alternate-merge, add-page-labels, rotate-custom, view-metadata (PHASE-PLAN.md order).
+
+## R28 — PHASE-1 BATCH B: 6 tools (bates/remove-blank/alternate-merge/page-labels/rotate-custom/view-metadata) (2025-11-02)
+
+**THE ROUND:** PHASE-PLAN.md order follow — Batch B complete. Sab apne own engine pe, smoke 60/60, browser E2E (Hindi session + English).
+
+### 1. Tools (6 × config+worker [+engine])
+- **bates-numbering** (edit, batch 1-20): StampContext stamping — prefix+pad+suffix, 6 positions, 3 fonts, size/margin; **series continues across files** (legal exhibit sets); per-file start tracked; totalPages detail.
+- **remove-blank-pages** (optimize): content-sniff engine — string/hex/comment/dict-aware tokenizer; MARKING_OPS set (Tj/TJ/'/"/S/s/f/B/Do/BI/sh…); strict mode = "draws nothing" bhi blank (graphics-state noise only); conservative default (undecodable/untokenizable = keep); rb.errorAllBlank guard.
+- **alternate-merge** (organize, 2-10 files): round-robin planAlternate (lead swap = stable cycle rotation; keep = full interleave; drop = first-minLen pages per file) → organizeMerge (one parse per input).
+- **add-page-labels** (edit): /PageLabels /Nums INLINE in catalog replacement (rewriteDocument — sanitize seam reuse); styles none/D/r/R/a/A + /St start + /P prefix (WinAnsi-escaped literal); cover-unlabeled = 2 ranges; toRoman (pairs) + toLetters (bijective base-26) pure fns.
+- **rotate-custom** (organize): 1-179° arbitrary angle — ComposeContext form-embed + rotated-bbox sheet + centred placement math; /Rotate-aware (existing 90s stack with custom angle); cw/ccw.
+- **view-metadata** (view, batch 1-20): read-only report — /Info 8 fields (decodeTextString), pages/version/size/encryption/XMP presence; .txt output; outputKind "text" (text-report pattern).
+
+### 2. Wiring
+- Registry +6 defs (sanitize ke baad): icons Hash/FileX/ArrowRightLeft/ListOrdered/RotateCw/Info (sab already-imported). Live count 106→112.
+- configs.ts +6 imports + entries.
+- i18n: +rb.errorAllBlank (en+hi). Parity 4917=4917.
+
+### 3. Smoke (NEW smoke-pageops-b.ts — 60 checks ALL PASS)
+bates (batesText formats + decoded-content hex search + series 4-6 continue + oracle) · remove-blank (tokenizer 7 cases + crafted mixed fixture [real/empty/draws-nothing] + plan strict/loose + E2E 1-page) · alternate (5 plan cases + E2E equal/unequal/drop) · page-labels (roman/letters worked examples + labelFor + E2E /S /R + /P + cover 2-range + oracle) · rotate-custom (rotatedDims 45°/7° + placement derive (tx=35.355) + E2E bbox sheet + oracle) · view-metadata (facts + Title/Author read + XMP absent-truth + report render).
+**Bugs found+fixed**: switch fallthrough in labelFor ("none" → roman!); bates hex search — StampContext LOWERCASE hex likhta hai (hexOf .toUpperCase() hata); placement test expectation derive se sahi kiya; tsc discipline miss pakda (Batch A pages-fix ke baad tsc re-run nahi hua tha — reverse countPages listPages(parseForOrganize) type error).
+
+### 4. Gates + E2E
+tsc 0 · eslint 0 · smoke-a 80/80 + smoke-b 60/60 · tool routes ×6 200 · sitemap 119→125 URLs · **Browser E2E**: bates HINDI session me 2-file batch → "2 फ़ाइलें, 8 पेज" + exhibit-a/b-bates.pdf + ZIP download (screenshot public/qa/phase1b-bates-hindi-e2e.png) · view-metadata EN golden path (.txt 456 B + chains) · mobile 390 rotate-custom no-overflow · no page errors.
+- Dev server 2× reaped (daemon restarts) — sandbox pattern known.
+
+### Known / Deferred
+- Push ab bhi PENDING (token wipe #3 — user se fresh PAT maangna hai; R27+R28 dono commits local).
+- add-page-labels: multi-SECTION schemes (roman→arabic switch) future option.
+
+NEXT: Phase 1 Batch C — pdf-to-zip, duplex-collate, remove-annotations (+ background-color, add-stamps, change-permissions as PHASE-PLAN.md C-set) — 6 tools → Phase 1 COMPLETE.
