@@ -25,7 +25,7 @@
 | Server | Next.js 16.1.3, port 3000 (daemon: `python3 scripts/dev-daemon.py`), dev.log clean |
 | **Production** | **https://mycloudy-beta.vercel.app** LIVE (Vercel; DB endpoints degrade gracefully — Turso future) |
 | GitHub | `DKUMARGUPTA/MyCloudy` — ⚠️ **21 commits UNPUSHED (R19→R43, tokens wiped)**; 26 local tags; push ritual ready (`scripts/push-github.sh`) |
-| Quality gates | tsc **0** errors · eslint 0 · battery **125/125** (R26 baseline; smoke-billing added) · iOS-compat smoke **21/21** (R41) |
+| Quality gates | tsc **0** errors · eslint 0 · battery **113/113** (R44 exact tree; 113 = current smoke-file count, R43 cleanup ke baad) · iOS-compat smoke **21/21** (R41) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
 | i18n | English + हिंदी — **5218 = 5218** flat-leaf keys parity (R29 admin +169, R42 analytics +35, R41 boot UI bilingual) |
 | Mini-services | convert (port 3031), request-sign (3032) — double-fork daemonizer se start |

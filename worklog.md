@@ -6578,7 +6578,7 @@ status report.
   md2pdf 57/57, collage 266/266, card 215/215, create-pdf 86/86,
   write-pdf 109/109, translate 73/73, ocr-invisible 11, ocr-deskew 33,
   ocr-encrypted 13, ocr-invoice-extract 134, create-invoice all-vectors.
-- Gates: `bunx tsc --noEmit` 0 · full battery r6b (125 smokes) pass.
+- Gates: `bunx tsc --noEmit` 0 · `bun run lint` 0 · **full battery r6b 113/113 PASS, 0 FAIL** (exact committed tree, resumable chunk runner).
 - Live E2E (agent-browser): images-to-pdf golden path fill mode +
   branded download verified (qa-r44-*.png).
 
