@@ -39,8 +39,10 @@ R25: e-invoice rotation 5/5. Update this file whenever a phase lands.
    D6; hard limits auto-activate with the keys), demo-sub expiry sweep
    (D7 grandfathering at provider-wiring time), account polish (name
    edit), Turso, then Phase-11.
-2. **Turso production DB** — swap datasource; graceful-degrade already
-   proven; keep table names identical.
+2. **~~Turso production DB~~ DONE (R46, 2026-10-31)** — driver-adapter
+   wiring live (`src/lib/db.ts` + `scripts/turso-init.ts`); prod DB
+   `docopdf-deepakkumar` (Mumbai) verified end-to-end; see
+   13-INTEGRATIONS.md §Turso.
 3. **Phase-11 services/worker** — server-side LibreOffice (266-format gap,
    Filee comparison positioning).
 

@@ -60,10 +60,24 @@ The three AI tools (chat / summarize / translate) run through
 - The adapter accepts an AbortSignal — route deadlines CANCEL the
   in-flight fetch (R19 P3 "SDK abort" closed).
 
-## Turso (planned production DB)
+## Turso (LIVE production DB — R46, 2026-10-31)
 
-- Swap datasource provider to libSQL; table/column names already match
-  (`05-DATA-RELATIONS.md`). Env: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`.
+- **Wired:** `src/lib/db.ts` branches on `TURSO_DATABASE_URL`
+  (`libsql://…`) → Prisma + `@prisma/adapter-libsql` driver adapter
+  (schema `previewFeatures = ["driverAdapters"]`). Sandbox keeps plain
+  SQLite via `DATABASE_URL=file:…` — `prisma db push` unaffected.
+- Env (Vercel, encrypted, production+preview): `TURSO_DATABASE_URL`,
+  `TURSO_AUTH_TOKEN`, plus `AUTH_SECRET` (required in prod since R46 —
+  JWT signing throws without it).
+- DB: `docopdf-deepakkumar` @ aws-ap-south-1 (Mumbai). Table/column
+  names match `05-DATA-RELATIONS.md` (`@@map`, snake_case) — no renames.
+- Schema apply (no remote `prisma db push` with adapters):
+  `bunx prisma migrate diff --from-empty --to-schema-datamodel
+  prisma/schema.prisma --script --output /tmp/turso-init.sql` →
+  `TURSO_DATABASE_URL=… TURSO_AUTH_TOKEN=… bun scripts/turso-init.ts`
+  (idempotent — skips DDL when core tables exist).
+- Admin bootstrap: no seed needed — signup auto-claims `role=admin` for
+  `ADMIN_EMAILS` (src/lib/auth.ts). Sessions are stateless JWTs.
 - All DB routes keep graceful degradation when DB env is absent.
 
 ## Vendored engines (self-hosted, /public)

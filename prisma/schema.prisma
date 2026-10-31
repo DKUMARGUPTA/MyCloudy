@@ -5,7 +5,11 @@
 // HARD RULE: metadata only. NEVER store PDF content or file names.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // R46: driver adapters let the same client run on Turso/libSQL in
+  // production (@prisma/adapter-libsql) while the sandbox keeps plain
+  // SQLite via DATABASE_URL=file:… — adapter is opt-in per constructor.
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {

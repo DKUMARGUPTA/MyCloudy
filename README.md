@@ -35,7 +35,7 @@ rule docs updated with the change they describe.
 | Framework | Next.js 16 (App Router) + TypeScript strict + Tailwind CSS 4 |
 | UI | shadcn/ui (New York) + Lucide + Framer Motion + custom tokens |
 | PDF engine | **In-house engine** (`src/lib/own`, P6) + pdf.js + qpdf WASM + Tesseract.js + libheif — all self-hosted under `/public`; pdf-lib is a dev-only smoke oracle |
-| Database | Prisma + SQLite (sandbox) → Turso/libSQL (production plan); metadata only |
+| Database | Prisma + SQLite (sandbox) / **Turso/libSQL LIVE in production** (driver adapter, R46); metadata only |
 | Files | OPFS / IndexedDB / File System Access / Web Share — device only |
 | Fonts | Self-hosted Inter + Noto Sans Devanagari (`src/fonts/`) |
 | Mini-services | `convert` :3031 (office/webpage→PDF) · `request-sign` :3032 (envelopes) — hardened: SSRF guard, per-IP rate limits, size caps, atomic locks |
