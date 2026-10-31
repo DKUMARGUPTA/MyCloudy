@@ -1,7 +1,7 @@
 /**
  * Smoke: P3-b import pack (R56) — csv-to-pdf, json-to-pdf, xml-to-pdf.
  *
- *   0. Wiring: registry counts 130 total / 129 live / 1 deferred AI
+ *   0. Wiring: registry counts 134 total / 133 live / 1 deferred AI
  *      (translate only); the three new defs are enabled convert-to
  *      (accepts text); configs + seo entries present; error keys used
  *      by the workers all exist in BOTH catalogs (no new i18n keys).
@@ -91,8 +91,8 @@ console.log("── 0. Wiring ────────────────�
   const live = ALL_TOOLS.filter((t) => t.enabled).length;
   const deferred = ALL_TOOLS.filter((t) => !t.enabled).map((t) => t.id);
   check(
-    "tool counts: 130 total / 129 live / 1 deferred AI (translate)",
-    ALL_TOOLS.length === 130 && live === 129 && deferred.join(",") === "translate-pdf",
+    "tool counts: 134 total / 133 live / 1 deferred AI (translate)",
+    ALL_TOOLS.length === 134 && live === 133 && deferred.join(",") === "translate-pdf",
     { total: ALL_TOOLS.length, live, deferred },
   );
 

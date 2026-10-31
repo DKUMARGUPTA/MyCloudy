@@ -7643,3 +7643,118 @@ excel model). Excel tool UNTOUCHED — zero regression risk.
   lineage, CSV/XML/JSON engines all hand-rolled per RFC/spec.
 - Billing freeze untouched; all 3 tools free-tier.
 - Next: P3-c import pack 2 (bmp/psd/cbz-to-pdf, EML) per PHASE-PLAN.md.
+
+## R57 — P3-c import pack 2: bmp-to-pdf + psd-to-pdf + cbz-to-pdf + email-to-pdf (2026-10-31)
+
+Owner directive continue: "yes go ahead" — P3-c per PHASE-PLAN.md (image/
+docs import batch). Discipline check first: registry grep confirmed NONE
+of the four ids existed (genuine gaps: images-to-pdf sniffs BMP/PSD as
+"unknown" — the new tools own those formats; CBZ is a zip container, no
+existing archive→PDF path; EML/MIME had no parser anywhere).
+
+### Shared core — tools/raster-decode-common/ (NEW)
+- **bmp.ts** PURE clean-room BMP decoder (spec: MS DIB + OS/2): headers
+  CORE(12)/INFO(40)/V2/V3(52/56)/V4(108)/V5(124); compression BI_RGB/
+  RLE8/RLE4/BITFIELDS/ALPHABITFIELDS; depths 1/4/8/16/24/32; bottom-up +
+  top-down rows; channel-mask sampling (BITFIELDS incl. alpha, RGB555
+  defaults); RLE8/RLE4 repeat + absolute + EOL + delta (holes keep
+  palette-0); MAX_RASTER_PIXELS 40 MP honest guard; typed failures
+  (corrupt/unsupported/too-large).
+- **psd.ts** PURE composite decoder (spec: Adobe Photoshop File Format):
+  8BPS v1 PSD + v2 PSB (8-byte layer length), depth 8, Grayscale + RGB,
+  raw + PackBits RLE (row-size table, channel-major), alpha channel
+  honoured, planar→interleave RGBA.
+- **render.ts**: computeImagePlacement PURE geometry (fit/A4/Letter,
+  auto-orientation, 0/18/54 margins) + encodeRaster worker-side canvas
+  encode (palette/alpha → lossless PNG, photos → JPEG 0.92 over white —
+  the imagegrid recipe).
+
+### Tool 1 — bmp-to-pdf (convert-to, accepts image)
+- worker: BM signature gate → decodeBmp → encodeRaster → embedPng/Jpeg
+  → one page per file (A4/Letter contain or fit-to-image).
+
+### Tool 2 — psd-to-pdf (convert-to, accepts image)
+- worker: 8BPS gate → decodePsd composite → encodeRaster → page per
+  file. Honest refusals: 16/32-bit depth, CMYK/Lab/Indexed modes.
+
+### Tool 3 — cbz-to-pdf (convert-to, accepts any, maxFiles 1)
+- worker-lib PURE: naturalCompare (digit runs numeric, value→length→
+  zero-pad tiebreak, case-folded), isJunkEntry (__MACOSX/.DS_Store/
+  dotfiles), hasImageExtension (jpg/jpeg/png/webp/gif/bmp/psd/avif),
+  filterAndSortImageEntries.
+- worker: unzipSync (OWN zip engine — non-zip → errorNotArchive honest)
+  → filter + natural sort → per page: JPG DCT passthrough, PNG embed,
+  BMP/PSD via own decoders, GIF/WEBP/AVIF browser bitmap → PNG. Guards:
+  ≤3000 pages, ≤600 MB uncompressed (both honest refusals).
+
+### Tool 4 — email-to-pdf (convert-to, accepts text, maxFiles 5)
+- worker-lib PURE clean-room EML/MIME parser (RFC 5322 + 2045/46/47):
+  byte-level splitEntity, folded headers, RFC 2047 B/Q encoded words
+  (adjacent-word join), QP (soft breaks + =XX) + base64 (whitespace
+  tolerant), charset aliases (utf-8/ascii/latin1→cp1252/utf-16le),
+  multipart recursion (mixed/alternative/related/any), plain-preferred
+  body pick, HTML→tidy text fallback (entities incl. accented Latin-1,
+  list bullets, block tags), attachments (CD filename + CT name +
+  RFC 2231 filename* percent-decode, size = DECODED bytes), honest
+  not-an-email refusal.
+- render.ts (shared painter, smoke-drivable): header block (subject
+  bold, From/To/Cc/Date labels on the value's first baseline), hairline
+  divider, word-wrap + hard-split + pagination, attachment list with
+  formatted sizes, Noto embed when non-WinAnsi.
+
+### Wiring
+- registry: 4 convert-to defs (ImagePlus/Layers/BookOpen/Mail icons;
+  popularity 12/14/10/16) — **134 total / 133 live / 1 deferred
+  (translate only)**. configs.ts 4 imports + map entries. tool-seo 4
+  honest entries.
+- DropZone sniffIsImage: + BMP "BM" + PSD "8BPS" magic bytes.
+- protocol RunDetail: + attachments?: number (documented).
+- i18n: +3 keys en+hi (errorInputTooLarge, errorNotArchive,
+  errorNotEmail — honest copy with {detail}); leaf parity re-asserted
+  in smoke.
+- Count assertions updated: p3a/p3b/r51/r52/r53/p2-ai (134/133/1).
+
+### Gates
+- smoke-p3c-imports NEW: **147/147** (wiring 22 + BMP engine 33 incl.
+  bitfields/RLE4/RLE8/CORE/555 + PSD engine 18 incl. PSB/RLE/gray +
+  CBZ 18 incl. natural-sort + zip roundtrip + EML 27 incl. RFC 2047/
+  2231/QP/base64/multipart + render integration 13 incl. hand-built
+  PNG → own engine → pdf-lib oracle + email pagination oracle + worker
+  discipline 16). tsc: **0**. eslint: **0**.
+- Regression: p3a 71/71 + p3b 108/108 + r51 77/77 + r52 94/94 + r53
+  75/75 + p2-ai 77/77 GREEN.
+
+### E2E (agent-browser, DataTransfer+change recipe; fixtures from
+scripts/make-p3c-fixtures.ts — all authored with own engines, real
+JPEG page reuses public/qa-rkb-small.jpg)
+- bmp-to-pdf: photo.bmp (24-bit gradient) → run → ready "1 files, 1
+  pages" → Download captured → pdf-lib oracle: 1 page **841.89×595.28
+  A4 LANDSCAPE auto** (8×6 wide image), Producer DocoPDF (updateMetadata:
+  false — R44 clobber lesson), Title "photo".
+- psd-to-pdf: art.psd (RLE + alpha) → ready, 1,355 B PDF.
+- cbz-to-pdf: comic.cbz (cover.png + page-2.bmp + page-10.jpg + 2 junk
+  entries) → ready **"1 files, 3 pages"** — junk skipped, natural order.
+- email-to-pdf: message.eml (Hindi RFC 2047 subject + QP Devanagari
+  body + base64 attachment) → ready → **VLM full-page verification**:
+  bold subject "नमस्ते — साप्ताहिक रिपोर्ट", From/To/Date rows, Devanagari
+  body NO tofu, "Attachments (1) report.pdf — 61 B" (decoded size),
+  zero rendering defects. pdf-lib: Title = decoded Hindi subject,
+  Producer DocoPDF.
+- Hindi /hi/tool/email-to-pdf: lang=hi, H1 "ईमेल से पीडीएफ़", FAQ
+  Devanagari, footer "134". Mobile 390: two tool pages scrollW 390 NO
+  overflow. Fresh-visits console/page errors **0** on all four.
+  Category page lists all four; search "bmp" → "BMP से पीडीएफ़"
+  discoverable. dev.log clean (200/202 only).
+
+### ⚠️ Pinned lessons re-confirmed
+- Terminal rendering ≠ bytes: `[htmlToPdf.toolId]` false alarm AGAIN
+  (rg + sed dono ne `[h` khaya; od -c ne bytes sahi dikhaaye).
+- pdf-lib oracle Producer clobber: always reload with
+  { updateMetadata: false }.
+
+### Discipline
+- ZERO bentopdf code (AGPL) — BMP/PSD/EML are clean-room spec
+  implementations, CBZ = own zip engine + own decoders.
+- Billing freeze untouched; all 4 tools free-tier.
+- Next: P3-d attachments cluster (add/extract/remove-attachments) per
+  PHASE-PLAN.md.

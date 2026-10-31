@@ -65,8 +65,13 @@
   dump, prepare-pdf-for-ai se distinct), pdf-to-csv (RFC 4180, Excel
   extraction reuse), pdf-to-cbz (raster + own-zip, page-NNN naming) —
   smoke 71/71 + E2E download-verified. **127 tools / 126 live.**
-- Importers: csv/json/xml-to-pdf, bmp/psd, cbz (comics), email-to-pdf (EML),
-  mobi, fb2, odg/odp/ods (LibreOffice family), wpd/wps, vsd, xps.
+- ~~**P3-b: import pack 1 (text-ish)**~~ **DONE (R56)** — csv/json/
+  xml-to-pdf + data-table-common painter. **130/129/1.**
+- ~~**P3-c: import pack 2 (image/docs)**~~ **DONE (R57)** — bmp/psd/
+  cbz/email-to-pdf + raster-decode-common (own BMP/PSD decoders,
+  natural sort, EML/MIME parser). **134/133/1.**
+- Importers left: mobi, fb2, odg/odp (LibreOffice family — honest
+  best-effort or documented refusal), wpd/wps, vsd, xps.
 - Exporters left: pdf-to-bmp.
 - Attachments cluster: add/edit/extract-attachments (embedded files).
 
@@ -105,6 +110,12 @@
 
 ## DONE (append-only log)
 
+- **R57 (2026-10-31):** P3-c import pack 2 — 4 tools (bmp/psd/cbz/
+  email-to-pdf) + tools/raster-decode-common (BMP decoder CORE→V5 +
+  RLE8/RLE4/BITFIELDS, PSD/PSB composite raw+PackBits, placement
+  geometry) + PURE EML/MIME parser + natural sort. 134 tools (133
+  live). Smoke 147/147 + E2E 4 golden paths (VLM email verification) +
+  regressions all green. See worklog R57.
 - **R48 (2026-10-31):** 6 tools batch 1 (reverse/add-blank/divide/
   combine-single/booklet/sanitize) — prod live, 106 tools. `081ab67`
 - **R48-pre (2026-10-31):** pre-batch push + bentopdf audit. `1883198`

@@ -153,6 +153,8 @@ export interface RunDetail {
   translatedChars?: number;
   /** API batches the translation needed (translate-pdf R9-c). */
   translatedBatches?: number;
+  /** Attachments listed on the rendered page (email-to-pdf P3-c). */
+  attachments?: number;
 }
 
 export interface ToolOutput {

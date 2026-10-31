@@ -51,7 +51,9 @@ not duplicated:
 | **P1-d** | **Page utils (3 new + 2 covered-by)** | **✅ DONE (R53)** — duplex-collate, remove-annotations, page-dimensions; fix-page-size→change-pdf-page-size, linearize→web-optimize (mapped) |
 | **P2** | **AI differentiators (self-dependent, on-device)** | **✅ DONE (R54)** — summarize TextRank, Ask PDF BM25, prepare-pdf-for-ai LlamaIndex JSON; 124 tools / 123 live / 1 deferred |
 | **P3-a** | **Export pack (json/csv/cbz)** | **✅ DONE (R55)** — pdf-to-json, pdf-to-csv, pdf-to-cbz; 127 tools / 126 live |
-| P3-b…e | Format expansion rest | ⬜ |
+| **P3-b** | **Import pack 1 (text-ish)** | **✅ DONE (R56)** — csv/json/xml-to-pdf + data-table painter; 130/129/1 |
+| **P3-c** | **Import pack 2 (image/docs)** | **✅ DONE (R57)** — bmp/psd/cbz/email-to-pdf + raster-decode-common; 134/133/1 |
+| P3-d…e | Attachments cluster + toc | ⬜ |
 | P4 | Programmatic SEO + traffic | ⬜ |
 | P5 | Big rocks (multi-tool grid, workflow, deskew, tables, text edit) | ⬜ |
 | P6 | Platform (PWA, config.json, more languages) | ⬜ `[owner]` gates |

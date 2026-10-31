@@ -410,7 +410,10 @@
     "errorAllBlank": "Every page in this document is blank — there would be nothing left to keep.",
     "errorPageTooLarge": "Rotating that page would exceed the PDF size limit — rotate a smaller page or split the file first.",
     "errorOwnerPwShort": "The owner password needs at least 6 characters — or leave it empty.",
-    "errorPwChars": "AES-128 can't carry that password — use basic letters and digits, or switch to AES-256."
+    "errorPwChars": "AES-128 can't carry that password — use basic letters and digits, or switch to AES-256.",
+    "errorInputTooLarge": "That is too much to process safely in the browser — {detail}. Try a smaller version.",
+    "errorNotArchive": "This file is not a readable comic archive (.cbz / .zip with images inside) — {detail}.",
+    "errorNotEmail": "This file does not look like an .eml email message — {detail}. Export the raw message from your mail app and try again."
   },
   "result": {
     "title": "Your file is ready!",

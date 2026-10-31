@@ -1,7 +1,7 @@
 /**
  * Smoke: P2 AI differentiators (R54) — the self-dependent rebuild.
  *
- *   0. Wiring: registry counts 130 total / 129 live / 1 deferred AI
+ *   0. Wiring: registry counts 134 total / 133 live / 1 deferred AI
  *      (translate only); configs + seo entries; ask.* i18n keys en+hi
  *      parity with real Devanagari; ZERO provider fetches in the three
  *      tools; /api/chat + /api/summarize retired; old provider-era
@@ -191,8 +191,8 @@ console.log("── 0. Wiring sanity ──────────────�
   const live = ALL_TOOLS.filter((t) => t.enabled).length;
   const deferred = ALL_TOOLS.filter((t) => !t.enabled).map((t) => t.id);
   check(
-    "tool counts: 130 total / 129 live / 1 deferred AI (translate)",
-    ALL_TOOLS.length === 130 && live === 129 && deferred.join(",") === "translate-pdf",
+    "tool counts: 134 total / 133 live / 1 deferred AI (translate)",
+    ALL_TOOLS.length === 134 && live === 133 && deferred.join(",") === "translate-pdf",
     { total: ALL_TOOLS.length, live, deferred },
   );
   check(

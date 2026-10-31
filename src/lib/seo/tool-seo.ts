@@ -944,6 +944,54 @@ const CURATED: Record<string, CuratedSeo> = {
       "sitemap xml to pdf",
     ],
   },
+  "bmp-to-pdf": {
+    title: "BMP to PDF Converter Online Free — Bitmap to PDF",
+    description:
+      "Convert Windows BMP images to PDF — photos, palette art and RLE scans, decoded on your device. Free BMP to PDF converter, no upload.",
+    keywords: [
+      "bmp to pdf",
+      "bmp to pdf converter",
+      "convert bmp to pdf online",
+      "bitmap to pdf",
+      "bmp image to pdf",
+    ],
+  },
+  "psd-to-pdf": {
+    title: "PSD to PDF Converter Online Free — Photoshop to PDF",
+    description:
+      "Flatten Photoshop PSD files to PDF pages from the embedded composite — RGB and grayscale, transparency honoured. Free, private, on-device.",
+    keywords: [
+      "psd to pdf",
+      "psd to pdf converter",
+      "convert psd to pdf online",
+      "photoshop to pdf",
+      "psd file to pdf",
+    ],
+  },
+  "cbz-to-pdf": {
+    title: "CBZ to PDF Converter Online Free — Comic Archive to PDF",
+    description:
+      "Turn comic book archives (CBZ/ZIP) into one PDF — natural page order, no re-compression of JPG/PNG pages. Free CBZ to PDF converter in your browser.",
+    keywords: [
+      "cbz to pdf",
+      "cbz to pdf converter",
+      "convert cbz to pdf online",
+      "comic to pdf",
+      "cbz reader to pdf",
+    ],
+  },
+  "email-to-pdf": {
+    title: "Email to PDF Converter Online Free — EML to PDF",
+    description:
+      "Exported .eml emails as clean PDFs — header, body text and attachment list, MIME and encoded subjects handled. Free, private, on-device.",
+    keywords: [
+      "email to pdf",
+      "eml to pdf",
+      "eml to pdf converter",
+      "convert eml to pdf online",
+      "email message to pdf",
+    ],
+  },
   "pdf-to-excel": {
     title: "PDF to Excel Converter — Extract Tables Free",
     description:
