@@ -1,15 +1,18 @@
 /**
- * Smoke test: AI client adapter (R21 — production AI-config fix).
+ * Smoke test: AI client adapter (R21; P2/R54 trim — chat + summarize
+ * routes retired, translate remains).
  *
- * The summarize / chat / translate routes used to import
- * z-ai-web-dev-sdk directly, whose `.z-ai-config` FILE (cwd → home →
- * /etc) exists only in the dev sandbox — on Vercel every AI call died
- * with a misleading "check your connection" error. The
- * `src/lib/ai/zai-client.ts` adapter speaks the same HTTP contract but
- * resolves env vars FIRST (any OpenAI-compatible provider) and reports
- * an honest `aiNotConfigured` (503) when nothing is configured.
+ * The translate route used to import z-ai-web-dev-sdk directly, whose
+ * `.z-ai-config` FILE (cwd → home → /etc) exists only in the dev sandbox —
+ * on Vercel every AI call died with a misleading "check your connection"
+ * error. The `src/lib/ai/zai-client.ts` adapter speaks the same HTTP
+ * contract but resolves env vars FIRST (any OpenAI-compatible provider)
+ * and reports an honest `aiNotConfigured` (503) when nothing is
+ * configured.
  *
- * This smoke pins, SDK-free:
+ * P2/R54: chat-with-pdf and summarize-pdf are REBUILT self-dependent
+ * (BM25 / TextRank on-device) — their routes and api-models are gone.
+ * This smoke now pins, SDK-free:
  *   1. env resolution — valid pair, trailing-slash trim, optional
  *      fields, missing-key rejection
  *   2. file resolution — real sandbox paths resolve; bogus paths null
@@ -18,9 +21,7 @@
  *      backend (proves the fetch contract matches the SDK's), an
  *      explicit-null config throws AiNotConfiguredError, and a dead
  *      endpoint fails with the ai-http- error prefix
- *   5. api-models — all three tools carry aiNotConfigured: 503
- *   6. surfaces/worker — the code paths map aiNotConfigured to the
- *      new i18n keys (en + hi, real Devanagari)
+ *   5. translate api-model + worker + route keep the honest 503 path
  *
  * Run: bun scripts/smoke-ai-config.ts
  */
@@ -35,12 +36,6 @@ import {
   configFromFile,
   getAiConfig,
 } from "../src/lib/ai/zai-client";
-import {
-  CHAT_ERROR_STATUS,
-} from "../tools/chat-with-pdf/api-model";
-import {
-  SUMMARIZE_ERROR_STATUS,
-} from "../tools/summarize-pdf/api-model";
 import {
   TRANSLATE_ERROR_STATUS,
 } from "../tools/translate-pdf/api-model";
@@ -175,51 +170,30 @@ async function main(): Promise<void> {
     );
   }
 
-  console.log("\n== api-models carry the new code ==");
+  console.log("\n== translate keeps the honest 503 path (P2 trim) ==");
 
   check(
-    "api-models: aiNotConfigured → 503 in all three tools",
-    SUMMARIZE_ERROR_STATUS.aiNotConfigured === 503 &&
-      CHAT_ERROR_STATUS.aiNotConfigured === 503 &&
-      TRANSLATE_ERROR_STATUS.aiNotConfigured === 503,
+    "api-model: translate aiNotConfigured → 503",
+    TRANSLATE_ERROR_STATUS.aiNotConfigured === 503,
+  );
+  check(
+    "P2: /api/chat + /api/summarize routes are RETIRED (no directory)",
+    !exists("src/app/api/chat/route.ts") &&
+      !exists("src/app/api/summarize/route.ts"),
   );
 
-  console.log("\n== surfaces + worker map the new code ==");
-
-  const summarizeSurface = read("tools/summarize-pdf/surface.tsx");
-  const chatSurface = read("tools/chat-with-pdf/surface.tsx");
   const translateWorker = read("tools/translate-pdf/worker.ts");
-  check(
-    "surfaces: summarize + chat map aiNotConfigured → errNotConfigured keys",
-    summarizeSurface.includes('code === "aiNotConfigured"') &&
-      summarizeSurface.includes("summarize.errNotConfigured") &&
-      chatSurface.includes('code === "aiNotConfigured"') &&
-      chatSurface.includes("chat.errNotConfigured"),
-  );
   check(
     "worker: translate maps aiNotConfigured → tool.errorTranslateNotConfigured",
     translateWorker.includes("translate-aiNotConfigured") &&
       translateWorker.includes("tool.errorTranslateNotConfigured"),
   );
 
-  console.log("\n== routes rewired (no SDK import) ==");
-
-  const sumRoute = read("src/app/api/summarize/route.ts");
-  const chatRoute = read("src/app/api/chat/route.ts");
   const trRoute = read("src/app/api/translate/route.ts");
   check(
-    "routes: all three use the adapter, none import z-ai-web-dev-sdk",
-    sumRoute.includes("@/lib/ai/zai-client") &&
-      chatRoute.includes("@/lib/ai/zai-client") &&
-      trRoute.includes("@/lib/ai/zai-client") &&
-      !sumRoute.includes("z-ai-web-dev-sdk") &&
-      !chatRoute.includes("z-ai-web-dev-sdk") &&
-      !trRoute.includes("z-ai-web-dev-sdk"),
-  );
-  check(
-    "routes: early aiNotConfigured gate before the retry loop",
-    sumRoute.includes('fail("aiNotConfigured")') &&
-      chatRoute.includes('fail("aiNotConfigured")') &&
+    "route: translate uses the adapter, no z-ai-web-dev-sdk import",
+    trRoute.includes("@/lib/ai/zai-client") &&
+      !trRoute.includes("z-ai-web-dev-sdk") &&
       trRoute.includes('fail("aiNotConfigured")'),
   );
 
@@ -227,24 +201,16 @@ async function main(): Promise<void> {
 
   const en = JSON.parse(read("src/i18n/en.json")) as Record<string, unknown>;
   const hi = JSON.parse(read("src/i18n/hi.json")) as Record<string, unknown>;
-  const enSum = en.summarize as Record<string, string>;
-  const hiSum = hi.summarize as Record<string, string>;
-  const enChat = en.chat as Record<string, string>;
-  const hiChat = hi.chat as Record<string, string>;
   const enTool = en.tool as Record<string, string>;
   const hiTool = hi.tool as Record<string, string>;
   check(
-    "i18n: errNotConfigured present with real copy",
-    typeof enSum.errNotConfigured === "string" &&
-      enSum.errNotConfigured.length > 20 &&
-      typeof enChat.errNotConfigured === "string" &&
-      typeof enTool.errorTranslateNotConfigured === "string",
+    "i18n: errorTranslateNotConfigured present with real copy",
+    typeof enTool.errorTranslateNotConfigured === "string" &&
+      enTool.errorTranslateNotConfigured.length > 20,
   );
   check(
     "i18n: Hindi copy is real Devanagari",
-    /[\u0900-\u097F]/.test(hiSum.errNotConfigured) &&
-      /[\u0900-\u097F]/.test(hiChat.errNotConfigured) &&
-      /[\u0900-\u097F]/.test(hiTool.errorTranslateNotConfigured),
+    /[\u0900-\u097F]/.test(hiTool.errorTranslateNotConfigured),
   );
 
   /* ------------------------------ verdict ------------------------------ */
@@ -252,6 +218,15 @@ async function main(): Promise<void> {
     `\n${fail === 0 ? "PASS" : "FAIL"}: ${pass} passed, ${fail} failed${failures.length ? `\n  failures: ${failures.join(" | ")}` : ""}\n`,
   );
   process.exit(fail === 0 ? 0 : 1);
+}
+
+function exists(p: string): boolean {
+  try {
+    readFileSync(join(process.cwd(), p));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 void main();

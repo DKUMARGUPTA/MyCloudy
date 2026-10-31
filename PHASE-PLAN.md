@@ -49,7 +49,7 @@ not duplicated:
 | P1-b | Raster color family (4 tools) | ✅ DONE (R51) |
 | P1-c | Output pack (4 tools) | ✅ DONE (R52) |
 | **P1-d** | **Page utils (3 new + 2 covered-by)** | **✅ DONE (R53)** — duplex-collate, remove-annotations, page-dimensions; fix-page-size→change-pdf-page-size, linearize→web-optimize (mapped) |
-| P2 | AI differentiators (self-dependent, on-device) | ⬜ NEXT |
+| **P2** | **AI differentiators (self-dependent, on-device)** | **✅ DONE (R54)** — summarize TextRank, Ask PDF BM25, prepare-pdf-for-ai LlamaIndex JSON; 124 tools / 123 live / 1 deferred |
 | P3 | Format expansion (import/export/attachments) | ⬜ |
 | P4 | Programmatic SEO + traffic | ⬜ |
 | P5 | Big rocks (multi-tool grid, workflow, deskew, tables, text edit) | ⬜ |
@@ -80,9 +80,14 @@ browser E2E golden path + mobile + Hindi; worklog/memory/queue updated; pushed.
 - ~~fix-page-size~~ → covered by `change-pdf-page-size` (mapped above).
 - ~~linearize-pdf~~ → covered by `web-optimize-pdf` (mapped above).
 
-## P2 — AI differentiators (self-dependent, on-device, honest)
+## P2 — AI differentiators (self-dependent, on-device, honest) — ✅ DONE (R54)
 
-The 3 deferred AI tools come back WITHOUT any provider env:
+Delivered exactly as scoped (detail: worklog R54, smoke-p2-ai 77/77):
+summarize-pdf TextRank extractive + Ask PDF BM25 smart search +
+prepare-pdf-for-ai LlamaIndex JSON export; registry 124/123/1 (only
+translate-pdf stays deferred — genuinely provider-backed); provider-era
+/api/chat + /api/summarize routes and old surfaces retired; i18n ask.*
+(5150=5150). Original scope (kept for the record):
 
 1. **`summarize-pdf`** — TextRank/TF-IDF extractive sentence scoring in a
    Web Worker (pdf.js text extraction), page citations, honest copy

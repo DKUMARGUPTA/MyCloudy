@@ -375,11 +375,11 @@ async function main(): Promise<void> {
   const live = ALL_TOOLS.filter((t) => t.enabled).length;
   const deferred = ALL_TOOLS.filter((t) => !t.enabled).map((t) => t.id);
   check(
-    `tool counts: 123 total / 120 live / 3 deferred AI`,
-    ALL_TOOLS.length === 123 &&
-      live === 120 &&
+    `tool counts: 124 total / 123 live / 1 deferred AI`,
+    ALL_TOOLS.length === 124 &&
+      live === 123 &&
       JSON.stringify(deferred) ===
-        JSON.stringify(["chat-with-pdf", "summarize-pdf", "translate-pdf"]),
+        JSON.stringify(["translate-pdf"]),
     { total: ALL_TOOLS.length, live, deferred },
   );
 

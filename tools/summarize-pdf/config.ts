@@ -1,91 +1,104 @@
 import type { ToolConfig } from "@/lib/tools/config-types";
 
 /**
- * Summarize PDF (R11, tool #100) — one-tap structured TL;DR with page
- * citations, free (Smallpdf/IlovePDF keep this premium). The third
- * DocoPDF tool with a server round-trip, same honest shape as chat and
- * translate: text is extracted on-device by the shared chat worker; ONLY
- * the bounded excerpt + option codes ever POST to /api/summarize — never
- * file bytes. Nothing is stored, nothing is logged.
- *
- * Like chat-with-pdf, the workspace surface IS the tool (viewerOnly) —
- * no run step, no output blob from the pipeline; the summary renders
- * on-screen and exports to PDF / Markdown / plain text from the surface.
+ * Summarize PDF (P2 / R54) — REBUILT self-dependent: TextRank extractive
+ * summarization 100% on-device. No LLM, no provider, no network — the
+ * sentences in the summary are verbatim from the document, ranked by an
+ * unsupervised graph algorithm, each with its page citation. Standard run
+ * pipeline: upload → length/format → run → Markdown/TXT report.
  */
 export const config: ToolConfig = {
   toolId: "summarize-pdf",
-  viewerOnly: true,
-  landingSurface: true,
-  howKeys: ["summarize.how1", "summarize.how2", "summarize.how3"],
+  createWorker: () =>
+    new Worker(new URL("./worker.ts", import.meta.url), {
+      type: "module",
+    }),
+  outputKind: "text",
   minFiles: 1,
   maxFiles: 1,
-  options: [],
-  chainToolIds: ["chat-with-pdf", "translate-pdf", "ocr-pdf", "view-pdf"],
+  options: [
+    {
+      kind: "select",
+      id: "length",
+      label: { en: "Summary depth", hi: "सारांश की गहराई" },
+      hint: {
+        en: "How many of the top-ranked sentences to include — from a quick TL;DR to a detailed digest.",
+        hi: "टॉप-रैंक वाक्यों में से कितने लेने हैं — झटपट TL;DR से लेकर विस्तृत सार तक।",
+      },
+      choices: [
+        { value: "brief", label: { en: "Brief — quick TL;DR", hi: "संक्षिप्त — झटपट TL;DR" } },
+        { value: "standard", label: { en: "Standard — balanced", hi: "सामान्य — संतुलित" } },
+        { value: "detailed", label: { en: "Detailed — full digest", hi: "विस्तृत — पूरा सार" } },
+      ],
+      default: "standard",
+    },
+    {
+      kind: "select",
+      id: "format",
+      label: { en: "Report format", hi: "रिपोर्ट फ़ॉर्मैट" },
+      hint: {
+        en: "Markdown keeps the headings and emphasis; plain text pastes anywhere.",
+        hi: "Markdown में हेडिंग और ज़ोर बने रहते हैं; प्लेन टेक्स्ट कहीं भी पेस्ट हो जाता है।",
+      },
+      choices: [
+        { value: "md", label: { en: "Markdown (.md)", hi: "Markdown (.md)" } },
+        { value: "txt", label: { en: "Plain text (.txt)", hi: "प्लेन टेक्स्ट (.txt)" } },
+      ],
+      default: "md",
+    },
+  ],
+  chainToolIds: ["chat-with-pdf", "prepare-pdf-for-ai", "pdf-to-txt"],
   features: [
     {
-      en: "A structured summary in one tap — TL;DR, key points, action items — with the page citation like (p. 3) behind every claim.",
-      hi: "एक टैप में ढाँचे वाला सारांश — TL;DR, मुख्य बातें, करने के काम — हर बात के साथ पेज का हवाला जैसे (p. 3)।",
+      en: "A real summary in one tap — TL;DR plus key points, every sentence lifted verbatim from your document with its page citation like (p. 3).",
+      hi: "एक टैप में असली सारांश — TL;DR और मुख्य बातें, हर वाक्य आपके दस्तावेज़ से जैसा है वैसा ही, अपने पेज हवाले जैसे (p. 3) के साथ।",
     },
     {
-      en: "Choose the language (English or Hindi) and the depth (brief, standard, detailed) — then regenerate instantly without re-uploading.",
-      hi: "भाषा (अंग्रेज़ी या हिन्दी) और गहराई (संक्षिप्त, सामान्य, विस्तृत) चुनिए — फिर बिना दोबारा अपलोड किए तुरंत नया सारांश बनाइए।",
+      en: "TextRank ranking — the same unsupervised graph algorithm search engines use for extractive summarization — running entirely in your browser. No AI service, no account, no upload.",
+      hi: "TextRank रैंकिंग — वही अनसुपरवाइज़्ड ग्राफ़ एल्गोरिद्म जो सर्च इंजन एक्स्ट्रैक्टिव सारांश के लिए इस्तेमाल करते हैं — पूरा आपके ब्राउज़र में। न कोई AI सर्विस, न अकाउंट, न अपलोड।",
     },
     {
-      en: "Download the summary as a clean PDF, Markdown or plain text — perfect for reports, notes and email digests.",
-      hi: "सारांश को साफ़ PDF, Markdown या प्लेन टेक्स्ट में डाउनलोड करें — रिपोर्ट, नोट्स और ईमेल के लिए बिल्कुल सही।",
+      en: "Three depths — brief for a quick TL;DR, standard for a balanced digest, detailed when you need the whole shape of the document.",
+      hi: "तीन गहराई — झटपट TL;DR के लिए संक्षिप्त, संतुलित सार के लिए सामान्य, और पूरी जानकारी चाहिए तो विस्तृत।",
     },
     {
-      en: "Your file never leaves the device: text is extracted on your device and only the bounded excerpt is sent for the AI — never the PDF bytes.",
-      hi: "आपकी फ़ाइल डिवाइस से बाहर नहीं जाती: टेक्स्ट आपके डिवाइस पर निकलता है और सिर्फ़ वही सीमित अंश AI के पास जाता है — PDF बाइट्स कभी नहीं।",
+      en: "Works with English and Hindi (Devanagari) documents — sentence boundaries and stopwords understand both scripts.",
+      hi: "अंग्रेज़ी और हिन्दी (देवनागरी) दस्तावेज़ दोनों चलते हैं — वाक्य की सीमा और स्टॉपवर्ड दोनों लिपियाँ समझते हैं।",
     },
     {
-      en: "The AI summarizes only from your document and cites the page for every claim — no invented facts.",
-      hi: "AI सिर्फ़ आपके दस्तावेज़ से सारांश बनाता है और हर बात का पेज बताता है — कोई बनावटी बात नहीं।",
-    },
-    {
-      en: "Scans are detected honestly and pointed to PDF OCR first; very long documents are summarized head+tail with a visible omitted-pages note.",
-      hi: "स्कैन ईमानदारी से पहचाने जाते हैं और पहले PDF OCR की ओर भेजे जाते हैं; बहुत लंबे दस्तावेज़ का आगे+पीछे का सारांश बनता है और छोड़े पेजों की सूचनी साफ़ दिखती है।",
+      en: "Download as clean Markdown or plain text — ready for notes, reports and email digests. Your file never leaves the device.",
+      hi: "साफ़ Markdown या प्लेन टेक्स्ट में डाउनलोड — नोट्स, रिपोर्ट और ईमेल के लिए तैयार। आपकी फ़ाइल डिवाइस से बाहर नहीं जाती।",
     },
   ],
   faq: [
     {
       q: {
-        en: "Is my PDF uploaded anywhere?",
-        hi: "क्या मेरी PDF कहीं अपलोड होती है?",
+        en: "Is this an AI summary?",
+        hi: "क्या यह AI सारांश है?",
       },
       a: {
-        en: "No. The file is opened in your browser and its text is extracted on your device. Only that bounded excerpt — never the PDF itself — is sent for summarization, and nothing is stored on the server.",
-        hi: "नहीं। फ़ाइल आपके ब्राउज़र में खुलती है और उसका टेक्स्ट आपके डिवाइस पर निकलता है। सिर्फ़ वही सीमित अंश — PDF कभी नहीं — सारांश के लिए जाता है, और सर्वर पर कुछ सेव नहीं होता।",
+        en: "It is an extractive summary, and we say so plainly: an algorithm (TextRank) scores every sentence by how central it is to the document, then picks the best ones — verbatim. Nothing is rewritten, paraphrased or invented. That also means it works fully offline, free and private.",
+        hi: "यह एक्स्ट्रैक्टिव सारांश है, और हम साफ़ कहते हैं: एक एल्गोरिद्म (TextRank) हर वाक्य को दस्तावेज़ में उसकी ज़रूरत के हिसाब से अंक देता है और सबसे अच्छे वाक्य चुनता है — जैसे हैं वैसे ही। कुछ दोबारा लिखा या बनाया नहीं जाता। इसी से यह पूरी तरह ऑफ़लाइन, मुफ़्त और निजी चलता है।",
       },
     },
     {
       q: {
-        en: "What is the difference between brief, standard and detailed?",
-        hi: "संक्षिप्त, सामान्य और विस्तृत में क्या फ़र्क़ है?",
+        en: "How are the sentences picked?",
+        hi: "वाक्य कैसे चुने जाते हैं?",
       },
       a: {
-        en: "Brief is about 120-180 words: TL;DR + key points. Standard (280-420 words) adds a Details section. Detailed (480-750 words) goes deeper into numbers, dates and definitions. All three cite pages.",
-        hi: "संक्षिप्त लगभग 120-180 शब्द: TL;DR + मुख्य बातें। सामान्य (280-420 शब्द) में विवरण खंड जुड़ता है। विस्तृत (480-750 शब्द) आँकड़ों, तारीख़ों और परिभाषाओं में गहरा जाता है। तीनों में पेज के हवाले होते हैं।",
+        en: "TextRank builds a graph where two sentences connect when they share meaningful words, then runs power iteration (like PageRank for sentences). The sentences most connected to the rest of the document rise to the top. Reading order is restored afterwards, so the summary reads naturally.",
+        hi: "TextRank एक ग्राफ़ बनाता है जहाँ दो वाक्य जुड़ते हैं जब उनमें सार्थक शब्द साझा हों, फिर पावर इटरेशन चलाता है (वाक्यों के लिए PageRank जैसा)। जो वाक्य दस्तावेज़ से सबसे जुड़े होते हैं वे ऊपर आते हैं। बाद में पढ़ने का क्रम वापस लग जाता है, ताकि सारांश सहज पढ़ा जाए।",
       },
     },
     {
       q: {
-        en: "How long can the document be?",
-        hi: "दस्तावेज़ कितना लंबा हो सकता है?",
+        en: "My scanned PDF fails — why?",
+        hi: "मेरी स्कैन की PDF असफल हो जाती है — क्यों?",
       },
       a: {
-        en: "Up to 200 pages and about 48,000 characters of text in one run. Longer documents are summarized from the beginning and end, and the file card honestly shows how many middle pages were left out.",
-        hi: "एक बार में 200 पेज और लगभग 48,000 अक्षर तक। इससे लंबे दस्तावेज़ का सारांश शुरुआत और अंत से बनता है, और फ़ाइल कार्ड पर साफ़ दिखता है कि बीच के कितने पेज छूटे।",
-      },
-    },
-    {
-      q: {
-        en: "Can I get the summary in Hindi?",
-        hi: "क्या सारांश हिन्दी में मिल सकता है?",
-      },
-      a: {
-        en: "Yes — pick हिन्दी before summarizing and the whole summary (TL;DR, key points, action items, details) is written in Hindi with real Devanagari, including the exported PDF.",
-        hi: "हाँ — सारांश बनाने से पहले हिन्दी चुनें और पूरा सारांश (TL;DR, मुख्य बातें, करने के काम, विवरण) हिन्दी में असली देवनागरी के साथ लिखा जाएगा — निर्यात की गई PDF भी।",
+        en: "Scanned pages are images with no selectable text, so there is nothing to rank. Run the file through PDF OCR first, then summarize the OCR result. The tool refuses honestly instead of shipping an empty summary.",
+        hi: "स्कैन किए पेज तस्वीरें हैं, उनमें चुनने लायक़ टेक्स्ट नहीं होता, रैंक करने को कुछ नहीं मिलता। पहले फ़ाइल को PDF OCR से निकालिए, फिर उसी नतीजे का सारांश बनाइए। यह टूल ख़ाली सारांश देने के बजाय ईमानदारी से मना करता है।",
       },
     },
   ],

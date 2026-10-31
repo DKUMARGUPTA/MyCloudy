@@ -7348,3 +7348,109 @@ honest-coverage decisions verified up front.
 - Next: **P2 — AI differentiators** (summarize-pdf TextRank, chat-with-pdf
   BM25, prepare-pdf-for-ai LlamaIndex JSON, re-enable flow) per
   PHASE-PLAN.md.
+
+## R54 (2026-10-31) — P2 COMPLETE: AI differentiators self-dependent (TextRank + BM25 + LlamaIndex export)
+
+Owner directive: PHASE-PLAN.md P2 execute — "self-dependent, on-device,
+honest" AI tools WITHOUT any provider env. Sab kuch own engine, zero
+network, zero LLM claims.
+
+### Tool 1 — summarize-pdf REBUILT (TextRank extractive)
+- OLD provider-era stack DELETED: 946-line surface.tsx + model.ts +
+  api-model.ts + /api/summarize route (zero-caller retirement; translate
+  route STAYS — its tool is still deferred).
+- NEW: standard run pipeline (R48 anatomy). worker-lib.ts PURE TextRank:
+  bilingual sentence split (danda । + abbreviation guard Mr./Dr./e.g. +
+  decimal protection), script-agnostic tokenize, Mihalcea–Tarau
+  word-overlap similarity + power iteration (25 iters, d=0.85, uniform
+  start = deterministic), word-band selection (brief/standard/detailed),
+  near-duplicate sentence dedupe, reading-order restore, (p. N) citations.
+- Honest copy everywhere: "extractive — sentences verbatim, nothing
+  rewritten or invented" (FAQ pehla sawal hi yahi hai).
+- MD/TXT output `-summary.md` with TL;DR + Key points + stats + method.
+
+### Tool 2 — chat-with-pdf → "Ask PDF (smart search)" REBUILT (BM25)
+- OLD 1012-line chat surface + model + api-model + /api/chat route
+  DELETED. Registry name → "Ask PDF (smart search)"; id STAYS chat-with-pdf
+  (URL stability), icon Bot → Search.
+- worker-lib.ts PURE Okapi BM25: paragraph passages (page-tracked,
+  >1600-char split at sentences), per-passage TF maps + docFreq + IDF
+  ln(1+(N-df+.5)/(df+.5)), k1=1.5 b=0.75, ranked hits + windowed snippet
+  runs (hit/non-hit, head+tail ellipses) + EN+HI stopword query tokens
+  with raw fallback.
+- worker.ts private protocol: extract → indexed → search → results (index
+  lives in worker memory; instant follow-up searches).
+- surface.tsx NAYA search-first UI: hero → DropZone → per-page progress →
+  indexed line (N pages · M passages) → search box + 4 quick chips →
+  ranked passage cards (page badge, relevance %, <mark> highlights,
+  copy) → no-match honest state → OCR chain on scans, summarize chain.
+  viewerOnly + landingSurface (workspace IS the tool).
+
+### Tool 3 — prepare-pdf-for-ai NEW (LlamaIndex JSON export)
+- PDF → RAG-ready export: full Document (id_ + text + metadata: page
+  count, char/word/token counts, language_hint en/hi/mixed, prepared_by/
+  at) + TextNodes array (id_ pattern doc-chunk-000, page + page_label +
+  start/end_page + counts). JSON (pretty) ya JSONL (node-per-line).
+- Chunker: paragraph-boundary integrity (RAG ko semantic units milte
+  hain), ~4-char token estimates, >3× target paragraphs split at
+  sentences, overlap tail-carry between consecutive chunks. 5 files/run.
+- Category convert-from (PDF→JSON honest), icon BrainCircuit.
+
+### Engine bugs smoke ne pakde (isliye battery hoti hai)
+- **Devanagari matras split**: [\p{L}\p{N}] regex ा (Mn category) ko word
+  se todta tha — "लाख" → "ल","ख" (Hindi BM25/TextRank matching quality
+  ghata). FIX: [\p{L}\p{M}\p{N}] teeno jagah (tokenize ×2, wordCount,
+  snippet isMatch ×2).
+- **Snippet tail ellipsis**: used (chars) vs words.length (token count)
+  compare — tail ellipsis kabhi fire nahi hota tha. FIX: lastIdx
+  tracking. Surface HighlightRuns mein bhi.
+- **aiDocId parentheses**: "(Final)" sanitize nahi hota tha. FIX: () in
+  the strip class.
+
+### ⚠️ E2E debug saga — React StrictMode worker massacre (NAYA PINNED LESSON)
+Ask PDF extraction "Opening your PDF…" pe forever stuck. Diagnosis chain:
+surface posting OK → worker module kabhi execute nahi → turbopack
+bootstrap + chunks sab 200 → manual classic worker SAME URL se chalta hai
+→ lifecycle hook: +0 -0 +1 pattern. **ROOT CAUSE: dev StrictMode
+double-mount — mount#1 worker banata hai, mera unmount-only cleanup
+useEffect usko TERMINATE karta hai, remount pe ranSigRef guard early-
+return — dead worker, kabhi naya nahi banta.** FIX: extraction effect ab
+khud cleanup return karta hai (ranSigRef = null + terminate) — remount
+fresh worker banata hai. (Thumbnail pdf.js workers red herring the —
+unke internal sourceName/targetName messages hook ne capture kiye the.)
+Also: agent-browser console worker-context logs capture NAHI karta —
+module-alive postMessage probe hi theek tarika.
+
+### Wiring
+- registry: chat (enabled, P2, Ask PDF name, honest desc) + summarize
+  (enabled, P2, TextRank desc) + prepare NEW def → **124 total / 123
+  live / 1 deferred (translate-pdf only)**. r51/r52/r53 count assertions
+  updated (124/123/["translate-pdf"]).
+- configs.ts: preparePdfForAi wired. tool-seo: 3 honest entries (AI
+  claims OUT — "TextRank extractive", "BM25 smart search", "RAG-ready
+  JSON"). surfaces.tsx: ChatSurface→AskPdfSurface, SummarizeSurface out.
+- i18n: chat.* + summarize.* groups RETIRED, naya ask.* group (37 keys)
+  en+hi perfect parity — **5150 = 5150**. zai-client + /api/translate
+  bacha (smoke-ai-config trimmed to translate-only: 16/16).
+- protocol.ts RunDetail: sentences? (summarize) + chunks? (prepare)
+  documented fields.
+
+### Gates
+- smoke-p2-ai NEW: **77/77** (wiring + TextRank + BM25 + chunker + worker
+  discipline). tsc: **0**. eslint: **0**. Regression: r51 77/77 + r52
+  94/94 + r53 75/75 + ai-config 16/16 GREEN.
+- E2E (agent-browser, DataTransfer+change recipe): summarize golden path
+  (run → ready → preview MD: TL;DR + Key points + *(p. 1..4)* citations +
+  TextRank note exact); Ask PDF (upload → indexed "4 pages · 8 passages"
+  → search "revenue enterprise segment" → 3 matches, p.2 100% > p.1 94%
+  > p.4 56% BM25 ranking CORRECT, <mark> highlights, method note);
+  prepare (run → qbr-for-ai.json 3.1KB → preview: id_ "qbr" + full text +
+  metadata). Hindi full Devanagari (पीडीएफ़ से पूछें + PDF सारांश).
+  Mobile 390: no-overflow. Console/page errors 0. Home "All 124 tools".
+
+### Discipline
+- ZERO bentopdf code (AGPL) — TextRank/BM25 classic published algorithms,
+  apna implementation.
+- Billing freeze untouched; all 3 tools free-tier.
+- **P2 PHASE COMPLETE** — next: P3 format expansion (importers/exporters/
+  attachments) per PHASE-PLAN.md.

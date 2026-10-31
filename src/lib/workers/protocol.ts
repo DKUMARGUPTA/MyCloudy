@@ -51,6 +51,10 @@ export interface RunDetail {
   nothingFlattened?: boolean;
   /** Info-dict entries removed, dates + custom included (remove-pdf-metadata). */
   removedInfoFields?: number;
+  /** Sentences ranked by TextRank (summarize-pdf). */
+  sentences?: number;
+  /** Chunk nodes exported (prepare-pdf-for-ai). */
+  chunks?: number;
   /** XMP /Metadata stream removed (remove-pdf-metadata). */
   removedXmp?: boolean;
   /** Page /PieceInfo dictionaries stripped (remove-pdf-metadata). */

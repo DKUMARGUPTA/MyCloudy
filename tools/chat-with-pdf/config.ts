@@ -1,105 +1,75 @@
 import type { ToolConfig } from "@/lib/tools/config-types";
 
 /**
- * Chat with PDF (R8; R9-a export; R9-b multi-file) — ask up to five
- * documents anything. Smallpdf keeps this behind a premium paywall;
- * DocoPDF ships it free.
- *
- * One of the two DocoPDF tools with a server round-trip, and the shape is
- * the honest minimum: the PDFs themselves are extracted in a Web Worker
- * on the device; only a bounded, page-marked TEXT excerpt (equally split
- * across the open files, each section labeled === FILE "name" ===) plus
- * the visible chat history ever POST to /api/chat. There is no run step
- * and no output file — like view-pdf, the workspace surface IS the tool
- * (viewerOnly), so the shell never builds a Run CTA.
+ * Ask PDF (chat-with-pdf, P2 / R54) — REBUILT self-dependent: BM25 smart
+ * search, 100% on-device. No LLM, no provider, no network — the document
+ * is extracted and indexed in a Web Worker in the browser, queries rank
+ * passages by classic Okapi BM25, results are exact sentences with page
+ * badges and term highlights. Search-grade, honestly named. Smallpdf
+ * keeps AI chat behind a premium paywall; DocoPDF ships honest search
+ * free. The workspace surface IS the tool (viewerOnly) — no run step,
+ * no output file.
  */
 export const config: ToolConfig = {
   toolId: "chat-with-pdf",
   viewerOnly: true,
   landingSurface: true,
-  howKeys: ["chat.how1", "chat.how2", "chat.how3"],
+  howKeys: ["ask.how1", "ask.how2", "ask.how3"],
   minFiles: 1,
-  maxFiles: 5,
+  maxFiles: 1,
   options: [],
+  chainToolIds: ["summarize-pdf", "prepare-pdf-for-ai", "ocr-pdf"],
   features: [
     {
-      en: "Ask anything about your PDF — summaries, key points, dates, numbers, explanations — with page citations like (p. 3) for every claim.",
-      hi: "अपनी PDF के बारे में कुछ भी पूछें — सारांश, मुख्य बातें, तारीख़ें, आँकड़े, समझाना — हर जवाब के साथ पेज का हवाला जैसे (p. 3)।",
+      en: "Instant answers with receipts: every result is an exact sentence from your document, with its page badge — never rewritten, never invented.",
+      hi: "प्रमाण के साथ तुरंत जवाब: हर नतीजा आपके दस्तावेज़ का असली वाक्य है, अपने पेज बैज के साथ — दोबारा लिखा नहीं, बनाया नहीं गया।",
     },
     {
-      en: "The AI answers only from your document and says so when something is not in it — no invented facts.",
-      hi: "AI सिर्फ़ आपके दस्तावेज़ से जवाब देता है, और जो चीज़ नहीं है उसे साफ़ बता देता है — कोई बनावटी जवाब नहीं।",
+      en: "BM25 — the ranking algorithm behind search engines — finds the passages that matter for your question, in milliseconds, entirely in your browser.",
+      hi: "BM25 — सर्च इंजनों के पीछे वाला रैंकिंग एल्गोरिद्म — आपके सवाल के लिए ज़रूरी हिस्से मिलीसेकंड में ढूँढता है, पूरा आपके ब्राउज़र में।",
     },
     {
-      en: "Your file never leaves the device: text is extracted on your device and only that bounded excerpt is sent for the AI — never the PDF bytes.",
-      hi: "आपकी फ़ाइल डिवाइस से बाहर नहीं जाती: टेक्स्ट आपके डिवाइस पर निकलता है और सिर्फ़ वही सीमित अंश AI के पास जाता है — PDF बाइट्स कभी नहीं।",
+      en: "Search terms light up inside every result, so you see the context around each match — not just a line number.",
+      hi: "खोजे गए शब्द हर नतीजे के अंदर उजले होते हैं, ताकि हर मैच के आस-पास का संदर्भ दिखे — सिर्फ़ लाइन नंबर नहीं।",
     },
     {
-      en: "Works in English and Hindi — ask in Hindi, get Hindi answers.",
-      hi: "अंग्रेज़ी और हिंदी दोनों में काम करता है — हिंदी में पूछिए, हिंदी में जवाब मिलेगा।",
+      en: "Works with English and Hindi (Devanagari) documents — ask in either language, the words find their matches.",
+      hi: "अंग्रेज़ी और हिन्दी (देवनागरी) दस्तावेज़ दोनों चलते हैं — किसी भी भाषा में पूछिए, शब्द अपने मैच ढूँढ लेते हैं।",
     },
     {
-      en: "Open up to 5 PDFs at once — every answer says which file a fact came from, like (\"report.pdf\" p. 3).",
-      hi: "एक साथ 5 तक PDF खोलें — हर जवाब बताता है कि कौन सी फ़ाइल से बात आई है, जैसे (\"report.pdf\" p. 3)।",
-    },
-    {
-      en: "Download the whole conversation as Markdown or plain text — questions, answers and page citations included.",
-      hi: "पूरी बातचीत Markdown या प्लेन टेक्स्ट में डाउनलोड करें — सवाल, जवाब और पेज संदर्भ सब सहित।",
-    },
-    {
-      en: "Long documents stay honest: the middle is left out with a visible marker, and the AI says which pages it could not see.",
-      hi: "लंबे दस्तावेज़ ईमानदार रहते हैं: बीच का हिस्सा साफ़ चिह्न के साथ छोड़ा जाता है, और AI बताता है कि कौन से पेज उसे नहीं दिखे।",
+      en: "Your file never leaves the device: extraction, indexing and search all happen in your browser. Zero uploads, zero API keys, zero accounts.",
+      hi: "आपकी फ़ाइल डिवाइस से बाहर नहीं जाती: एक्स्ट्रैक्शन, इंडेक्सिंग और खोज तीनों आपके ब्राउज़र में। न अपलोड, न API की, न अकाउंट।",
     },
   ],
   faq: [
     {
       q: {
-        en: "Is my PDF uploaded anywhere?",
-        hi: "क्या मेरी PDF कहीं अपलोड होती है?",
+        en: "Is this an AI chat?",
+        hi: "क्या यह AI चैट है?",
       },
       a: {
-        en: "No. The file is opened in your browser and its text is extracted on your device. Only that extracted text — trimmed to a bounded, page-marked excerpt — is sent to the AI to answer you. The PDF bytes themselves never leave your device, and nothing is stored on the server.",
-        hi: "नहीं। फ़ाइल आपके ब्राउज़र में खुलती है और उसका टेक्स्ट आपके डिवाइस पर निकलता है। सिर्फ़ वही निकला टेक्स्ट — एक सीमित, पेज-चिह्नित अंश — AI के पास जवाब के लिए जाता है। PDF बाइट्स कभी डिवाइस से बाहर नहीं जातीं, और सर्वर पर कुछ भी सेव नहीं होता।",
+        en: "No — and that is the honest part. This is smart search: the BM25 algorithm ranks your document's passages against your question and shows the best matches verbatim. Nothing is generated, so nothing can be hallucinated. For a one-tap digest of the whole file, use Summarize PDF; for feeding the document to an AI stack, use Prepare PDF for AI.",
+        hi: "नहीं — और यही ईमानदारी है। यह स्मार्ट सर्च है: BM25 एल्गोरिद्म आपके सवाल के मुक़ाबले दस्तावेज़ के हिस्सों को रैंक करता है और सबसे अच्छे मैच जैसे हैं वैसे दिखाता है। कुछ भी बनाया नहीं जाता, इसलिए बनावटी जवाब का सवाल ही नहीं। पूरी फ़ाइल के झटपट सार के लिए Summarize PDF लें; AI सिस्टम को दस्तावेज़ देने के लिए Prepare PDF for AI।",
       },
     },
     {
       q: {
-        en: "Why does it say some pages were omitted?",
-        hi: "यह क्यों कहता है कि कुछ पेज छोड़ दिए गए?",
+        en: "How should I phrase my search?",
+        hi: "खोज कैसे लिखूँ?",
       },
       a: {
-        en: "The AI works within a context window. For very long documents DocoPDF sends the first pages, the last pages and an honest marker in between — and the AI is instructed to tell you when an answer would need the omitted middle.",
-        hi: "AI एक निश्चित संदर्भ सीमा में काम करता है। बहुत लंबे दस्तावेज़ों में DocoPDF पहले पेज, आख़िरी पेज और बीच में एक ईमानदार चिह्न भेजता है — और AI को निर्देश है कि जब जवाब छोड़े हुए हिस्से की ज़रूरत हो तो वह साफ़ बता दे।",
+        en: "Use the exact words you expect in the document — names, dates, amounts, technical terms. BM25 rewards word matches, so \"GST rate FY 2024\" beats \"what are the taxes\". Common filler words in English and Hindi are ignored automatically.",
+        hi: "वही शब्द लिखिए जो दस्तावेज़ में मिलने की उम्मीद है — नाम, तारीख़ें, रक़म, तकनीकी शब्द। BM25 शब्द-मैच पर काम करता है, इसलिए \"GST दर 2024\" बेहतर है \"कौन से टैक्स हैं\" से। अंग्रेज़ी और हिन्दी के आम जोड़ने वाले शब्द अपने आप छोड़ दिए जाते हैं।",
       },
     },
     {
       q: {
-        en: "My PDF is a scan and chat says there is no text — what now?",
-        hi: "मेरी PDF स्कैन है और चैट कहती है टेक्स्ट नहीं है — अब क्या?",
+        en: "My scanned PDF says no text — what now?",
+        hi: "मेरी स्कैन PDF में टेक्स्ट नहीं बताता — अब क्या?",
       },
       a: {
-        en: "Scanned pages are images, so there is nothing to extract. Use the one-tap button in the tool to open the same file in PDF OCR, recognize the text (English and Hindi), then chat about the result.",
-        hi: "स्कैन किए पेज तस्वीर होते हैं, निकालने के लिए कुछ नहीं होता। टूल में दिए एक-टैप बटन से वही फ़ाइल PDF OCR में खोलें, टेक्स्ट पहचानें (अंग्रेज़ी और हिंदी), फिर उस पर बात करें।",
-      },
-    },
-    {
-      q: {
-        en: "Can I ask about several files at once?",
-        hi: "क्या एक साथ कई फ़ाइलों के बारे में पूछ सकता हूँ?",
-      },
-      a: {
-        en: "Yes — add up to 5 PDFs. Each file gets an equal share of the AI's reading window, answers cite the file AND the page (like \"report.pdf\" p. 3), and files without selectable text are marked honestly instead of being mixed in.",
-        hi: "हाँ — 5 तक PDF जोड़ें। हर फ़ाइल को AI की पढ़ने की खिड़की का बराबर हिस्सा मिलता है, जवाब फ़ाइल और पेज दोनों बताते हैं (जैसे \"report.pdf\" p. 3), और जिन फ़ाइलों में टेक्स्ट नहीं है वे ईमानदारी से चिह्नित होती हैं।",
-      },
-    },
-    {
-      q: {
-        en: "Are the AI answers guaranteed to be right?",
-        hi: "क्या AI के जवाब हमेशा सही होते हैं?",
-      },
-      a: {
-        en: "No AI is perfect. DocoPDF's model answers only from your document and cites pages, which keeps answers checkable — but you should still verify important claims against the cited page before relying on them.",
-        hi: "कोई भी AI परफ़ेक्ट नहीं है। DocoPDF का मॉडल सिर्फ़ आपके दस्तावेज़ से जवाब देता है और पेज बताता है, जिससे जवाब जाँचे जा सकते हैं — फिर भी ज़रूरी बातों को भरोसा करने से पहले बताए पेज पर देख लें।",
+        en: "Scanned pages are images, so there are no words to search. The tool detects this honestly and points you to PDF OCR — recognize the text first, then search the result here.",
+        hi: "स्कैन किए पेज तस्वीरें हैं, खोजने को शब्द नहीं होते। यह टूल यह ईमानदारी से पकड़ता है और आपको PDF OCR की ओर भेजता है — पहले टेक्स्ट पहचानिए, फिर उसी नतीजे को यहाँ खोजिए।",
       },
     },
   ],

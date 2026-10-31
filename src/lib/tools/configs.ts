@@ -67,6 +67,7 @@ import { config as changePermissions } from "../../../tools/change-permissions/c
 import { config as duplexCollate } from "../../../tools/duplex-collate/config";
 import { config as removeAnnotations } from "../../../tools/remove-annotations/config";
 import { config as pageDimensions } from "../../../tools/page-dimensions/config";
+import { config as preparePdfForAi } from "../../../tools/prepare-pdf-for-ai/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
@@ -200,6 +201,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [duplexCollate.toolId]: duplexCollate,
   [removeAnnotations.toolId]: removeAnnotations,
   [pageDimensions.toolId]: pageDimensions,
+  [preparePdfForAi.toolId]: preparePdfForAi,
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,

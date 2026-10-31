@@ -43,14 +43,22 @@
   Battery fix: r50 smoke missing process.exit since R50 (timeout-124 on
   green) — fixed; r50/r51/r52 count assertions updated to 123/120.
 
-### P2 — AI differentiators (self-dependent, on-device)
-- `summarize-pdf`: TextRank/TF-IDF sentence scoring in Web Worker, page
-  citations, honest "extractive summary" copy (no LLM claims).
-- `chat-with-pdf` → "Ask PDF (smart search)": BM25 + snippet + page numbers.
-- `prepare-pdf-for-ai`: PDF → LlamaIndex-style JSON export for RAG pipelines
-  (pdf.js text extraction + JSON formatter; AI-first positioning).
-- Re-enable flow per 08-PLAN §Deferred (registry flips + SEO + i18n) —
-  WITHOUT any provider env.
+### P2 — AI differentiators (self-dependent, on-device) — ✅ DONE (R54)
+- ~~`summarize-pdf`: TextRank/TF-IDF sentence scoring~~ **DONE** — REBUILT
+  self-dependent: standard run pipeline, PURE TextRank worker-lib
+  (bilingual danda+abbrev sentence split, power iteration, word-band
+  select, (p. N) citations), MD/TXT output. smoke 77/77.
+- ~~`chat-with-pdf` → "Ask PDF (smart search)"~~ **DONE** — BM25 Okapi
+  (k1=1.5 b=0.75) passage index in worker, ranked snippet cards with
+  page badges + <mark> highlights + relevance %, search-first surface.
+- ~~`prepare-pdf-for-ai`~~ **DONE** — NEW tool (convert-from): LlamaIndex
+  JSON/JSONL export (Document + TextNodes page map, paragraph-boundary
+  chunker + overlap, token estimates, language_hint).
+- ~~Re-enable flow~~ **DONE** — registry flips (124 total / 123 live /
+  1 deferred = translate only) + honest SEO + i18n ask.* (5150=5150).
+  Provider-era cleanup: /api/chat + /api/summarize routes + old
+  surfaces/models/api-models DELETED; /api/translate + zai-client
+  STAY (translate-pdf future re-enable).
 
 ### P3 — Format expansion (importers/exporters/attachments)
 - Importers: csv/json/xml-to-pdf, bmp/psd, cbz (comics), email-to-pdf (EML),

@@ -8,7 +8,7 @@
  * engine.
  *
  *  0. Wiring sanity: registry entries + configs + seo; own-engine discipline
- *     (no pdf-lib imports in workers); tool counts 123 total / 120 live /
+ *     (no pdf-lib imports in workers); tool counts 124 total / 123 live /
  *     3 deferred.
  *  1. duplex-collate: pure plan math for all 4 layout×flip combos + odd
  *     padBlank; worker E2E on a simulated 6-page duplex scan (distinct page
@@ -320,11 +320,11 @@ console.log("── 0. Wiring sanity ──────────────�
   const live = ALL_TOOLS.filter((t) => t.enabled).length;
   const deferred = ALL_TOOLS.filter((t) => !t.enabled).map((t) => t.id);
   check(
-    "tool counts: 123 total / 120 live / 3 deferred AI",
-    ALL_TOOLS.length === 123 &&
-      live === 120 &&
+    "tool counts: 124 total / 123 live / 1 deferred AI",
+    ALL_TOOLS.length === 124 &&
+      live === 123 &&
       JSON.stringify(deferred) ===
-        JSON.stringify(["chat-with-pdf", "summarize-pdf", "translate-pdf"]),
+        JSON.stringify(["translate-pdf"]),
     { total: ALL_TOOLS.length, live, deferred },
   );
 }

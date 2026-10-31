@@ -19,8 +19,7 @@ import { PasswordSurface } from "../../../tools/generate-password/surface";
 import { LockSurface } from "../../../tools/lock-pdf/surface";
 import { UnlockSurface } from "../../../tools/unlock-pdf/surface";
 import { ScanSurface } from "../../../tools/scan-pdf/surface";
-import { ChatSurface } from "../../../tools/chat-with-pdf/surface";
-import { SummarizeSurface } from "../../../tools/summarize-pdf/surface";
+import { AskPdfSurface } from "../../../tools/chat-with-pdf/surface";
 import { ExtractImagesSurface } from "../../../tools/extract-images/surface";
 import { SearchSurface } from "../../../tools/search-pdf/surface";
 import { CopyFromPdfSurface } from "../../../tools/copy-from-pdf/surface";
@@ -130,8 +129,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "remove-pdf-metadata": RemoveMetaSurface,
   "fill-out-pdf": FillSurface,
   "view-pdf": ViewSurface,
-  "chat-with-pdf": ChatSurface,
-  "summarize-pdf": SummarizeSurface,
+  "chat-with-pdf": AskPdfSurface,
   "sign-pdf": SignSurface,
   "redact-pdf": RedactSurface,
   "generate-password": PasswordSurface,
