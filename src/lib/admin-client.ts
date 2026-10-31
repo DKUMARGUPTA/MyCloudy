@@ -102,6 +102,27 @@ export interface AdminSettingsDto {
   siteFlags: { registrationOpen: boolean };
 }
 
+export interface AdminAnalyticsDto {
+  viewsToday: number;
+  visitorsToday: number;
+  views7d: number;
+  visitors7d: number;
+  views30d: number;
+  visitors30d: number;
+  /** Zero-filled last 30 days, oldest → newest. */
+  series: Array<{ day: string; views: number; visitors: number }>;
+  topPages: Array<{ label: string; count: number }>;
+  referrers: Array<{ label: string; count: number }>;
+  devices: Array<{ label: string; count: number }>;
+  locales: Array<{ label: string; count: number }>;
+  tools: {
+    runs30d: number;
+    successRate30d: number;
+    avgDurationMs: number;
+    top: Array<{ toolId: string; runs: number; successRate: number }>;
+  };
+}
+
 /* ------------------------------ fetchers ------------------------------ */
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T | null> {
@@ -139,6 +160,9 @@ export const fetchAudit = () => jsonFetch<AdminAuditDto>("/api/admin/audit");
 
 export const fetchSettings = () =>
   jsonFetch<AdminSettingsDto>("/api/admin/settings");
+
+export const fetchAnalytics = () =>
+  jsonFetch<AdminAnalyticsDto>("/api/admin/analytics");
 
 /* ------------------------------- mutators ----------------------------- */
 

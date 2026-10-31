@@ -71,6 +71,30 @@ model UsageEvent {
   @@map("usage_events")
 }
 
+/// First-party page-view analytics (R42). Privacy rules mirror UsageEvent:
+/// aggregate metadata only — NO IP, NO raw user agent, NO cross-site
+/// identifiers. visitorId is the same anonymous localStorage id the usage
+/// beacon uses (see src/lib/usage-beacon.ts); device is a coarse class,
+/// referrer is a bucket (direct/search/social/internal/other), path is the
+/// normalized app route. Purpose: product improvement (DPDP purpose
+/// limitation). Owner-only surfaces (/admin, /accounting) are excluded
+/// client- AND server-side so the owner's own sessions never pollute data.
+model PageView {
+  id        String   @id @default(uuid())
+  path      String // "/", "/tools", "/tool/merge-pdf", "/page/contact"…
+  locale    String // "en" | "hi" (UI locale at view time)
+  device    String // "mobile" | "tablet" | "desktop"
+  referrer  String // "direct" | "search" | "social" | "internal" | "other"
+  visitorId String // anonymous per-browser id (usage-beacon ANON_KEY)
+  day       String // YYYY-MM-DD (UTC)
+  createdAt DateTime @default(now())
+
+  @@index([day])
+  @@index([path])
+  @@index([visitorId, day])
+  @@map("page_views")
+}
+
 model Feedback {
   id            String   @id @default(uuid())
   toolId        String

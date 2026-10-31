@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  Activity,
   BookOpenCheck,
   Bug,
   Inbox,
@@ -42,6 +43,7 @@ import { UsersTab } from "@/components/doco/admin/users-tab";
 import { BugsTab } from "@/components/doco/admin/bugs-tab";
 import { MessagesTab } from "@/components/doco/admin/messages-tab";
 import { FeedbackTab } from "@/components/doco/admin/feedback-tab";
+import { AnalyticsTab } from "@/components/doco/admin/analytics-tab";
 import { AuditTab } from "@/components/doco/admin/audit-tab";
 import { SettingsTab } from "@/components/doco/admin/settings-tab";
 
@@ -258,6 +260,10 @@ function Console() {
             <MessageSquareHeart className="size-4" aria-hidden="true" />
             {t("admin.tab.feedback")}
           </TabsTrigger>
+          <TabsTrigger value="analytics" className="gap-1.5 rounded-btn">
+            <Activity className="size-4" aria-hidden="true" />
+            {t("admin.tab.analytics")}
+          </TabsTrigger>
           <TabsTrigger value="audit" className="gap-1.5 rounded-btn">
             <ScrollText className="size-4" aria-hidden="true" />
             {t("admin.tab.audit")}
@@ -282,6 +288,9 @@ function Console() {
         </TabsContent>
         <TabsContent value="feedback">
           <FeedbackTab />
+        </TabsContent>
+        <TabsContent value="analytics">
+          <AnalyticsTab />
         </TabsContent>
         <TabsContent value="audit">
           <AuditTab />

@@ -6446,3 +6446,27 @@ Phase-10 remaining + admin dashboard polish: billing overview card (MRR/active s
 
 ### Note
 Ye diagnostic SCREEN ki original purpose (iPhone white-screens) intact hai — fatal errors ab bhi 1.2s grace ke saath dikhte hain; sirf slow-start false-positives aur permanent-overlay bug khatam.
+
+---
+
+## R42 — First-party analytics + admin Analytics tab; contact-form flow re-verified
+
+**THE ROUND:** Owner ask: "Next batao kya pending hai + github/vercel par user visit tracker, analytics chahiye jisse pata chale user k behavior/activity — improvement ke liye + contact form active karo jisse admin dashboard me sabhi request/message/query dikhen." Findings: contact form PEHLE SE active tha (page → /api/contact → ContactMessage → admin Messages tab) — E2E re-verified; analytics ke liye GA4 (consent-gated) + UsageEvent (tool runs) the, par visitor/page analytics first-party dashboard me missing tha.
+
+### Shipped (code)
+1. **Prisma `PageView`** model (`page_views`): path, locale, device, referrer bucket, visitorId, day — privacy-first (no IP, no raw UA, no cross-site ids; visitorId = usage-beacon wala anonymous localStorage id). Indexes [day], [path], [visitorId,day].
+2. **`/api/analytics/view` POST** (NEW): always-202 fire-and-forget (usage-api contract), zod-validated, 60/min/visitor rate limit, owner surfaces (/admin, /accounting) server-side reject (defense in depth).
+3. **`src/lib/analytics/page-view.ts`** (NEW): trackPageView(routeKey, locale) — dedupe per route (module-level lastTracked), normalizedPath (query strip, /hi strip, legacy #/ strip), coarse device class (matchMedia), referrer bucketing (direct/search/social/internal/other), keepalive fetch. Wired in AppShell (routeKey+locale effect).
+4. **`/api/admin/analytics` GET** (NEW): views+unique visitors (today/7d/30d), zero-filled 30-day daily series, top pages, referrers, devices, locales + UsageEvent aggregates (runs 30d, success rate, avg duration, per-tool top-8 health).
+5. **Admin Analytics tab** (8th tab, `analytics-tab.tsx` NEW): 6 stat cards, 30-day hoverable bar chart (title tooltips), top pages bars, traffic sources bars, device split + locale chips, tool health list (color-coded success ≥90 green / ≥70 amber / else red), privacy note. i18n EN+HI full (~35 keys).
+6. **admin-client.ts**: AdminAnalyticsDto + fetchAnalytics.
+
+### QA evidence (agent-browser, owner session)
+- **Tracking**: home + /tools + /tool/merge-pdf + /contact visits → DB me PageView rows correct (path/locale/device/referrer); **/admin visits tracked NAHI** (ownerSurfacesTracked=0) ✓.
+- **Analytics tab**: live data render (13 views today, top pages / 8, /contact 3; merge-pdf 28 runs 68% success); API JSON verified; **VLM full-page pass** — chart well-formed, no overlap/cut-off (qa/r42-analytics-full.png); mobile 390px overflowX=0 (r42-analytics-mobile.png); Hindi full render — ट्रैफ़िक — पिछले 30 दिन, डिवाइस और भाषा, गुमनाम privacy note (r42-analytics-hindi.png).
+- **Contact form E2E**: /contact → name/email/category "Tool idea"/message/consent → submit → ticket SDC-496B02D0 → admin Messages tab me "Ravi Sharma · feature · batch watermarking request" inbox + read modal me full message (qa/r42-contact-inbox.png).
+- `bun run lint` 0 problems; i18n JSON parse ✓.
+
+### Infra notes
+- Dev server 2 baar crash hua round ke dauraan (sandbox memory/OOM pattern) — nohup restart se recover; ye preview panel ke "did not finish starting" reports ka ek aur source ho sakta hai (server dead = connection refused).
+- GitHub/Vercel deployment: GA4 live hone ke liye Vercel env `NEXT_PUBLIC_GA_ID` set hona chahiye ( Consent Mode v2 ke saath); first-party analytics (ye naya system) app DB me hi store hota hai — Vercel + Turso par as-is kaam karega.

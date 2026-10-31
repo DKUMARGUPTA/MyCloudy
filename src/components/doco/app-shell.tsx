@@ -30,6 +30,7 @@ import { anchorClickHandler } from "@/lib/anchor";
 import { track } from "@/lib/analytics/ga4";
 import { bootstrapAuth } from "@/lib/auth-client";
 import { subscribeOpenPro } from "@/lib/pro-modal";
+import { trackPageView } from "@/lib/analytics/page-view";
 import { ALL_TOOLS } from "@/lib/tools/registry";
 import { LOCALE_STORAGE_KEY, setSessionLocale } from "@/i18n";
 
@@ -189,6 +190,17 @@ export function AppShell({
     w.__DP_BOOTED__ = true;
     if (typeof w.__DP_BOOT_OK__ === "function") w.__DP_BOOT_OK__();
   }, []);
+
+  /*
+   * First-party page-view analytics (R42): one row per route change,
+   * fire-and-forget. Runs AFTER the boot marker so the very first view
+   * fires once the shell is alive; owner surfaces (/admin, /accounting)
+   * are skipped inside trackPageView. See src/lib/analytics/page-view.ts
+   * for the privacy posture (anonymous, aggregate, no IP/UA).
+   */
+  useEffect(() => {
+    trackPageView(routeKey, locale);
+  }, [routeKey, locale]);
 
   /*
    * Session bootstrap (Phase-10): fetch /api/auth/me once per page load so
