@@ -7454,3 +7454,103 @@ module-alive postMessage probe hi theek tarika.
 - Billing freeze untouched; all 3 tools free-tier.
 - **P2 PHASE COMPLETE** — next: P3 format expansion (importers/exporters/
   attachments) per PHASE-PLAN.md.
+
+## R55 — P3-a export pack: pdf-to-json + pdf-to-csv + pdf-to-cbz (2026-10-31)
+
+Owner directive continue: "phase-wise sab kuch, zero mistake" — P3-a
+(PHASE-PLAN.md format expansion, export batch). Discipline check first:
+registry grep confirmed NONE of the three ids existed (genuine gaps, no
+duplicates: prepare-pdf-for-ai = RAG chunks ≠ pdf-to-json = document
+structure; pdf-to-excel = XLSX workbook ≠ pdf-to-csv = plain RFC 4180
+CSV; pdfs-to-zip = PDFs passthrough ≠ pdf-to-cbz = raster page archive).
+
+### Tool 1 — pdf-to-json (convert-from)
+- worker-lib PURE: buildPdfJson (document meta: fileName/fileSize/
+  pageCount/charCount/wordCount/languageHint en-hi-mixed/exportedBy/
+  exportedAt + pages[] with width/height/rotation in PDF points at
+  viewport scale 1, text, per-page counts, optional textItems[] with
+  x/y/width/fontSize) + renderPdfJson (pretty 2-space + trailing NL).
+  Honest null when no page has text (scan → errorNoText upstream).
+- worker: pdf.js fake-worker (pdf-to-txt recipe), pageText flow/lines +
+  collectPieces for positions, values rounded to 2dp. 5 files/run.
+- Options: layout select (flow default | lines), textItems switch
+  (positions, default off — file-size honest hint).
+- Differentiation FAQ: "Prepare PDF for AI vs PDF to JSON" — RAG chunks
+  vs document-as-data, ekdum clear honest copy.
+
+### Tool 2 — pdf-to-csv (convert-from)
+- worker-lib PURE: RFC 4180 emit — csvEscape (quote on delimiter/quote/
+  CR/LF, embedded quotes doubled), csvLine, renderCsv (CRLF ends +
+  trailing CRLF), buildCsvOutputs (single = every page stacked with
+  leading Page column; per-page = one file per page, single page no
+  suffix; empty page grid → Page-only row), csvExtension (tab → .tsv),
+  parseCsvLine (smoke oracle parse-back).
+- worker: THE pdf-to-excel EXTRACTION REUSED — gridItemsFromRaw +
+  extractRuledGrid (border geometry via getOperatorList, exact cells)
+  with extractGrid (y-band + column-anchor clustering) fallback; scans
+  → honest errorNoText; fresh-buffer + destroy-in-finally pinned
+  lessons honoured.
+- Options: delimiter (comma/semicolon/tab), mode (single | per-page),
+  ruled switch (default on, Excel parity).
+
+### Tool 3 — pdf-to-cbz (convert-from)
+- worker: pdf-to-images render recipe (fake-worker pdf.js, sequential
+  renders, one canvas at a time, RenderPixelBudget guard BEFORE render)
+  → pages named <base>/page-NNN.ext (pad = max(3, digits needed), so
+  lexical order = page order in EVERY comic reader; 1000-page comic
+  pads to 4) → zipSync OWN ZIP ENGINE level 0 STORE (page encodes are
+  already compressed). mime application/vnd.comicbook+zip.
+- Options: format (jpg default | png), dpi (96/150/300 — comic-sized,
+  not the 600 archive tier), pages spec, jpg quality.
+- Honest refusals: errorInvalidPages, errorRenderBudget, canvas guard.
+
+### Wiring
+- registry: 3 convert-from defs (Braces / FileSpreadsheet / BookOpen
+  icons, accepts pdf, enabled) — **127 total / 126 live / 1 deferred
+  (translate only)**. configs.ts 3 imports + map entries. tool-seo 3
+  honest entries (structured export / tabular extractor / comic
+  archive converter).
+- Count assertions updated: smoke-r51 77/77, r52 94/94, r53 75/75,
+  p2-ai 77/77 (127/126).
+- i18n: ZERO new keys — all error codes pre-existing (errorNoText ×2,
+  errorEncrypted, errorCorrupt, errorGeneric, errorInvalidPages,
+  errorRenderBudget) — smoke asserts en+hi presence.
+- protocol detail: { files, pages } standard.
+
+### Gates
+- smoke-p3a-exports NEW: **71/71** (wiring 15 + JSON engine 14 + CSV
+  RFC4180 20 + extractGrid integration 2 + CBZ zip roundtrip 6 + worker
+  discipline 12, including 1000-page pad + JPG/PNG magic byte-exact +
+  unzipSync parse-back). tsc: **0**. eslint: **0**.
+- Regression: r51 77/77 + r52 94/94 + r53 75/75 + p2-ai 77/77 +
+  own-zip 33/33 + pdf-to-excel 79/79 + i18n-params 26/26 GREEN.
+
+### E2E (agent-browser, DataTransfer+change recipe)
+- 3-page fixture (prose + RULED TABLE + prose, pdf-lib authored):
+  pdf-to-json run → preview VERBATIM (fileName p3a-fixture.pdf,
+  fileSize 2003 exact, pageCount 3, languageHint en, width 612/height
+  792/rotation 0 per page, page-2 table text complete, textItems absent
+  by default). pdf-to-csv run → DOWNLOAD captured → bytes verified:
+  Page column 1/2/3, page-2 ruled table EXACT cells "Region,Sales,
+  Growth / North,120,8% / South,80,4% / East,60,6% / West,40,2%" —
+  ruled-grid reader did its job. pdf-to-cbz run → 95,919 B .cbz →
+  unzipSync parse-back: p3a-fixture/page-001.jpg/002/003, all FFD8
+  JPG magic, 37.6/36.8/21.1 KB.
+- Hindi locale: /hi/tool/pdf-to-csv full Devanagari (कॉमा, सेमीकोलन,
+  टैब hints), lang=hi, search modal "पीडीएफ़ से JSON" discoverable,
+  tools page से JSON/CSV/CBZ listed. Mobile 390: no-overflow.
+  Console/page errors: 0. Footer "127 tools live".
+
+### ⚠️ Pinned lesson — terminal rendering vs bytes
+- configs.ts "arkdownToPdf" FALSE ALARM: sed/awk/cat -A output mein
+  `[m` invisible tha (terminal ne [m ko ANSI-reset ki tarah treat kiya)
+  — od -c hex dump ne turant bataya line bilkul sahi `  [markdownToPdf`
+  hai. TEXT RENDERING ≠ FILE BYTES: jab koi line "corrupt" dikhe, pehla
+  step od/xxd hex verify — edit se pehle. (Is baar bytes intact the,
+  koi fix nahi chahiye tha.)
+
+### Discipline
+- ZERO bentopdf code (AGPL) — CSV = RFC 4180 spec + own grid engine,
+  CBZ = own zip + own render pipeline, JSON = own schema.
+- Billing freeze untouched; all 3 tools free-tier.
+- Next: P3-b import pack (csv/json/xml-to-pdf) per PHASE-PLAN.md.

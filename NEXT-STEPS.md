@@ -61,9 +61,13 @@
   STAY (translate-pdf future re-enable).
 
 ### P3 — Format expansion (importers/exporters/attachments)
+- ~~**P3-a: export pack**~~ **DONE (R55)** — pdf-to-json (structured doc
+  dump, prepare-pdf-for-ai se distinct), pdf-to-csv (RFC 4180, Excel
+  extraction reuse), pdf-to-cbz (raster + own-zip, page-NNN naming) —
+  smoke 71/71 + E2E download-verified. **127 tools / 126 live.**
 - Importers: csv/json/xml-to-pdf, bmp/psd, cbz (comics), email-to-pdf (EML),
   mobi, fb2, odg/odp/ods (LibreOffice family), wpd/wps, vsd, xps.
-- Exporters: pdf-to-bmp, pdf-to-json, pdf-to-csv, pdf-to-cbz.
+- Exporters left: pdf-to-bmp.
 - Attachments cluster: add/edit/extract-attachments (embedded files).
 
 ### P4 — Programmatic SEO + traffic

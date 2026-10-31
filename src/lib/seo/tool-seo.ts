@@ -211,6 +211,45 @@ const CURATED: Record<string, CuratedSeo> = {
       "rag ingestion pdf",
     ],
   },
+  "pdf-to-json": {
+    title: "PDF to JSON Online Free — Structured Document Export",
+    titleHi: "पीडीएफ़ से JSON — संरचित दस्तावेज़ निर्यात, मुफ़्त",
+    description:
+      "Export any PDF as structured JSON — pages with geometry, text, word counts and optional text positions. Developer-ready, 100% on-device.",
+    keywords: [
+      "pdf to json",
+      "pdf to json converter",
+      "extract pdf structure",
+      "pdf text positions json",
+      "pdf data interchange",
+    ],
+  },
+  "pdf-to-csv": {
+    title: "PDF to CSV Online Free — Tabular Data Extractor",
+    titleHi: "पीडीएफ़ से CSV — टेबल डेटा एक्स्ट्रैक्टर, मुफ़्त",
+    description:
+      "Convert tabular PDFs to plain CSV — comma, semicolon or tab delimited. Bordered tables read cell-for-cell. On-device, free.",
+    keywords: [
+      "pdf to csv",
+      "pdf to csv converter",
+      "pdf table to csv",
+      "extract table from pdf",
+      "pdf to tsv",
+    ],
+  },
+  "pdf-to-cbz": {
+    title: "PDF to CBZ Online Free — Comic Archive Converter",
+    titleHi: "पीडीएफ़ से CBZ — कॉमिक आर्काइव कन्वर्टर, मुफ़्त",
+    description:
+      "Turn any PDF into a .cbz comic archive — numbered page images every comic reader opens. JPG or PNG, pick your DPI. On-device.",
+    keywords: [
+      "pdf to cbz",
+      "pdf to comic",
+      "comic book archive",
+      "pdf to cbz converter",
+      "manga pdf converter",
+    ],
+  },
   "rotate-pdf-pages": {
     title: "Rotate PDF Pages Online Free — Save Permanently",
     titleHi: "PDF पेज घुमाएँ — मुफ़्त ऑनलाइन",
