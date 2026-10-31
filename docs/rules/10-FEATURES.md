@@ -1,7 +1,7 @@
 # 10 · Features (LIVE inventory)
 
 Single source of truth for "what exists". Registry: `src/lib/tools/registry.ts`
-(100 enabled tools, brace-aware verified). Categories: 9.
+(106 registered — 103 enabled + 3 AI deferred, brace-aware verified). Categories: 9.
 
 ## Tool categories & coverage
 

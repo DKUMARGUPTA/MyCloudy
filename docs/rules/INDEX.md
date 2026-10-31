@@ -38,6 +38,7 @@ karne hain — jo missing hai banao."*
 | Skill | Purpose |
 |---|---|
 | `docs/skills/security-audit/SKILL.md` | Pentest-style audit of our own app (pentagi-derived pipeline, OWASP-mapped) |
+| `docs/skills/docopdf-autopilot/SKILL.md` | Master round-protocol skill — context load, agent tiers, auto-work queue, round close. (Installed copy for auto-triggering: `skills/docopdf-autopilot/` — gitignored platform dir; tracked copy here is canonical, sync both when editing) |
 
 ## Update protocol (who edits these)
 

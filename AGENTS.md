@@ -6,7 +6,7 @@
 > if you are unsure, re-read the referenced rule doc.
 
 **Product:** DocoPDF (https://www.docopdf.com) — "Har PDF kaam, ek jagah.
-Fast, free, private." 100 live tools, English + हिंदी, files stay on the
+Fast, free, private." 106 registered tools (103 live + 3 AI deferred), English + हिंदी, files stay on the
 user's device.
 
 **Repo:** `DKUMARGUPTA/MyCloudy` (main branch) → Vercel auto-deploy.
@@ -19,8 +19,13 @@ user's device.
 
 1. Read `AGENTS.md` (this file) + `docs/rules/INDEX.md`.
 2. Read `CONTEXT-MEMORY.md` — it is the short-term memory of the project.
-3. Check `dev.log` tail + `git log --oneline -5` to know the actual state.
-4. Plan with TodoWrite; identify parallelizable steps before writing code.
+3. Read **`NEXT-STEPS.md`** — the auto-work queue (what to do next; skip
+   `[owner]`-tagged items without approval).
+4. Check `dev.log` tail + `git log --oneline -5` to know the actual state.
+5. Plan with TodoWrite; identify parallelizable steps before writing code.
+6. Delegating to subagents? Use the tier profiles in **`docs/agents/`**
+   (Scout = fast recon, Builder = implementation, Auditor = verification)
+   — see `docs/agents/INDEX.md` for handoff + return contracts.
 
 ## 1. The Ten Hard Rules (violations = round is invalid)
 

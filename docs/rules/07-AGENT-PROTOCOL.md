@@ -3,6 +3,31 @@
 Binding conduct for AI agents (cron webDevReview rounds, subagents, main
 session) working in this repo.
 
+## Specialized subagent tiers (R49)
+
+Multi-step delegation uses the profiles in **`docs/agents/`** (derived
+from codebase-memory-mcp's Scout/Verify/Auditor system):
+
+- **Scout** — fast read-only recon; findings labeled provisional; NO
+  absence/all/none/dead-code claims; at most one browser check.
+- **Builder** (default) — bounded implementation; reads rule docs first;
+  runs gates before claiming done; scope gaps → exact question, not
+  invention.
+- **Auditor** — independent verification; re-derives all gate evidence;
+  P0/P1/P2 findings with reproduction; limitations section mandatory;
+  never fixes.
+
+Every Task-tool handoff carries: Task ID + tier + bounded scope + known
+evidence + expected return format (TIER/SCOPE/FINDINGS/EVIDENCE/
+LIMITATIONS/NEXT; auditor variant: VERIFIED + VERDICT). A subagent
+missing context returns the exact missing query instead of guessing.
+Full contracts: `docs/agents/INDEX.md`.
+
+The **`docs/skills/docopdf-autopilot/SKILL.md`** skill (tracked;
+auto-triggering copy at `skills/docopdf-autopilot/`, gitignored platform
+dir) encodes the complete round protocol for any session (context load
+order, work picking, delegation, round close).
+
 ## Identity & task IDs
 
 - Multi-step work is planned with TodoWrite; items assigned to subagents
@@ -13,12 +38,15 @@ session) working in this repo.
 
 ## Round lifecycle (cron webDevReview, every 15 min)
 
-1. Read `AGENTS.md` + `docs/rules/INDEX.md` + `CONTEXT-MEMORY.md`.
+1. Read `AGENTS.md` + `docs/rules/INDEX.md` + `CONTEXT-MEMORY.md` +
+   **`NEXT-STEPS.md`** (the auto-work queue).
 2. Assess real state: `dev.log` tail, `git log -5`, service health.
 3. QA with agent-browser first; fix bugs before new features.
-4. If stable: pick ONE coherent increment (new tool polish, feature,
-   hardening) — small, gated, shippable.
-5. Gates → worklog → CONTEXT-MEMORY → push (see `09-EXECUTION-STEPS.md`).
+4. If stable: take the TOP `NEXT-STEPS.md` queue item that fits the round
+   budget (skip `[owner]`-tagged items) — small, gated, shippable.
+5. Gates → worklog → CONTEXT-MEMORY → NEXT-STEPS update (item → DONE
+   with commit hash; new candidates added) → push
+   (see `09-EXECUTION-STEPS.md`).
 
 ## Commit discipline
 

@@ -6,7 +6,8 @@
 > **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R46 — TURSO/LIBSQL PRODUCTION DB LIVE (2026-10-31)** — owner ne Turso creds diye → driver-adapter wiring (`@prisma/adapter-libsql`), 20 tables apply (Mumbai region), Vercel env (TURSO_DATABASE_URL/TURSO_AUTH_TOKEN/AUTH_SECRET encrypted), prod E2E: limits 500→200, usage/analytics rows persist, signup+JWT session PASS (test rows cleaned). **Prod ab: sessions + analytics + limits counter + /admin sab persistent.** Pichle: **R45** production release (R24→R44 push + deploy + health verified); **R44** fill mode + watermark-free branding; **R43** security + governance; **R42** analytics; **R41** boot fix; **R29** admin console; **R28** billing shadow-mode.
+> **Updated:** **R49 — AGENT SYSTEM + AUTO-WORK QUEUE (2026-10-31)** — codebase-memory-mcp (MIT) se Scout/Builder/Auditor tier concepts adapt kiye: `docs/agents/` (3 profiles + INDEX contracts), `NEXT-STEPS.md` (priority queue — cron rounds ab khud se kaam chunte hain, `[owner]` items skip), `docs/skills/docopdf-autopilot/SKILL.md` (auto-trigger master skill; installed copy `skills/docopdf-autopilot/`), 07-AGENT-PROTOCOL + AGENTS.md §0 sync, tool counts 106/103 corrected. Dry-runs: Scout (AI-tool touch points file:line map) + Auditor (FIX-FIRST verdict, 2 P1 fixed in-round). **Pichle:** **R48** bentopdf batch 1 — 6 new own-engine tools LIVE (106 tools @ 081ab67); **R46** Turso prod DB live.
+> (archived chain) **R46 — TURSO/LIBSQL PRODUCTION DB LIVE (2026-10-31)** — owner ne Turso creds diye → driver-adapter wiring (`@prisma/adapter-libsql`), 20 tables apply (Mumbai region), Vercel env (TURSO_DATABASE_URL/TURSO_AUTH_TOKEN/AUTH_SECRET encrypted), prod E2E: limits 500→200, usage/analytics rows persist, signup+JWT session PASS (test rows cleaned). **Prod ab: sessions + analytics + limits counter + /admin sab persistent.** Pichle: **R45** production release (R24→R44 push + deploy + health verified); **R44** fill mode + watermark-free branding; **R43** security + governance; **R42** analytics; **R41** boot fix; **R29** admin console; **R28** billing shadow-mode.
 
 ---
 
@@ -14,7 +15,7 @@
 
 | Metric | Value |
 |---|---|
-| Registry | **100 tools registered — 97 LIVE + 3 AI DEFERRED** (R23: chat-with-pdf/summarize-pdf/translate-pdf enabled:false, phase P3; re-enable plan 08-PLAN §Deferred) |
+| Registry | **106 tools registered — 103 LIVE + 3 AI DEFERRED** (R48: 6 new own-engine tools; R23: chat-with-pdf/summarize-pdf/translate-pdf enabled:false, phase P3; re-enable plan = NEXT-STEPS.md item 1 self-dependent NLP) |
 | **LIVE tools** | **97** (3 AI deferred — R23 owner decision) |
 | Own PDF engine (P6) | **P6-a..z + P6-v-b + P6-END — MIGRATION COMPLETE ✅** — ALL 60 tool families pdf-lib-free, **0 runtime importers** (pdf-lib = devDependency only: smoke fixtures + oracles) |
 | Master plan | **MASTER-PLAN-1** worklog mein recorded (P6-t..z → P7 → LAUNCH-OPS → P10 → P11) + discipline contract (worklog+memory+push+Vercel per phase; battery on EXACT commit tree) |

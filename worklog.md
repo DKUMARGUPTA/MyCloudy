@@ -6861,3 +6861,72 @@ state push kiya (31d3092..1883198 + 28 tags), phir audit, phir Batch 1.
 bates-numbering · pdfs-to-zip · raster color family (invert/greyscale/
 scanner effect) · programmatic SEO landing pages · SW/PWA offline ·
 CBZ/EML importers · workflow builder (phase-wise).
+
+## R49 — AGENT SYSTEM + AUTO-WORK QUEUE (codebase-memory-mcp adaptation) (2026-10-31)
+
+**Trigger:** owner ne reference repo diya (github.com/DeusData/codebase-
+memory-mcp, MIT) — "khud ke skill aur agent improve karo, multiple agents
+banao, skill se upgrade karo jisse kaam automatic samajh aur suggest ho."
+Pehle plan+improvements present kiye, phir implement.
+
+### Audit (inspection only — /tmp clone, ZERO code copy)
+- C-based MCP server (1.5GB): codebase knowledge graph + 17 MCP tools +
+  45 client integrations. Asli gold = **agent discipline system**:
+  Scout/Verify/Auditor tiers (tool allowlists + claims policy), evidence
+  contracts ("clean result ≠ proof of completeness", provisional
+  labeling, path-coverage-before-negative-claims), handoff protocol
+  (parent supplies tier+scope+evidence; child returns exact missing
+  query, never guesses), structured return formats.
+- Humare paas unka C server chahiye hi nahi (apna memory system already:
+  AGENTS.md + CONTEXT-MEMORY + worklog + rules docs) — sirf **tier
+  discipline + auto-work queue** missing thi. Wahi adapt kiya.
+
+### Shipped (4 layers, ZERO app-code change — docs+skill only)
+1. **docs/agents/** (NEW, tracked): `INDEX.md` (tier selection, evidence
+   ladder, handoff + return contracts, auditor variant) · `scout.md`
+   (Tier 1: 3-6 narrow searches, provisional findings, NO
+   absence/all-none/dead-code claims, read-only) · `builder.md` (Tier 2
+   default: evidence-first, house patterns, gates table before "done",
+   scope-gap → exact question) · `auditor.md` (Tier 3: re-derive
+   evidence, P0/P1/P2 findings, limitations mandatory, VERDICT
+   SHIP/FIX-FIRST/BLOCKED, never fixes).
+2. **NEXT-STEPS.md** (NEW): priority auto-work queue — item 1: AI tools
+   self-dependent NLP re-enable (owner 2026-10-31 direction); item 2:
+   bento batch 2 (bates/pdfs-to-zip/raster colors); item 3: UX polish
+   continuation; item 4: programmatic SEO pages; item 5: PWA `[owner]`;
+   Blocked: billing frozen, translate decision, GA4. Protocol: IN
+   PROGRESS → DONE+commit-hash, append-only.
+3. **docs/skills/docopdf-autopilot/SKILL.md** (NEW, tracked canonical) +
+   `skills/docopdf-autopilot/` (installed auto-trigger copy, gitignored
+   platform dir): context-load order (AGENTS→MEMORY→NEXT-STEPS→runtime),
+   autopilot core (bugs first → top queue item, skip [owner]), tier
+   delegation table, R48 new-tool anatomy, round close, hard reminders.
+4. **Sync:** 07-AGENT-PROTOCOL (tiers + queue in lifecycle + skill ref),
+   AGENTS.md §0 (NEXT-STEPS step 3 + agents step 6), docs/rules/INDEX
+   skills table, CONTEXT-MEMORY R49 header, stale tool counts corrected
+   (AGENTS/10-FEATURES/CONTEXT-MEMORY → 106 registered / 103 live / 3
+   deferred).
+
+### Dry-run TRAINING (Task tool, parallel, haiku) — system khud prove hua
+- **Scout (R49-f-1):** summarize-pdf re-enable touch points — full
+  file:line map (registry 1439-1458 enabled:false, tools/ contents 4
+  files, API route 503 aiNotConfigured, chat worker extraction protocol
+  reusable, en.json ~60 keys LLM-flavored copy note, 08-PLAN §Deferred
+  superseded-by-NEXT-STEPS note) + LIMITATIONS + exact NEXT queries.
+  Discipline perfect: provisional labels, no absence claims.
+- **Auditor (R49-f-2):** R49 docs consistency audit — VERDICT
+  **FIX-FIRST**: P1-1 skill gitignored (fix: tracked copy
+  docs/skills/ + INDEX table + 07 ref), P1-2 auditor return-format
+  mismatch (fix: INDEX auditor-variant documented), P2-1 stale counts
+  (fix: 3 files), P2-3 jargon (fix: auditor.md wording). Dono P1
+  in-round fix hue — auditor ne apne hi creator ke docs pakde, exactly
+  jaisa system designed tha.
+
+### Gates
+- Markdown-only round (git status: 0 code files) — tsc 0 + eslint 0
+  (auditor ne khud re-run kiya), no smoke/E2E needed (auditor
+  documented the rationale + limitations honestly).
+
+### Discipline
+- codebase-memory-mcp MIT hai, par zero code copy — sirf concepts
+  (bentopdf/pentagi pattern follow). App code untouched.
