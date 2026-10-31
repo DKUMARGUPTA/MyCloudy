@@ -840,6 +840,9 @@
     "chipFooter": "Footer on",
     "ctaEmpty": "Type something in at least one header or footer field first."
   },
+  "dv": {
+    "errorGrid": "Pick a grid of at least 2 pieces — raise columns or rows."
+  },
   "crop": {
     "previewTitle": "Live preview — crop",
     "previewNote": "Drag the box or its handles — or type exact margins in the panel. Arrow keys nudge the box.",

@@ -6338,3 +6338,39 @@ tsc 0 · eslint 0 · smoke-billing **125/125** · auth-ui 88/88 · a11y-names 9/
 `BILLING_DEMO` unset on Vercel → checkout 503 billingNotConfigured → pricing modal shows the honest "Payments aren't live yet" note. Re-enable = set provider keys + replace the demo branch with real Razorpay/Stripe order creation (route contracts + i18n already locked by smoke-billing).
 
 NEXT: Phase-10 continue — real Razorpay/Stripe wiring (owner keys) or account polish (name edit) → Turso → Phase-11 worker.
+
+## R27 — PHASE-1 BATCH A: 6 page-ops tools (2025-11-02, "Continuously work karo with discipline and skill")
+
+**THE ROUND:** Session continuation with stale summary (previous session ka "R48 Batch 1 delivered" claim FALSE tha — git R26 pe tha, koi Batch 1 tool exist nahi karta tha). Reality-check FIRST: git log + registry + PHASE-PLAN.md missing — audit re-verified from scratch (bentopdf re-cloned: alam00000/bentopdf, 125 pages). **PHASE-PLAN.md CREATED** (Phase 0 deliverable): 7 phases, tools, acceptance criteria, risks, ritual. Then Batch A fully implemented: 6 tools, sab apne own engine pe, zero bentopdf code (AGPL red line).
+
+### 1. Tools (6 × config+worker [+engine])
+- **reverse-pages** (organize, batch 1-20): organizePages reversed plan; content byte-exact; totalPages detail (cosmetic fix — files count galat pass ho raha tha).
+- **add-blank-page** (organize): 1-100 blanks at start/end/after-N; size = page1/largest/A4/Letter; organize writer native blank entries. **BUG FIXED: "end" double-insert** (in-loop i+1===pageCount + after-loop >=pageCount dono fire hote the — smoke ne pakda).
+- **divide-pages** (organize): N×M grid (1-4 cols × 1-4 rows, ≥2 pieces), rows/columns order, /Rotate-aware display→user mapping (halve math ka generalization, tool-local copy house rule). Engine: divideCellBox + planDivide pure fns. **BUG FIXED: displayDims swap typo** (dw:vh,dh:vh → self-review catch).
+- **combine-single-page** (organize): sab pages EK sheet pe (contact sheet); ComposeContext embed-once/draw-many; auto columns ceil(sqrt); auto orientation; paper a4/letter/legal/match; margin/gap mm; /Rotate-aware fit+centre placement (nup drawFormOps parity).
+- **pdf-booklet** (organize): saddle-stitch imposition — bookletSides pure fn: [8,1][2,7][6,3][4,5] for 8 pages; auto-blank pad to multiple of 4; 5 paper sizes (A4→A5 … A3→A4 …); landscape sheets, 2 portrait slots, fit+centre; margin/gap.
+- **sanitize-pdf** (security): object-graph surgery via rewriteDocument {replacements, deletions, dropInfo}: JS name tree + JS actions, EmbeddedFiles tree + catalog /AF, OpenAction + catalog/page /AA + dangerous annot /A (Launch/URI/Sound/Movie/JavaScript/SubmitForm/ImportData/GoToR/GoToE/Hide/SetOCGState/Thread/ResetForm), XMP /Metadata + trailer /Info. **Internal /GoTo + /Named + Dests tree SURVIVE.** collectReachable walk → JS/EF subtree ke SAB indirect objects deletions mein (ride-along dead weight impossible). Encrypted refused.
+
+### 2. Wiring
+- Registry +6 defs (halve ke baad): icons FlipHorizontal/FilePlus/Grid2x2/Combine/BookOpen/ShieldAlert (3 naye lucide imports).
+- configs.ts +6 imports + TOOL_CONFIGS entries.
+- i18n: +1 key group "dv" (errorGrid) — sirf wahi naya chahiye tha (baaki sab shared tool.* keys). Parity 4916=4916.
+
+### 3. Smoke (NEW smoke-pageops-a.ts — 80 checks ALL PASS)
+Sections: reverse (marker order + oracle reload) · add-blank (positions/sizes/empty-blanks/largest-mixed) · divide engine math (2×2 quadrants, rotate-90 axis swap, rows/cols order, clamps) + E2E (4 quadrants 100×150, marker, dv.errorGrid) · combine engine (auto-cols, auto-orient, match, tiling) + E2E (1 sheet, 5 draws, subset 2) · booklet math (8/5/12-page impositions, geometry, margins) + E2E (4 sides, 2 draws/side, 3 padded slots) · sanitize (hand-crafted RAW fixture: JS tree + OpenAction + URI annot + EmbeddedFiles + XMP + Dests-survivor + /Info — plan findings + E2E byte-level asserts + metadata-off variant + oracle reload).
+**Smoke bugs found+fixed**: stream bytes `.raw` not `.v` (PdfObj shape); latin1(data, from, to) 3-arg signature; result-object `.bytes` unwrapping; pdf-lib hex show-text `<5031>` markers (pinned lesson wapas yaad aaya); rotate-90 left=user-BOTTOM expectation (halve-proven semantics).
+
+### 4. Gates + E2E
+tsc 0 · eslint 0 · smoke-pageops-a 80/80 · tool routes ×6 200 · sitemap 113→119 URLs · **Browser golden paths**: reverse (inject → Run → "Your file is ready!" → e2e-4page-reversed.pdf 1.9KB) + booklet (4 pages → 2 sides 2.5KB) — screenshots public/qa/phase1a-*.png · /hi/tool/divide-pages full Devanagari · mobile 390 sanitize no-overflow (390=390) · regressions (home/merge-pdf//hi) 200 · console: sirf documented flaky hydration artifact (R24 addendum, pre-existing).
+- **"See all 106 tools"** (100+6) on home rail — live count updated automatically.
+- Dev server restart needed tha (daemon re-run) — sandbox reaper.
+
+### 5. Docs
+- PHASE-PLAN.md NEW (Phase 0): 7-phase roadmap with acceptance criteria + risks + ritual + status checkboxes.
+- Bentopdf audit pinned: 125 pages vs hum 106 → gap list in PHASE-PLAN (skip-set documented: e-invoice suite already ahead, LibreOffice-format turf Phase-11).
+
+### Known / Deferred
+- **Push PENDING**: token wiped AGAIN (`.env.credentials` + `/home/z/.tokens` dono gaye — sandbox rollback artifact, R26+documented pattern). Commit locally ready; fresh PAT chahiye push ke liye. Vercel deploy push ke baad.
+- Cosmetic: reverse detail "1 files, 1 pages" FIXED (totalPages now real count).
+
+NEXT: Phase 1 Batch B — bates-numbering, remove-blank-pages, alternate-merge, add-page-labels, rotate-custom, view-metadata (PHASE-PLAN.md order).
