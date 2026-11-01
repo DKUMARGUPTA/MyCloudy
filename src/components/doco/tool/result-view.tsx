@@ -77,6 +77,7 @@ export function ResultView({
         straightenedPages?: number;
         tablesExtracted?: number;
         textBlocksRecolored?: number;
+        textOutlined?: number;
         targetHit?: boolean;
         compressStage?: "optimize" | "images" | "raster";
         compressQuality?: number;
@@ -349,6 +350,12 @@ export function ResultView({
         {runSummary?.textBlocksRecolored ? (
           <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
             {t("result.textBlocksRecolored", { n: runSummary.textBlocksRecolored })}
+          </p>
+        ) : null}
+        {/* font-to-outline (P7): text shows turned into bezier curves. */}
+        {runSummary?.textOutlined ? (
+          <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+            {t("result.textOutlined", { n: runSummary.textOutlined })}
           </p>
         ) : null}
         {/* compress-pdf image dedupe (R4-b): byte-identical photos now

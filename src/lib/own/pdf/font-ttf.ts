@@ -352,12 +352,16 @@ export class ParsedTtfFont {
       p += 2;
     }
 
-    /* cmap — prefer the UCS-4 format 12 subtable, fall back to format 4. */
-    const cmap = need("cmap");
+    /* cmap — prefer the UCS-4 format 12 subtable, fall back to format 4.
+     * OPTIONAL since P7-R41: our own GID-keyed embeds (and many
+     * producers' CID subsets) ship without cmap — glyph access is by
+     * GID there, so a missing cmap must not kill the parse. */
+    const cmap = tables.get("cmap");
     let fmt4: ParsedTtfFont["cmap4"] = null;
     let fmt12: ParsedTtfFont["cmap12"] = null;
-    const subCount = u16(cmap, 2);
-    for (let i = 0; i < subCount; i++) {
+    if (cmap) {
+      const subCount = u16(cmap, 2);
+      for (let i = 0; i < subCount; i++) {
       const rec = 4 + i * 8;
       if (rec + 8 > cmap.length) break;
       const platform = u16(cmap, rec);
@@ -400,8 +404,11 @@ export class ParsedTtfFont {
         }
         fmt12 = { groups };
       }
+      }
     }
-    if (!fmt4 && !fmt12) throw new PdfError("chars", "ttf cmap has no unicode subtable");
+    // No unicode subtable is fine for GID-keyed access (P7-R41: our own
+    // CID subsets and producers' Identity-H embeds); unicode callers
+    // (stamp/shaper) always hand us full fonts that have one.
     this.cmap4 = fmt4;
     this.cmap12 = fmt12;
 
@@ -485,6 +492,7 @@ export class ParsedTtfFont {
       }
       return 0;
     }
+    if (!this.cmap4) return 0; // cmap-less GID-keyed subset (P7-R41)
     const c = this.cmap4!;
     let lo = 0;
     let hi = c.segCount - 1;

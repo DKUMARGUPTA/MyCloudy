@@ -346,7 +346,7 @@ console.log("9) i18n wf.* parity");
 console.log("10) Registry counts");
 {
   const total = ALL_TOOLS.length;
-  check(LIVE_COUNT === 137, `live tool count 137 (got ${LIVE_COUNT})`);
+  check(LIVE_COUNT === 141, `live tool count 141 (got ${LIVE_COUNT})`);
   check(total === 140, `total tool count 140 (got ${total})`);
 }
 

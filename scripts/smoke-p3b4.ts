@@ -239,7 +239,7 @@ console.log("6. registry — live tool count");
 
 {
   // 134 + 1 = 135 live, 138 total (3 AI deferred).
-  check("registry: 135 live tools", liveToolCount === 135, String(liveToolCount));
+  check("registry: 141 live tools", liveToolCount === 141, String(liveToolCount));
 }
 
 /* ------------------------------------------------------------------ */

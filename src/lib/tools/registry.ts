@@ -927,6 +927,25 @@ export const ALL_TOOLS: ToolDef[] = [
     },
   }),
   def({
+    id: "font-to-outline",
+    category: "edit",
+    mode: "D",
+    phase: "P2",
+    icon: Shapes,
+    popularity: 10,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Font to outline", hi: "फ़ॉन्ट आउटलाइन करें" },
+    description: {
+      en: "Turn text into pure vector curves — nothing left to select or copy.",
+      hi: "टेक्स्ट को शुद्ध वेक्टर कर्व में बदलें — चुनने-कॉपी करने को कुछ न बचे।",
+    },
+    tags: {
+      en: ["outline", "curves", "convert text to curves", "print ready"],
+      hi: ["आउटलाइन", "कर्व", "प्रिंट तैयार"],
+    },
+  }),
+  def({
     id: "pdf-to-greyscale",
     category: "convert-from",
     mode: "D",

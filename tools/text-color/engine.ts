@@ -254,7 +254,7 @@ function latin1Bytes(s: string): Uint8Array {
 }
 
 /** All /Contents stream objects of a page (refs resolved; direct streams skipped). */
-function pageContentStreams(
+export function pageContentStreams(
   doc: ParsedPdf,
   page: PdfPageInfo
 ): Array<{ num: number; obj: PdfObj & { k: "stream" } }> {
@@ -279,7 +279,7 @@ function pageContentStreams(
 }
 
 /** Form XObjects reachable from a resource dict (direct objects only here). */
-function formStreams(
+export function formStreams(
   doc: ParsedPdf,
   resources: PdfObj | undefined
 ): Array<{ num: number; obj: PdfObj & { k: "stream" } }> {

@@ -41,6 +41,8 @@ export interface RunDetail {
   tablesExtracted?: number;
   /** Text objects repainted by the recolor surgery (text-color). */
   textBlocksRecolored?: number;
+  /** Text-show ops converted to bezier paths (font-to-outline). */
+  textOutlined?: number;
   /** Whether the output fit the byte budget (compress-pdf-to-size). */
   targetHit?: boolean;
   /** Winning compress-to-size ladder stage (compress-pdf-to-size). */

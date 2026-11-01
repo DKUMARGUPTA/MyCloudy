@@ -6936,3 +6936,61 @@ parity). **E2E GOLDEN**: tables.pdf upload → default red → Run →
 TTF glyf bezier surgery), R42 edit-pdf-text.
 
 **Push:** R40 commit + push + Vercel verify.
+
+## R41 — PHASE-7 R41: font-to-outline (TTF glyf → bezier surgery) (2025-11-02)
+
+**Phase 7 ka sabse kathin tool — text ko SHUDDH VECTOR CURVES mein
+badalna (print-shop "convert fonts to outlines"). Own engine, zero
+external deps.**
+
+- **glyf.ts** (pure): `glyphContours` — simple glyphs (endPts/flags/x-y
+  deltas, repeat-flag runs) + composite glyphs (ARG_WORDS/XY/scale/2×2
+  matrix components, depth-capped recursion; legacy point-matching
+  offsets dropped). `walkContour` — TrueType on/off walk: on→line,
+  off→quad, off+off→implied midpoint, all-off→midpoint start/end,
+  wrap-to-start. `glyphToPathOps` — quad→cubic 2/3 control rule,
+  m/l/c/h + nonzero `f`.
+- **engine.ts**: `resolveOutlineFont` — Type0 + Identity-H +
+  CIDFontType2 + CIDToGGIDMap /Identity + FontFile2 (DECODED — stream
+  compressed) → ParsedTtfFont + /W|/DW width map (1000-basis, dono
+  forms: c-array + cfirst-clast-w). `outlineContent` — FULL text state
+  machine: q/Q/cm CTM stack, Tm/Tlm, Tfs/Tz/Tc/Tw/TL/Ts, Td/TD/T*/BT,
+  Tf font-name resolution; Tj/TJ/'/" → path ops (advance = w0/1000×Tfs
+  +Tc)×Th, TJ adjustments ×Tfs, glyph transform = [Tfs·Th 0 0 Tfs 0
+  Ts]×Tm×CTM). Hex+literal string decode (octal/n/r/t/line-cont).
+  Position-preserving spans (text-color tokenizer REUSE).
+  `planFontToOutline`: pages + Form XObjects recursive (text-color ke
+  exported helpers REUSE), untouched-stream byte-preservation.
+- **font-ttf.ts (SHARED ENGINE FIX)**: cmap OPTIONAL for GID-keyed
+  subsets — hamara subsetter cmap/unicode-subtable emit nahi karta
+  (GID-keyed hai), ParsedTtfFont.parse pehle throw karta tha. Ab
+  cmap-less parse OK + glyphForCodePoint no-cmap guard (existing
+  callers full fonts dete hain — behavior unchanged, p3b2/watermark/
+  invoice regression smokes GREEN).
+- **worker.ts**: parse → plan → rewriteDocument; honest
+  tool.errorNoConvertibleText jab kuch convertible nahi. RunDetail
+  .textOutlined chip + i18n EN/HI + tool.errorNoConvertibleText key.
+  Registry (edit, Shapes, pop 10) + configs wiring.
+
+**Bugs caught:** (1) subset FontFile2 cmap-less + no-unicode-subtable
+parse throws (2-layer fix). (2) latin1(…,∞) NUL-bomb khud debug script
+mein phir kiya — OOM kill; decoded.length use (LESSON REPEATED — pinned).
+(3) smoke regex `\dm` vs "digit space m" whitespace. Stale registry
+count pins (127/134/135/137) → 141 sab batch smokes mein refresh.
+
+**Quality gates:** tsc 0 (2 fixes: cmap narrowing + tf string return) ·
+lint 0 · **smoke-p7d 29/29** (walkContour ×6 unit cases, 2/3 rule,
+string decode, CreateContext+NotoDevanagari fixture: font resolve, 2
+shows convert, 12 glyph paths, first path point (40, 614.9) correct
+baseline placement, Tj GONE + BT/Tm/Tf survive, re-parse, honest error
+Type1, 141 live, i18n parity) · REGRESSION: p3b2 41/41 + watermark +
+create-invoice green · **E2E GOLDEN**: upload → Run → **"2 टेक्स्ट-ब्लॉक
+कर्व में बदले" chip + download + preview** · **VLM VISUAL PROOF**:
+preview screenshot pe "नमस्ते दस्तावेज़ / गोपनीय दस्तावेज़" SHARP vector
+curves — zero tofu, zero glitch · mobile 390 MOBILE_OK · 0 non-hydration
+console errors.
+
+**Live count: 141 / 144.** Next: R42 edit-pdf-text (Phase-7 ka aakhri
+round — cover+redraw in-place editor).
+
+**Push:** R41 commit + push + Vercel verify.
