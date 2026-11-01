@@ -7038,3 +7038,40 @@ done (P0 plan → P1 18 pageops → P2 AI-prep → P3 19 chhote → P4 SEO → P
 multi-tool → P6 workflow → P7 hardest 5). 100→142 live tools.**
 
 **Push:** R42 + Phase-7-close commit + push + Vercel verify.
+
+## R43 — ROADMAP-CLOSE VERIFICATION: push-durability + full QA sweep + smoke re-verify (2025-11-02)
+
+**Sab phases complete hone ke baad ka final verification round — durability
+sabse pehle (disk ephemeral hai, ek baar wipe ho chuka).**
+
+- **Push durability**: remote abhi R41 pe atka tha (d0c55e8) — R42 ka
+  edit-pdf-text commit GitHub pe tha hi nahi. `bash scripts/push-github.sh`
+  (auto-loaded `.env.credentials`) → main `d0c55e8..18c4e11` + 28 tags.
+  **Vercel prod deploy `dpl_A8oouiMT…` READY @ 18c4e11** — https://www.docopdf.com
+  ab complete 142-tool build chala raha hai (200 OK).
+- **Credentials persistence** (user ka direct request — 4th wipe ke baad):
+  `.env.credentials` (chmod 600, gitignored) me GH PAT + Vercel token +
+  Turso URL sabse live; push script auto-load karta hai; encrypted backup
+  `secrets/vault.enc` GitHub pe pushed. Turso JWT hi missing hai (truncated
+  across session) — Turso actually use hone par owner se ek baar maangna.
+- **Dev server**: duplicate `bun run dev` instances (1286+1290) found —
+  ERR_CONNECTION_REFUSED + stale Fast Refresh. Dono kill → dev-daemon restart
+  → single instance, 200 OK.
+- **QA sweep (agent-browser, Hindi locale)**: home (145 टूल, footer) ·
+  **edit-pdf-text FULL GOLDEN PATH**: fixture (pdf-lib Helvetica 3-line
+  text) upload via `/__qa2.pdf` fetch + DataTransfer change-event → search
+  "the" → "2 मिली पंक्तियाँ" match cards page-tags ke saath → replace
+  "REPLACED TEXT" → run → **"आपकी फ़ाइल तैयार है!" + "2 पंक्तियाँ उसी जगह
+  दोबारा लिखीं"** + result fixture-edited.pdf 1.5KB (download/save/preview/
+  what-next/feedback/privacy sab present) · workflow-builder (pipeline UI
+  0/12, presets, import/export) · multi-tool-pdf · SEO landing
+  compress-pdf-for-email (H1 + FAQ JSON-LD + unique title) · **mobile 390**
+  (docW=390, zero x-overflow, footer natural-push) · fresh loads par
+  **0 console errors** (2 hydration-mismatch artifacts sirf mid-session
+  dev-crash window me the; har fresh reload clean).
+- **Fresh gates**: tsc 0 · eslint 0 · **smoke-p7e re-run 30/30** (contended
+  CPU pe pehla try 180s timeout tha — Chromium band karke clean pass;
+  liveToolCount 142 verified in-smoke).
+- **Cleanup**: QA fixtures (`public/__qa.pdf`, `__qa2.pdf`) removed.
+
+**Status: P0-P7 sab complete + pushed + prod LIVE + verified. Live 142/145.**

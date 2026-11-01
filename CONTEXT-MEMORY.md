@@ -6,7 +6,7 @@
 > **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R42 — PHASE 7 COMPLETE (2025-11-02): edit-pdf-text LIVE — 7/7 PHASES DONE.** Focused typo-fixer (search→check→retype): editor harvest REUSE + HarvestPiece userX/userBaseline (E2E+VLM caught display-vs-user-space mirror bug) + StampContext cover+redraw auto-fit. smoke-p7e 30/30 + E2E golden + VLM proof (“Banana 12 340” exact, zero smudge). **142 live / 145.** Phase-7 scorecard: deskew-pdf (R38) · extract-tables (R39) · text-color (R40) · font-to-outline (R41, VLM-proven Devanagari curves) · edit-pdf-text (R42). Roadmap: P0✓ P1✓ P2✓ P3✓ P4✓ P5✓ P6✓ P7✓ — 100→142 live tools. Pichla: R41.
+> **Updated:** **R43 — ROADMAP-CLOSE VERIFICATION (2025-11-02): sab kuch DURABLE + VERIFIED.** R42 push hua tha hi nahi (remote R41 pe atka) — push kiya: main d0c55e8..18c4e11 + 28 tags, **Vercel prod READY @ 18c4e11** (www.docopdf.com = full 142-tool build). Credentials `.env.credentials` me persistent (chmod 600, push script auto-load, encrypted vault GitHub pe). QA sweep: edit-pdf-text FULL GOLDEN PATH (search→match cards→replace→“2 पंक्तियाँ उसी जगह दोबारा लिखीं”→result) + workflow-builder + multi-tool + SEO landing + mobile 390 clean + fresh 0 console errors. smoke-p7e re-run 30/30, tsc 0, lint 0. **142 live / 145. P0✓ P1✓ P2✓ P3✓ P4✓ P5✓ P6✓ P7✓ — COMPLETE.** Pichla: R42.
 
 ---
 
@@ -21,13 +21,13 @@
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |
 | Static pages (PRD §9) | **LIVE** — about/contact/privacy/terms wired end-to-end (footer + `#/page/<id>` + i18n 166×2) |
 | Server | Next.js 16.1.3, port 3000 (daemon: `python3 scripts/dev-daemon.py`), dev.log clean |
-| **Production** | **https://mycloudy-beta.vercel.app** LIVE (Vercel; DB endpoints degrade gracefully — Turso future) |
-| GitHub | `DKUMARGUPTA/MyCloudy` — main fully pushed + 26 tags; zero unpushed |
+| **Production** | **https://www.docopdf.com** LIVE (Vercel project `mycloudy`, main→prod auto-deploy; READY @ 18c4e11 R43-verified; DB endpoints degrade gracefully — Turso future) |
+| GitHub | `DKUMARGUPTA/MyCloudy` — main fully pushed @ 18c4e11 + 28 tags; zero unpushed (R43 verify) |
 | Quality gates | tsc **0** errors · eslint 0 · battery **110/110 ALL PASS** (P7-a a11y-names + P7-b magic-bytes added; 108 tool smokes + 2 P7 gates) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
 | i18n | English + हिंदी — **4915 = 4915** flat-leaf keys parity (R26: +77 account/pricing/billing, −3 retired pro.* placeholder) |
 | Mini-services | convert (port 3031), request-sign (3032) — double-fork daemonizer se start |
-| Tokens | ⚠️ **WIPED 2025-10-30 05:33** (`.env.credentials` + `/home/z/.tokens/` dono gaye — sandbox artifact; recovery impossible, values kabhi print nahi hue). **Push ke liye user se fresh PAT maango.** Jab mile: TURANT push ritual + tag push — disk files pe durability mat maano |
+| Tokens | ✅ **PERSISTENT (R43)**: `.env.credentials` (chmod 600, gitignored) — GH PAT + Vercel + Turso URL live, push script auto-loads; encrypted backup `secrets/vault.enc` GitHub pe. Sirf Turso JWT missing (truncated) — Turso use hone par owner se ek baar maangna. Disk rollback ho to vault.enc + VAULT_PASSPHRASE se restore |
 
 ---
 
