@@ -74,6 +74,13 @@ import { config as posterizePdf } from "../../../tools/posterize-pdf/config";
 import { config as scannerEffect } from "../../../tools/scanner-effect/config";
 import { config as timestampPdf } from "../../../tools/timestamp-pdf/config";
 import { config as tableOfContents } from "../../../tools/table-of-contents/config";
+import { config as csvToPdf } from "../../../tools/csv-to-pdf/config";
+import { config as jsonToPdf } from "../../../tools/json-to-pdf/config";
+import { config as xmlToPdf } from "../../../tools/xml-to-pdf/config";
+import { config as pdfToBmp } from "../../../tools/pdf-to-bmp/config";
+import { config as bmpToPdf } from "../../../tools/bmp-to-pdf/config";
+import { config as pdfToCbz } from "../../../tools/pdf-to-cbz/config";
+import { config as cbzToPdf } from "../../../tools/cbz-to-pdf/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
@@ -214,6 +221,13 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [scannerEffect.toolId]: scannerEffect,
   [timestampPdf.toolId]: timestampPdf,
   [tableOfContents.toolId]: tableOfContents,
+  [csvToPdf.toolId]: csvToPdf,
+  [jsonToPdf.toolId]: jsonToPdf,
+  [xmlToPdf.toolId]: xmlToPdf,
+  [pdfToBmp.toolId]: pdfToBmp,
+  [bmpToPdf.toolId]: bmpToPdf,
+  [pdfToCbz.toolId]: pdfToCbz,
+  [cbzToPdf.toolId]: cbzToPdf,
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,

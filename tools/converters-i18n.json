@@ -1,0 +1,62 @@
+{
+  "en": {
+    "c2p": {
+      "errorEmpty": "This file has no readable rows.",
+      "errorTooLarge": "More than 20,000 rows — split the file first.",
+      "errorTooWide": "More than 60 columns — split the columns first.",
+      "errorNotText": "This file isn't readable text."
+    },
+    "j2p": {
+      "errorEmpty": "This file is empty.",
+      "errorInvalid": "Not valid JSON — fix the syntax and try again."
+    },
+    "x2p": {
+      "errorEmpty": "This file is empty.",
+      "errorInvalid": "This doesn't look like XML — it must start with '<'."
+    },
+    "b2p": {
+      "errorNotBmp": "Not a BMP file (missing the BM signature).",
+      "errorUnsupportedBmp": "This BMP variant isn't supported — only uncompressed 8/24/32-bit.",
+      "errorTruncated": "This BMP is cut short — the file is smaller than its header claims."
+    },
+    "c2d": {
+      "errorNotArchive": "Not a comic archive (CBZ/ZIP) — missing the ZIP signature.",
+      "errorBadArchive": "This archive couldn't be read — it may be corrupted.",
+      "errorNoPages": "No readable pages (JPEG/PNG/BMP) inside this archive.",
+      "errorTooManyPages": "More than 2,000 pages — split the archive first.",
+      "errorGif": "GIF pages aren't supported — convert them to PNG or JPG first.",
+      "errorUnknownImage": "Unrecognized image data inside the archive.",
+      "errorBadImage": "A page image couldn't be decoded — it may be corrupted."
+    }
+  },
+  "hi": {
+    "c2p": {
+      "errorEmpty": "इस फ़ाइल में कोई पढ़ने लायक पंक्ति नहीं।",
+      "errorTooLarge": "20,000 से ज़्यादा पंक्तियाँ — पहले फ़ाइल बाँटें।",
+      "errorTooWide": "60 से ज़्यादा कॉलम — पहले कॉलम बाँटें।",
+      "errorNotText": "यह फ़ाइल पढ़ने लायक टेक्स्ट नहीं है।"
+    },
+    "j2p": {
+      "errorEmpty": "यह फ़ाइल ख़ाली है।",
+      "errorInvalid": "सही JSON नहीं — सिंटैक्स ठीक करके दोबारा चलाएँ।"
+    },
+    "x2p": {
+      "errorEmpty": "यह फ़ाइल ख़ाली है।",
+      "errorInvalid": "यह XML जैसी नहीं लगती — शुरुआत '<' से होनी चाहिए।"
+    },
+    "b2p": {
+      "errorNotBmp": "BMP फ़ाइल नहीं (BM हस्ताक्षर नहीं मिला)।",
+      "errorUnsupportedBmp": "यह BMP किस्म असमर्थित है — सिर्फ़ बिना-कंप्रेशन 8/24/32-बिट।",
+      "errorTruncated": "यह BMP अधूरी है — फ़ाइल हेडर से छोटी है।"
+    },
+    "c2d": {
+      "errorNotArchive": "कॉमिक आर्काइव (CBZ/ZIP) नहीं — ZIP हस्ताक्षर नहीं मिला।",
+      "errorBadArchive": "यह आर्काइव पढ़ा नहीं जा सका — शायद ख़राब है।",
+      "errorNoPages": "आर्काइव में कोई पढ़ने लायक पेज (JPEG/PNG/BMP) नहीं।",
+      "errorTooManyPages": "2,000 से ज़्यादा पेज — पहले आर्काइव बाँटें।",
+      "errorGif": "GIF पेज असमर्थित हैं — पहले PNG या JPG में बदलें।",
+      "errorUnknownImage": "आर्काइव के अंदर पहचान न आने वाला इमेज डेटा।",
+      "errorBadImage": "एक पेज-इमेज डिकोड नहीं हो सकी — शायद ख़राब है।"
+    }
+  }
+}
