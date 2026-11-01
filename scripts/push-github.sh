@@ -13,6 +13,15 @@
 # pushed to GitHub, work is NOT durable. Run this after EVERY batch.
 set -euo pipefail
 
+# Auto-load persistent credentials (saved 2025-11-02 after 4th token wipe).
+# .env.credentials is gitignored + chmod 600; an encrypted backup lives in
+# secrets/vault.enc (restorable with VAULT_PASSPHRASE, see secrets/README.md).
+if [ -z "${MYCLOUDY_GH_TOKEN:-}" ] && [ -f .env.credentials ]; then
+  # shellcheck disable=SC1091
+  set -a; source .env.credentials; set +a
+  echo "✓ loaded MYCLOUDY_GH_TOKEN from .env.credentials"
+fi
+
 TOKEN="${MYCLOUDY_GH_TOKEN:?Set MYCLOUDY_GH_TOKEN to a PAT with Contents read+write}"
 URL="https://x-access-token:${TOKEN}@github.com/DKUMARGUPTA/MyCloudy.git"
 
