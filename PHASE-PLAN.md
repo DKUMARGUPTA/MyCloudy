@@ -88,9 +88,11 @@ deskew-pdf (raster rotation detection + content transform) · text-color (existi
 - [x] Phase 4 — SEO landing pages — COMPLETE 2025-11-02 (6 compress landings × EN+HI, toolPreset chain, R35)
 - [x] Phase 5 — multi-tool grid — COMPLETE 2025-11-02 (multi-tool-pdf, GridPreset multi, R36)
 - [x] Phase 6 — workflow builder — COMPLETE 2025-11-02 (R37, smoke 68/68 + E2E golden; 68-tool node library; save/load JSON)
-- [ ] Phase 7 — hardest (in progress — dedicated rounds)
+- [x] Phase 7 — hardest — **COMPLETE 2025-11-02: 5 tools (deskew/extract-tables/text-color/font-to-outline/edit-pdf-text), live 142/145**
   - [x] deskew-pdf — R38 2025-11-02 (detectSkewAngle reuse + ComposeContext centre-rotation; smoke-p7a 44/44 + E2E golden; 138 live)
   - [x] extract-tables — R39 2025-11-02 (segmentation engine pitch-tracking + CSV/ZIP; smoke-p7b 40/40 + E2E golden; 139 live)
   - [x] text-color — R40 2025-11-02 (content-stream recolor surgery + Form recursion; smoke-p7c 38/38 + E2E golden; 140 live)
   - [x] font-to-outline — R41 2025-11-02 (glyf→bezier + text-state machine + font-ttf cmap fix; smoke-p7d 29/29 + E2E + VLM visual proof; 141 live)
-  - [ ] edit-pdf-text — R42 (in-place cover+redraw editor)
+  - [x] edit-pdf-text — R42 2025-11-02 (cover+redraw typo-fixer + userX/userBaseline harvest fix; smoke-p7e 30/30 + E2E + VLM proof; 142 live)
+
+**ROADMAP COMPLETE — all 8 phases (0-7) shipped 2025-11-02. 100 → 142 live tools.**

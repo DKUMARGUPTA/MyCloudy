@@ -78,6 +78,7 @@ export function ResultView({
         tablesExtracted?: number;
         textBlocksRecolored?: number;
         textOutlined?: number;
+        textEditsApplied?: number;
         targetHit?: boolean;
         compressStage?: "optimize" | "images" | "raster";
         compressQuality?: number;
@@ -356,6 +357,12 @@ export function ResultView({
         {runSummary?.textOutlined ? (
           <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
             {t("result.textOutlined", { n: runSummary.textOutlined })}
+          </p>
+        ) : null}
+        {/* edit-pdf-text (P7): cover+redraw edits baked. */}
+        {runSummary?.textEditsApplied ? (
+          <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+            {t("result.textEditsApplied", { n: runSummary.textEditsApplied })}
           </p>
         ) : null}
         {/* compress-pdf image dedupe (R4-b): byte-identical photos now

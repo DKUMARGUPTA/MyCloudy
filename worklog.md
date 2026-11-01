@@ -6994,3 +6994,47 @@ console errors.
 round — cover+redraw in-place editor).
 
 **Push:** R41 commit + push + Vercel verify.
+
+## R42 — PHASE-7 R42 + PHASE 7 COMPLETE: edit-pdf-text (focused typo-fixer) (2025-11-02)
+
+**Phase 7 ka aakhri tool — full editor ke cover+redraw engine ka focused
+distillation: search → check lines → retype in place.**
+
+- **engine.ts** (pure): `groupLines` — harvest pieces → visual lines
+  (y-band, space-join 0.25·size gap, user-rect union MIN/MAX trackers —
+  Infinity-sentinel reduce bug smoke-caught); `findLines` case-insensitive;
+  `buildEditOp` — cover = band + 3pt pad, auto-fit (scale = availW/natural,
+  40% readability floor); `resolveEditOps` — JSON blob validation (≤200
+  edits, page range, ≤500 chars, coord sanity).
+- **HarvestPiece EXTENDED** (edit-pdf/model + text-layer): naye `userX` +
+  `userBaseline` fields (viewport.convertToPdfPoint(x, sy)) — pehle sirf
+  display-space baseline tha. **E2E+VLM ne pakda**: cover sahi jagah lekin
+  replacement text GAYAB — display y-down ko user y-up ki tarah stamp kiya
+  ja raha tha (2× vertical mirror). Fix ke baad "Banana 12 340" EXACT
+  render, Mango gayab, zero smudge (VLM verified).
+- **worker.ts**: StampContext.load → per op: stampRect cover + stampText
+  (font match → std key bold/italic map ya deva TTF once-loaded; rotate =
+  page /Rotate; WinAnsi-unencodable replacement skip honest). Detail
+  textEditsApplied chip + i18n. ept.errorNoEdits honest error.
+- **surface.tsx**: fullWidth — DropZone → scanPagesText (editor harvest
+  REUSE, 100-page cap) → find/replace/cover-color inputs → live match
+  cards (checkbox + <mark> highlight + page tag) → edits blob option-values
+  mein (editor epoch-key pattern). **React-19 lint discipline**: derived
+  checked-state (unchecked-set + useMemo — setState-in-effect BANNED),
+  per-file reset render-phase prevFile pattern (documented React recipe),
+  async-only effects. 15 ept.* i18n keys EN+HI (parity 5063=5063).
+
+**Quality gates:** tsc 0 · lint 0 (React-hooks/set-state-in-effect ×2
+restructure) · **smoke-p7e 30/30** (groupLines joins/unions, find,
+auto-fit + 40% floor, blob caps, runEditText end-to-end pdf-lib fixture:
+cover m…h f path + hex Tj + original preserved, honest errors, 142 live,
+i18n) · **E2E GOLDEN + VLM PROOF**: tables.pdf → "Mango"→"Banana 12 340"
+→ chip "1 पंक्ति उसी जगह दोबारा लिखी" → VLM: row EXACT, clean, no
+double-print · mobile 390 MOBILE_OK · fresh console 0 errors (36 stale
+Turbopack-cache artifacts documented).
+
+**Live count: 142 / 145. PHASE 7 COMPLETE — 7-phase roadmap ke SAB phases
+done (P0 plan → P1 18 pageops → P2 AI-prep → P3 19 chhote → P4 SEO → P5
+multi-tool → P6 workflow → P7 hardest 5). 100→142 live tools.**
+
+**Push:** R42 + Phase-7-close commit + push + Vercel verify.

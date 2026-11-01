@@ -441,6 +441,7 @@
     "tablesExtracted": "{n, plural, =1 {1 table found and exported} other {# tables found and exported}}",
     "textBlocksRecolored": "{n, plural, =1 {1 text block repainted} other {# text blocks repainted}}",
     "textOutlined": "{n, plural, =1 {1 text block converted to curves} other {# text blocks converted to curves}}",
+    "textEditsApplied": "{n, plural, =1 {1 line retyped in place} other {# lines retyped in place}}",
     "dedupedImages": "{n, plural, =1 {1 duplicate image merged} other {# duplicate images merged}}",
     "dedupeBytesSaved": "{bytes} of duplicate image data removed",
     "ocrSendInvoice": "Send to invoice",
@@ -5262,6 +5263,23 @@
     "errorGif": "GIF pages aren't supported — convert them to PNG or JPG first.",
     "errorUnknownImage": "Unrecognized image data inside the archive.",
     "errorBadImage": "A page image couldn't be decoded — it may be corrupted."
+  },
+  "ept": {
+    "scanning": "Reading the text inside your PDF…",
+    "scanError": "The text layer could not be read — the PDF may be a scan (try the OCR tool first) or damaged.",
+    "find": "Find",
+    "findPlaceholder": "Type the words to fix…",
+    "replace": "Replace with",
+    "replacePlaceholder": "The corrected words…",
+    "cover": "Cover color",
+    "typeToSearch": "Type in Find to see the matching lines.",
+    "noMatches": "No line contains those words.",
+    "matchCount": "{n, plural, =1 {1 matching line} other {# matching lines}} — new matches start checked",
+    "pageTag": "p. {n}",
+    "readyHint": "{n, plural, =1 {1 line} other {# lines}} will be retyped as “{replacement}”",
+    "blockedScan": "Wait for the text scan, or pick a text-based PDF.",
+    "blockedPick": "Find a line, check it, and type the replacement.",
+    "errorNoEdits": "No edits to apply — find a line, keep it checked, and type the replacement."
   },
   "pl": {
     "how1": "Drop a PDF — its layer tree loads automatically (own parser, no upload).",

@@ -1553,6 +1553,11 @@ export interface HarvestPiece {
    *  text. The display fields above stay source-rotation display space
    *  (line grouping reads them). */
   user: ObjRect;
+  /** P7-R42: baseline-left anchor in PDF USER space (the display
+   *  `baseline`/`x` are viewport-space — cover+redraw tools stamp in
+   *  user space and must not mix the two). */
+  userX: number;
+  userBaseline: number;
   str: string;
   font: FontMatch;
 }

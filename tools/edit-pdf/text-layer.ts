@@ -139,6 +139,9 @@ async function piecesFromPage(page: PDFPageProxy): Promise<HarvestPiece[]> {
       w: Math.abs(ub[0] - ua[0]),
       h: Math.abs(ub[1] - ua[1]),
     };
+    // P7-R42: the baseline-left anchor in USER space (display coords
+    // must never feed a stamp directly).
+    const anchor = viewport.convertToPdfPoint(x, sy);
 
     out.push({
       index: out.length,
@@ -147,6 +150,8 @@ async function piecesFromPage(page: PDFPageProxy): Promise<HarvestPiece[]> {
       baseline: sy,
       h,
       user,
+      userX: anchor[0] ?? user.x,
+      userBaseline: anchor[1] ?? user.y,
       str: item.str,
       font: matchFont(rawName, {
         bold: boolOrUndef(meta?.bold),

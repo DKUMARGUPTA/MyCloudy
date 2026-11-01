@@ -43,6 +43,8 @@ export interface RunDetail {
   textBlocksRecolored?: number;
   /** Text-show ops converted to bezier paths (font-to-outline). */
   textOutlined?: number;
+  /** Cover+redraw edits baked by the typo-fixer (edit-pdf-text). */
+  textEditsApplied?: number;
   /** Whether the output fit the byte budget (compress-pdf-to-size). */
   targetHit?: boolean;
   /** Winning compress-to-size ladder stage (compress-pdf-to-size). */

@@ -946,6 +946,25 @@ export const ALL_TOOLS: ToolDef[] = [
     },
   }),
   def({
+    id: "edit-pdf-text",
+    category: "edit",
+    mode: "D",
+    phase: "P2",
+    icon: PenLine,
+    popularity: 20,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Edit PDF text", hi: "PDF टेक्स्ट एडिट करें" },
+    description: {
+      en: "Find any line and retype it in place — the focused typo-fixer.",
+      hi: "कोई भी पंक्ति खोज कर उसी जगह दोबारा लिखें — टाइपो सुधारने का सीधा तरीक़ा।",
+    },
+    tags: {
+      en: ["edit text", "typo", "replace text", "fix text"],
+      hi: ["टेक्स्ट एडिट", "टाइपो", "शब्द बदलें"],
+    },
+  }),
+  def({
     id: "pdf-to-greyscale",
     category: "convert-from",
     mode: "D",
