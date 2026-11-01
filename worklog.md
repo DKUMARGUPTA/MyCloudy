@@ -7118,3 +7118,35 @@ durable ho gaye.**
 
 **LAUNCH-OPS ab COMPLETE: Turso ✓ (ye round) · domain ✓ · forkProtection ✓ ·
 analytics ✓ · SEO pass ✓ · regression ✓. Live 142/145 tools + prod DB live.**
+
+## R45 — Ops revival + privacy-copy audit + P11 infra verification (2025-11-02)
+
+**LAUNCH-OPS ke baad ka infra/health round — teen silent issues pakde.**
+
+- **Mini-services revived**: dono ports the (convert 3031, request-sign
+  3032) — sandbox restart ke baad chale gaye the. request-sign ke LIVE
+  consumers hain (digital-signature + stamp.ts + registry); **LibreOffice
+  E2E re-verified direct**: minimal docx → POST /convert (office2pdf) →
+  valid %PDF-1.7, 1.4s (soffice sandbox me installed hai).
+- **REGISTRY TRUTH (future agents ke liye)**: `tools/server-convert/
+  worker.ts` (Mode S proxy bridge, 14 TOOL_SPECS) **ORPHAN hai** — P6
+  own-engine migration ne sab tools on-device kar diye (word/excel/
+  powerpoint/odt/rtf/epub/publisher/html-to-pdf, pdf-to-word/excel/
+  powerpoint/odt/svg/pdfa — sabke apne workers). Koi bhi registry/config/
+  surface server-convert import nahi karta. Ye **P11-READY infra** hai
+  (service + bridge dono hardened — SSRF guard, rate limit, concurrency
+  cap, job-scoped tempdirs): future me jo format browser sach me nahi kar
+  sakta, wahi is bridge se route hoga. Delete MAT karna.
+- **Privacy-copy audit (trust bug fix)**: word-to-pdf (mode D) ki
+  description stale Mode-S copy thi — "deleted from the server right
+  after" — jabki tool 100% on-device hai. Scanner (mode × description
+  keywords) se sirf ye ek asli false-claim mili (sign-pdf ka "upload your
+  signature" false-positive hai). Fix: "rendered right in your browser —
+  the file never leaves your device" (EN+HI). Browser-verified.
+- **Re-verification**: word-to-pdf smoke **67/67** (parse + Hindi +
+  real renders + embedded images) · PWA complete (manifest.webmanifest +
+  icon-192/512/maskable + self-unregistering SW — documented decision) ·
+  tsc 0 · lint 0.
+
+**Live 142/145 + prod Turso live (R44). Next: cron rounds — styling
+detail + feature polish.**

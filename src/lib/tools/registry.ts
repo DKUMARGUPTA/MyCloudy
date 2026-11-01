@@ -2290,8 +2290,8 @@ export const ALL_TOOLS: ToolDef[] = [
     accepts: "word",
     name: { en: "Word to PDF", hi: "वर्ड से पीडीएफ़" },
     description: {
-      en: "DOC/DOCX to clean PDF; deleted from the server right after.",
-      hi: "DOC/DOCX से साफ़ PDF; काम के बाद तुरंत डिलीट।",
+      en: "DOC/DOCX to clean PDF, rendered right in your browser — the file never leaves your device.",
+      hi: "DOC/DOCX से साफ़ PDF, सीधे आपके ब्राउज़र में — फ़ाइल आपके डिवाइस से बाहर नहीं जाती।",
     },
     tags: {
       en: ["docx", "doc", "word document"],
