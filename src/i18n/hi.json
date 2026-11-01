@@ -669,7 +669,9 @@
     "batchRemovedTitle": "इस फ़ाइल से हटाए गए पेज",
     "batchSelected": "{count, plural, =1 {1 चुना} other {# चुने गए}}",
     "batchSelectedTitle": "इस फ़ाइल में निकालने के लिए चुने गए पेज",
-    "addMore": "और PDF जोड़ें"
+    "addMore": "और PDF जोड़ें",
+    "batchEdited": "{count, plural, =1 {1 बदलाव} other {# बदलाव}}",
+    "batchEditedTitle": "इस फ़ाइल में पेज बदलाव (घुमाए, खिसकाए या हटाए)"
   },
   "igrid": {
     "surfaceLabel": "इमेज ग्रिड",

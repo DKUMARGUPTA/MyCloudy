@@ -764,7 +764,7 @@ export function GridSurface({
     { id: "all", key: "grid.scopeAll" },
     { id: "selected", key: "grid.scopeSelected" },
   ];
-  if (preset === "rotate") {
+  if (preset === "rotate" || preset === "multi") {
     scopeOptions.push(
       { id: "odd", key: "grid.scopeOdd" },
       { id: "even", key: "grid.scopeEven" }
@@ -880,6 +880,21 @@ export function GridSurface({
               key: "grid.batchRemoved",
               titleKey: "grid.batchRemovedTitle",
             };
+          }
+        } else if (preset === "multi") {
+          // Combined edit badge: rotated + moved + removed in one count.
+          if (grid) {
+            const rotated = grid.filter((page) => page.rotation !== 0).length;
+            const moved = grid.filter((page, i) => page.source !== i).length;
+            const removed = info ? info.count - grid.length : 0;
+            const edited = rotated + moved + removed;
+            if (edited > 0) {
+              badge = {
+                count: edited,
+                key: "grid.batchEdited",
+                titleKey: "grid.batchEditedTitle",
+              };
+            }
           }
         } else {
           const storedSelection = selectionsByFileRef.current[item.id];
@@ -1221,7 +1236,7 @@ export function GridSurface({
             <span className="hidden md:inline">{t("grid.delete")}</span>
           </Button>
 
-          {preset === "remove" ? (
+          {preset === "remove" || preset === "multi" ? (
             <Button
               type="button"
               variant="outline"

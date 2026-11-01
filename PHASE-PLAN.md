@@ -86,6 +86,6 @@ deskew-pdf (raster rotation detection + content transform) · text-color (existi
   - [x] Batch 3 — converters: csv/json/xml-to-pdf · pdf-to-bmp · bmp-to-pdf · pdf-to-cbz · cbz-to-pdf (R33, smoke 50/50; ⚠️ PNG IDAT zlib + BMP palette R/B engine bugs FIXED; own BMP/PNG codecs shipped)
   - [x] Batch 4 — pdf-layers (R34, smoke 34/34 + E2E; font-to-outline + text-color Phase 7 mein MOVE — engine-level surgery, honest split).
 - [x] Phase 4 — SEO landing pages — COMPLETE 2025-11-02 (6 compress landings × EN+HI, toolPreset chain, R35)
-- [ ] Phase 5 — multi-tool grid
+- [x] Phase 5 — multi-tool grid — COMPLETE 2025-11-02 (multi-tool-pdf, GridPreset multi, R36)
 - [ ] Phase 6 — workflow builder
 - [ ] Phase 7 — hardest trio

@@ -1172,6 +1172,25 @@ export const ALL_TOOLS: ToolDef[] = [
     },
   }),
   def({
+    id: "multi-tool-pdf",
+    category: "organize",
+    mode: "D",
+    phase: "P2",
+    icon: LayoutGrid,
+    popularity: 30,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Multi-tool PDF", hi: "मल्टी-टूल PDF" },
+    description: {
+      en: "Reorder, rotate, delete, duplicate and blank pages — one workbench, undo included.",
+      hi: "क्रम, घुमाव, हटाना, डुप्लिकेट और ख़ाली पेज — एक वर्कबेंच, अनडू सहित।",
+    },
+    tags: {
+      en: ["organize", "multi tool", "page grid", "all in one", "workbench"],
+      hi: ["व्यवस्थित", "पेज", "मल्टी टूल"],
+    },
+  }),
+  def({
     id: "pdf-layers",
     category: "edit",
     mode: "D",

@@ -24,7 +24,7 @@ export interface GridPage {
   rotation: number;
 }
 
-export type GridPreset = "rotate" | "rearrange" | "remove" | "extract";
+export type GridPreset = "rotate" | "rearrange" | "remove" | "extract" | "multi";
 
 /**
  * Why a document probe (page count + aspect) failed — R6-b honesty split.

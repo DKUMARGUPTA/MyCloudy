@@ -669,7 +669,9 @@
     "batchRemovedTitle": "Pages removed from this file",
     "batchSelected": "{count, plural, =1 {1 selected} other {# selected}}",
     "batchSelectedTitle": "Pages selected for extraction in this file",
-    "addMore": "Add more PDFs"
+    "addMore": "Add more PDFs",
+    "batchEdited": "{count, plural, =1 {1 edit} other {# edits}}",
+    "batchEditedTitle": "Page edits in this file (rotated, moved or removed)"
   },
   "igrid": {
     "surfaceLabel": "Image grid",

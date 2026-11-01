@@ -6688,3 +6688,36 @@ tool ko **target preset** ke saath kholti hain.
 pdf-multi-tool parity: page-grid CRUD ek unified surface me).
 
 **Push:** R35 commit + push.
+
+## R36 — PHASE-5: Multi-tool PDF workbench (page-grid unified) (2025-11-02)
+
+**Scope (PHASE-PLAN Phase 5):** bentopdf pdf-multi-tool parity — ek unified
+page-grid surface jisme saare page operations.
+
+**Shipped — `multi-tool-pdf` (organize, popularity 30):**
+- **GridPreset "multi"** (naya 5th preset): rotate ke odd/even scopes + remove
+  ka remove-blanks + combined edit badge (rotated+moved+removed ek count,
+  grid.batchEdited ×2 i18n). Core select/drag/rotate/delete/duplicate/blank/
+  undo/redo/virtualize — shared GridSurface code UNTOUCHED (P6-c tested family).
+- Worker: shared pagegrid worker + "-organized" suffix. Batch 20 files, har
+  file apna grid, ek output per input.
+- Registry + configs + surfaces (MultiGridSurface wrapper) + i18n 4978=4978.
+
+**Quality gates:** tsc 0 · lint 0 · E2E agent-browser: upload → **page-select →
+rotate** (run 1: 3 pages "-organized" output) → **page-3 select → delete
+(3→2 cells)** → run 2 (2 pages) → download ×2 · 0 console errors · /hi mobile
+390 no-overflow. Undo = shared useGridHistory (Ctrl+Z; family-tested — result
+phase mein selector nahi mila par code path same hai).
+
+**Lessons:**
+- agent-browser click pe "covered by div.rounded-card.border" — scrollintoview
+  pehle, phir click (grid cells viewport ke bahar the).
+- Synthetic MouseEvent se GridSurface select nahi hota — page-button @ref click
+  hi reliable path.
+- i18n python edit: f-string mein `"\\n"` = literal backslash-n (JSON corrupt) —
+  hamesha `json.dump` + `f.write("\\n")` do alag calls mein (fix kiya).
+
+**Live count: 136 / 139** (135+1, 3 AI deferred). **PHASE 5 COMPLETE.**
+Next: **Phase 6 — Workflow builder** (80-node visual pipeline).
+
+**Push:** R36 commit + push.

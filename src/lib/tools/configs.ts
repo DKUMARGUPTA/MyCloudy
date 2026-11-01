@@ -82,6 +82,7 @@ import { config as bmpToPdf } from "../../../tools/bmp-to-pdf/config";
 import { config as pdfToCbz } from "../../../tools/pdf-to-cbz/config";
 import { config as cbzToPdf } from "../../../tools/cbz-to-pdf/config";
 import { config as pdfLayers } from "../../../tools/pdf-layers/config";
+import { config as multiToolPdf } from "../../../tools/multi-tool-pdf/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
@@ -230,6 +231,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [pdfToCbz.toolId]: pdfToCbz,
   [cbzToPdf.toolId]: cbzToPdf,
   [pdfLayers.toolId]: pdfLayers,
+  [multiToolPdf.toolId]: multiToolPdf,
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,

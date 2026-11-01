@@ -50,6 +50,7 @@ const OUTPUT_SUFFIX: Record<string, string> = {
   "rearrange-pdf-pages": "-rearranged",
   "remove-pdf-pages": "-pages-removed",
   "extract-pdf-pages": "-extracted",
+  "multi-tool-pdf": "-organized",
 };
 
 /** Strips path separators + unsafe chars from a download display name. */

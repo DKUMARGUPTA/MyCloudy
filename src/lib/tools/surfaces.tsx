@@ -95,6 +95,10 @@ function RearrangeGridSurface(props: ToolSurfaceProps) {
   return <GridSurface {...props} preset="rearrange" />;
 }
 
+function MultiGridSurface(props: ToolSurfaceProps) {
+  return <GridSurface {...props} preset="multi" />;
+}
+
 function RemoveGridSurface(props: ToolSurfaceProps) {
   return <GridSurface {...props} preset="remove" />;
 }
@@ -112,6 +116,7 @@ function HeaderFooterStampSurface(props: ToolSurfaceProps) {
 }
 
 export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
+  "multi-tool-pdf": MultiGridSurface,
   "rotate-pdf-pages": RotateGridSurface,
   "rearrange-pdf-pages": RearrangeGridSurface,
   "remove-pdf-pages": RemoveGridSurface,
