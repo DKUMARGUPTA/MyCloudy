@@ -91,6 +91,6 @@ deskew-pdf (raster rotation detection + content transform) · text-color (existi
 - [ ] Phase 7 — hardest (in progress — dedicated rounds)
   - [x] deskew-pdf — R38 2025-11-02 (detectSkewAngle reuse + ComposeContext centre-rotation; smoke-p7a 44/44 + E2E golden; 138 live)
   - [x] extract-tables — R39 2025-11-02 (segmentation engine pitch-tracking + CSV/ZIP; smoke-p7b 40/40 + E2E golden; 139 live)
-  - [ ] text-color — R40 (content-stream recolor surgery)
+  - [x] text-color — R40 2025-11-02 (content-stream recolor surgery + Form recursion; smoke-p7c 38/38 + E2E golden; 140 live)
   - [ ] font-to-outline — R41 (embedded TTF glyf → bezier)
   - [ ] edit-pdf-text — R42 (in-place cover+redraw editor)

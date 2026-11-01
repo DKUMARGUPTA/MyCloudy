@@ -442,6 +442,7 @@
     "deskewedPages": "{n, plural, =1 {1 टेढ़ा पेज OCR से पहले सीधा किया} other {# टेढ़े पेज OCR से पहले सीधे किए}}",
     "straightenedPages": "{n, plural, =1 {1 टेढ़ा पेज अपने-आप सीधा हुआ} other {# टेढ़े पेज अपने-आप सीधे हुए}}",
     "tablesExtracted": "{n, plural, =1 {1 टेबल मिलकर एक्सपोर्ट हुई} other {# टेबलें मिलकर एक्सपोर्ट हुईं}}",
+    "textBlocksRecolored": "{n, plural, =1 {1 टेक्स्ट-ब्लॉक रंगा गया} other {# टेक्स्ट-ब्लॉक रंगे गए}}",
     "dedupedImages": "{n, plural, =1 {1 डुप्लिकेट तस्वीर मिलाई} other {# डुप्लिकेट तस्वीरें मिलाईं}}",
     "dedupeBytesSaved": "{bytes} डुप्लिकेट तस्वीर डेटा हटाया",
     "ocrSendInvoice": "इनवॉइस में भेजें",

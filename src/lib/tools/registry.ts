@@ -908,6 +908,25 @@ export const ALL_TOOLS: ToolDef[] = [
     },
   }),
   def({
+    id: "text-color",
+    category: "edit",
+    mode: "D",
+    phase: "P2",
+    icon: Palette,
+    popularity: 14,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Text color", hi: "टेक्स्ट का रंग" },
+    description: {
+      en: "Recolor the text already inside the PDF — vectors only, layout untouched.",
+      hi: "PDF के अंदर के टेक्स्ट का रंग बदलें — सिर्फ़ वेक्टर, लेआउट जस का तस।",
+    },
+    tags: {
+      en: ["text color", "recolor", "font color", "change color"],
+      hi: ["टेक्स्ट रंग", "रंग बदलें", "फ़ॉन्ट रंग"],
+    },
+  }),
+  def({
     id: "pdf-to-greyscale",
     category: "convert-from",
     mode: "D",

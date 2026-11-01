@@ -6892,3 +6892,47 @@ MOBILE_OK · console: 0 non-hydration errors (7 = pre-existing Radix class).
 surgery), R41 font-to-outline, R42 edit-pdf-text.
 
 **Push:** R39 commit + push + Vercel verify.
+
+## R40 — PHASE-7 R40: text-color (content-stream recolor surgery) (2025-11-02)
+
+**text-color (edit, icon Palette, pop 14):** PDF ke ANDAR ke text ka rang
+badalna — overlay nahi, asli repaint. Own engine content-stream surgery.
+
+- **engine.ts** (pure): `tokenizeContent` — POSITION-PRESERVING tokenizer
+  (spans [start,end), whitespace/comments gaps mein rehte hain; nested
+  parens + \) escapes + hex strings + names + delims). `recolorContent`:
+  BT ke baad `{rgb} rg` INSERT (page-state se inherited rang override),
+  in-text fill ops (rg g k sc scn) + stroke ops (RG G K SC SCN) REPLACE
+  (operand-span skip: lastOpEnd..opEnd), in-text `Q` ke baad re-INSERT
+  (q/Q graphics-state restore trap). Pattern scn → solid rg (honest
+  simplification, FAQ'd). `planTextColor`: page /Contents (arr-aware,
+  ref-only direct streams skip) + Form XObjects RECURSIVE (cycle-safe
+  seen-set, shared forms once) → replacements Map (re-flate zlibSync,
+  Filter/DecodeParms strip). `hasInlineImages` (BI) → stream skip honest.
+- **worker.ts**: parsePdf → listPages → parsePageSpec → planTextColor →
+  rewriteDocument({replacements}). Honest: textObjects=0 → tool.errorNoText
+  (scan); invalid pages → tool.errorInvalidPages; hex fallback #DC2626
+  (watermark parseHexColor REUSE cross-tool).
+- RunDetail.textBlocksRecolored chip + i18n EN/HI. Registry (edit, Palette)
+  + configs wiring; options: color hex text + pages.
+
+**Bugs caught (2):** (1) REAL — replacement insertion mein leading
+whitespace missing ("q0.86..rg" → operator merge = corrupt stream) —
+` ${rgb} rg` fix. (2) latin1(bytes,0,Infinity) infinite-NUL-loop trap —
+decoded.length use (self-review catch). Smoke ne nested-paren test string
+ka apna imbalance bhi pakda (test fix).
+
+**Quality gates:** tsc 0 · lint 0 · **smoke-p7c 38/38** (tokenizer
+positions/strings/comments, BT-insert + operand-span replace + Q-trap +
+outside-BT untouched + comments byte-preserved + pattern scn, BI detect,
+planTextColor end-to-end pdf-lib fixture: streams recolored, output
+re-parse, decoded content mein #10AA10 → 0.062745098 0.6666666667,
+pages=2 selective (page-1 blue kept), honest errors, 140 live, i18n
+parity). **E2E GOLDEN**: tables.pdf upload → default red → Run →
+**"14 टेक्स्ट-ब्लॉक रंगे गए" chip + download** · mobile 390 MOBILE_OK ·
+0 non-hydration console errors.
+
+**Live count: 140 / 143.** Next: R41 font-to-outline (sabse kathin —
+TTF glyf bezier surgery), R42 edit-pdf-text.
+
+**Push:** R40 commit + push + Vercel verify.

@@ -438,6 +438,7 @@
     "deskewedPages": "{n, plural, =1 {1 tilted page deskewed before OCR} other {# tilted pages deskewed before OCR}}",
     "straightenedPages": "{n, plural, =1 {1 tilted page straightened automatically} other {# tilted pages straightened automatically}}",
     "tablesExtracted": "{n, plural, =1 {1 table found and exported} other {# tables found and exported}}",
+    "textBlocksRecolored": "{n, plural, =1 {1 text block repainted} other {# text blocks repainted}}",
     "dedupedImages": "{n, plural, =1 {1 duplicate image merged} other {# duplicate images merged}}",
     "dedupeBytesSaved": "{bytes} of duplicate image data removed",
     "ocrSendInvoice": "Send to invoice",

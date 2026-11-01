@@ -57,6 +57,7 @@ import { config as addPageLabels } from "../../../tools/add-page-labels/config";
 import { config as rotateCustom } from "../../../tools/rotate-custom/config";
 import { config as deskewPdf } from "../../../tools/deskew-pdf/config";
 import { config as extractTables } from "../../../tools/extract-tables/config";
+import { config as textColor } from "../../../tools/text-color/config";
 import { config as viewMetadata } from "../../../tools/view-metadata/config";
 import { config as backgroundColor } from "../../../tools/background-color/config";
 import { config as addStamps } from "../../../tools/add-stamps/config";
@@ -209,6 +210,7 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [rotateCustom.toolId]: rotateCustom,
   [deskewPdf.toolId]: deskewPdf,
   [extractTables.toolId]: extractTables,
+  [textColor.toolId]: textColor,
   [viewMetadata.toolId]: viewMetadata,
   [backgroundColor.toolId]: backgroundColor,
   [addStamps.toolId]: addStamps,

@@ -39,6 +39,8 @@ export interface RunDetail {
   straightenedPages?: number;
   /** Distinct tables found and exported (extract-tables). */
   tablesExtracted?: number;
+  /** Text objects repainted by the recolor surgery (text-color). */
+  textBlocksRecolored?: number;
   /** Whether the output fit the byte budget (compress-pdf-to-size). */
   targetHit?: boolean;
   /** Winning compress-to-size ladder stage (compress-pdf-to-size). */

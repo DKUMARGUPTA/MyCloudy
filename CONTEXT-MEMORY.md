@@ -6,7 +6,7 @@
 > **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R39 — PHASE-7: extract-tables LIVE (2025-11-02)** — table SEGMENTATION (pdf-to-excel se alag problem: page ke andar distinct tables; pitch-tracking gap rule + anchor snapping + no-left-shift grids) → RFC-4180 CSV (ZIP per-table ya combined; , ; tab delimiters). smoke-p7b 40/40 + E2E golden (“2 टेबलें मिलकर एक्सपोर्ट हुईं”). **139 live / 142.** Pichla: R38 (deskew-pdf). Next: **R40 text-color → R41 font-to-outline → R42 edit-pdf-text** (Phase-7 rounds).
+> **Updated:** **R40 — PHASE-7: text-color LIVE (2025-11-02)** — content-stream recolor surgery (position-preserving tokenizer; BT-insert + in-text rg/g/k/sc/scn + RG/G/K/SC/SCN replace + Q-restore re-insert; Form XObjects recursive; BI streams honest-skip) apne engine pe. smoke-p7c 38/38 + E2E golden (“14 टेक्स्ट-ब्लॉक रंगे गए”). **140 live / 143.** Pichla: R39 (extract-tables). Next: **R41 font-to-outline → R42 edit-pdf-text** (Phase-7 ke aakhri rounds).
 
 ---
 
@@ -14,8 +14,8 @@
 
 | Metric | Value |
 |---|---|
-| Registry | **142 tools registered — 139 LIVE + 3 AI DEFERRED** (R39: extract-tables added; AI trio re-enable plan 08-PLAN §Deferred) |
-| **LIVE tools** | **139** (3 AI deferred — R23 owner decision) |
+| Registry | **143 tools registered — 140 LIVE + 3 AI DEFERRED** (R40: text-color added; AI trio re-enable plan 08-PLAN §Deferred) |
+| **LIVE tools** | **140** (3 AI deferred — R23 owner decision) |
 | Own PDF engine (P6) | **P6-a..z + P6-v-b + P6-END — MIGRATION COMPLETE ✅** — ALL 60 tool families pdf-lib-free, **0 runtime importers** (pdf-lib = devDependency only: smoke fixtures + oracles) |
 | Master plan | **MASTER-PLAN-1** worklog mein recorded (P6-t..z → P7 → LAUNCH-OPS → P10 → P11) + discipline contract (worklog+memory+push+Vercel per phase; battery on EXACT commit tree) |
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |
