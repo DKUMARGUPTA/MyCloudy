@@ -87,6 +87,7 @@ import {
   Stamp,
   Table,
   Target,
+  Workflow,
   Wrench,
   Zap,
 } from "lucide-react";
@@ -1188,6 +1189,25 @@ export const ALL_TOOLS: ToolDef[] = [
     tags: {
       en: ["organize", "multi tool", "page grid", "all in one", "workbench"],
       hi: ["व्यवस्थित", "पेज", "मल्टी टूल"],
+    },
+  }),
+  def({
+    id: "workflow-builder",
+    category: "organize",
+    mode: "D",
+    phase: "P2",
+    icon: Workflow,
+    popularity: 34,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Workflow Builder", hi: "वर्कफ़्लो बिल्डर" },
+    description: {
+      en: "Chain tools into one pipeline — compress, watermark, number — and run the whole chain in a single click.",
+      hi: "टूल्स को एक पाइपलाइन में जोड़ें — कंप्रेस, वॉटरमार्क, नंबर — और पूरी चेन एक क्लिक में चलाएँ।",
+    },
+    tags: {
+      en: ["workflow", "pipeline", "batch tools", "chain", "automate"],
+      hi: ["वर्कफ़्लो", "पाइपलाइन", "चेन", "ऑटोमेट"],
     },
   }),
   def({

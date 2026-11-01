@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 
 import type { ToolSurfaceProps, ToolResultExtraProps } from "./panel-types";
 import { GridSurface } from "../../../tools/pagegrid/grid-surface";
+import { WorkflowSurface } from "../../../tools/workflow-builder/surface";
 import { AssembleSurface } from "../../../tools/assemble-pdf/surface";
 import { ImageGridSurface } from "../../../tools/imagegrid/image-grid-surface";
 import { WatermarkSurface } from "../../../tools/add-watermark/wm-surface";
@@ -117,6 +118,7 @@ function HeaderFooterStampSurface(props: ToolSurfaceProps) {
 
 export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "multi-tool-pdf": MultiGridSurface,
+  "workflow-builder": WorkflowSurface,
   "rotate-pdf-pages": RotateGridSurface,
   "rearrange-pdf-pages": RearrangeGridSurface,
   "remove-pdf-pages": RemoveGridSurface,

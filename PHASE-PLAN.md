@@ -87,5 +87,5 @@ deskew-pdf (raster rotation detection + content transform) · text-color (existi
   - [x] Batch 4 — pdf-layers (R34, smoke 34/34 + E2E; font-to-outline + text-color Phase 7 mein MOVE — engine-level surgery, honest split).
 - [x] Phase 4 — SEO landing pages — COMPLETE 2025-11-02 (6 compress landings × EN+HI, toolPreset chain, R35)
 - [x] Phase 5 — multi-tool grid — COMPLETE 2025-11-02 (multi-tool-pdf, GridPreset multi, R36)
-- [ ] Phase 6 — workflow builder
+- [x] Phase 6 — workflow builder — COMPLETE 2025-11-02 (R37, smoke 68/68 + E2E golden; 68-tool node library; save/load JSON)
 - [ ] Phase 7 — hardest trio

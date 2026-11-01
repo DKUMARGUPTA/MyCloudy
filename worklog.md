@@ -6721,3 +6721,71 @@ phase mein selector nahi mila par code path same hai).
 Next: **Phase 6 — Workflow builder** (80-node visual pipeline).
 
 **Push:** R36 commit + push.
+
+---
+
+## R37 — PHASE 6 COMPLETE: Workflow Builder (visual pipeline) LIVE (2026-11-02)
+
+**Credentials system first (user direct request):** 4th token-wipe ke baad
+triple-protection — (1) `.env.credentials` (chmod 600, gitignored) + (2)
+`~/.mycloudy-credentials` home backup + (3) **`secrets/vault.enc`** AES-256-CBC
+PBKDF2 encrypted vault COMMITTED to repo (full-disk rollback survive karta hai;
+passphrase `MyCloudy-Vault-2025-Krypton9-Dossier` owner ko chat mein diya +
+`~/.mycloudy-credentials` mein stored + `secrets/README.md` mein restore
+instructions). `scripts/push-github.sh` ab `.env.credentials` AUTO-LOAD karta
+hai (set -a source). 29 unpushed commits (R19→R36 + vault) push + Vercel prod
+verify (dpl_3xMn READY, www.docopdf.com 200). Turso JWT context-truncation se
+incomplete — file mein NOTE hai (full chahiye to user se ek baar maangna).
+
+**Workflow Builder — `workflow-builder` tool (organize, icon Workflow, pop 34):**
+- **lib.ts** (pure, node-testable): `buildWorkflowLibrary()` — registry+configs
+  se auto-built node library (**68 chainable tools**: enabled + createWorker +
+  outputKind pdf + accepts pdf/any, EXCLUDED page-grid family fileIds-options +
+  builder khud + viewers + noFile + non-pdf-out + AI-deferred).
+  `validateWorkflowDoc` (strict shape: version/name/id/steps ≤12 + stale option
+  ids dropped + scalar-only), `WORKFLOW_PRESETS` ×3 (emailReady =
+  compress→watermark→page-numbers EXACT acceptance chain; scanClean; archivePrep),
+  localStorage persistence (favorites.ts pattern: useSyncExternalStore +
+  createLocalSnapshot, `docopdf-workflows` key, max 30).
+- **runner.ts** (client): `runPipeline` — sequential `toolRunner.run` per step,
+  outputs Blob→File wrap → next step input (memory-only), per-step progress
+  emit, cancel = in-flight worker terminate + RunCancelledError catch, honest
+  status done/cancelled/error + failedIndex + partial outputs.
+- **surface.tsx** (noFile pattern — surface IS product, landing pe render):
+  name input + [Save|Presets|Saved|Export|Import] toolbar → input DropZone card
+  → numbered step cards (expand → OptionsPanel reuse + move/remove + live
+  Progress + state chips) → add-step CommandDialog (category-grouped, 68 tools,
+  en+hi tags search) → output terminal card → sticky run bar (overall %,
+  cancel) → result downloads (per-file + download-all). Error card
+  (stepFailed + partial hint).
+- Registry def + configs + surfaces wiring + i18n **wf.* 62 keys EN+HI**
+  (4978→5040 = 5040 parity).
+
+**Quality gates:** tsc 0 · lint 0 · smoke-workflow **68/68** (library filter,
+presets, validate, round-trip, i18n, counts 137/140) · E2E agent-browser
+**GOLDEN PATH**: preset load → PDF upload (fetch→DataTransfer→change) →
+OptionsPanel tweak → Run → **3 steps "Step finished"** → result
+`wf-e2e-compressed-watermarked-numbered.pdf` 1.27→1.04MB + download · picker
+(search rotate → add → options → remove) · save → reload → Saved popover →
+load-back (name+steps restore) · /hi पूरा localized · mobile 390 no-overflow ·
+0 new console errors (5 = pre-existing Radix nav-menu hydration, R24-documented).
+
+**E2E-caught bugs (3):**
+1. Save button hi missing tha (handleSave dead code) — toolbar mein add.
+2. Preset load user-typed NAME wipe karta tha (presetToDoc fresh doc) — ab
+   current name preserved.
+3. 0-step pipeline save ho rahi thi — ab Save gated (run jaisa).
+
+**Lessons:**
+- agent-browser `fill` React controlled input pe UNRELIABLE (value set but
+  onChange race) — native setter + input event eval hi reliable.
+- Radix DropdownMenuItem direct click FLAKY — pinned lesson phir sahi pada:
+  `focus()` + Enter keydown.
+- MultiEdit sequential edits: pehla edit context consume kar deta hai —
+  same-file multi-edit mein overlap mat karo (partial-apply ho sakta hai).
+
+**Live count: 137 / 140** (136+1). **PHASE 6 COMPLETE (7-phase roadmap ka
+sabse bada UI investment).** Next: **Phase 7 — hardest** (font-to-outline,
+text-color, edit-pdf-text, extract-tables, deskew — har ek dedicated round).
+
+**Push:** R37 commit + push + Vercel verify.
