@@ -6487,3 +6487,71 @@ tsc 0 · lint 0 · smoke 25/25 · routes ×5 200 · sitemap 132→137 · **Brows
 - add-attachments /Names replacement drops other name trees (Dests) — sanitize covers JS/EF; documented trade-off.
 
 NEXT: Phase 3 batch 2 — converters (csv-to-pdf, json-to-pdf, xml-to-pdf, bmp-to-pdf) + finishing (table-of-contents, timestamp-pdf) per PHASE-PLAN.md.
+
+## R32 — PHASE-3 BATCH 2: edit-attachments + colors + scanner + timestamp + TOC (6 tools) (2025-11-02)
+
+**Scope (PHASE-PLAN Phase 3, batch 2/4):** chhote tools ka doosra batch — 6 naye live tools, sab apne OWN engine pe.
+
+**Tools shipped:**
+- **edit-attachments** (organize) — embedded files ka list editor: pdf.js probe surface
+  (getAttachments listing, rename inputs, delete/Undo toggles, Reset changes), serialized
+  `ops` JSON ({i,name?,del?}) → worker authority (apna tree re-walk, ops by INDEX — UI
+  names kabhi trust nahi). Rename = filespec /F+/UF in-place replacement (replacements
+  map); delete = flat-tree se drop; **sibling /Names subtrees (Dests, JS) PRESERVED**
+  (sirf EmbeddedFiles key replace hoti hai — add-attachments se better). Delete-all =
+  subtree removal. parseOps validation (bad JSON/shapes/index dropped, unsafe-name
+  sanitize). Honest errors: edat.errorNoAttachments / edat.errorNothingToDo.
+- **adjust-colors** (edit) — raster pass: brightness → contrast (c = 259(C+255)/255(259−C))
+  → saturation (luminance blend), PNG lossless rebuild (invert-colors pattern). 0/0/0 =
+  faithful copy (honest).
+- **posterize-pdf** (edit) — v' = round(v/255·(N−1))·255/(N−1) with clamp (256-overflow
+  fix), 2..32 levels, PNG rebuild.
+- **scanner-effect** (edit) — flatbed illusion: palette pass (greyscale | bw threshold 160
+  | faint-colour 75% gray + 25% colour + warm tint), sensor noise (±jitter + salt specks,
+  pure-white background skip), tilt rotate onto white sheet (cover-scale), **JPEG 0.82
+  rebuild via embedJpeg** (scanners are JPEG machines). Batch 5 files.
+- **timestamp-pdf** (edit) — StampContext (bates pipeline): local clock **read ONCE per
+  run** (batch = ek honest moment), 4 formats (datetime/date/time/iso + tz offset),
+  optional prefix label, 9 placements, 5 colours, size/opacity dials. Batch 20.
+- **table-of-contents** (organize) — 4-stage pipeline: (1) pdf.js READ (bookmarks
+  depth-capped 500 / ya har page ki first text line), (2) organizePages PLAN (blank TOC
+  pages sized like page 1 — original VECTOR pages preserved), (3) StampContext DRAW
+  (Helvetica Bold 20 heading + entries + dot leaders + right-aligned PHYSICAL numbers =
+  original + shift; Devanagari titles = Noto TTF route — font embed DRAW se PEHLE await,
+  no write() race), (4) writeOutline NAV (root + entries, /PageMode /UseOutlines).
+  Multi-page TOC (lines/page math), start|end insertion.
+
+**⚠️ BUG FOUND + FIXED (E2E ne pakda, smoke nahi):** pdf.js `getDocument({data})` buffer
+DETACH kar deta hai — TOC worker mein wahi bytes baad mein parseForOrganize ko jaati
+thi → empty → errorCorrupt. **Fix: pdfjs ko hamesha `pdfBytes.slice()` (copy) do.**
+(edit-attachments/bookmark surfaces safe the — ve File se fresh padhte hain.)
+
+**Wiring:** registry +6 (127 live / 130 total — 3 AI deferred), configs.ts +6,
+surfaces.tsx +edit-attachments, i18n edat(16)+toc(1) = **4937 = 4937** parity
+(merge-p3b2-i18n.ts), RunDetail +renamed/deleted/stamped/levels/entries/tocPages.
+
+**Quality gates:**
+- `bunx tsc --noEmit` = 0 · `bun run lint` = 0
+- `bun scripts/smoke-p3b2.ts` = **41/41 PASS** (edit-attachments round-trip byte-exact +
+  delete-wins + parseOps; timestamp formats/clamps + hex Tj marker; TOC buildTocFromEntries
+  start/end/multi-page/shifted-numbers/bookmarks/PageMode; registry 127)
+- E2E agent-browser (real bytes via base64→DataTransfer): TOC golden (4 pages, download) ·
+  edit-attachments golden (probe 2 rows, rename+delete, run) · scanner-effect golden ·
+  timestamp golden · **merge-pdf regression** (2 files, minFiles=2 note) · /hi TOC
+  Devanagari · mobile 390 no-overflow · **0 console errors**
+
+**Lessons:**
+- pdfjs data-buffer detach: own-parser ke saath mix karo to COPY do (transferable trap).
+- Dev server crash hua tha (cron-agent contention) — dev-daemon.py se restart, phir sab green.
+- `agent-browser upload` 0-byte issue confirmed — base64→File→DataTransfer→change event hi
+  reliable path hai.
+- Display pipeline `[h`/`[m` kha sakta hai tool output mein — raw bytes verify karne ke liye
+  `od -c` use karo (false-alarm configs.ts corruption investigate kiya tha).
+- merge-pdf minFiles=2 — single-file regression CTA disabled dikha sakta hai (by design).
+
+**Live count: 127 / 130** (121+6 enabled, 3 AI deferred). Phase 3: 11/~21 tools done
+(batch 1: 5 + batch 2: 6). Next: **Batch 3 converters** (pdf-to-bmp, bmp-to-pdf,
+csv-to-pdf, json-to-pdf, xml-to-pdf, pdf-to-cbz, cbz-to-pdf).
+
+**Push:** ⚠️ TOKEN WIPE #4 — .env.credentials gaya, user se fresh PAT maangna hoga
+(R27–R32 = 6 commits local pending). Vercel deploy pending push ke saath.

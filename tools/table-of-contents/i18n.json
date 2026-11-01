@@ -1,0 +1,12 @@
+{
+  "en": {
+    "toc": {
+      "errorNoEntries": "No entries found — this PDF has no bookmarks and no readable text lines. Switch the source to 'Every page', or build bookmarks first."
+    }
+  },
+  "hi": {
+    "toc": {
+      "errorNoEntries": "कोई एंट्री नहीं मिली — इस PDF में न बुकमार्क हैं, न पढ़ने लायक टेक्स्ट पंक्तियाँ। स्रोत 'हर पेज' करें, या पहले बुकमार्क बनाएँ।"
+    }
+  }
+}

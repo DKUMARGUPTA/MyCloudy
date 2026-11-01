@@ -76,6 +76,18 @@ export interface RunDetail {
   notes?: number;
   /** Outline items written into the output (bookmark-pdf). */
   bookmarks?: number;
+  /** Attachments renamed (edit-attachments). */
+  renamed?: number;
+  /** Attachments deleted (edit-attachments). */
+  deleted?: number;
+  /** The stamp text written on the pages (timestamp-pdf). */
+  stamped?: string;
+  /** Quantization levels per channel (posterize-pdf). */
+  levels?: number;
+  /** TOC entries written (table-of-contents). */
+  entries?: number;
+  /** TOC pages inserted (table-of-contents). */
+  tocPages?: number;
   /** Words of text written into the output (write-pdf). */
   words?: number;
   /** Characters of salvaged story text (publisher-to-pdf). */

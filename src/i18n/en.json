@@ -5204,5 +5204,26 @@
       "billingNotConfigured": "Payments aren't available yet.",
       "server_error": "Something went wrong. Please retry."
     }
+  },
+  "edat": {
+    "how1": "Drop a PDF — the embedded files list loads automatically.",
+    "how2": "Rename entries in place, or mark the ones you want deleted.",
+    "how3": "Run to rewrite the attachment tree — the output opens with your edits applied.",
+    "surfaceLabel": "Attachment editor",
+    "reading": "Reading the PDF and its embedded files…",
+    "probeError": "The quick reader couldn't open this file. The run may still work — try it.",
+    "emptyList": "No embedded files found in this PDF. Use Add attachments first.",
+    "countChip": "{count} attached · {kept} kept · {deleted} deleted",
+    "restoreAll": "Reset changes",
+    "renameLabel": "Attachment name: {name}",
+    "delete": "Delete",
+    "keep": "Undo",
+    "ctaEmpty": "This PDF has no embedded files to edit.",
+    "ctaNothing": "Rename or delete at least one attachment first.",
+    "errorNoAttachments": "No embedded files found in this PDF.",
+    "errorNothingToDo": "Nothing to change — rename or delete an attachment first."
+  },
+  "toc": {
+    "errorNoEntries": "No entries found — this PDF has no bookmarks and no readable text lines. Switch the source to 'Every page', or build bookmarks first."
   }
 }

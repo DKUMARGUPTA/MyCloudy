@@ -25,6 +25,7 @@ import { ExtractImagesSurface } from "../../../tools/extract-images/surface";
 import { SearchSurface } from "../../../tools/search-pdf/surface";
 import { CopyFromPdfSurface } from "../../../tools/copy-from-pdf/surface";
 import { BookmarkSurface } from "../../../tools/bookmark-pdf/surface";
+import { EditAttachmentsSurface } from "../../../tools/edit-attachments/surface";
 import { OverlaySurface } from "../../../tools/overlay-pdf/surface";
 import { CompareSurface } from "../../../tools/compare-pdf/surface";
 import { GenerateQrSurface } from "../../../tools/generate-qr-code/surface";
@@ -142,6 +143,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "search-pdf": SearchSurface,
   "copy-from-pdf": CopyFromPdfSurface,
   "bookmark-pdf": BookmarkSurface,
+  "edit-attachments": EditAttachmentsSurface,
   "overlay-pdf": OverlaySurface,
   "compare-pdf": CompareSurface,
   "generate-qr-code": GenerateQrSurface,

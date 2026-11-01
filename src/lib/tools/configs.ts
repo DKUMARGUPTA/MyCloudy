@@ -68,6 +68,12 @@ import { config as extractAttachments } from "../../../tools/extract-attachments
 import { config as invertColors } from "../../../tools/invert-colors/config";
 import { config as pdfToGreyscale } from "../../../tools/pdf-to-greyscale/config";
 import { config as pageDimensions } from "../../../tools/page-dimensions/config";
+import { config as editAttachments } from "../../../tools/edit-attachments/config";
+import { config as adjustColors } from "../../../tools/adjust-colors/config";
+import { config as posterizePdf } from "../../../tools/posterize-pdf/config";
+import { config as scannerEffect } from "../../../tools/scanner-effect/config";
+import { config as timestampPdf } from "../../../tools/timestamp-pdf/config";
+import { config as tableOfContents } from "../../../tools/table-of-contents/config";
 import { config as flattenPdf } from "../../../tools/flatten-pdf/config";
 import { config as extractImages } from "../../../tools/extract-images/config";
 import { config as searchPdf } from "../../../tools/search-pdf/config";
@@ -202,6 +208,12 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [invertColors.toolId]: invertColors,
   [pdfToGreyscale.toolId]: pdfToGreyscale,
   [pageDimensions.toolId]: pageDimensions,
+  [editAttachments.toolId]: editAttachments,
+  [adjustColors.toolId]: adjustColors,
+  [posterizePdf.toolId]: posterizePdf,
+  [scannerEffect.toolId]: scannerEffect,
+  [timestampPdf.toolId]: timestampPdf,
+  [tableOfContents.toolId]: tableOfContents,
   [flattenPdf.toolId]: flattenPdf,
   [extractImages.toolId]: extractImages,
   [searchPdf.toolId]: searchPdf,
