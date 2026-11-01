@@ -111,3 +111,22 @@ export function staticPageMetadata(pageId: StaticPageId, locale: SeoLocale = "en
   const description = locale === "hi" ? seo.descriptionHi : seo.description;
   return baseMetadata(`/${pageId}`, locale, title, description);
 }
+
+/* ------------------------- compress landings (PHASE-4) --------------- */
+
+import { getLanding } from "./landing-pages";
+
+/** Metadata for a programmatic compress landing (EN + HI mirrors). */
+export function landingMetadata(slug: string, locale: SeoLocale = "en"): Metadata | undefined {
+  const landing = getLanding(slug);
+  if (!landing) return undefined;
+  const title = locale === "hi" ? landing.title.hi : landing.title.en;
+  const description = locale === "hi" ? landing.description.hi : landing.description.en;
+  const meta = baseMetadata(`/${slug}`, locale, title, description);
+  const keywords = locale === "hi" ? landing.keywords.hi : landing.keywords.en;
+  meta.keywords = keywords.split(",").map((k) => k.trim()).filter(Boolean);
+  return meta;
+}
+
+/** Landing slugs (for static params + validation). */
+export { LANDING_SLUGS } from "./landing-pages";

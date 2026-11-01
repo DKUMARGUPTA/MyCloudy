@@ -6653,3 +6653,38 @@ Plus: asDict undefined return kar sakta hai — nullish guards (`!ocp`) everywhe
 (compress-size landing pages).
 
 **Push:** R34 commit + push (token live).
+
+## R35 — PHASE-4: programmatic SEO compress landings (6 pages × EN+HI) (2025-11-02)
+
+**Scope (PHASE-PLAN Phase 4):** intent-specific landing routes jo compress-pdf-to-size
+tool ko **target preset** ke saath kholti hain.
+
+**Shipped:**
+- **6 landing routes** × EN+HI mirror: /compress-pdf-for-email · /to-100kb ·
+  /to-200kb · /to-500kb · /to-1mb · /to-2mb. Har page: unique title/description/
+  keywords (EN+HI), 3× unique FAQs (FAQPage JSON-LD), BreadcrumbList JSON-LD,
+  hreflang pair, canonical — sab `src/lib/seo/landing-pages.ts` data module se.
+- **toolPreset chain (naya):** HashRoute + `toolPreset` → AppShell → ToolView →
+  ToolShell `presetOptions` → `defaultOptionValues()` merge. Presets: target
+  100/200/500/1000 ya custom+customKB (2048 / 5120). Mount-time only —
+  in-app navigation untouched.
+- **Router:** parseRouteKey mein landing slugs → tool route (client nav bhi
+  kaam karta hai; pehle unknown-path → home fallback tha — E2E ne pakda).
+- **HI catch-all:** resolvePath + generateStaticParams + metadata + render
+  (landing kind).
+- **Sitemap:** 6 EN entries (HI hreflang auto-generate hota hai).
+
+**Quality gates:**
+- tsc 0 · lint 0
+- E2E agent-browser: /compress-pdf-to-100kb SSR title + JSON-LD + **preset
+  "100 KB से कम" combobox preselected** + upload + run + download (0 console
+  errors, /hi 2mb page pe custom+2048 input DOM-verified) · sitemap.xml me
+  sab 6 naye URLs · sab 12 URLs 200 · mobile 390 no-overflow.
+- ⚠️ Bug found+fixed during E2E: hash-router unknown-path → home fallback
+  (parseRouteKey mein landings add kiye).
+
+**Live count: 135 / 138** tools (landings tools nahi hain — routes hain).
+**PHASE 4 COMPLETE.** Next: **Phase 5 — Multi-tool grid UI** (bentopdf
+pdf-multi-tool parity: page-grid CRUD ek unified surface me).
+
+**Push:** R35 commit + push.

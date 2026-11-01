@@ -1,5 +1,6 @@
 import { absoluteUrl, hindiPath } from "@/lib/seo/site";
 import { ALL_TOOLS, CATEGORIES } from "@/lib/tools/registry";
+import { LANDING_SLUGS } from "@/lib/seo/landing-pages";
 
 import { buildSitemapHtml, type HtmlSitemapEntry } from "./html";
 
@@ -49,6 +50,11 @@ function buildEntries(): SitemapEntry[] {
     ...ALL_TOOLS.filter((t) => t.enabled).map((t) => ({
       path: `/tool/${t.id}`,
       priority: t.popularity >= 40 ? 0.8 : 0.7,
+      freq: "weekly" as Freq,
+    })),
+    ...LANDING_SLUGS.map((slug) => ({
+      path: `/${slug}`,
+      priority: 0.7,
       freq: "weekly" as Freq,
     })),
     { path: "/about", priority: 0.4, freq: "monthly" },

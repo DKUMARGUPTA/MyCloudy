@@ -14,7 +14,13 @@ import { getTool } from "@/lib/tools/registry";
  * configs and mounts the shared ToolShell. Unknown or not-yet-live ids
  * get an honest empty state instead of a broken page.
  */
-export function ToolView({ toolId }: { toolId: string }) {
+export function ToolView({
+  toolId,
+  preset,
+}: {
+  toolId: string;
+  preset?: Record<string, string | number | boolean>;
+}) {
   const { t } = useI18n();
   const tool = getTool(toolId);
   const config = tool ? getToolConfig(tool.id) : undefined;
@@ -38,5 +44,5 @@ export function ToolView({ toolId }: { toolId: string }) {
 
   // key: navigating between tools must remount the shell (fresh state +
   // a new chain-handoff peek per tool).
-  return <ToolShell key={tool.id} tool={tool} config={config} />;
+  return <ToolShell key={tool.id} tool={tool} config={config} presetOptions={preset} />;
 }

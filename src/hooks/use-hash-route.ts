@@ -57,12 +57,26 @@ export interface HashRoute {
   toolId?: string;
   /** Static page id (about|contact|privacy|terms) for the "/<page>" view. */
   pageId?: string;
+  /**
+   * Initial option overrides for the tool workspace (SSR landing pages
+   * only — e.g. the compress-to-100kb page presetting target: "100").
+   * Applied once at shell mount; later in-app navigation ignores it.
+   */
+  toolPreset?: Record<string, string | number | boolean>;
   /** Anchor id — legacy plain-"#section" hashes only (see file header). */
   anchor?: string;
 }
 
 /** Static pages that live at the site root (mirrors SITE.staticPages). */
 const STATIC_PAGE_IDS = ["about", "contact", "privacy", "terms"] as const;
+
+/**
+ * Programmatic SEO landings (PHASE-4): "/<landing-slug>" opens the
+ * compress tool with the page's preset. Imported lazily-shaped at module
+ * scope (pure data, no server deps).
+ */
+const LANDING_TOOL = "compress-pdf-to-size";
+import { getLanding } from "@/lib/seo/landing-pages";
 
 const ROUTE_EVENT = "docopdf:route-change";
 
@@ -148,6 +162,16 @@ export function parseRouteKey(key: string): HashRoute {
     (STATIC_PAGE_IDS as readonly string[]).includes(staticId)
   ) {
     return { view: "page", pageId: staticId };
+  }
+  if (path.startsWith("/") && !path.includes("/", 1)) {
+    const landing = getLanding(staticId);
+    if (landing) {
+      return {
+        view: "tool",
+        toolId: LANDING_TOOL,
+        toolPreset: landing.preset,
+      };
+    }
   }
   return { view: "home" };
 }

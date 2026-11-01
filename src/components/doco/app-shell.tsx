@@ -241,7 +241,7 @@ export function AppShell({
               <Faq />
             </>
           ) : route.view === "tool" ? (
-            <ToolView toolId={route.toolId ?? ""} />
+            <ToolView toolId={route.toolId ?? ""} preset={route.toolPreset} />
           ) : route.view === "page" ? (
             <StaticPageView pageId={route.pageId ?? ""} />
           ) : route.view === "account" ? (

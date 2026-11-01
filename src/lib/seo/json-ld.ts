@@ -186,3 +186,49 @@ export function jsonLdScripts(items: Json[]): { key: string; html: string }[] {
     html: JSON.stringify(item).replace(/</g, "\\u003c"),
   }));
 }
+
+/* ------------------------- compress landings (PHASE-4) --------------- */
+
+import { getLanding } from "./landing-pages";
+
+/** FAQ + Breadcrumb JSON-LD for a programmatic compress landing. */
+export function landingJsonLd(slug: string, locale: SeoLocale = "en"): Json[] {
+  const landing = getLanding(slug);
+  if (!landing) return [];
+
+  const url = absoluteUrl(locale === "hi" ? `/hi/${slug}` : `/${slug}`);
+  const name = locale === "hi" ? landing.title.hi : landing.title.en;
+
+  const faq: Json = {
+    "@context": SCHEMA,
+    "@type": "FAQPage",
+    inLanguage: locale === "hi" ? "hi" : "en",
+    mainEntity: landing.faq.map((item) => ({
+      "@type": "Question",
+      name: pick(item.q, locale),
+      acceptedAnswer: { "@type": "Answer", text: pick(item.a, locale) },
+    })),
+  };
+
+  const breadcrumb: Json = {
+    "@context": SCHEMA,
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: locale === "hi" ? "होम" : "Home",
+        item: absoluteUrl(locale === "hi" ? "/hi" : "/"),
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: locale === "hi" ? "ऑप्टिमाइज़" : "Optimize",
+        item: absoluteUrl(locale === "hi" ? "/hi/tools/optimize" : "/tools/optimize"),
+      },
+      { "@type": "ListItem", position: 3, name, item: url },
+    ],
+  };
+
+  return [faq, breadcrumb];
+}

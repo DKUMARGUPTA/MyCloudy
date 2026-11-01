@@ -92,7 +92,15 @@ function nextFileId(): string {
   return `wf-${Date.now().toString(36)}-${fileSeq}`;
 }
 
-export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig }) {
+export function ToolShell({
+  tool,
+  config,
+  presetOptions,
+}: {
+  tool: ToolDef;
+  config: ToolConfig;
+  presetOptions?: Record<string, string | number | boolean>;
+}) {
   const { t, locale } = useI18n();
   const routes = useLocalizedRoutes();
   const { toast } = useToast();
@@ -128,9 +136,10 @@ export function ToolShell({ tool, config }: { tool: ToolDef; config: ToolConfig 
 
   const [phase, setPhase] = useState<ShellPhase>(() => (chainIn ? "workspace" : "landing"));
   const [files, setFiles] = useState<WorkspaceFile[]>(() => chainIn?.items ?? []);
-  const [options, setOptions] = useState<OptionValues>(() =>
-    defaultOptionValues(config.options)
-  );
+  const [options, setOptions] = useState<OptionValues>(() => ({
+    ...defaultOptionValues(config.options),
+    ...(presetOptions ?? {}),
+  }));
   const [progress, setProgress] = useState<RunProgress>({
     pct: 0,
     stage: "reading",

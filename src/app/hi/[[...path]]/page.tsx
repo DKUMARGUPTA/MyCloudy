@@ -9,15 +9,18 @@ import {
   staticPageMetadata,
   toolMetadata,
   toolsIndexMetadata,
+  landingMetadata,
 } from "@/lib/seo/metadata";
 import {
   categoryJsonLd,
   staticPageJsonLd,
   toolJsonLd,
   toolsIndexJsonLd,
+  landingJsonLd,
 } from "@/lib/seo/json-ld";
 import { ALL_TOOLS } from "@/lib/tools/registry";
 import { SITE, type StaticPageId } from "@/lib/seo/site";
+import { LANDING_SLUGS, getLanding } from "@/lib/seo/landing-pages";
 
 /**
  * Hindi mirror routes (P7-SEO): "/hi", "/hi/tools", "/hi/tools/<cat>",
@@ -33,6 +36,7 @@ type PathInfo =
   | { kind: "category"; category: string }
   | { kind: "tool"; id: string }
   | { kind: "page"; pageId: string }
+  | { kind: "landing"; slug: string }
   | { kind: "account" };
 
 function resolvePath(segments: string[] | undefined): PathInfo | null {
@@ -42,6 +46,9 @@ function resolvePath(segments: string[] | undefined): PathInfo | null {
     if (segments[0] === "account") return { kind: "account" };
     if ((SITE.staticPages as readonly string[]).includes(segments[0])) {
       return { kind: "page", pageId: segments[0] };
+    }
+    if ((LANDING_SLUGS as readonly string[]).includes(segments[0])) {
+      return { kind: "landing", slug: segments[0] };
     }
     return null;
   }
@@ -68,6 +75,7 @@ export function generateStaticParams() {
     ...CATEGORY_IDS.map((category) => ({ path: ["tools", category] })),
     ...ENABLED_TOOL_IDS.map((id) => ({ path: ["tool", id] })),
     ...SITE.staticPages.map((pageId) => ({ path: [pageId] })),
+    ...LANDING_SLUGS.map((slug) => ({ path: [slug] })),
   ];
 }
 
@@ -100,6 +108,8 @@ export async function generateMetadata({
       return toolMetadata(info.id, "hi") ?? {};
     case "page":
       return staticPageMetadata(info.pageId as StaticPageId, "hi");
+    case "landing":
+      return landingMetadata(info.slug, "hi") ?? {};
     case "account":
       return {
         title: "खाता सेटिंग्स — DocoPDF",
@@ -235,6 +245,24 @@ export default async function HindiPage({
         </>
       );
       break;
+    case "landing": {
+      const landing = getLanding(info.slug);
+      if (!landing) notFound();
+      content = (
+        <>
+          <JsonLd items={landingJsonLd(info.slug, "hi")} />
+          <AppShell
+            initialRoute={{
+              view: "tool",
+              toolId: "compress-pdf-to-size",
+              toolPreset: landing.preset,
+            }}
+            initialLocale="hi"
+          />
+        </>
+      );
+      break;
+    }
     case "account":
       content = (
         <AppShell initialRoute={{ view: "account" }} initialLocale="hi" />
