@@ -5,7 +5,8 @@
 // HARD RULE: metadata only. NEVER store PDF content or file names.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
