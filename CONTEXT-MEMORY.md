@@ -6,7 +6,7 @@
 > **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R43 — ROADMAP-CLOSE VERIFICATION (2025-11-02): sab kuch DURABLE + VERIFIED.** R42 push hua tha hi nahi (remote R41 pe atka) — push kiya: main d0c55e8..18c4e11 + 28 tags, **Vercel prod READY @ 18c4e11** (www.docopdf.com = full 142-tool build). Credentials `.env.credentials` me persistent (chmod 600, push script auto-load, encrypted vault GitHub pe). QA sweep: edit-pdf-text FULL GOLDEN PATH (search→match cards→replace→“2 पंक्तियाँ उसी जगह दोबारा लिखीं”→result) + workflow-builder + multi-tool + SEO landing + mobile 390 clean + fresh 0 console errors. smoke-p7e re-run 30/30, tsc 0, lint 0. **142 live / 145. P0✓ P1✓ P2✓ P3✓ P4✓ P5✓ P6✓ P7✓ — COMPLETE.** Pichla: R42.
+> **Updated:** **R44 — LAUNCH-OPS COMPLETE (2025-11-02): TURSO LIVE IN PROD.** Prod DB pehle fully degraded tha (serverless FS read-only, DATABASE_URL env hi nahi). Dual-mode db.ts: TURSO_* envs → `@prisma/adapter-libsql/web` (pure-HTTP), warna classic SQLite (local zero-change). Key-gated `/api/admin/db-migrate` (one-time env key via Vercel API → redeploy → 24/24 DDL applied → 15/15 tables → key deleted + purge redeploy). **E2E PROOF: feedback write Turso me ✓, signup→session→delete→login-block FULL AUTH LIFECYCLE prod me ✓ (P10 accounts live).** LAUNCH-OPS sab items done. Pichla: R43.
 
 ---
 
@@ -21,13 +21,13 @@
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |
 | Static pages (PRD §9) | **LIVE** — about/contact/privacy/terms wired end-to-end (footer + `#/page/<id>` + i18n 166×2) |
 | Server | Next.js 16.1.3, port 3000 (daemon: `python3 scripts/dev-daemon.py`), dev.log clean |
-| **Production** | **https://www.docopdf.com** LIVE (Vercel project `mycloudy`, main→prod auto-deploy; READY @ 18c4e11 R43-verified; DB endpoints degrade gracefully — Turso future) |
+| **Production** | **https://www.docopdf.com** LIVE — Vercel project `mycloudy`, main→prod auto-deploy; **TURSO DB LIVE (R44)**: accounts/feedback/contact/sessions sab durable (libSQL adapter); DB endpoints degrade gracefully agar Turso down |
 | GitHub | `DKUMARGUPTA/MyCloudy` — main fully pushed @ 18c4e11 + 28 tags; zero unpushed (R43 verify) |
 | Quality gates | tsc **0** errors · eslint 0 · battery **110/110 ALL PASS** (P7-a a11y-names + P7-b magic-bytes added; 108 tool smokes + 2 P7 gates) |
 | Privacy | 100% on-device (Mode D) — zero external requests |
 | i18n | English + हिंदी — **4915 = 4915** flat-leaf keys parity (R26: +77 account/pricing/billing, −3 retired pro.* placeholder) |
 | Mini-services | convert (port 3031), request-sign (3032) — double-fork daemonizer se start |
-| Tokens | ✅ **PERSISTENT (R43)**: `.env.credentials` (chmod 600, gitignored) — GH PAT + Vercel + Turso URL live, push script auto-loads; encrypted backup `secrets/vault.enc` GitHub pe. Sirf Turso JWT missing (truncated) — Turso use hone par owner se ek baar maangna. Disk rollback ho to vault.enc + VAULT_PASSPHRASE se restore |
+| Tokens | ✅ **PERSISTENT (R43)**: `.env.credentials` (chmod 600, gitignored) — GH PAT + Vercel live, push script auto-loads; encrypted backup `secrets/vault.enc` GitHub pe. **R44: Turso JWT sirf Vercel env me SET hai (verified live — prod adapter se connect ho raha); local copy adhura hai lekin zaroorat nahi (local = SQLite fallback).** Disk rollback ho to vault.enc + VAULT_PASSPHRASE se restore |
 
 ---
 

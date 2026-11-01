@@ -7075,3 +7075,46 @@ sabse pehle (disk ephemeral hai, ek baar wipe ho chuka).**
 - **Cleanup**: QA fixtures (`public/__qa.pdf`, `__qa2.pdf`) removed.
 
 **Status: P0-P7 sab complete + pushed + prod LIVE + verified. Live 142/145.**
+
+## R44 — LAUNCH-OPS COMPLETE: Turso migration live in prod (2025-11-02)
+
+**LAUNCH-OPS ka aakhri item — prod DB pehle se FULLY DEGRADED tha (Vercel pe
+DATABASE_URL env hi nahi tha, serverless FS read-only = SQLite impossible).
+Is round me Turso adapter wire hua aur auth/feedback/contact SAB prod me
+durable ho gaye.**
+
+- **Discovery**: Vercel project env audit → TURSO_DATABASE_URL +
+  TURSO_AUTH_TOKEN (real JWT) + AUTH_SECRET pehle se SET the — sirf consume
+  hone ka intezaar. Remote main synced (9c7c89f); gitForkProtection ON;
+  sitemap robots.txt + hreflang + OG image + GA4 consent-gated sab pehle se
+  live — Turso hi ek missing piece tha.
+- **Dual-mode `src/lib/db.ts`** (LAUNCH-OPS design): TURSO_* envs + real-JWT
+  guard (`eyJ…` + >80 chars — placeholder kabhi adapter trigger nahi karega)
+  → PrismaClient through `@prisma/adapter-libsql/web` (pure-HTTP client, no
+  native bindings — serverless-safe). Warna classic SQLite PrismaClient —
+  local sandbox me ZERO behavior change (26 routes / smokes unaffected).
+  Prisma schema: `previewFeatures = ["driverAdapters"]` (classic path bhi
+  verified working after regen).
+- **`/api/admin/db-migrate`** (key-gated): GET = Turso connectivity +
+  table-presence report; POST = idempotent DDL apply (`CREATE … IF NOT
+  EXISTS`, 24 statements). Guard: `x-admin-key` header === env
+  `DB_MIGRATE_KEY` (timing-safe compare; unset key → **404 quiet** — route
+  ki existence hi disclose nahi hoti). Error sanitization (URL/token kabhi
+  response me nahi). DDL source: `src/lib/db-turso-ddl.ts` (prisma migrate
+  diff --from-empty, idempotent-transformed).
+- **Prod ops sequence (Vercel API se)**: one-time `DB_MIGRATE_KEY` (51-char
+  random) env create → gitSource redeploy (env changes need redeploy to
+  take effect) → GET migrate: **Turso CONNECTED, 15/15 tables PEHLE SE
+  present** (kisi pichhle session ne Turso me schema bana diya tha) → POST
+  migrate: **24/24 applied, 0 failed, complete:true** (missing indexes bhi
+  cover) → **E2E PROD VERIFICATION**: feedback POST `{"ok":true,"stored":true}`
+  (Turso WRITE ✓) · announcements GET ✓ · **FULL AUTH LIFECYCLE**: signup
+  201 (User row in Turso) → /api/auth/me session ✓ → delete ✓ → session
+  invalidated ✓ → re-login 401 ✓ (P10 accounts stack ab prod me poora
+  live) → env key DELETE + purge redeploy → migrate route wapas 404 ✓.
+- **Local verification**: tsc 0 · lint 0 · dev daemon restart ke baad
+  SQLite fallback intact (feedback POST stored ✓, announcements ✓, migrate
+  no-key 404 ✓). QA user + one-time key sab cleaned up.
+
+**LAUNCH-OPS ab COMPLETE: Turso ✓ (ye round) · domain ✓ · forkProtection ✓ ·
+analytics ✓ · SEO pass ✓ · regression ✓. Live 142/145 tools + prod DB live.**

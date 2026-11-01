@@ -30,8 +30,13 @@ const globalForPrisma = globalThis as unknown as {
 const TURSO_URL = process.env.TURSO_DATABASE_URL?.trim()
 const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN?.trim()
 
+/** A real Turso token is a JWT (`eyJ…`); rejects placeholder/legacy values. */
+function tursoTokenLooksReal(): boolean {
+  return !!TURSO_TOKEN && TURSO_TOKEN.startsWith('eyJ') && TURSO_TOKEN.length > 80
+}
+
 function createDb(): PrismaClient {
-  if (TURSO_URL && TURSO_TOKEN && TURSO_URL.startsWith('libsql://')) {
+  if (TURSO_URL && TURSO_URL.startsWith('libsql://') && tursoTokenLooksReal()) {
     // Adapter v6.19 API: pass a Config; it creates the HTTP client itself.
     const adapter = new PrismaLibSQL({
       url: TURSO_URL,
