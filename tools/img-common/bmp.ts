@@ -85,9 +85,10 @@ export function decodeBmp(bytes: Uint8Array): RawImage {
       const di = dst + x * 4;
       if (bpp === 8) {
         const idx = bytes[src + x]! * 4;
-        rgba[di] = palette![idx]!;
-        rgba[di + 1] = palette![idx + 1]!;
-        rgba[di + 2] = palette![idx + 2]!;
+        // Palette entries are BGRX: [B, G, R, 0].
+        rgba[di] = palette![idx + 2]!; // R
+        rgba[di + 1] = palette![idx + 1]!; // G
+        rgba[di + 2] = palette![idx]!; // B
         rgba[di + 3] = 255;
       } else {
         const si = src + x * bytesPerPixel;

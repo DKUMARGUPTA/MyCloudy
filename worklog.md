@@ -6555,3 +6555,44 @@ csv-to-pdf, json-to-pdf, xml-to-pdf, pdf-to-cbz, cbz-to-pdf).
 
 **Push:** ⚠️ TOKEN WIPE #4 — .env.credentials gaya, user se fresh PAT maangna hoga
 (R27–R32 = 6 commits local pending). Vercel deploy pending push ke saath.
+
+## R33 — PHASE-3 BATCH 3: converters ×7 + own BMP/PNG codecs (2025-11-02)
+
+**Scope (PHASE-PLAN Phase 3, batch 3/4):** converter batch — 7 naye live tools, sab apne OWN engine pe, ZERO canvas dependency pure paths.
+
+**Tools shipped:**
+- **csv-to-pdf** (convert-to) — RFC-4180 parser (quoted fields, embedded commas/newlines/escaped quotes; comma/semicolon/tab) + print-grade table (measured columns with 32% cap + proportional shrink, bold header REPEATED on continuation pages, zebra rows, hairline grid, ellipsis fit). Control chars in cells → space (WinAnsi guard). A4/Letter/A3 × portrait/landscape. Caps: 20k rows / 60 cols honest errors.
+- **json-to-pdf** (convert-to) — JSON.parse validation (honest invalid error) → 2-space pretty → Courier mono render with syntax colouring (keys=blue, strings=green, punctuation=gray; regex run tokenizer), char-grid wrapping, 200-page cap.
+- **xml-to-pdf** (convert-to) — nesting-aware pretty-printer (tag tokenizer, depth indent, decl/comments/self-close aware, text nodes own lines; no tree build) + same mono renderer. looksLikeXml guard.
+- **pdf-to-bmp** (convert-from) — pdfjs render → **apna 24-bit BMP encoder** (bottom-up, 4-byte row padding, 72-DPI header).
+- **bmp-to-pdf** (convert-to) — **apna BMP decoder**: BI_RGB 8-bit palettised / 24 / 32-bit, top-down (negative height) + bottom-up, V4/V5 headers; **apna PNG encoder** (filter-0 rows + zlibSync IDAT) → embedPng lossless. 96-DPI pt sizing.
+- **pdf-to-cbz** (convert-from) — comic archive: pdfjs JPEG render (DPI+quality dials) → zipSync level-1 (JPEG already compressed) → .cbz (application/vnd.comicbook+zip).
+- **cbz-to-pdf** (convert-to) — unzipSync (apna inflate) → magic-byte format sniff (rename-proof) → JPEG/PNG byte-direct embed, BMP via apna decoder, __MACOSX junk skip, **natural sort** (page-2 < page-10, localeCompare numeric), 2000-page cap, honest per-file errors.
+
+**⚠️ ASLI ENGINE BUGS SMOKE NE PAKDE (2):**
+1. **PNG encoder IDAT raw-deflate tha** — PNG spec RFC-1950 zlib stream maangta hai (CMF/FLG header + adler32 trailer). Fix: `deflate()` → `zlibSync()`. (embedPng ka parser reject kar deta tha — smoke stage-5 crash tha.)
+2. **BMP decoder palette path R/B SWAP** — palette entries BGRX hain `[B,G,R,0]` par maine `rgba[di]=palette[idx]` (B) likha tha. Fix: `rgba[di]=palette[idx+2]` (R), `rgba[di+2]=palette[idx]` (B). 24/32-bit path pe asli BGR→RGB tha, sirf 8-bit palettised path foot tha.
+
+**Shared modules:** `tools/img-common/bmp.ts` (codec, pure Node-testable), `tools/img-common/png-encode.ts`, `tools/mono-common/engine.ts` (mono layout + prettyJson + prettyXml), `tools/csv-to-pdf/engine.ts`.
+
+**Wiring:** registry +7 (134 live / 137 total), configs +7, i18n c2p/j2p/x2p/b2p/c2d (18 leaves ×2) = **4955 = 4955** parity, RunDetail n/a (standard fields).
+
+**⚠️ Token wipe #4 RECOVERED:** user ne fresh PAT diya — **R25–R32 (10 commits) + 28 tags PUSHED** (main @ 3f213a1). Vercel auto-deploy triggered. .env.credentials restored (chmod 600, gitignored, leak-scan clean).
+
+**Quality gates:**
+- `bunx tsc --noEmit` = 0 · `bun run lint` = 0
+- `bun scripts/smoke-p3b3.ts` = **50/50 PASS** (csv parse RFC-4180 + render + multi-page + oracle; json/xml pretty + courier markers; BMP codec round-trip + top-down + palette + 3 honest errors; bmp→pdf pipeline; cbz zip round-trip + natural order; registry 134)
+- E2E agent-browser: csv-to-pdf golden (125B CSV → download) · cbz-to-pdf golden (4 pages, junk skipped) · pdf-to-bmp golden (3 BMPs) · json-to-pdf golden · /hi CBZ Devanagari + mobile 390 no-overflow
+- ⚠️ Pre-existing (merge-pdf pe bhi): 3 hydration attribute-mismatch warnings dev mode mein — naye tools ka regression NAHI (home clean). Production build silent.
+
+**Lessons:**
+- **CreateContext show-text hex UPPERCASE** (`<4E616D65>`), StampContext LOWERCASE — smokes me marker helpers alag casing chahiye.
+- CreateContext content streams object-stream/compressed — raw latin1 search JHOOTH; allContent (parsePdf + decodeStreamBytes + listPages walk) use karo.
+- MultiEdit partial-apply idiosyncrasy: fail ke baad file re-read karke exact bytes target karo (escaped quotes `\"` file mein literal backslash-quote hai).
+- 8-bit BMP row stride: 2px → 4 bytes (padding) — palette craft me top row +4 pe hai, +8 nahi.
+- ImageData.data Uint8ClampedArray hai — encodeBmp ko dena hai to `new Uint8Array(len) + .set()` copy.
+- Dev server dobara crash (cron contention) — dev-daemon.py restart se green.
+
+**Live count: 134 / 137** (127+7 enabled, 3 AI deferred). Phase 3: 18 tools done (b1:5 + b2:6 + b3:7). Next: **Batch 4 finishing** (font-to-outline, pdf-layers).
+
+**Push:** R33 commit ke saath push (token live).

@@ -85,7 +85,11 @@ async function run(request: WorkerRunRequest): Promise<void> {
     page.cleanup();
 
     const image = context.getImageData(0, 0, width, height);
-    const bmp = encodeBmp({ width, height, rgba: image.data });
+    // ImageData.data is Uint8ClampedArray — copy into a plain Uint8Array
+    // for the BMP encoder.
+    const rgba = new Uint8Array(image.data.length);
+    rgba.set(image.data);
+    const bmp = encodeBmp({ width, height, rgba });
 
     outputs.push({
       name: `${safeBaseName(file.name)}-${String(pageNumber).padStart(3, "0")}.bmp`,

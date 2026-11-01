@@ -80,10 +80,10 @@ deskew-pdf (raster rotation detection + content transform) · text-color (existi
 - [x] Phase 0 — PHASE-PLAN.md (ye file)
 - [x] Phase 1 — 18 tools (A / B / C) — COMPLETE 2025-11-02 (smokes 80+60+42, live count 118)
 - [x] Phase 2 — prepare-pdf-for-ai — COMPLETE 2025-11-02 (smoke 23/23 + E2E JSON verified)
-- [ ] Phase 3 — chhote tools — **IN PROGRESS: b1 (5) + b2 (6) = 11 done, live 127/130**
+- [ ] Phase 3 — chhote tools — **IN PROGRESS: b1 (5) + b2 (6) + b3 (7) = 18 done, live 134/137**
   - [x] Batch 1 — add/extract-attachments · invert-colors · pdf-to-greyscale · page-dimensions (R31, smoke 25/25)
   - [x] Batch 2 — edit-attachments · adjust-colors · posterize-pdf · scanner-effect · timestamp-pdf · table-of-contents (R32, smoke 41/41 + 5 E2E goldens; ⚠️ pdfjs data-detach → .slice() fix)
-  - [ ] Batch 3 — converters: pdf-to-bmp · bmp-to-pdf · csv-to-pdf · json-to-pdf · xml-to-pdf · pdf-to-cbz · cbz-to-pdf
+  - [x] Batch 3 — converters: csv/json/xml-to-pdf · pdf-to-bmp · bmp-to-pdf · pdf-to-cbz · cbz-to-pdf (R33, smoke 50/50; ⚠️ PNG IDAT zlib + BMP palette R/B engine bugs FIXED; own BMP/PNG codecs shipped)
   - [ ] Batch 4 — finishing: font-to-outline · pdf-layers (+ text-color agar feasible)
 - [ ] Phase 4 — SEO landing pages
 - [ ] Phase 5 — multi-tool grid

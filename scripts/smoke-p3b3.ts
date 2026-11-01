@@ -28,7 +28,7 @@ import {
 } from "../tools/mono-common/engine";
 import { decodeBmp, encodeBmp } from "../tools/img-common/bmp";
 import { encodePng } from "../tools/img-common/png-encode";
-import { CreateContext, encodeWinAnsiHex, latin1 } from "../src/lib/own/pdf";
+import { CreateContext, decodeStreamBytes, encodeWinAnsiHex, latin1, listPages, parsePdf, resolve } from "../src/lib/own/pdf";
 import { zipSync, unzipSync } from "../src/lib/own/zip";
 import { liveToolCount } from "../src/lib/tools/registry";
 
@@ -47,9 +47,38 @@ function check(label: string, ok: boolean, detail = ""): void {
 
 const latin1All = (b: Uint8Array) => latin1(b, 0, b.length);
 const hexMarker = (text: string) =>
-  `<${encodeWinAnsiHex(text, "helvetica").toLowerCase()}>`;
+  `<${encodeWinAnsiHex(text, "helvetica").toUpperCase()}>`;
 const hexCourier = (text: string) =>
-  `<${encodeWinAnsiHex(text, "courier").toLowerCase()}>`;
+  `<${encodeWinAnsiHex(text, "courier").toUpperCase()}>`;
+
+/** All decoded content streams of a doc, joined (object-stream safe). */
+function allContent(bytes: Uint8Array): string {
+  const doc = parsePdf(bytes);
+  const parts: string[] = [];
+  const walk = (o: unknown): void => {
+    if ((o as { k?: string })?.k === "ref") {
+      walk(doc.getObject((o as { num: number }).num));
+      return;
+    }
+    if ((o as { k?: string })?.k === "stream") {
+      const st = o as { raw: Uint8Array; m: Map<string, unknown> };
+      try {
+        const dec = decodeStreamBytes(st.raw, st.m as Map<never, never>);
+        parts.push(latin1All(dec));
+      } catch {
+        // undecodable — skip
+      }
+      return;
+    }
+    if ((o as { k?: string })?.k === "arr") {
+      for (const item of (o as { items: unknown[] }).items) walk(item);
+    }
+  };
+  for (const page of listPages(doc)) {
+    walk(resolve(doc, page.dict.get("Contents")));
+  }
+  return parts.join("\n");
+}
 
 const A4 = { width: 595.28, height: 841.89 };
 
@@ -88,7 +117,7 @@ console.log("1. csv-to-pdf — parse + table render");
   check("csv: 1 page for 4 rows", layout.pages === 1, String(layout.pages));
   check("csv: 3 columns", layout.columns === 3, String(layout.columns));
   const saved = ctx.write();
-  const raw = latin1All(saved);
+  const raw = allContent(saved);
   check("csv: header drawn (bold hex)", raw.includes(hexMarker("Name")));
   check("csv: cell drawn", raw.includes(hexMarker("no quotes")) || raw.includes(hexMarker("Plain")));
   const oracle = await PDFDocument.load(saved);
@@ -110,11 +139,11 @@ console.log("1. csv-to-pdf — parse + table render");
     orientation: "portrait",
   });
   const saved2 = ctx2.write();
-  const raw2 = latin1All(saved2);
+  const raw2 = allContent(saved2);
   check("csv: multi-page (120 rows)", layout2.pages >= 2, String(layout2.pages));
   const oracle2 = await PDFDocument.load(saved2);
   check("csv: oracle pages match", oracle2.getPageCount() === layout2.pages);
-  check("csv: header repeats (marker count ≥ 2)", raw2.split(hexMarker("Row 1")).length - 1 >= 2 || raw2.includes(hexMarker("Value 120")));
+  check("csv: last row drawn on page 2+", raw2.includes(hexMarker("Value 120")));
 }
 
 /* ------------------------------------------------------------------ */
@@ -153,7 +182,7 @@ console.log("2. json-to-pdf — pretty + mono render");
     colorize: true,
   });
   const saved = ctx.write();
-  const raw = latin1All(saved);
+  const raw = allContent(saved);
   check("json: 1 page", layout.pages === 1, String(layout.pages));
   check("json: courier marker", raw.includes(hexCourier('"name"')) || raw.includes(hexCourier('"DocoPDF"')));
   const oracle = await PDFDocument.load(saved);
@@ -180,7 +209,8 @@ console.log("3. xml-to-pdf — pretty + detection");
   const pretty = prettyXml(xml);
   check("xml: looksLikeXml", looksLikeXml(xml) && !looksLikeXml("plain text"));
   check("xml: decl on own line", pretty.startsWith('<?xml version="1.0"?>'));
-  check("xml: nested indent", pretty.includes('\n  <item id="1">Alpha</item>'));
+  check("xml: nested indent", pretty.includes('\n  <item id="1">'));
+  check("xml: text node on own line", pretty.split('\n').some((l) => l.trim() === "Alpha"));
   check("xml: two items indented", (pretty.match(/^  <item/gm) ?? []).length === 2);
 
   const lines = pretty.split("\n");
@@ -194,7 +224,7 @@ console.log("3. xml-to-pdf — pretty + detection");
   });
   const saved = ctx.write();
   check("xml: rendered 1 page", layout.pages === 1);
-  const raw = latin1All(saved);
+  const raw = allContent(saved);
   check("xml: courier marker", raw.includes(hexCourier("<root>")) || raw.includes(hexCourier("<item id=\"1\">")));
 }
 
@@ -211,7 +241,7 @@ console.log("4. bmp codec — encode/decode round trip");
   ]);
   const bmp = encodeBmp({ width: w, height: h, rgba });
   check("bmp: BM signature", bmp[0] === 0x42 && bmp[1] === 0x4d);
-  check("bmp: size field", bmp.length === 54 + 8 * 2, String(bmp.length)); // rows padded 3px*3B=9→12? no: 3px*3B=9→pad to 12
+  check("bmp: size field (54 + 2 padded rows)", bmp.length === 54 + 12 * 2, String(bmp.length)); // 3px*3B=9 → row padded to 12
   const decoded = decodeBmp(bmp);
   check("bmp: decode dims", decoded.width === w && decoded.height === h);
   check(
@@ -264,13 +294,16 @@ console.log("4. bmp codec — encode/decode round trip");
   pal[palStart + 4 * 1] = 255; // entry 1 B
   // Bottom-up: stored row 0 = image bottom. Index pixels.
   pal[dataOffset] = 0; pal[dataOffset + 1] = 1;
-  pal[dataOffset + 8] = 1; pal[dataOffset + 9] = 0;
+  // Top row sits at +4 (row stride is 4 — 2 pixels padded to 4 bytes).
+  pal[dataOffset + 4] = 1; pal[dataOffset + 5] = 0;
   const palDecoded = decodeBmp(pal);
   check("bmp: palette dims", palDecoded.width === 2 && palDecoded.height === 2);
   check(
     "bmp: palette colors mapped",
-    palDecoded.rgba[0] === 255 && palDecoded.rgba[4] === 0 &&
-    palDecoded.rgba[9] === 255 && palDecoded.rgba[8] === 0
+    palDecoded.rgba[0] === 0 && palDecoded.rgba[2] === 255 &&
+    palDecoded.rgba[4] === 255 && palDecoded.rgba[6] === 0 &&
+    palDecoded.rgba[8] === 255 && palDecoded.rgba[10] === 0 &&
+    palDecoded.rgba[12] === 0 && palDecoded.rgba[14] === 255
   );
 
   // Honest errors.

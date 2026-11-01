@@ -1,4 +1,4 @@
-import { crc32, deflate } from "@/lib/own/zip";
+import { crc32, zlibSync } from "@/lib/own/zip";
 
 /**
  * Minimal PNG encoder (PHASE-3 batch 3) — 8-bit RGBA, no interlace —
@@ -55,7 +55,7 @@ export function encodePng(
 
   const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const ihdrChunk = chunk("IHDR", ihdr);
-  const idatChunk = chunk("IDAT", deflate(raw, 6));
+  const idatChunk = chunk("IDAT", zlibSync(raw, 6));
   const iendChunk = chunk("IEND", new Uint8Array(0));
 
   const out = new Uint8Array(
