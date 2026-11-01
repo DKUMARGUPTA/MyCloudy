@@ -6,7 +6,7 @@
 > **⚠️ R22+R23 (2025-10-30):** 3 AI tools (`chat-with-pdf`, `summarize-pdf`, `translate-pdf`) owner decision se **DEFERRED** hain — `enabled: false`, phase P3, R22 warning UI REMOVED. **Kabhi auto re-enable mat karna** — re-enable plan 08-PLAN §Deferred mein hai (Vercel AI env keys → prod verify → enabled:true flip → GSC resubmit). Registry `aiDependent` flags + `AI_DEPENDENT_TOOLS` + API routes (honest 503) retained. Live count = 97/100.
 > Detailed technical handover = `/home/z/my-project/worklog.md` (har round ka full entry wahan append hota hai).
 > Product PRD (WHAT to build) = `/home/z/my-project/upload/DocoPDF-PRD-v2.md`
-> **Updated:** **R37 — PHASE 6 COMPLETE: Workflow Builder LIVE (2025-11-02)** — visual pipeline editor as `workflow-builder` tool (noFile surface): 68-tool chainable library (auto-built from registry; page-grid family excluded — fileIds options), sequential toolRunner runs (Blob→File chain, memory-only), per-step live progress + cancel, presets ×3 (emailReady = compress→watermark→page-numbers), save/load localStorage + export/import JSON. E2E golden: preset→upload→run→3 steps done→numbered-watermarked-compressed download; save→reload→load-back; /hi + mobile clean. **137 live / 140.** Credentials TRIPLE-SAVED: .env.credentials + ~/.mycloudy-credentials + secrets/vault.enc (AES-256, committed; passphrase in chat/home). Push script auto-loads. Next: **Phase 7 — hardest** (font-to-outline, text-color, edit-pdf-text, extract-tables, deskew — dedicated rounds). Pichla: R36.
+> **Updated:** **R38 — PHASE-7 START: deskew-pdf LIVE (2025-11-02)** — auto-tilt detection (ocr-pdf ka Hough-lite projection-profile engine DIRECT reuse: detectSkewAngle/rgbaToGray) + vector straighten (own ComposeContext Form-XObject centre-rotation; keep/grow sizing; identity only when correction=0 AND /Rotate norm=0 — rotate-norm pages always centre-path). RunDetail.straightenedPages chip + i18n. smoke-p7a 44/44 + E2E golden (2-page fixture: +4° tilted page → “1 टेढ़ा पेज अपने-आप सीधा हुआ”). **138 live / 141.** 27 unpushed commits vault-token se push (remote HEAD f0963db, Vercel prod READY). Next: **R39 extract-tables → R40 text-color → R41 font-to-outline → R42 edit-pdf-text** (Phase-7 dedicated rounds). Pichla: R37.
 
 ---
 
@@ -14,8 +14,8 @@
 
 | Metric | Value |
 |---|---|
-| Registry | **140 tools registered — 137 LIVE + 3 AI DEFERRED** (R37: workflow-builder added; AI trio re-enable plan 08-PLAN §Deferred) |
-| **LIVE tools** | **137** (3 AI deferred — R23 owner decision) |
+| Registry | **141 tools registered — 138 LIVE + 3 AI DEFERRED** (R38: deskew-pdf added; AI trio re-enable plan 08-PLAN §Deferred) |
+| **LIVE tools** | **138** (3 AI deferred — R23 owner decision) |
 | Own PDF engine (P6) | **P6-a..z + P6-v-b + P6-END — MIGRATION COMPLETE ✅** — ALL 60 tool families pdf-lib-free, **0 runtime importers** (pdf-lib = devDependency only: smoke fixtures + oracles) |
 | Master plan | **MASTER-PLAN-1** worklog mein recorded (P6-t..z → P7 → LAUNCH-OPS → P10 → P11) + discipline contract (worklog+memory+push+Vercel per phase; battery on EXACT commit tree) |
 | Editor (Phase 8) | COMPLETE 6/6 (edit/annotate/text-edit+F&R/form fields/mobile polish) |

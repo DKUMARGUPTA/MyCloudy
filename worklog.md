@@ -6789,3 +6789,61 @@ sabse bada UI investment).** Next: **Phase 7 — hardest** (font-to-outline,
 text-color, edit-pdf-text, extract-tables, deskew — har ek dedicated round).
 
 **Push:** R37 commit + push + Vercel verify.
+
+## R38 — PHASE-7 R38: deskew-pdf (auto-tilt detection + vector straighten) (2025-11-02)
+
+**Phase 7 (hardest engine tools) ka pehla dedicated round.** 27 unpushed
+commits pehle vault-token se push (remote HEAD = f0963db, 28 tags, Vercel
+prod READY, www.docopdf.com 200).
+
+**deskew-pdf (organize, icon AlignCenterHorizontal, pop 12):**
+- **engine.ts** (pure, bun-smokeable): `deskewSheetOps` — Form-XObject
+  rotation via own ComposeContext. "keep" (default): sheet keeps visual
+  size, form rotates about CENTRE (3-translate sandwich: sheet-centre →
+  rotate totalTheta → back to form origin). "grow": rotate-custom ka
+  rotatedDims+placement reuse (bbox growth). **Identity ONLY when
+  correction=0 AND /Rotate norm=0** (rotate-norm pages hamesha
+  centre-rotation path — totalTheta=norm alone = exact 1:1 visual,
+  bbox EXACT fit at 90/270 — self-review caught the bug: plain-draw
+  identity /Rotate-90 pages ka content clip kar deta).
+  `correctionFromDetection` gates: samples<2 → 0, |angle|<0.3 noise → 0,
+  |angle|>10 (rotated-not-skewed) → 0. `rotateNorm` -90→270 normalize.
+- **Detection reuse**: ocr-pdf ka Hough-lite projection-profile engine
+  (`detectSkewAngle` + `rgbaToGray`, R4-b battle-tested) DIRECT import —
+  zero duplication. Convention inherited: positive = CW tilt (right edge
+  lower) → correction = visual CCW = PDF +A.
+- **worker.ts**: 2-phase — `detectPageAngles` (pdf.js render @~110 DPI
+  capped 1400px, RenderPixelBudget guard, **bytes.slice()** pdfjs-detach
+  trap R32) → sparse corrections map; `applyDeskew` (own ComposeContext:
+  per-page embed + deskewSheetOps + addSheet; unselected/straight pages
+  identity pass-through — NO page ever dropped). `runDeskewPdf` =
+  resolveDeskewOptions + parsePageSpec (honest tool.errorInvalidPages
+  BEFORE raster) + both phases.
+- **RunDetail.straightenedPages** (protocol + result-view chip +
+  i18n `result.straightenedPages` EN/HI) — ocr-pdf ke deskewedPages se
+  alag neutral wording ("tilted page straightened automatically").
+- Registry def + configs wiring; default options surface (pages + sizing
+  select); chainToolIds rotate-custom/crop-pdf/ocr-pdf.
+
+**Quality gates:** tsc 0 · lint 0 · **smoke-p7a 44/44** (geometry math
+numeric cos/sin ±1e-3, gates, rotateNorm, synthetic tilted planes ±3°/
+−2.5° detection via deskew gate, applyDeskew pdf-lib fixture 2-page
+[2.5,0] — keep sizes/decoded-ops/straightened=1/grow-bbox, invalid-pages
+error, 138 live, i18n parity). **E2E GOLDEN**: 2-page fixture (page 1
+text rows +4° pdf-lib rotate, page 2 straight) → upload (base64→
+DataTransfer) → Run → **"1 टेढ़ा पेज अपने-आप सीधा हुआ" chip + डाउनलोड** ·
+mobile 390 MOBILE_OK · /hi h1 ✓ · console = 5 pre-existing Radix
+hydration only (R24 baseline). 
+
+**Lessons:**
+- `liveToolCount` registry se VALUE export hai (138), function nahi —
+  smoke mein direct use.
+- Bun smoke kabhi-kabhi sandbox contention se transient hang (second run
+  clean pass) — pehle zombie-process check (ps), phir retry.
+- pdfjs-dist top-level import safe nahi bhi ho sakta heavy chains pe —
+  worker-lib already lazy (`await import`) rakhta hai, pattern follow karo.
+
+**Live count: 138 / 141.** Next: R39 extract-tables (text-position
+clustering → CSV), R40 text-color, R41 font-to-outline, R42 edit-pdf-text.
+
+**Push:** R38 commit + push + Vercel verify.

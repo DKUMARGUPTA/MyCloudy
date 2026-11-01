@@ -438,6 +438,7 @@
     "imagesEmbedded": "{n, plural, =1 {1 तस्वीर जुड़ी} other {# तस्वीरें जुड़ीं}}",
     "imagesSkipped": "{n, plural, =1 {1 तस्वीर छोड़ी} other {# तस्वीरें छोड़ी गईं}} — रिमोट या असमर्थित",
     "deskewedPages": "{n, plural, =1 {1 टेढ़ा पेज OCR से पहले सीधा किया} other {# टेढ़े पेज OCR से पहले सीधे किए}}",
+    "straightenedPages": "{n, plural, =1 {1 टेढ़ा पेज अपने-आप सीधा हुआ} other {# टेढ़े पेज अपने-आप सीधे हुए}}",
     "dedupedImages": "{n, plural, =1 {1 डुप्लिकेट तस्वीर मिलाई} other {# डुप्लिकेट तस्वीरें मिलाईं}}",
     "dedupeBytesSaved": "{bytes} डुप्लिकेट तस्वीर डेटा हटाया",
     "ocrSendInvoice": "इनवॉइस में भेजें",

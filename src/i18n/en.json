@@ -434,6 +434,7 @@
     "imagesEmbedded": "{n, plural, =1 {1 image embedded} other {# images embedded}}",
     "imagesSkipped": "{n, plural, =1 {1 image skipped} other {# images skipped}} — remote or unsupported",
     "deskewedPages": "{n, plural, =1 {1 tilted page deskewed before OCR} other {# tilted pages deskewed before OCR}}",
+    "straightenedPages": "{n, plural, =1 {1 tilted page straightened automatically} other {# tilted pages straightened automatically}}",
     "dedupedImages": "{n, plural, =1 {1 duplicate image merged} other {# duplicate images merged}}",
     "dedupeBytesSaved": "{bytes} of duplicate image data removed",
     "ocrSendInvoice": "Send to invoice",

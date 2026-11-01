@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  AlignCenterHorizontal,
   AlignLeft,
   ArrowRightLeft,
   ArrowUpDown,
@@ -676,6 +677,25 @@ export const ALL_TOOLS: ToolDef[] = [
     tags: {
       en: ["rotate angle", "straighten", "tilt", "deskew"],
       hi: ["कोण", "घुमाना", "सीधा", "rotate"],
+    },
+  }),
+  def({
+    id: "deskew-pdf",
+    category: "organize",
+    mode: "D",
+    phase: "P2",
+    icon: AlignCenterHorizontal,
+    popularity: 12,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "Deskew PDF", hi: "PDF सीधी करें" },
+    description: {
+      en: "Auto-detect each page's tilt and straighten it — sub-degree, vectors only.",
+      hi: "हर पेज का झुकाव ख़ुद पहचान कर सीधा करें — डिग्री से बारीक, सिर्फ़ वेक्टर।",
+    },
+    tags: {
+      en: ["deskew", "straighten", "skew", "tilt", "scan fix"],
+      hi: ["सीधा", "झुकाव", "स्कैन सुधार", "deskew"],
     },
   }),
   def({

@@ -35,6 +35,8 @@ export interface RunDetail {
   confidence?: number;
   /** Pages counter-rotated before OCR by the deskew switch (ocr-pdf). */
   deskewedPages?: number;
+  /** Pages auto-straightened by their own detected tilt (deskew-pdf). */
+  straightenedPages?: number;
   /** Whether the output fit the byte budget (compress-pdf-to-size). */
   targetHit?: boolean;
   /** Winning compress-to-size ladder stage (compress-pdf-to-size). */
