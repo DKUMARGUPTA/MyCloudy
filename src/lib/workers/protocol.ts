@@ -80,6 +80,10 @@ export interface RunDetail {
   renamed?: number;
   /** Attachments deleted (edit-attachments). */
   deleted?: number;
+  /** Layers toggled (pdf-layers). */
+  toggled?: number;
+  /** Layers added (pdf-layers). */
+  added?: number;
   /** The stamp text written on the pages (timestamp-pdf). */
   stamped?: string;
   /** Quantization levels per channel (posterize-pdf). */

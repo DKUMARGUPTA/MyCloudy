@@ -6596,3 +6596,60 @@ csv-to-pdf, json-to-pdf, xml-to-pdf, pdf-to-cbz, cbz-to-pdf).
 **Live count: 134 / 137** (127+7 enabled, 3 AI deferred). Phase 3: 18 tools done (b1:5 + b2:6 + b3:7). Next: **Batch 4 finishing** (font-to-outline, pdf-layers).
 
 **Push:** R33 commit ke saath push (token live).
+
+## R34 — PHASE-3 BATCH 4: pdf-layers + PHASE 3 COMPLETE (2025-11-02)
+
+**Scope (PHASE-PLAN Phase 3, batch 4/4 — FINAL):** OCG layer editor — PHASE 3 ka
+closing tool. Font-to-outline + text-color ko **Phase 7 mein MOVE kiya** (honest
+split: engine-level content-stream surgery — bentopdf Ghostscript-WASM karta hai,
+humara own path wahi difficulty class hai).
+
+**Tool shipped:**
+- **pdf-layers** (edit) — Optional Content Group editor, 100% apne engine pe
+  (probe mein bhi pdf.js NAHI — apna parsePdf browser mein):
+  - **READ:** /OCProperties → /D config → /OCGs + /Order display tree + /ON
+    /OFF /Locked sets. Spec-correct nesting (/Order nested arrays: parent
+    pehle element ke roop me REPEAT hota hai — repeated parent pe children
+    EXISTING node pe attach, duplicate nahi). OCMD membership dicts /Type
+    check se skip. OFF-wins visibility. Out-of-Order OCGs bhi list hote hain
+    (flat, end pe). Lax files (/Type absent) allowed.
+  - **WRITE:** rewriteDocument surgery — /ON /OFF rebuilds (toggle),
+    fresh /OCG objects + /OCGs + /Order append (adds; child = spec format
+    [parent, child] nested array), ref-strip everywhere (deletes), unknown
+    /D keys (AS, Usage, RBGroups) preserved.
+  - **Surface:** apne parser ka probe (structuredClone baseline), visibility
+    checkboxes (locked = disabled + Lock icon), optimistic pending-add rows
+    (नई chip, negative num), top-level + nested add form, per-row delete,
+    Reset changes. Ops JSON object-number-keyed (UI names kabhi trust nahi).
+  - **Worker:** parseOps validation (bad shapes dropped), engine authority.
+
+**Wiring:** registry +1 (135 live / 138 total), configs +1, surfaces +pdf-layers,
+i18n pl (21 leaves ×2) = **4976 = 4976** parity, RunDetail +toggled/added.
+
+**Quality gates:**
+- `bunx tsc --noEmit` = 0 · `bun run lint` = 0
+- `bun scripts/smoke-p3b4.ts` = **34/34 PASS** (raw crafted OCG fixture: read tree
+  + visibility + OCMD skip + plain-PDF empty; toggle ON/OFF both ways + reread;
+  add top + child with Order nesting + default-visible; delete with OFF-emptying;
+  combined round-trip + oracle; parseOps; registry 135)
+- E2E agent-browser: OCG fixture → probe (2 लेयर · 1 दिखती) → toggle Annotations +
+  add "Dimensions" (pending chip) → run → download; 0 console errors; /hi mobile
+  390 no-overflow.
+
+**⚠️ Bugs smoke ne pakde (2):** (1) PdfRef shape `{k, num, gen}` — mera inline
+`{k:"ref", num}` gen-missing tha; `ref()` factory use karo. (2) name-obj field
+**`v`** hai `n` nahi (`type.v !== "OCG"` — pehle `type.n` tha, hamesha-undefined).
+Plus: asDict undefined return kar sakta hai — nullish guards (`!ocp`) everywhere.
+
+**Lessons:**
+- /Order tree semantics: nested array = [parentRef, ...children] — parent REPEAT
+  hota hai; reader mein byNum map se dedupe+attach.
+- Dev server 3rd crash (cron contention) — dev-daemon.py se restart.
+- Ek hi ref ko multiple baar python-replace karna reliable hai jab MultiEdit
+  escaped-quote file bytes se tang kare.
+
+**Live count: 135 / 138** (3 AI deferred). **PHASE 3 COMPLETE: 19 tools**
+(b1:5 + b2:6 + b3:7 + b4:1). Next: **Phase 4 — Programmatic SEO**
+(compress-size landing pages).
+
+**Push:** R34 commit + push (token live).

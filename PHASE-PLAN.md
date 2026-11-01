@@ -63,7 +63,7 @@ hai — 80-node library Phase 1+3 ke tools se auto-build hogi.
 
 ## Phase 7 — Hardest (engine-level, last)
 
-edit-pdf-text (in-place text editing with reflow) · extract-tables (structure detection) ·
+font-to-outline (text→bezier content-stream surgery) · text-color (existing text recolor) · edit-pdf-text (in-place text editing with reflow) · extract-tables (structure detection) ·
 deskew-pdf (raster rotation detection + content transform) · text-color (existing text recolor).
 **Risk:** highest — inse hi matlab hai ki ye LAST rakha gaya. Har ek ka dedicated round.
 
@@ -80,11 +80,11 @@ deskew-pdf (raster rotation detection + content transform) · text-color (existi
 - [x] Phase 0 — PHASE-PLAN.md (ye file)
 - [x] Phase 1 — 18 tools (A / B / C) — COMPLETE 2025-11-02 (smokes 80+60+42, live count 118)
 - [x] Phase 2 — prepare-pdf-for-ai — COMPLETE 2025-11-02 (smoke 23/23 + E2E JSON verified)
-- [ ] Phase 3 — chhote tools — **IN PROGRESS: b1 (5) + b2 (6) + b3 (7) = 18 done, live 134/137**
+- [x] Phase 3 — chhote tools — **COMPLETE 2025-11-02: 19 tools (b1:5 + b2:6 + b3:7 + b4:1), live 135/138**
   - [x] Batch 1 — add/extract-attachments · invert-colors · pdf-to-greyscale · page-dimensions (R31, smoke 25/25)
   - [x] Batch 2 — edit-attachments · adjust-colors · posterize-pdf · scanner-effect · timestamp-pdf · table-of-contents (R32, smoke 41/41 + 5 E2E goldens; ⚠️ pdfjs data-detach → .slice() fix)
   - [x] Batch 3 — converters: csv/json/xml-to-pdf · pdf-to-bmp · bmp-to-pdf · pdf-to-cbz · cbz-to-pdf (R33, smoke 50/50; ⚠️ PNG IDAT zlib + BMP palette R/B engine bugs FIXED; own BMP/PNG codecs shipped)
-  - [ ] Batch 4 — finishing: font-to-outline · pdf-layers (+ text-color agar feasible)
+  - [x] Batch 4 — pdf-layers (R34, smoke 34/34 + E2E; font-to-outline + text-color Phase 7 mein MOVE — engine-level surgery, honest split).
 - [ ] Phase 4 — SEO landing pages
 - [ ] Phase 5 — multi-tool grid
 - [ ] Phase 6 — workflow builder

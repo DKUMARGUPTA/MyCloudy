@@ -5253,5 +5253,28 @@
     "errorGif": "GIF pages aren't supported — convert them to PNG or JPG first.",
     "errorUnknownImage": "Unrecognized image data inside the archive.",
     "errorBadImage": "A page image couldn't be decoded — it may be corrupted."
+  },
+  "pl": {
+    "how1": "Drop a PDF — its layer tree loads automatically (own parser, no upload).",
+    "how2": "Toggle visibility, add new layers (top-level or nested), delete stale ones.",
+    "how3": "Run to rewrite /OCProperties — the output opens with your layer states baked in.",
+    "surfaceLabel": "Layer editor",
+    "reading": "Reading the PDF's layers…",
+    "probeError": "The quick reader couldn't open this file. The run may still work — try it.",
+    "emptyTree": "No layers (OCGs) in this PDF — you can add new ones below.",
+    "countChip": "{count} layers · {visible} visible",
+    "restoreAll": "Reset changes",
+    "toggleLabel": "Layer visibility: {name}",
+    "lockedLabel": "Locked by the document author",
+    "pendingChip": "new",
+    "deleteLabel": "Delete layer: {name}",
+    "newNamePlaceholder": "New layer name…",
+    "newNameLabel": "New layer name",
+    "parentLabel": "Add under",
+    "parentTop": "Top level",
+    "parentUnder": "Under: {name}",
+    "add": "Add",
+    "ctaNothing": "Toggle, add or delete at least one layer first.",
+    "errorNothingToDo": "Nothing to change — toggle, add or delete a layer first."
   }
 }

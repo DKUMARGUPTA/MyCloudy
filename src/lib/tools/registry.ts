@@ -1172,6 +1172,25 @@ export const ALL_TOOLS: ToolDef[] = [
     },
   }),
   def({
+    id: "pdf-layers",
+    category: "edit",
+    mode: "D",
+    phase: "P2",
+    icon: Layers,
+    popularity: 10,
+    accepts: "pdf",
+    enabled: true,
+    name: { en: "PDF layers", hi: "PDF लेयरें" },
+    description: {
+      en: "See, toggle, add and delete Optional Content layers — with lock states.",
+      hi: "लेयरें देखें, बदलें, जोड़ें, मिटाएँ — लॉक हालत के साथ।",
+    },
+    tags: {
+      en: ["layers", "ocg", "optional content", "cad"],
+      hi: ["लेयर", "ocg", "स्तर"],
+    },
+  }),
+  def({
     id: "bookmark-pdf",
     category: "organize",
     mode: "D",
