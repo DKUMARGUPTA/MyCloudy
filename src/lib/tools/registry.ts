@@ -2560,6 +2560,25 @@ export const ALL_TOOLS: ToolDef[] = [
     tags: { en: ["xlsx", "tables to sheet"], hi: ["एक्सेल", "xlsx", "table"] },
   }),
   def({
+    id: "extract-tables",
+    category: "convert-from",
+    mode: "D",
+    enabled: true,
+    phase: "P2",
+    icon: Table,
+    popularity: 18,
+    accepts: "pdf",
+    name: { en: "Extract tables", hi: "टेबलें निकालें" },
+    description: {
+      en: "Find the distinct tables inside a PDF and export clean CSV — one per table.",
+      hi: "PDF के अंदर की अलग-अलग टेबलें ढूँढ़ कर साफ़ CSV बनाएँ — हर एक की अपनी।",
+    },
+    tags: {
+      en: ["tables", "csv", "extract", "data"],
+      hi: ["टेबल", "csv", "डेटा", "निकालना"],
+    },
+  }),
+  def({
     id: "pdf-to-jpg",
     category: "convert-from",
     mode: "D",

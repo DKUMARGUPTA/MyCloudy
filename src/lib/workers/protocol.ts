@@ -37,6 +37,8 @@ export interface RunDetail {
   deskewedPages?: number;
   /** Pages auto-straightened by their own detected tilt (deskew-pdf). */
   straightenedPages?: number;
+  /** Distinct tables found and exported (extract-tables). */
+  tablesExtracted?: number;
   /** Whether the output fit the byte budget (compress-pdf-to-size). */
   targetHit?: boolean;
   /** Winning compress-to-size ladder stage (compress-pdf-to-size). */

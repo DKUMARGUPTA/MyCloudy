@@ -75,6 +75,7 @@ export function ResultView({
         confidence?: number;
         deskewedPages?: number;
         straightenedPages?: number;
+        tablesExtracted?: number;
         targetHit?: boolean;
         compressStage?: "optimize" | "images" | "raster";
         compressQuality?: number;
@@ -335,6 +336,12 @@ export function ResultView({
         {runSummary?.straightenedPages ? (
           <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
             {t("result.straightenedPages", { n: runSummary.straightenedPages })}
+          </p>
+        ) : null}
+        {/* extract-tables (P7): distinct tables found and exported. */}
+        {runSummary?.tablesExtracted ? (
+          <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+            {t("result.tablesExtracted", { n: runSummary.tablesExtracted })}
           </p>
         ) : null}
         {/* compress-pdf image dedupe (R4-b): byte-identical photos now

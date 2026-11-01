@@ -6847,3 +6847,48 @@ hydration only (R24 baseline).
 clustering → CSV), R40 text-color, R41 font-to-outline, R42 edit-pdf-text.
 
 **Push:** R38 commit + push + Vercel verify.
+
+## R39 — PHASE-7 R39: extract-tables (table segmentation → CSV) (2025-11-02)
+
+**extract-tables (convert-from, icon Table, pop 18):** pdf-to-excel se
+DIFFERENT problem — wo whole-page grid → XLSX; ye page ke ANDAR distinct
+tables SEGMENT karta hai → clean CSV (paragraph text kabhi leak nahi).
+
+- **engine.ts** (pure): `rowsFromItems` (y-band rows, pdf-to-excel recipe
+  ROW_TOL_FACTOR=0.5; x-gap > 1.6·size = new column, warna same-cell
+  space-join) → `extractTables` block loop: non-tabular row splits,
+  **pitch-tracking gap rule** (running mean row-pitch ×2.2 = split limit;
+  bootstrap floor 4×font jab tak pitch unknown — airy 30pt-pitch tables
+  survive), zero-shared-anchor + count-diff split. `gridForBlock`:
+  column anchors chain-merge (8pt), jagged rows empty cells RAKHTI hain
+  (no left-shift). `ET_MIN_TABLE_ROWS=2` (lone tabular row ≠ table).
+- **csv-emit.ts**: RFC-4180 (quote only jab zaroorat, "" doubling, CRLF),
+  3 delimiters (, ; tab), `combineCsvs` blank-line separation,
+  `tableFileName` p{n}-t{m}.
+- **worker.ts**: pdf-to-excel recipe (pdfjs fake-worker + getTextContent
+  per page, bytes.slice() detach-guard, doc.destroy finally) + own zipSync
+  (ZIP: 1 CSV per table) ya single combined CSV. Honest errors:
+  tool.errorNoText (scan) + NEW tool.errorNoTables + tool.errorTooManyItems
+  (20k pieces/page). RunDetail.tablesExtracted chip + i18n EN/HI.
+- Registry (pdf-to-excel ke baad, convert-from) + configs wiring; default
+  options surface (pages + delimiter + output); chain pdf-to-excel/csv-to-pdf.
+
+**Engine bugs caught by smoke (2):** (1) block-gap font-size pe tha,
+row-pitch pe nahi — 30pt-pitch 10pt-font table har row pe split hoti thi
+(2.2×10=22 < 30) — pitch-tracking se fix, bootstrap 4× floor. (2)
+moderate-gap pieces naya cell ban rahe the (touching-only join tha) —
+invert: split ONLY > threshold, warna join.
+
+**Quality gates:** tsc 0 (1 fix: OptionValues string narrowing) · lint 0 ·
+**smoke-p7b 40/40** (rows/cells/joins, segmentation 2-tables+paragraph,
+anchors no-left-shift, split rules ×3, airy-table survival, RFC-4180
+quoting, delimiters, CRLF, combine, honest edges, 139 live, i18n parity).
+**E2E GOLDEN**: 1-page fixture (3×3 table + paragraph + 2×2 table, EXACT
+smoke geometry) → upload → Run → **"2 टेबलें मिलकर एक्सपोर्ट हुईं" chip +
+ZIP download** + chain buttons (Excel/CSV-to-PDF) visible · mobile 390
+MOBILE_OK · console: 0 non-hydration errors (7 = pre-existing Radix class).
+
+**Live count: 139 / 142.** Next: R40 text-color (content-stream recolor
+surgery), R41 font-to-outline, R42 edit-pdf-text.
+
+**Push:** R39 commit + push + Vercel verify.

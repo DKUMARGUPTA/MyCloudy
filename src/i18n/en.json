@@ -365,6 +365,8 @@
       "errorSvgRaster": "{detail} is still being prepared — try again in a moment."
     },
     "errorNoText": "No selectable text found — this PDF is probably a scan. Try the PDF OCR tool.",
+    "errorNoTables": "No tables found on those pages — the text is there but no tabular rows. Tables drawn as images need the OCR tool first.",
+    "errorTooManyItems": "This page has too many text pieces to analyse safely — split the PDF first, then try again.",
     "errorWatermarkMissing": "Add the watermark text (or a logo) first.",
     "errorWatermarkChars": "The embedded font can't carry this text — Latin letters, digits and Hindi (Devanagari) are supported.",
     "errorWatermarkLogo": "The logo image could not be read. Try a PNG or JPG.",
@@ -435,6 +437,7 @@
     "imagesSkipped": "{n, plural, =1 {1 image skipped} other {# images skipped}} — remote or unsupported",
     "deskewedPages": "{n, plural, =1 {1 tilted page deskewed before OCR} other {# tilted pages deskewed before OCR}}",
     "straightenedPages": "{n, plural, =1 {1 tilted page straightened automatically} other {# tilted pages straightened automatically}}",
+    "tablesExtracted": "{n, plural, =1 {1 table found and exported} other {# tables found and exported}}",
     "dedupedImages": "{n, plural, =1 {1 duplicate image merged} other {# duplicate images merged}}",
     "dedupeBytesSaved": "{bytes} of duplicate image data removed",
     "ocrSendInvoice": "Send to invoice",
