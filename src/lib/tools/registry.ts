@@ -70,6 +70,8 @@ import {
   Presentation,
   Printer,
   QrCode,
+  ScanBarcode,
+  Barcode,
   Receipt,
   RotateCw,
   Ruler,
@@ -120,7 +122,8 @@ export type ToolCategoryId =
   | "create"
   | "invoices"
   | "view"
-  | "images";
+  | "images"
+  | "qr";
 
 export type Accepts =
   | "pdf"
@@ -144,7 +147,8 @@ export type CategoryColor =
   | "optimize"
   | "create"
   | "invoices"
-  | "view";
+  | "view"
+  | "qr";
 
 export interface ToolCategory {
   id: ToolCategoryId;
@@ -252,8 +256,8 @@ export const CATEGORIES: ToolCategory[] = [
     icon: FilePlus,
     name: { en: "Create", hi: "बनाएँ" },
     intro: {
-      en: "Start from scratch: write documents, scan paper with your camera, build QR codes or resumes — and export finished PDFs.",
-      hi: "शुरुआत से बनाएँ: दस्तावेज़ लिखें, कैमरे से स्कैन करें, QR कोड या रिज़्यूमे बनाएँ — और तैयार PDF एक्सपोर्ट करें।",
+      en: "Start from scratch: write documents, scan paper with your camera, build resumes, cards and collages — and export finished PDFs.",
+      hi: "शुरुआत से बनाएँ: दस्तावेज़ लिखें, कैमरे से स्कैन करें, रिज़्यूमे, कार्ड और कोलाज बनाएँ — और तैयार PDF एक्सपोर्ट करें।",
     },
   },
   {
@@ -284,6 +288,16 @@ export const CATEGORIES: ToolCategory[] = [
     intro: {
       en: "Convert phone photos between HEIC, WEBP, JPG and PNG, resize to exact KB limits for government forms, and make passport photo sheets.",
       hi: "फ़ोन की तस्वीरें HEIC, WEBP, JPG और PNG में बदलें, सरकारी फ़ॉर्म के लिए तय KB तक छोटी करें और पासपोर्ट फ़ोटो शीट बनाएँ।",
+    },
+  },
+  {
+    id: "qr",
+    color: "qr",
+    icon: QrCode,
+    name: { en: "QR & Barcodes", hi: "QR और बारकोड" },
+    intro: {
+      en: "Build QR codes for links, UPI payments, WiFi and contacts, print scannable retail barcodes (EAN, UPC, Code 128), and read back what any code hides — all on your device.",
+      hi: "लिंक, UPI पेमेंट, WiFi और संपर्कों के QR कोड बनाएँ, दुकानों वाले स्कैन होने लायक़ बारकोड (EAN, UPC, Code 128) छापें, और किसी भी कोड के अंदर क्या छिपा है पढ़ें — सब आपके डिवाइस पर।",
     },
   },
 ];
@@ -1722,7 +1736,7 @@ export const ALL_TOOLS: ToolDef[] = [
   }),
   def({
     id: "generate-qr-code",
-    category: "create",
+    category: "qr",
     mode: "D",
     phase: "P2",
     icon: QrCode,
@@ -1735,6 +1749,44 @@ export const ALL_TOOLS: ToolDef[] = [
       hi: "URL, UPI, WiFi या vCard QR — रंग और बीच में लोगो।",
     },
     tags: { en: ["qr", "upi qr", "barcode"], hi: ["क्यूआर", "qr", "upi"] },
+  }),
+  def({
+    id: "generate-barcode",
+    category: "qr",
+    mode: "D",
+    phase: "P2",
+    icon: Barcode,
+    popularity: 18,
+    accepts: "any",
+    enabled: true,
+    name: { en: "Generate barcode", hi: "बारकोड बनाएँ" },
+    description: {
+      en: "Retail-ready 1D barcodes — Code 128, EAN-13, EAN-8, UPC-A, Code 39 and ITF — as PNG, SVG or PDF.",
+      hi: "दुकानों के काम के 1D बारकोड — Code 128, EAN-13, EAN-8, UPC-A, Code 39 और ITF — PNG, SVG या PDF में।",
+    },
+    tags: {
+      en: ["barcode", "ean 13", "upc", "code 128"],
+      hi: ["बारकोड", "ean", "code 128"],
+    },
+  }),
+  def({
+    id: "scan-qr-code",
+    category: "qr",
+    mode: "D",
+    phase: "P2",
+    icon: ScanBarcode,
+    popularity: 16,
+    accepts: "image",
+    enabled: true,
+    name: { en: "Scan QR code", hi: "QR कोड पढ़ें" },
+    description: {
+      en: "Upload a photo or screenshot and read the QR or barcode inside — links, WiFi, UPI and vCard decoded and explained.",
+      hi: "फ़ोटो या स्क्रीनशॉट अपलोड करें और उसमें छिपे QR पढ़ें — लिंक, WiFi, UPI और vCard समझाकर।",
+    },
+    tags: {
+      en: ["qr scanner", "read qr", "qr decoder"],
+      hi: ["क्यूआर स्कैन", "qr पढ़ें"],
+    },
   }),
 
   /* ---------------- Invoices (§7.4) ---------------- */
@@ -3025,6 +3077,7 @@ export const categoryChipClass: Record<CategoryColor, string> = {
   create: "bg-cat-create/10 text-cat-create",
   invoices: "bg-cat-invoices/10 text-cat-invoices",
   view: "bg-cat-view/10 text-cat-view",
+  qr: "bg-cat-qr/10 text-cat-qr",
 };
 
 /** Card hover border accent per category color. */
@@ -3037,4 +3090,5 @@ export const categoryHoverClass: Record<CategoryColor, string> = {
   create: "hover:border-cat-create/40",
   invoices: "hover:border-cat-invoices/40",
   view: "hover:border-cat-view/40",
+  qr: "hover:border-cat-qr/40",
 };

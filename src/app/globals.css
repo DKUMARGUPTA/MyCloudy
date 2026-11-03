@@ -53,6 +53,7 @@
   --color-cat-create: var(--cat-create);
   --color-cat-invoices: var(--cat-invoices);
   --color-cat-view: var(--cat-view);
+  --color-cat-qr: var(--cat-qr);
   /* Self-hosted fonts (PRD §3.2): Inter + Noto Sans Devanagari fallback */
   --font-sans: var(--font-inter), var(--font-noto-devanagari), ui-sans-serif, system-ui,
     "Segoe UI", sans-serif;
@@ -118,6 +119,7 @@
   --cat-create: #be185d;
   --cat-invoices: #d97706;
   --cat-view: #475569;
+  --cat-qr: #c026d3;
 }
 
 .dark {
@@ -167,6 +169,7 @@
   --cat-create: #f472b6;
   --cat-invoices: #fbbf24;
   --cat-view: #94a3b8;
+  --cat-qr: #e879f9;
 }
 
 @layer base {

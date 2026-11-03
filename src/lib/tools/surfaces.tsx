@@ -32,6 +32,8 @@ import { PdfLayersSurface } from "../../../tools/pdf-layers/surface";
 import { OverlaySurface } from "../../../tools/overlay-pdf/surface";
 import { CompareSurface } from "../../../tools/compare-pdf/surface";
 import { GenerateQrSurface } from "../../../tools/generate-qr-code/surface";
+import { GenerateBarcodeSurface } from "../../../tools/generate-barcode/surface";
+import { ScanQrSurface } from "../../../tools/scan-qr-code/surface";
 import { ConvertToPdfSurface } from "../../../tools/convert-to-pdf/surface";
 import { ConvertFromPdfSurface } from "../../../tools/convert-from-pdf/surface";
 import { MakeFillableSurface } from "../../../tools/make-pdf-fillable/surface";
@@ -158,6 +160,8 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "overlay-pdf": OverlaySurface,
   "compare-pdf": CompareSurface,
   "generate-qr-code": GenerateQrSurface,
+  "generate-barcode": GenerateBarcodeSurface,
+  "scan-qr-code": ScanQrSurface,
   "convert-to-pdf": ConvertToPdfSurface,
   "convert-from-pdf": ConvertFromPdfSurface,
   "make-pdf-fillable": MakeFillableSurface,

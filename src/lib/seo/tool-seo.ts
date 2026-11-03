@@ -789,13 +789,22 @@ const CATEGORY_SEO: Record<ToolCategoryId, CategorySeo> = {
     keywords: ["pdf editing tools", "edit pdf free", "pdf watermark", "pdf tools online"],
   },
   create: {
-    title: "Create PDFs — Documents, Resumes, Invoices, QR Codes",
-    titleHi: "PDF बनाएँ — दस्तावेज़, रिज़्यूमे, इनवॉइस",
+    title: "Create PDFs — Documents, Resumes, Collages, Cards",
+    titleHi: "PDF बनाएँ — दस्तावेज़, रिज़्यूमे, कोलाज",
     description:
-      "10 free creators — blank PDFs, written documents, resumes, photo collages, cards, QR codes and scans. No signup, fully on-device.",
+      "9 free creators — blank PDFs, written documents, resumes, photo collages, cards and camera scans. No signup, fully on-device.",
     descriptionHi:
-      "10 मुफ़्त क्रिएटर — ख़ाली PDF, दस्तावेज़, रिज़्यूमे, कोलाज, कार्ड, QR कोड। बिना साइनअप।",
-    keywords: ["create pdf online", "pdf maker free", "resume builder", "qr code generator"],
+      "9 मुफ़्त क्रिएटर — ख़ाली PDF, दस्तावेज़, रिज़्यूमे, कोलाज, कार्ड। बिना साइनअप।",
+    keywords: ["create pdf online", "pdf maker free", "resume builder", "collage maker pdf"],
+  },
+  qr: {
+    title: "QR Code & Barcode Tools — Generate, Scan, Print Free",
+    titleHi: "QR कोड और बारकोड टूल्स — बनाएँ, पढ़ें, छापें",
+    description:
+      "3 free code tools — QR codes for links, UPI, WiFi and vCard, retail barcodes (EAN-13, UPC-A, Code 128) and an instant QR reader. All on-device.",
+    descriptionHi:
+      "3 मुफ़्त टूल — लिंक, UPI, WiFi के QR कोड, दुकान वाले बारकोड (EAN-13, UPC-A, Code 128) और तुरंत QR पढ़ने वाला। सब डिवाइस पर।",
+    keywords: ["qr code generator", "barcode generator", "ean 13 barcode", "qr code scanner online"],
   },
   view: {
     title: "View & Understand PDFs — Read, Search, Summarize, Chat",
@@ -859,6 +868,7 @@ const CATEGORY_NOUN: Record<ToolCategoryId, string> = {
   optimize: "PDF Tool",
   invoices: "Invoice Tool",
   images: "Image Tool",
+  qr: "Code Tool",
 };
 
 const EN_TAILS = [

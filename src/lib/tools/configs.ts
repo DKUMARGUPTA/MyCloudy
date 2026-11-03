@@ -97,6 +97,8 @@ import { config as txtToPdf } from "../../../tools/txt-to-pdf/config";
 import { config as markdownToPdf } from "../../../tools/markdown-to-pdf/config";
 import { config as bookmarkPdf } from "../../../tools/bookmark-pdf/config";
 import { config as generateQrCode } from "../../../tools/generate-qr-code/config";
+import { config as generateBarcode } from "../../../tools/generate-barcode/config";
+import { config as scanQrCode } from "../../../tools/scan-qr-code/config";
 import { config as comparePdf } from "../../../tools/compare-pdf/config";
 import { config as overlayPdf } from "../../../tools/overlay-pdf/config";
 import { config as changePdfPageSize } from "../../../tools/change-pdf-page-size/config";
@@ -252,6 +254,8 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   [markdownToPdf.toolId]: markdownToPdf,
   [bookmarkPdf.toolId]: bookmarkPdf,
   [generateQrCode.toolId]: generateQrCode,
+  [generateBarcode.toolId]: generateBarcode,
+  [scanQrCode.toolId]: scanQrCode,
   [comparePdf.toolId]: comparePdf,
   [overlayPdf.toolId]: overlayPdf,
   [changePdfPageSize.toolId]: changePdfPageSize,
