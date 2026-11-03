@@ -32,6 +32,12 @@ function sizeBucket(bytes: number): "tiny" | "small" | "medium" | "large" {
   return "large";
 }
 
+/** Read the anonymous visitor id (creates one on first call). Shared by
+ * the usage beacon and the first-party page-view tracker. */
+export function readAnonId(): string {
+  return anonId();
+}
+
 /** Send one usage event; safe to call anywhere (never throws). */
 export function sendUsageBeacon(params: {
   toolId: string;

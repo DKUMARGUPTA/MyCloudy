@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { trackPageView } from "@/lib/analytics/page-view";
 import { SiteHeader } from "@/components/doco/site-header";
 import { SiteFooter } from "@/components/doco/site-footer";
 import { AnnouncementBanner } from "@/components/doco/home/announcement-banner";
@@ -17,6 +18,7 @@ import { ToolsView } from "@/components/doco/tools/tools-view";
 import { ToolView } from "@/components/doco/tool/tool-view";
 import { StaticPageView } from "@/components/doco/page/static-page";
 import { AccountPage } from "@/components/doco/account/account-page";
+import { AdminDashboardPage } from "@/components/doco/admin/admin-dashboard-page";
 import { PricingModal } from "@/components/doco/billing/pricing-modal";
 import { SearchPalette } from "@/components/doco/search/search-palette";
 import { CookieBanner } from "@/components/doco/cookie-banner";
@@ -52,6 +54,13 @@ export function AppShell({
   const { route, routeKey } = useHashRoute(initialRoute);
   const [proOpen, setProOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+
+  /* First-party page-view tracking (R42): fire-and-forget on every route
+   * change, owner surfaces excluded client-side. Privacy-preserving by
+   * design (see src/lib/analytics/page-view.ts). */
+  useEffect(() => {
+    trackPageView(routeKey, locale);
+  }, [routeKey, locale]);
   const openSearch = useCallback(() => {
     setSearchOpen(true);
     track("search_open", { locale });
@@ -246,6 +255,8 @@ export function AppShell({
             <StaticPageView pageId={route.pageId ?? ""} />
           ) : route.view === "account" ? (
             <AccountPage onGetPro={openPro} />
+          ) : route.view === "admin" ? (
+            <AdminDashboardPage />
           ) : (
             <ToolsView categoryId={route.category} query={route.query} />
           )}

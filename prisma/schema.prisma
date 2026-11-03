@@ -57,6 +57,21 @@ model AnonUsage {
   @@map("anon_usage")
 }
 
+model PageView {
+  id        String   @id @default(uuid())
+  path      String
+  locale    String
+  device    String // "mobile" | "tablet" | "desktop" (coarse class)
+  referrer  String // bucketed label
+  visitorId String // same anonymous localStorage id as the usage beacon
+  day       String // YYYY-MM-DD
+  createdAt DateTime @default(now())
+
+  @@index([day])
+  @@index([visitorId, day])
+  @@map("page_views")
+}
+
 model UsageEvent {
   id         String   @id @default(uuid())
   toolId     String
