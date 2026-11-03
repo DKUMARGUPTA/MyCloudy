@@ -5463,19 +5463,35 @@
       "adminNotePlaceholder": "Visible only to you…",
       "save": "Save",
       "saving": "Saving…",
-      "empty": "No bug reports."
+      "empty": "No bug reports.",
+      "stNew": "New",
+      "stConfirmed": "Confirmed",
+      "stInProgress": "In progress",
+      "stFixed": "Fixed",
+      "stWontfix": "Won't fix",
+      "sevLow": "Low",
+      "sevMedium": "Medium",
+      "sevHigh": "High",
+      "sevCritical": "Critical"
     },
     "messages": {
       "empty": "The contact inbox is empty.",
       "markRead": "Mark read",
       "markNew": "Mark new",
-      "markDone": "Mark done"
+      "markDone": "Mark done",
+      "stNew": "New",
+      "stRead": "Read",
+      "stDone": "Done"
     },
     "feedback": {
       "up": "Works",
       "down": "Broke",
       "note": "Note",
-      "empty": "No feedback yet."
+      "empty": "No feedback yet.",
+      "reasonSlow": "Too slow",
+      "reasonWrong": "Wrong result",
+      "reasonConfusing": "Confusing",
+      "reasonOther": "Something else"
     },
     "analytics": {
       "viewsToday": "Views today",

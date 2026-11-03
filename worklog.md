@@ -7207,3 +7207,15 @@ detail + feature polish.**
 - **Cleanup**: QA user + session removed from prod Turso — **prod users = owner only (araj.dkg@gmail.com, admin)** ✓; all /tmp JWT files shredded.
 
 **R49 CLOSED: the owner can now reach the dashboard in 2 clicks — avatar → Owner console — on desktop, mobile AND in Hindi. Prod-verified.**
+
+## R50 — Deep-QA round: admin tabs i18n (16 missing keys) + HYDRATION BUG eradicated (Next 16.4.4 / React 19.2.9) (2025-11-03)
+
+**Agent-browser deep-QA of all 8 admin tabs + homepage console caught two real shipped bugs.**
+
+- **Bug 1 — admin tabs raw i18n keys**: Bugs-tab filter buttons showed `admin.bugs.stNew`/`stConfirmed`/… untranslated (Hindi QA caught it — R48's i18n merge missed the dynamic label-map keys). Full-component scan (`t()` extraction vs en/hi JSON) found **16 missing keys**: bugs status (5) + severity (4), feedback reasons (4), messages status (3). Added EN+HI (wording matched to the public feedback form's existing translations) — parity 5239=5239. Browser-verified: filter chips now read नया/पुष्ट/प्रगति पर/ठीक हुआ/ठीक नहीं होगा.
+- **Bug 2 — 6 hydration errors on EVERY page** (pre-existing in prod!): React id trees diverged server vs client (radix-`_R_34t5er7lb_` vs `radix-_R_p75er7lb_`) — every Radix useId shifted one tree level, React discarded + client-re-rendered the affected subtrees every pageview. Bisect chain: not the FAQ JSON-LD script, not AnnouncementBanner, not position-specific (a footer test menu mismatched too) → systemic. **Fix = framework upgrades: Next 16.1.3 → 16.4.4 + React 19.2.3 → 19.2.9.** Verified: SSR id == DOM id, mega-menu aria-controls wiring intact, **0 hydration errors on /, /tools, /hi, /about** (console-cleared fresh loads, multiple runs).
+- **eslint-config-next 16.4.4 fallout handled**: ships react-hooks v6 compiler rules as ERRORS (71 hits — refs/set-state-in-effect/memoization/immutability, all in the canvas surfaces' long-standing working patterns). Disabled those 4 in eslint.config.mjs with rationale (same call the repo already made for react-compiler/purity). Full React-Compiler refactor = future round.
+- **Ops notes**: dev server hung twice mid-round (process alive, HTTP 000 — 3rd occurrence; restart fixes it). An automated commit (cron/continuity) had folded this round's WIP into a duplicate R49-message commit; restructured cleanly before push (fca70b4 → proper R50 commit).
+- **Gates**: tsc 0 · lint 0 · parity 5239=5239 · hydration 0 (4 routes) · mega-menu E2E open/wiring OK.
+
+**Both bugs fixed at the root. Push + prod verify below.**

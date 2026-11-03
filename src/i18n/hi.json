@@ -5463,19 +5463,35 @@
       "adminNotePlaceholder": "सिर्फ़ आपको दिखेगा…",
       "save": "सेव",
       "saving": "सेव हो रहा है…",
-      "empty": "कोई बग रिपोर्ट नहीं।"
+      "empty": "कोई बग रिपोर्ट नहीं।",
+      "stNew": "नया",
+      "stConfirmed": "पुष्ट",
+      "stInProgress": "प्रगति पर",
+      "stFixed": "ठीक हुआ",
+      "stWontfix": "ठीक नहीं होगा",
+      "sevLow": "कम",
+      "sevMedium": "मध्यम",
+      "sevHigh": "उच्च",
+      "sevCritical": "गंभीर"
     },
     "messages": {
       "empty": "संपर्क इनबॉक्स खाली है।",
       "markRead": "पढ़ा हुआ करें",
       "markNew": "नया करें",
-      "markDone": "पूर्ण करें"
+      "markDone": "पूर्ण करें",
+      "stNew": "नया",
+      "stRead": "पढ़ा हुआ",
+      "stDone": "पूर्ण"
     },
     "feedback": {
       "up": "चला",
       "down": "टूटा",
       "note": "नोट",
-      "empty": "अभी कोई फ़ीडबैक नहीं।"
+      "empty": "अभी कोई फ़ीडबैक नहीं।",
+      "reasonSlow": "धीमा था",
+      "reasonWrong": "नतीजा ग़लत",
+      "reasonConfusing": "समझ नहीं आया",
+      "reasonOther": "कुछ और"
     },
     "analytics": {
       "viewsToday": "आज के व्यू",
