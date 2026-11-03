@@ -7150,3 +7150,15 @@ analytics ✓ · SEO pass ✓ · regression ✓. Live 142/145 tools + prod DB li
 
 **Live 142/145 + prod Turso live (R44). Next: cron rounds — styling
 detail + feature polish.**
+
+## R46 — 5th-wipe incident + vault-restore SUCCESS + rollback-revert recovery (2025-11-03)
+
+**Sabse dangerous incident ab tak — aur systems ne kaam karke bachaya.**
+
+- **5th token wipe**: disk rollback ne `.env.credentials` + `~/.mycloudy-credentials` dono uda diye. **PERFORMANCE PROOF: secrets/vault.enc system ne kaam kiya** — passphrase worklog-memory se (MyCloudy-Vault-2025-Krypton9-Dossier) → openssl decrypt → GH PAT + Vercel + Turso URL sab recover, chmod 600. **User se maangne ki zaroorat NAHI padi — pehli baar.** Vault design fulfilled its purpose.
+- **Rollback side-effect (CRITICAL)**: working tree me purane abandoned session ke untracked files aa gaye the (accounting/P12 + old edit-pdf rewrite — jo kabhi commit nahi hue the). **15-min cron round ne unhe blindly commit kar diya (b56108d, 343 files, 64k insertions) — tsc 207 errors, Vercel build ERROR.** Prod last-good deploy pe serve hota raha (site down nahi hua), lekin deploys block.
+- **Recovery**: `git revert b56108d` (pure-additions commit tha → clean revert, R44/R45 kaam 100% safe — db.ts Turso adapter + copy fix + registry sab intact). `.next/dev` stale validator types clear → dev restart → **tsc 0 · lint 0 · browser green (145 tools)**. Push → Vercel **READY @ f5f234c** → prod 200.
+- **GUARDRAIL (future rounds ke liye — BINDING)**: cron/webDevReview rounds me **UNTRACKED FILES KABHI BLINDLY COMMIT MAT KARNA** — pehle `bunx tsc --noEmit` chalao; agar untracked files tsc tod rahi hain to wo purane abandoned session ki hain: unhe **commit nahi**, alag folder me archive karo ya ignore karo. Rollback ke baad untracked files ka matlab "khoja hua kaam" NAHI, "chhoda hua kaam" hai. Plus: `pkill -f "bun run dev"` mini-services ko bhi maarta hai (same pattern) — restart 3031/3032 zaroori.
+- **Post-recovery verify**: tree clean (0 untracked) · mini-services revived (3031/3032 ok) · prod word-to-pdf 200 + auth/me live · dev stable (t0/t20/t60 all 200).
+
+**Live 142/145 + Turso prod live + sab pushed @ f5f234c.**
