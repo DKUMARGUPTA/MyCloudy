@@ -44,6 +44,7 @@ const MORE_CATEGORIES: ToolCategoryId[] = [
   "invoices",
   "view",
   "images",
+  "qr",
 ];
 
 const TOOLS_PER_COLUMN = 6;
