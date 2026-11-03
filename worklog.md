@@ -7219,3 +7219,12 @@ detail + feature polish.**
 - **Gates**: tsc 0 · lint 0 · parity 5239=5239 · hydration 0 (4 routes) · mega-menu E2E open/wiring OK.
 
 **Both bugs fixed at the root. Push + prod verify below.**
+
+### R50 prod verification (same day)
+
+- **Deploy**: Vercel READY @ dpl_CngZ (commit 817125c) — clean build on the upgraded Next 16.4.4.
+- **Hydration on prod**: `https://www.docopdf.com/` fresh load → **0 hydration errors** (was 6 every pageview) · SSR trigger id == hydrated DOM id (`radix-_R_cjinmfb_…` both sides) ✓.
+- **Admin tabs on prod**: QA-admin cycle (signup → Turso promote → login → Owner console → Bugs tab) → filter chips read All/New/Confirmed/In progress/Fixed/Won't fix (translated, no raw keys) ✓ · 8 tabs render ✓.
+- **Cleanup**: QA user deleted from prod Turso (users = owner only) · all /tmp JWT + probe files shredded.
+
+**R50 CLOSED: both shipped bugs (raw i18n keys + hydration errors) fixed at the root and prod-verified. Framework now Next 16.4.4 + React 19.2.9.**
