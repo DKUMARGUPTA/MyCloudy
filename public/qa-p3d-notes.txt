@@ -1,3 +1,0 @@
-P3-d fixture notes.
-This file was embedded by the DocoPDF own engine.
-Byte-exact roundtrip expected.

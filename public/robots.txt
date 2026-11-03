@@ -1,8 +1,0 @@
-# DocoPDF robots (PRD §12.1)
-User-agent: *
-Allow: /
-
-# No crawl traps: hash views and API endpoints
-Disallow: /api/
-
-Sitemap: https://docopdf.com/sitemap.xml
