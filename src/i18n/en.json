@@ -5128,6 +5128,7 @@
     "menuPlanPro": "Pro",
     "proThanks": "Thanks for backing DocoPDF",
     "menuAdmin": "Admin",
+    "menuAdminConsole": "Owner console",
     "menuLogout": "Log out",
     "menuSettings": "Account settings"
   },
@@ -5140,6 +5141,9 @@
     "signInDesc": "Account settings hold your profile, plan and security. The tools stay free without an account too.",
     "memberSince": "Member since {date}",
     "sectionProfile": "Profile",
+    "adminCardTitle": "Owner console",
+    "adminCardDesc": "The admin dashboard lives here: users, bug reports, the contact inbox, feedback, usage analytics, the audit trail and site settings.",
+    "adminCardCta": "Open dashboard",
     "sectionPlan": "Plan & billing",
     "planFreeDesc": "All 97 device tools, unlimited use, both languages. Free forever — that's the promise.",
     "planProDesc": "Pro perks activate as server tools launch. Thanks for backing DocoPDF!",

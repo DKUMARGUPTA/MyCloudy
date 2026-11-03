@@ -5,6 +5,7 @@ import {
   CalendarDays,
   CreditCard,
   KeyRound,
+  LayoutDashboard,
   Loader2,
   LogIn,
   ReceiptText,
@@ -37,6 +38,7 @@ import {
   type BillingErrorCode,
   type BillingStatus,
 } from "@/lib/auth-client";
+import { navigateToHash, ROUTES } from "@/hooks/use-hash-route";
 
 /**
  * AccountPage (Phase-10 R26) — the /account view: profile, plan & billing
@@ -111,11 +113,54 @@ export function AccountPage({ onGetPro }: { onGetPro: () => void }) {
       lede={t("account.lede")}
     >
       <ProfileCard />
+      <AdminCard />
       <PlanCard onGetPro={onGetPro} />
       <BillingHistoryCard />
       <PasswordCard />
       <DangerCard />
     </PageShell>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Owner console shortcut (R49) — admins landing on /account get a      */
+/* prominent entry to /admin; regular users never see this card.       */
+/* ------------------------------------------------------------------ */
+
+function AdminCard() {
+  const { t } = useI18n();
+  const { user } = useAuth();
+  if (user?.role !== "admin") return null;
+
+  return (
+    <Card className="rounded-card border-primary/30 bg-primary/5">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span
+            className="flex size-8 items-center justify-center rounded-md bg-primary/15 text-primary"
+            aria-hidden="true"
+          >
+            <LayoutDashboard className="size-4" />
+          </span>
+          {t("account.adminCardTitle")}
+        </CardTitle>
+        <CardDescription>{t("account.adminCardDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button
+          type="button"
+          size="touch"
+          className="rounded-btn"
+          onClick={() => {
+            track("admin_console_open", { surface: "account" });
+            navigateToHash(ROUTES.admin);
+          }}
+        >
+          <LayoutDashboard className="size-4" aria-hidden="true" />
+          {t("account.adminCardCta")}
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

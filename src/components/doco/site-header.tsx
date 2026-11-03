@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { LogOut, Menu, Search, UserRound } from "lucide-react";
+import { LayoutDashboard, LogOut, Menu, Search, UserRound } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -189,6 +189,19 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
           </nav>
 
           <div className="mt-auto space-y-4 border-t border-border p-4">
+            {/* Admin console shortcut (R49): mobile admins need the same
+             * entry-point the desktop dropdown has — without this link the
+             * /admin dashboard is undiscoverable on phones. */}
+            {user?.role === "admin" ? (
+              <a
+                href={routes.admin}
+                onClick={() => setMenuOpen(false)}
+                className="flex min-h-11 items-center gap-3 rounded-btn bg-primary/10 px-3 text-base font-semibold text-primary outline-none transition-colors hover:bg-primary/15 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                <LayoutDashboard className="size-5" aria-hidden="true" />
+                {t("auth.menuAdminConsole")}
+              </a>
+            ) : null}
             {/* Account (Phase-10): guests get a login entry, signed-in users
              * see their identity + logout — the sheet is the mobile surface. */}
             {user ? (

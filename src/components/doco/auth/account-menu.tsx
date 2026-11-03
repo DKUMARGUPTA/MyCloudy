@@ -1,6 +1,6 @@
 "use client";
 
-import { LogOut, Settings, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { LayoutDashboard, LogOut, Settings, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -113,6 +113,15 @@ export function AccountMenu() {
           ) : null}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {user.role === "admin" ? (
+          <DropdownMenuItem
+            onClick={() => navigateToHash(ROUTES.admin)}
+            className="min-h-11 cursor-pointer rounded-btn"
+          >
+            <LayoutDashboard className="size-4" aria-hidden="true" />
+            {t("auth.menuAdminConsole")}
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem
           onClick={() => navigateToHash(ROUTES.account)}
           className="min-h-11 cursor-pointer rounded-btn"

@@ -7182,3 +7182,19 @@ detail + feature polish.**
 - **Gates**: tsc 0 · lint 0 · parity 5219=5219 · dev.log clean (admin/stats/analytics/view all 200/202).
 
 **Owner console fully live: 8 tabs (Overview/Users/Bugs/Messages/Feedback/Analytics/Audit/Settings) @ /admin — pushed @ 70d339c, prod verified.**
+
+## R49 — Admin console DISCOVERABILITY fix: entry-points the R48 restore forgot (2026-11-03)
+
+**User report: "admin id se login karne par bas ye dikhta hai — na dashboard na kuch features." Screenshot analysis confirmed it 100%: the account dropdown showed the Admin badge but only "Account settings" + "Log out" — R48 restored the /admin dashboard itself, but no UI path led there. A dashboard nobody can find is a dashboard that doesn't exist.**
+
+- **Root cause**: R48's recovery was server+route-complete (ROUTES.admin wired, 8-tab dashboard, prod verified) but shipped zero navigation entry-points — the owner was expected to *know* the /admin URL. The user's earlier screenshot showed exactly this gap.
+- **Fix — three admin-only surfaces (regular users never see any of them):**
+  1. **AccountMenu dropdown** (desktop): "Owner console" item (LayoutDashboard icon) above Account settings → `navigateToHash(ROUTES.admin)`.
+  2. **Mobile sheet** (site-header): highlighted primary-colored "Owner console" link at the top of the account section — the dashboard was completely undiscoverable on phones before this.
+  3. **/account page**: new AdminCard (border-primary/30, bg-primary/5) between Profile and Plan cards — title, description of the 8 tabs, "Open dashboard" CTA + `admin_console_open` GA4 event (surface: account).
+- **i18n**: `auth.menuAdminConsole` ("Owner console" / "ओनर कंसोल") + `account.adminCardTitle/Desc/Cta` — EN+HI, parity 5223=5223 (was 5219).
+- **E2E local (agent-browser)**: QA admin created (signup → SQL role promote, local custom.db only) → UI login → dropdown shows "Owner console" → click → **Admin Dashboard renders** (Owner console badge, identity card, 8 tabs, live stat cards: Users=1, recent signups) → mobile viewport 390×844: sheet link → dashboard renders → /hi: dropdown shows "ओनर कंसोल" ✓ → /account: AdminCard with "Open dashboard" ✓.
+- **Infra note**: dev server had hung mid-round (process alive, HTTP 000 — second occurrence); full restart, all routes 200 after. AUTH_SECRET dev-fallback warning is local-only (prod env has it).
+- **Gates**: tsc 0 · lint 0 · parity 5223=5223 · E2E green (desktop + mobile + Hindi).
+
+**Admin dashboard is now reachable in 3 clicks-or-less from anywhere: header avatar → Owner console. Pushed for prod verify below.**
