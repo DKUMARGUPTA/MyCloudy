@@ -7162,3 +7162,23 @@ detail + feature polish.**
 - **Post-recovery verify**: tree clean (0 untracked) · mini-services revived (3031/3032 ok) · prod word-to-pdf 200 + auth/me live · dev stable (t0/t20/t60 all 200).
 
 **Live 142/145 + Turso prod live + sab pushed @ f5f234c.**
+
+## R48 — Admin dashboard RESTORED: "wipe out" solved — git-archaeology recovery + wiring R47 never had (2025-11-03)
+
+**User's complaint "admin dashboard wipe out ho gaya" was 100% real — root cause found and fixed.**
+
+- **Root cause**: R46's emergency `git revert` (bad commit b56108d, 343 files, tsc 207) also reverted the GOOD admin dashboard that R47's cron round had built (dashboard + 7 tabs + admin-client + analytics infra lived only in that commit as untracked-then-committed files). Prod never shipped it (build had failed), so `/admin` was 404 in the tree — exactly what the user saw.
+- **Investigation chain**: prod APIs all 200 + Turso data intact (2 users, 2 feedback, 4 usage events) → backend healthy, data never lost → frontend consumer missing → `rg api/admin src/` → zero consumers → `git show b56108d --stat` → 14 admin files preserved in git object store.
+- **Recovery (better than the original R47 attempt)**: `git checkout b56108d --` 14 files, then ADDED what R47 never had:
+  - Router wiring: `"admin"` view in HashRoute union + parseLegacyHash + parseRouteKey + legacyHashToPath + ROUTES + localizedRoutes
+  - AppShell render case + first-party page-view tracking wired (trackPageView on every route change)
+  - PageView Prisma model added (matches Turso `page_views` DDL exactly — verified via sqlite_master query)
+  - `readAnonId` export in usage-beacon (page-view tracker's dependency)
+  - **Full i18n R47 shipped without**: 156 admin.* keys EN+HI (merge script + manual dynamic keys — device_mobile/tablet/desktop, refDirect/Search/Social/Internal/Other; parity 5219=5219, 0 orphans verified by key-diff vs t() usage)
+- **Accounting quick-link removed** from dashboard (dead /accounting link — P12 accounting is a separate future round; files remain in git object store for that round).
+- **E2E local (agent-browser)**: QA-admin login 200 → dashboard renders (Owner console badge, identity card, 8 tabs) → Overview stat cards + recent signups + quick links → Users tab table (search, "1 of 1 users", role/plan/status/You badge) → Analytics tab LIVE data (page-view tracking itself working: views incrementing per reload, Direct/Internal referrers, Desktop device, English locale) → `POST /api/analytics/view` 202 in dev.log.
+- **E2E prod**: deploy READY @ 70d339c → /admin 200 → Turso QA-admin login 200 → stats 200 (real data) → analytics 200.
+- **Cleanup**: prod Turso QA-admin + orphan `qa-1793558357@docopdf-test.local` deleted (prod users = owner only); local DB QA identity kept for future rounds' local E2E; all /tmp credential files shredded.
+- **Gates**: tsc 0 · lint 0 · parity 5219=5219 · dev.log clean (admin/stats/analytics/view all 200/202).
+
+**Owner console fully live: 8 tabs (Overview/Users/Bugs/Messages/Feedback/Analytics/Audit/Settings) @ /admin — pushed @ 70d339c, prod verified.**
