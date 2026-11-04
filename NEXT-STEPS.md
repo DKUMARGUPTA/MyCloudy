@@ -110,6 +110,18 @@
 
 ## DONE (append-only log)
 
+- **R53-test (2026-11-04):** Tier-A round 3 — 5/5 e2e PASS, zero bugs
+  filed. lock-pdf (qpdf-verified AES-256/AESv3 R=6, pw round-trip,
+  permission bits), unlock-pdf (decrypted output opens pw-free; wrong-pw
+  error copy clean; full lock→unlock round-trip), jpg-to-pdf (A4
+  auto-landscape for 800×560, DCTDecode embed, VLM text round-trip),
+  pdf-to-png (875×583 RGBA exactly as DPI preview promised, ZIP download),
+  rotate-pdf-pages (feature matrix: scope All/Selected + per-page buttons,
+  /Rotate metadata + visual render both verified). Suspected toolbar-rotate
+  bug investigated → working-as-designed ("Apply to" scope system, default
+  All). Footer Hinglish tagline on EN confirmed intentional branding.
+  Docs updated (TOOL-TESTING-PLAN R53 report + statuses). **NEXT: R54 —
+  pdf-to-txt, scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf.**
 - **R52 (2026-11-04):** Tier-A top-5 e2e + deploy fire-fight. edit-pdf,
   sign-pdf, word-to-pdf, pdf-to-jpg, pdf-to-word — 5/5 PASS with content
   verification (DOCX text runs, JPEG VLM, signed/edited pages). UX fix:

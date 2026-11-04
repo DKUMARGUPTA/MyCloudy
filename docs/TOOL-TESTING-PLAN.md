@@ -39,7 +39,7 @@
 |-------|-------|--------|
 | R51 | **QR & Barcodes (all 3)** + mega-menu QR category + Tier-A spot-check (merge e2e, split, compress routes) | ✅ done |
 | R52 | Tier A: edit-pdf, sign-pdf, word-to-pdf, pdf-to-jpg, pdf-to-word | ✅ done — 5/5 e2e PASS + 1 UX fix shipped |
-| R53 | Tier A: lock-pdf, unlock-pdf, jpg-to-pdf, pdf-to-png, rotate-pdf-pages | ⬜ |
+| R53 | Tier A: lock-pdf, unlock-pdf, jpg-to-pdf, pdf-to-png, rotate-pdf-pages | ✅ done — 5/5 e2e PASS (security round-trip verified) |
 | R54 | Tier A: pdf-to-txt, scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf | ⬜ |
 | R55 | Tier A remainder + Tier B start (edit category: watermark, fill, page numbers, crop) | ⬜ |
 | R56–R62 | Tier B by category (organize → edit → convert-to → convert-from → security → optimize → create) | ⬜ |
@@ -68,6 +68,19 @@
 - 🟡 Cookie consent banner covers download buttons until dismissed (expected; first-visit UX only).
 - 🟡 scan-qr-code description wording: "read the QR or barcode inside" → soften to "read the QR inside" for accuracy (low priority).
 
+**R53 round report (2026-11-04) — Tier-A security/convert/organize 5, 5/5 e2e PASS:**
+- ✅ `lock-pdf`: sample.pdf + pw `r53secret` → qpdf confirms AESv3/R=6 encryption, `/Encrypt` present, no-password load rejected, password decrypts to 3 pages. Permission defaults sensible (print ✓, copy ✗). 26% size growth = encryption overhead, correctly shown.
+- ✅ `unlock-pdf`: lock-pdf output → unlocked 2.7 KB PDF, opens without password, 3 pages intact. Wrong-password path shows "Something went wrong — That password is not correct." Full lock→unlock round-trip verified.
+- ✅ `jpg-to-pdf`: 800×560 JPG → A4 **landscape** (Auto orientation smart pick), DCTDecode-embedded, VLM confirms text + shapes survive round-trip. Multi-file UI up to 50 images.
+- ✅ `pdf-to-png`: live DPI preview ("Page 1 at 150 DPI → 875 × 583 px") matched output exactly; 3 RGBA PNGs + **Download all (ZIP)** verified; transparent-bg option present.
+- ✅ `rotate-pdf-pages`: page-grid editor (thumbnails, range select, undo/redo, drag reorder, keyboard shortcuts). Verified: scope=All → all pages 180°; per-page button → page 2 only 90°; scope=Selected + page 2 → page 2 only 90°. Metadata (`/Rotate`) + visual render both correct.
+- ℹ️ Investigated as suspected bug, confirmed **working-as-designed**: toolbar rotate uses an explicit "Apply to" scope (All/Selected/Odd/Even, default All) — selection alone doesn't scope toolbar actions; per-page buttons cover single-page cases.
+- ✅ i18n: HI verified on lock ("पासवर्ड लगाएँ"), unlock ("लॉक हटाएँ"), jpg-to-pdf ("JPG से पीडीएफ़").
+- ✅ Mobile 375px: lock result page + rotate **grid editor** both no horizontal scroll; 2-col thumbnail grid, toolbars wrap.
+- ✅ Dark mode: VLM confirms crisp contrast; toast transiently overlaps "What next?" card (standard toast behavior, cosmetic).
+- ℹ️ Footer tagline "Har PDF kaam, ek jagah." on EN pages = **intentional Hinglish branding** (hi.json uses Devanagari version) — not an i18n bug.
+- ✅ Dev log + console: zero errors across all 5 tools.
+
 **R52 round report (2026-11-04) — Tier-A top 5, 5/5 e2e PASS:**
 - ✅ `edit-pdf`: full editor (11 toolbar tools, undo/redo, zoom, page thumbnails); text object added via real-mouse canvas interaction; 3-page edited PDF with embedded "R52 EDIT TEST" object.
 - ✅ `sign-pdf`: date-stamp flow (create → place on page canvas → run); 3-page signed output. Hindi UI verified.
@@ -84,7 +97,7 @@
 |------|----|-----|--------|
 | Merge PDF | `merge-pdf` | 100 | ✅ R51: e2e pass (2+2 → 4-page merged download) |
 | Split PDF | `split-pdf` | 95 | 🟡 R51: route loads (split route spot-check only — full e2e pending R52) |
-| Rotate PDF pages | `rotate-pdf-pages` | 68 | ⬜ |
+| Rotate PDF pages | `rotate-pdf-pages` | 68 | ✅ R53: e2e — full feature matrix verified (scope=All rotates all, scope=Selected rotates only selection, per-page buttons work); 180° metadata + visual render both correct |
 | Rearrange PDF pages | `rearrange-pdf-pages` | 45 | ⬜ |
 | Remove PDF pages | `remove-pdf-pages` | 42 | ⬜ |
 | Extract PDF pages | `extract-pdf-pages` | 40 | ⬜ |
@@ -144,7 +157,7 @@
 | Tool | ID | Pop | Status |
 |------|----|-----|--------|
 | Word to PDF | `word-to-pdf` | 85 | ✅ R52: e2e — DOCX (own-zip fixture) → 1-page PDF, text run verified ("Second paragraph for conversion verification."), Helvetica embedded |
-| JPG to PDF | `jpg-to-pdf` | 72 | ⬜ |
+| JPG to PDF | `jpg-to-pdf` | 72 | ✅ R53: e2e — text-bearing JPG → PDF round-trip (VLM: text readable), A4 **auto-landscape** for 800×560 image, JPEG embedded via DCTDecode, centered with margins |
 | Convert to PDF | `convert-to-pdf` | 58 | ⬜ |
 | PNG to PDF | `png-to-pdf` | 56 | ⬜ |
 | PowerPoint to PDF | `powerpoint-to-pdf` | 30 | ⬜ |
@@ -172,7 +185,7 @@
 |------|----|-----|--------|
 | PDF to JPG | `pdf-to-jpg` | 84 | ✅ R52: e2e — 3 pages → 625×417 JPEGs, VLM-verified text ("R52 Test Page 1" readable), DPI info shown pre-run |
 | PDF to Word | `pdf-to-word` | 83 | ✅ R52: e2e — 3-page PDF → DOCX, all 6 text runs preserved (R52 Test Page 1/2/3 + subtitles), auto-download works; **UX fix shipped:** re-download button on result card (blocked/missed saves ke liye) |
-| PDF to PNG | `pdf-to-png` | 70 | ⬜ |
+| PDF to PNG | `pdf-to-png` | 70 | ✅ R53: e2e — 3 pages → 875×583 RGBA PNGs (exactly as DPI preview promised), ZIP download + per-file downloads work, VLM-verified content |
 | PDF to TXT | `pdf-to-txt` | 65 | ⬜ |
 | Convert from PDF | `convert-from-pdf` | 44 | ⬜ |
 | PDF to Excel | `pdf-to-excel` | 24 | ⬜ |
@@ -196,8 +209,8 @@
 | Tool | ID | Pop | Status |
 |------|----|-----|--------|
 | Sign PDF | `sign-pdf` | 88 | ✅ R52: e2e — date-stamp created, placed on page via canvas click, 3-page signed PDF downloaded; HI UI tested |
-| Lock PDF | `lock-pdf` | 78 | ⬜ |
-| Unlock PDF | `unlock-pdf` | 75 | ⬜ |
+| Lock PDF | `lock-pdf` | 78 | ✅ R53: e2e — qpdf-verified AES-256 (AESv3, R=6), user password round-trip works, permission bits set, 3 password fields + 6 permission toggles + strength selector |
+| Unlock PDF | `unlock-pdf` | 75 | ✅ R53: e2e — round-trip with lock-pdf output; decrypted file opens without password (qpdf: "File is not encrypted"); wrong-password shows clear error ("That password is not correct.") |
 | Redact PDF | `redact-pdf` | 28 | ⬜ |
 | Generate password | `generate-password` | 26 | ⬜ |
 | Remove PDF metadata | `remove-pdf-metadata` | 20 | ⬜ |
@@ -290,4 +303,4 @@
 
 ---
 
-*Last updated: R51 (QR category focus + mega-menu fix). Next: R52 — Tier A tools.*
+*Last updated: R53 (Tier-A: lock/unlock/jpg-to-pdf/pdf-to-png/rotate — 5/5 pass). Next: R54 — Tier A: pdf-to-txt, scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf.*
