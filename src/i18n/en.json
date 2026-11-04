@@ -53,7 +53,11 @@
     "searchHint": "Ctrl+K",
     "seeAllTools": "See all {count} tools",
     "seeCategory": "See all {category} tools",
-    "moreCategories": "More categories"
+    "moreCategories": "More categories",
+    "menuConvert": "Convert",
+    "menuSecure": "Secure",
+    "menuCreate": "Create",
+    "toolsCount": "{count} tools"
   },
   "makeFillable": {
     "detecting": "Detecting form fields…",

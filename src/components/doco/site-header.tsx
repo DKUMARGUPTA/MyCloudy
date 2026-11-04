@@ -14,7 +14,10 @@ import {
 import { Logo } from "@/components/doco/logo";
 import { LanguageSwitch } from "@/components/doco/language-switch";
 import { ThemeToggle } from "@/components/doco/theme-toggle";
-import { MegaMenu } from "@/components/doco/mega-menu";
+import {
+  CategoryBrowseMenu,
+  HeaderMenus,
+} from "@/components/doco/header-menus";
 import { AccountMenu } from "@/components/doco/auth/account-menu";
 import { useI18n } from "@/components/providers/locale-provider";
 import { anchorClickHandler } from "@/lib/anchor";
@@ -33,10 +36,12 @@ interface SiteHeaderProps {
 }
 
 /**
- * Sticky site header (PRD §5.1): logo, mega-menu, All Tools link,
- * Ctrl+K search trigger, language switch, theme toggle, account menu,
- * Get Pro. Mobile: logo + search + hamburger; categories and settings
- * live in the sheet. Bottom tab bar handles primary mobile navigation.
+ * Sticky site header (PRD §5.1, R51b multi-menu redesign): logo,
+ * focused category dropdowns (lg+), compact tablet browse menu (md–lg),
+ * All Tools link, Ctrl+K search trigger, language switch, theme toggle,
+ * account menu, Get Pro. Mobile: logo + search + hamburger; categories
+ * and settings live in the sheet. Bottom tab bar handles primary mobile
+ * navigation.
  */
 export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
   const { t, locale } = useI18n();
@@ -55,19 +60,23 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
           <Logo />
         </a>
 
-        <div className="ml-2 hidden items-center gap-1 md:flex">
-          <MegaMenu />
+        <div className="ml-1 hidden items-center gap-1 md:flex">
+          {/* R51b: one compact browse panel on tablets, six focused
+           * dropdowns on desktop — the old 5-column mega-menu wall is
+           * gone. Labels stay short so all six fit even in Hindi. */}
+          <CategoryBrowseMenu />
+          <HeaderMenus />
           <a
             href={routes.tools}
             aria-current={route.view === "tools" ? "page" : undefined}
-            className="flex min-h-11 items-center rounded-btn px-3 text-sm font-medium outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-[current=page]:text-primary"
+            className="flex h-9 items-center rounded-btn px-2.5 text-sm font-medium outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-[current=page]:text-primary"
           >
             {t("tools.title")}
           </a>
           <a
             href="#why"
             onClick={anchorClickHandler("why")}
-            className="flex min-h-11 items-center rounded-btn px-3 text-sm font-medium text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="hidden h-9 items-center rounded-btn px-2.5 text-sm font-medium text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 xl:flex"
           >
             {t("header.why")}
           </a>
@@ -82,10 +91,10 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
             onClick={onOpenSearch}
           >
             <Search className="size-4" aria-hidden="true" />
-            <span className="hidden text-sm lg:inline">
+            <span className="hidden text-sm xl:inline">
               {t("tools.searchLabel")}
             </span>
-            <kbd className="pointer-events-none hidden rounded-md border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground lg:inline-flex">
+            <kbd className="pointer-events-none hidden rounded-md border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground xl:inline-flex">
               {t("header.searchHint")}
             </kbd>
           </Button>

@@ -2,7 +2,7 @@ import { absoluteUrl, hindiPath } from "@/lib/seo/site";
 import { ALL_TOOLS, CATEGORIES } from "@/lib/tools/registry";
 import { LANDING_SLUGS } from "@/lib/seo/landing-pages";
 
-import { buildSitemapHtml, type HtmlSitemapEntry } from "./html";
+import { buildSitemapHtml, type HtmlSitemapEntry } from "./sitemap-html";
 
 /**
  * Custom /sitemap.xml route (R18-SITEMAP-UX).

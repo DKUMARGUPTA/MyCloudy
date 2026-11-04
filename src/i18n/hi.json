@@ -53,7 +53,11 @@
     "searchHint": "Ctrl+K",
     "seeAllTools": "सभी {count} टूल देखें",
     "seeCategory": "सभी {category} टूल देखें",
-    "moreCategories": "और श्रेणियाँ"
+    "moreCategories": "और श्रेणियाँ",
+    "menuConvert": "बदलें",
+    "menuSecure": "सुरक्षित",
+    "menuCreate": "बनाएँ",
+    "toolsCount": "{count} टूल"
   },
   "makeFillable": {
     "detecting": "फ़ॉर्म फ़ील्ड ढूँढे जा रहे हैं…",
