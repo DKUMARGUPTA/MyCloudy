@@ -51,16 +51,23 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border bg-background/85 backdrop-blur-md supports-[backdrop-filter]:bg-background/70">
-      <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-2 px-4">
+      {/* R54 fix: full row needs ~1400px (logo 113 + nav 718 + right 427
+       * + search text) but max-w-6xl gave 1152px → 257px overflow (Get Pro
+       * pushed off-screen at 1280–1535, labels wrapped to 2 lines with wide
+       * fonts). Fix: container to 1520px + tiered density — at xl–2xl the
+       * search stays icon-only, Log in is icon-only and "Why DocoPDF" hides;
+       * full labels return at 2xl+. Every label nowrap + shrink-0 so it can
+       * never break mid-word again. */}
+      <div className="mx-auto flex h-16 w-full max-w-[1520px] items-center gap-1 px-4">
         <a
           href={routes.home}
           aria-label={t("a11y.logoLabel")}
-          className="rounded-btn outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          className="shrink-0 rounded-btn outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
           <Logo />
         </a>
 
-        <div className="ml-1 hidden items-center gap-1 md:flex">
+        <div className="ml-1 hidden items-center gap-0.5 md:flex">
           {/* R51b: one compact browse panel on tablets, six focused
            * dropdowns on desktop — the old 5-column mega-menu wall is
            * gone. Labels stay short so all six fit even in Hindi. */}
@@ -69,20 +76,20 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
           <a
             href={routes.tools}
             aria-current={route.view === "tools" ? "page" : undefined}
-            className="flex h-9 items-center rounded-btn px-2.5 text-sm font-medium outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-[current=page]:text-primary"
+            className="flex h-9 shrink-0 items-center whitespace-nowrap rounded-btn px-2 text-sm font-medium outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-[current=page]:text-primary"
           >
             {t("tools.title")}
           </a>
           <a
             href="#why"
             onClick={anchorClickHandler("why")}
-            className="hidden h-9 items-center rounded-btn px-2.5 text-sm font-medium text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 xl:flex"
+            className="hidden h-9 shrink-0 items-center whitespace-nowrap rounded-btn px-2 text-sm font-medium text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 2xl:flex"
           >
             {t("header.why")}
           </a>
         </div>
 
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex items-center gap-1">
           <Button
             type="button"
             variant="outline"
@@ -91,10 +98,10 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
             onClick={onOpenSearch}
           >
             <Search className="size-4" aria-hidden="true" />
-            <span className="hidden text-sm xl:inline">
+            <span className="hidden text-sm 2xl:inline">
               {t("tools.searchLabel")}
             </span>
-            <kbd className="pointer-events-none hidden rounded-md border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground xl:inline-flex">
+            <kbd className="pointer-events-none hidden rounded-md border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground 2xl:inline-flex">
               {t("header.searchHint")}
             </kbd>
           </Button>
@@ -119,7 +126,7 @@ export function SiteHeader({ onGetPro, onOpenSearch, route }: SiteHeaderProps) {
             type="button"
             variant="cta"
             size="touch"
-            className="hidden rounded-btn xl:inline-flex"
+            className="hidden shrink-0 rounded-btn xl:inline-flex"
             onClick={onGetPro}
           >
             {t("header.getPro")}

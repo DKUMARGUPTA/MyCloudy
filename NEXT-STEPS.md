@@ -110,6 +110,24 @@
 
 ## DONE (append-only log)
 
+- **R54-fix (2026-11-04):** Header layout overflow FIXED (user-reported via
+  screenshot). Diagnosis: header row needed ~1400px (logo 113 + nav 718 +
+  right group 427 + search text) but `max-w-6xl` capped the container at
+  1152px → 257px structural overflow at ALL desktop sizes — Get Pro pushed
+  off-screen at 1280–1535 viewports (right edge measured at 1473px > 1280
+  viewport), and with wide system fonts the squeeze wrapped "All tools" /
+  "Why DocoPDF" onto 2 lines (labels had no whitespace-nowrap). The "75%"
+  pill in the report was Chrome's native zoom bubble (browser UI), not a
+  site component — but it led to the real bug. Fix (3 files): container
+  `max-w-6xl` → `max-w-[1520px]` + tiered density (search icon-only,
+  Log in icon-only, Why hidden below 2xl; full labels at 2xl+) + nowrap +
+  shrink-0 on every nav label (site-header.tsx, header-menus.tsx,
+  account-menu.tsx) + gap/padding trims. Verified: overflow=0 at
+  1280/1366/1440/1536/1600/1920/2048/2557/3000 EN+HI (Hindi = widest
+  locale, slack 174–360px), Get Pro in-viewport everywhere, labels
+  single-line everywhere, dropdowns open cleanly, mobile/tablet no
+  hscroll, lint 0, console clean. **NEXT: R54 testing — pdf-to-txt,
+  scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf.**
 - **R53-test (2026-11-04):** Tier-A round 3 — 5/5 e2e PASS, zero bugs
   filed. lock-pdf (qpdf-verified AES-256/AESv3 R=6, pw round-trip,
   permission bits), unlock-pdf (decrypted output opens pw-free; wrong-pw

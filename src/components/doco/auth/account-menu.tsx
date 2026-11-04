@@ -51,7 +51,7 @@ export function AccountMenu() {
         onClick={() => openAuthModal("login")}
       >
         <UserRound className="size-5" aria-hidden="true" />
-        <span className="hidden text-sm xl:inline">{t("auth.tabLogin")}</span>
+        <span className="hidden text-sm 2xl:inline">{t("auth.tabLogin")}</span>
       </Button>
     );
   }

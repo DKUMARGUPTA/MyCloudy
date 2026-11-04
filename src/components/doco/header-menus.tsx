@@ -255,7 +255,7 @@ export function HeaderMenus() {
             : getCategory(menu.labelCategory ?? "organize").name[locale];
           return (
             <NavigationMenuItem key={menu.id}>
-              <NavigationMenuTrigger className="h-9 rounded-btn px-2 text-sm font-medium">
+              <NavigationMenuTrigger className="h-9 shrink-0 whitespace-nowrap rounded-btn px-2 text-sm font-medium">
                 {label}
               </NavigationMenuTrigger>
               <NavigationMenuContent className={cn(menu.panelClass, "p-3")}>
@@ -289,7 +289,7 @@ export function CategoryBrowseMenu() {
     >
       <NavigationMenuList>
         <NavigationMenuItem>
-          <NavigationMenuTrigger className="h-9 rounded-btn px-2.5 text-sm font-medium">
+          <NavigationMenuTrigger className="h-9 shrink-0 whitespace-nowrap rounded-btn px-2.5 text-sm font-medium">
             {t("header.tools")}
           </NavigationMenuTrigger>
           <NavigationMenuContent className="md:w-[24rem] p-3">
