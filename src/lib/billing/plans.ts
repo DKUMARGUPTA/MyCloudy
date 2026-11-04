@@ -55,3 +55,25 @@ export function isProPlanId(id: string): id is ProPlanId {
 export function billingDemoMode(): boolean {
   return process.env.BILLING_DEMO === "1";
 }
+
+/* ─── Free-tier daily task limits (R28, billing-research D3) ─────────
+ *
+ * D3: 25 successful tasks/day for free (10× the market floor, covers
+ * every legitimate user), 1,000/day Pro fair-use ceiling. The counter +
+ * /api/limits + the 80% nudge run in SHADOW MODE while no payment
+ * provider is configured — never a block before checkout exists. The
+ * hard gate auto-activates the moment provider keys land. */
+
+/** Free-tier daily limit of successful tool runs. */
+export const FREE_DAILY_TASKS = 25;
+
+/** Pro fair-use daily ceiling (D3). */
+export const PRO_DAILY_TASKS = 1_000;
+
+/** Hard enforcement is live only when a payment provider is configured —
+ * limits and payments always ship together, never limits-first. */
+export function billingLimitsActive(): boolean {
+  return Boolean(
+    process.env.RAZORPAY_KEY_ID || process.env.STRIPE_SECRET_KEY
+  );
+}
