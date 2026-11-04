@@ -38,7 +38,7 @@
 | Round | Scope | Status |
 |-------|-------|--------|
 | R51 | **QR & Barcodes (all 3)** + mega-menu QR category + Tier-A spot-check (merge e2e, split, compress routes) | ✅ done |
-| R52 | Tier A: edit-pdf, sign-pdf, word-to-pdf, pdf-to-jpg, pdf-to-word | ⬜ |
+| R52 | Tier A: edit-pdf, sign-pdf, word-to-pdf, pdf-to-jpg, pdf-to-word | ✅ done — 5/5 e2e PASS + 1 UX fix shipped |
 | R53 | Tier A: lock-pdf, unlock-pdf, jpg-to-pdf, pdf-to-png, rotate-pdf-pages | ⬜ |
 | R54 | Tier A: pdf-to-txt, scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf | ⬜ |
 | R55 | Tier A remainder + Tier B start (edit category: watermark, fill, page numbers, crop) | ⬜ |
@@ -67,6 +67,16 @@
 - ✅ Dark mode: readable; minor contrast note — active "एक QR" tab teal-on-dark-teal slightly low contrast (cosmetic, not blocking).
 - 🟡 Cookie consent banner covers download buttons until dismissed (expected; first-visit UX only).
 - 🟡 scan-qr-code description wording: "read the QR or barcode inside" → soften to "read the QR inside" for accuracy (low priority).
+
+**R52 round report (2026-11-04) — Tier-A top 5, 5/5 e2e PASS:**
+- ✅ `edit-pdf`: full editor (11 toolbar tools, undo/redo, zoom, page thumbnails); text object added via real-mouse canvas interaction; 3-page edited PDF with embedded "R52 EDIT TEST" object.
+- ✅ `sign-pdf`: date-stamp flow (create → place on page canvas → run); 3-page signed output. Hindi UI verified.
+- ✅ `word-to-pdf`: DOCX fixture (own-zip) → valid PDF; text run decoded from content stream: "Second paragraph for conversion verification."
+- ✅ `pdf-to-jpg`: 3 pages → 625×417 baseline JPEGs; VLM confirmed readable text on output.
+- ✅ `pdf-to-word`: full text preservation (6 runs); auto-download design confirmed working.
+- 🔧 **UX fix shipped:** pdf-to-word result card had NO re-download path (auto-download only) — a blocked/missed browser save left the user stranded. Added "Download again" button (EN+HI i18n) storing the blob in result state. Verified via re-run + click.
+- ✅ Mobile 375px: no horizontal scroll on tool pages.
+- ✅ Lint: 0 errors. Dev log: clean.
 
 ### Organize (26)
 
@@ -103,7 +113,7 @@
 
 | Tool | ID | Pop | Status |
 |------|----|-----|--------|
-| Edit PDF | `edit-pdf` | 90 | ⬜ |
+| Edit PDF | `edit-pdf` | 90 | ✅ R52: e2e — editor loads (11 tools, undo/redo, zoom, thumbnails), text object added via real-mouse canvas click, "R52 EDIT TEST" embedded, 3-page edited PDF downloaded |
 | Add watermark | `add-watermark` | 55 | ⬜ |
 | Fill out PDF | `fill-out-pdf` | 50 | ⬜ |
 | Add page numbers | `add-page-numbers` | 38 | ⬜ |
@@ -133,7 +143,7 @@
 
 | Tool | ID | Pop | Status |
 |------|----|-----|--------|
-| Word to PDF | `word-to-pdf` | 85 | ⬜ |
+| Word to PDF | `word-to-pdf` | 85 | ✅ R52: e2e — DOCX (own-zip fixture) → 1-page PDF, text run verified ("Second paragraph for conversion verification."), Helvetica embedded |
 | JPG to PDF | `jpg-to-pdf` | 72 | ⬜ |
 | Convert to PDF | `convert-to-pdf` | 58 | ⬜ |
 | PNG to PDF | `png-to-pdf` | 56 | ⬜ |
@@ -160,8 +170,8 @@
 
 | Tool | ID | Pop | Status |
 |------|----|-----|--------|
-| PDF to JPG | `pdf-to-jpg` | 84 | ⬜ |
-| PDF to Word | `pdf-to-word` | 83 | ⬜ |
+| PDF to JPG | `pdf-to-jpg` | 84 | ✅ R52: e2e — 3 pages → 625×417 JPEGs, VLM-verified text ("R52 Test Page 1" readable), DPI info shown pre-run |
+| PDF to Word | `pdf-to-word` | 83 | ✅ R52: e2e — 3-page PDF → DOCX, all 6 text runs preserved (R52 Test Page 1/2/3 + subtitles), auto-download works; **UX fix shipped:** re-download button on result card (blocked/missed saves ke liye) |
 | PDF to PNG | `pdf-to-png` | 70 | ⬜ |
 | PDF to TXT | `pdf-to-txt` | 65 | ⬜ |
 | Convert from PDF | `convert-from-pdf` | 44 | ⬜ |
@@ -185,7 +195,7 @@
 
 | Tool | ID | Pop | Status |
 |------|----|-----|--------|
-| Sign PDF | `sign-pdf` | 88 | ⬜ |
+| Sign PDF | `sign-pdf` | 88 | ✅ R52: e2e — date-stamp created, placed on page via canvas click, 3-page signed PDF downloaded; HI UI tested |
 | Lock PDF | `lock-pdf` | 78 | ⬜ |
 | Unlock PDF | `unlock-pdf` | 75 | ⬜ |
 | Redact PDF | `redact-pdf` | 28 | ⬜ |

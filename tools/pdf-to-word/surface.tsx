@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
+  Download,
   FileText,
   Loader2,
   Sparkles,
@@ -47,6 +48,8 @@ interface DoneSummary {
   paragraphs: number;
   headings: number;
   tables: number;
+  /** Kept for re-download — browsers can block/miss the auto-save. */
+  blob: Blob;
 }
 
 export function PdfToWordSurface({
@@ -116,6 +119,7 @@ export function PdfToWordSurface({
               paragraphs: detail?.paragraphs ?? 0,
               headings: detail?.headings ?? 0,
               tables: detail?.tables ?? 0,
+              blob: output.blob,
             });
             toast({
               title: t("p2w.doneTitle"),
@@ -349,6 +353,18 @@ export function PdfToWordSurface({
               {t("p2w.summaryTables", { count: done.tables })}
             </li>
           </ul>
+          {/* R52: the run auto-downloads, but a blocked/missed save used to
+           * leave the user stranded — one tap re-saves the finished .docx. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="self-start rounded-btn"
+            onClick={() => downloadBlob(done.blob, done.name)}
+          >
+            <Download className="size-3.5" aria-hidden="true" />
+            {t("p2w.redownload")}
+          </Button>
         </div>
       ) : null}
 

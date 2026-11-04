@@ -3208,7 +3208,8 @@
     "feature1": "Real editable .docx — selectable PDF text becomes Word paragraphs, 100% on-device.",
     "feature2": "Structure survives — paragraphs, Heading 1/2 tiers, bold runs, detected tables and page breaks are rebuilt.",
     "feature3": "Hindi comes through clean — Devanagari converts in UTF-8 for Word, Google Docs and LibreOffice.",
-    "feature4": "Honest conversion — pages, paragraphs, tables and headings are counted before the download; images and multi-column layouts become text."
+    "feature4": "Honest conversion — pages, paragraphs, tables and headings are counted before the download; images and multi-column layouts become text.",
+    "redownload": "Download again"
   },
   "xls": {
     "how1": "Drop a .xlsx or .xlsm workbook — the real file is sniffed (not just the name), and it never leaves your device.",
