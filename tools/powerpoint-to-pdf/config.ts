@@ -33,6 +33,10 @@ export const config: ToolConfig = {
   minFiles: 0,
   maxFiles: 1,
   landingSurface: true,
+  // The surface renders its own summary + Layout card (page size, margins,
+  // notes, fit) inline — skip the generic options aside/mobile sheet so the
+  // same controls never appear twice (excel-to-pdf precedent).
+  fullWidthSurface: true,
   options: [
     {
       kind: "select",

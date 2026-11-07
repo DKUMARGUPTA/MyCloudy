@@ -27,6 +27,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
@@ -35,9 +36,12 @@ import {
 import {
   FileDown,
   FileUp,
+  Files,
   Loader2,
   Presentation,
+  Shapes,
   TriangleAlert,
+  Type,
   X,
 } from "lucide-react";
 
@@ -351,6 +355,26 @@ export function PowerpointToPdfSurface({
   const estPages = parsedDoc ? estimatePages(parsedDoc.slides, notes) : 0;
   const stats = parsedDoc ? statsSlides(parsedDoc.slides) : null;
 
+  /** First text of each slide (title shape first) — the outline chips. */
+  const slideTitles = useMemo<string[]>(() => {
+    if (!parsedDoc) return [];
+    return parsedDoc.slides.map((slide) => {
+      const pick = (wantTitle: boolean): string => {
+        for (const shape of slide.shapes) {
+          if (shape.isTitle !== wantTitle) continue;
+          const text = shape.paras
+            .map((p) => p.runs.map((r) => r.text).join(""))
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim();
+          if (text) return text;
+        }
+        return "";
+      };
+      return pick(true) || pick(false);
+    });
+  }, [parsedDoc]);
+
   /* ---------------------------------------------------------------- */
 
   return (
@@ -494,25 +518,77 @@ export function PowerpointToPdfSurface({
               <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {(
                   [
-                    ["ppt.statSlides", stats?.slides ?? 0],
-                    ["ppt.statShapes", stats?.shapes ?? 0],
-                    ["ppt.statWords", stats?.words ?? 0],
-                    ["ppt.statPages", estPages],
+                    ["ppt.statSlides", stats?.slides ?? 0, Presentation],
+                    ["ppt.statShapes", stats?.shapes ?? 0, Shapes],
+                    ["ppt.statWords", stats?.words ?? 0, Type],
+                    ["ppt.statPages", estPages, Files],
                   ] as const
-                ).map(([key, n]) => (
+                ).map(([key, n, Icon]) => (
                   <div
                     key={key}
-                    className="min-w-0 rounded-card border border-border bg-card p-3 text-center"
+                    className="flex min-w-0 flex-col items-center gap-1.5 rounded-card border border-border bg-card p-3 text-center transition-colors hover:border-primary/40 hover:bg-primary/[0.03]"
                   >
-                    <dt className="order-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    <span
+                      className="order-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                      aria-hidden="true"
+                    >
+                      <Icon className="size-4" />
+                    </span>
+                    <dt className="order-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                       {t(key)}
                     </dt>
-                    <dd className="order-1 text-lg font-bold tabular-nums text-foreground">
+                    <dd className="order-2 text-lg font-bold leading-none tabular-nums text-foreground">
                       {countFmt(n)}
                     </dd>
                   </div>
                 ))}
               </dl>
+              {docOk && parsedDoc && parsedDoc.slides.length > 0 ? (
+                <div className="mt-3 rounded-card border border-border bg-card p-3 sm:p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {t("ppt.outlineTitle")}
+                  </p>
+                  <ul className="mt-2 flex flex-wrap gap-1.5">
+                    {parsedDoc.slides.slice(0, 8).map((slide, i) => {
+                      const raw = slideTitles[i] ?? "";
+                      const label =
+                        raw.length > 42 ? `${raw.slice(0, 42).trimEnd()}…` : raw;
+                      const hasNotes = slide.notes.trim().length > 0;
+                      return (
+                        <li
+                          key={i}
+                          className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border bg-background py-1 pl-1 pr-2.5 text-xs text-foreground"
+                        >
+                          <span
+                            className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-bold tabular-nums text-primary"
+                            aria-hidden="true"
+                          >
+                            {i + 1}
+                          </span>
+                          <span className="min-w-0 truncate">
+                            {label || t("ppt.outlineEmpty")}
+                          </span>
+                          {hasNotes ? (
+                            <span
+                              className="shrink-0 rounded-full border border-primary/25 bg-primary/10 px-1.5 py-px text-[10px] font-medium text-primary"
+                              title={t("ppt.notesLbl")}
+                            >
+                              {t("ppt.outlineNotes")}
+                            </span>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                    {parsedDoc.slides.length > 8 ? (
+                      <li className="flex items-center rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground">
+                        {t("ppt.outlineMore", {
+                          n: parsedDoc.slides.length - 8,
+                        })}
+                      </li>
+                    ) : null}
+                  </ul>
+                </div>
+              ) : null}
               {!docOk ? (
                 <div
                   role="status"

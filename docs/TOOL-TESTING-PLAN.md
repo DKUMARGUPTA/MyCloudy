@@ -42,7 +42,7 @@
 | R53 | Tier A: lock-pdf, unlock-pdf, jpg-to-pdf, pdf-to-png, rotate-pdf-pages | ✅ done — 5/5 e2e PASS (security round-trip verified) |
 | R54 | Tier A: pdf-to-txt, scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf | ✅ done — 6/6 e2e PASS + 1 critical bug fixed (scan→OCR chain) + layout-audit fixes |
 | R55 | Tier A remainder + Tier B start (edit category: watermark, fill, page numbers, crop) | ✅ done — 4/4 e2e PASS + rG operator bug fixed + success-badge polish + Copy-text feature |
-| R56–R62 | Tier B by category (organize → edit → convert-to → convert-from → security → optimize → create) | 🔄 R56 done — organize: split/rearrange/remove/extract 4/4 PASS + rapid-move race bug fixed + Reverse feature |
+| R56–R62 | Tier B by category (organize → edit → convert-to → convert-from → security → optimize → create) | 🔄 R56 done — organize 4/4; R57 done — convert-to 4/4 PASS + vertical-mirror render bug fixed + duplicate options panel fixed |
 | R63–R66 | Tier C by category (incl. invoices, view, images) — smoke level | ⬜ |
 | R67 | Full regression: home, /tools, all 11 category pages EN+HI, search palette, footer | ⬜ |
 
@@ -67,6 +67,19 @@
 - ✅ Dark mode: readable; minor contrast note — active "एक QR" tab teal-on-dark-teal slightly low contrast (cosmetic, not blocking).
 - 🟡 Cookie consent banner covers download buttons until dismissed (expected; first-visit UX only).
 - 🟡 scan-qr-code description wording: "read the QR or barcode inside" → soften to "read the QR inside" for accuracy (low priority).
+
+**R57 round report (2026-11-07, cron review) — Tier-B convert-to category 4, 4/4 e2e PASS + 2 bugs fixed + slide-outline feature:**
+- 🔧 **VERTICAL-MIRROR RENDER BUG FIXED — every PowerPoint slide's text was drawn upside-down:** pptx slide geometry is top-down (y from the slide's top edge) but PDF y grows upward from the bottom-left origin; the renderer passed `shape.y` straight through, so a title at y=30 rendered 94% DOWN the page (bottom-left) and body text stacked upward — the whole slide vertically mirrored. Content-level asserts (pdftotext, smoke 104-check) never caught it because the text was all there, just positioned wrong — a VLM e2e position check ("Cover Title at bottom-left?") exposed it. **Fix (tools/powerpoint-to-pdf/render.ts):** the slide loop now converts the shape's top edge to PDF space (`oy + (slideH − shape.y)·scale`) and `drawTextBox` walks paragraphs DOWN the page from it — the same PDF-space convention the speaker-notes path already used (which is why notes pages were correct while slides mirrored). Verified: "Cover Title" now at 7-11% down (was 95-99%), slide-native + A4-letterbox + fit + notes paths all pixel-checked. **Smoke guard added:** the first text draw (the title) must sit at PDF y ∈ (400, 530) on the 540pt page — the old bug lands it at ~0-5, so this class of regression can never pass silently again (105 checks now).
+- 🔧 **Duplicate options panel fixed:** powerpoint-to-pdf rendered its custom "Layout" card (page size / margins / notes / fit) AND the generic "Options" aside — the same 4 controls twice on one page. Fix: `fullWidthSurface: true` in the config (excel-to-pdf precedent) — the inline card is the single source of truth.
+- ✅ `powerpoint-to-pdf` e2e: deck summary (3 slides / 5 shapes / 20 words / 3 est. pages), EN + Hindi slides (Noto Sans Devanagari embedded + Indic shaped), slide order follows presentation.xml sldIdLst (not filename order), speaker-notes pages ("Slide 1 — notes" headings + notes text), A4-landscape + fit-to-width letterbox framing.
+- ✅ `excel-to-pdf` e2e: sheet checkboxes (All/Sheet1), 3-row fixture → 1-page A4 portrait, "Sheet1" bold title + rule, gray header row, gridlines, zebra option, "Sheet 1 of 1" footer — VLM-verified clean table.
+- ✅ `heic-to-pdf` e2e: real HEIF/HEVC fixture (`file`-verified) decoded in-browser by the self-hosted libheif WASM (Chrome), ImageGrid accepts + converts to 1-page A4 auto-landscape; corner-color round-trip vs ffmpeg decode (dark TL / pink TR / green BL / yellow BR) — faithful.
+- ✅ `webp-to-pdf` e2e: VP8 WEBP → PNG transcode → 1-page A4 auto-landscape, "WEBP FIXTURE R57" text + orange circle + purple background survive (VLM).
+- ✅ Dispatcher (convert-to-pdf): .pptx upload → "PowerPoint to PDF" recommendation card → click chains with file carried over; .xlsx → "Excel to PDF" card likewise.
+- ✨ **Feature: Slide outline chips** (powerpoint-to-pdf workspace) — numbered pill chips showing each slide's title text (title shape preferred, first text fallback, "No text" for empty slides), a teal "notes" badge on slides carrying speaker notes, "+N more" overflow for decks > 8 slides; EN + HI labels.
+- ✨ **Styling:** stat tiles upgraded — per-stat Lucide icons in teal circular badges (Presentation/Shapes/Type/Files), big tabular number + small uppercase label, hover border/bg states; VLM-reviewed clean.
+- ✅ Mobile 375px: no horizontal overflow (scrollWidth == 375) with the new tiles + chips; Hindi workspace fully localized (सारांश, रूपरेखा, कोई टेक्स्ट नहीं, नोट्स). Lint 0, dev log clean.
+
 
 **R56 round report (2026-11-07, cron review) — Tier-B organize category 4, 4/4 e2e PASS + PageGrid race bug fixed + Reverse feature:**
 - ✅ `split-pdf` (full e2e, was spot-check only): By-ranges "1-2, 3-5" → 2 exact parts (pages 1-2 / 3-5, pdftotext-verified); Every-N (N=2) → 3 parts 1-2/3-4/5 with descriptive filenames (five-part-1-pages-1-2.pdf…); per-part downloads + Download-all-ZIP all verified.
@@ -197,10 +210,10 @@
 | JPG to PDF | `jpg-to-pdf` | 72 | ✅ R53: e2e — text-bearing JPG → PDF round-trip (VLM: text readable), A4 **auto-landscape** for 800×560 image, JPEG embedded via DCTDecode, centered with margins |
 | Convert to PDF | `convert-to-pdf` | 58 | ✅ R54: e2e — smart dispatcher routes JPG → Images to PDF chain, A4 output |
 | PNG to PDF | `png-to-pdf` | 56 | ✅ R54: e2e — PNG → 1-page A4 landscape, image placed with margins, VLM-verified |
-| PowerPoint to PDF | `powerpoint-to-pdf` | 30 | ⬜ |
-| Excel to PDF | `excel-to-pdf` | 28 | ⬜ |
-| HEIC to PDF | `heic-to-pdf` | 26 | ⬜ |
-| WEBP to PDF | `webp-to-pdf` | 22 | ⬜ |
+| PowerPoint to PDF | `powerpoint-to-pdf` | 30 | ✅ R57: e2e — 3-slide deck → 3-page 960×540 PDF, Hindi slide text (Noto embedded), speaker-notes pages verified; 🔧 vertical-mirror render bug + duplicate options panel FIXED (see R57 report) |
+| Excel to PDF | `excel-to-pdf` | 28 | ✅ R57: e2e — 3-row sheet → 1-page A4 portrait, gray header + gridlines + "Sheet 1 of 1" footer, VLM-verified table |
+| HEIC to PDF | `heic-to-pdf` | 26 | ✅ R57: e2e — real HEIF/HEVC fixture decoded by libheif WASM in Chromium, A4 auto-landscape, corner-color round-trip verified (dark/pink/green/yellow quadrants) |
+| WEBP to PDF | `webp-to-pdf` | 22 | ✅ R57: e2e — VP8 WEBP → 1-page A4 auto-landscape, text + circle survive (VLM), PNG transcode path |
 | TXT to PDF | `txt-to-pdf` | 18 | ⬜ |
 | CSV to PDF | `csv-to-pdf` | 14 | ⬜ |
 | Markdown to PDF | `markdown-to-pdf` | 14 | ⬜ |
@@ -340,4 +353,4 @@
 
 ---
 
-*Last updated: R53 (Tier-A: lock/unlock/jpg-to-pdf/pdf-to-png/rotate — 5/5 pass). Next: R54 — Tier A: pdf-to-txt, scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf.*
+*Last updated: R57 (Tier-B convert-to: powerpoint/excel/heic/webp-to-pdf — 4/4 pass, vertical-mirror bug fixed). Next: R58 — Tier B convert-from category (pdf-to-excel, pdf-to-powerpoint, extract-tables, prepare-pdf-for-ai).*

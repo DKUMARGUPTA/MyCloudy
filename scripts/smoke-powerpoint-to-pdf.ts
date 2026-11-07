@@ -410,6 +410,22 @@ async function render(o: RenderOpts): Promise<{
   check("EN: no NaN geometry", !txt.includes("NaN"));
   check("EN: no overflow in the sample", out.report.overflowed === 0, out.report.overflowed);
 
+  // R57 regression guard — the VLM e2e caught a vertical-mirror bug the
+  // content-level asserts never saw: slide y (top-down) was passed straight
+  // to PDF y (bottom-up), landing every title at the BOTTOM of its page.
+  // The first text draw on page 1 is the title shape (top-down y=36 on the
+  // 540pt slide) — in correct PDF space it must sit near the page TOP.
+  {
+    const tmY = [...txt.matchAll(/1 0 0 1 -?[\d.]+ (-?[\d.]+) Tm/g)].map((m) =>
+      Number(m[1])
+    );
+    check(
+      "EN: first draw = slide title at page TOP (PDF y in (400, 530))",
+      tmY.length > 0 && tmY[0] > 400 && tmY[0] < 530,
+      tmY[0]
+    );
+  }
+
   const a4 = await render({ noto: false, pageSize: "a4" });
   const a4Size = (await PDFDocument.load(a4.bytes)).getPage(0).getSize();
   check("A4 landscape dims", near(a4Size.width, 841.89) && near(a4Size.height, 595.28), `${a4Size.width}x${a4Size.height}`);

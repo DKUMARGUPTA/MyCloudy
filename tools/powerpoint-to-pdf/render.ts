@@ -361,7 +361,8 @@ function layoutPlain(
 
 interface BoxGeo {
   x: number;
-  y: number; // top
+  /** Box TOP edge in PDF space (y grows upward) — text walks DOWN. */
+  y: number;
   w: number;
   h: number;
 }
@@ -382,7 +383,9 @@ function drawTextBox(
 
   const innerX = box.x + INS_X * scale;
   const innerW = Math.max(12, box.w - INS_X * 2 * scale);
-  let y = box.y + INS_Y * scale;
+  // box.y is the box TOP in PDF space (origin bottom-left, y up) — the
+  // inset and every following line step DOWN, away from it.
+  let y = box.y - INS_Y * scale;
   let textH = 0;
 
   const defTitle = TITLE_DEFAULT_PT * scale;
@@ -392,7 +395,7 @@ function drawTextBox(
     if (para.runs.length === 0) {
       // empty paragraph — one honest blank line
       const lh = (shape.isTitle ? defTitle : defBody) * LINE_MUL;
-      y += lh;
+      y -= lh;
       textH += lh;
       continue;
     }
@@ -444,7 +447,7 @@ function drawTextBox(
       if (bullet) {
         p.text(page, "•", innerX, y, bulletSize, false, ln.maxSeg, COL_TEXT);
       }
-      y += ln.lh;
+      y -= ln.lh;
       textH += ln.lh;
     }
   }
@@ -525,9 +528,15 @@ export function drawPptxPdf(
     }
 
     for (const shape of slide.shapes) {
+      // Slide XML y is TOP-DOWN (EMU from the slide's top edge); PDF y
+      // grows UPWARD from the bottom-left origin. Convert the shape's top
+      // edge to PDF space: oy is the slide rect's bottom edge, so the
+      // shape top sits (slideH − shape.y)·scale above it. drawTextBox then
+      // walks the paragraphs DOWN the page from there (notes pages share
+      // the same PDF-space Painter convention).
       const box: BoxGeo = {
         x: ox + shape.x * scale,
-        y: oy + shape.y * scale,
+        y: oy + (slideH - shape.y) * scale,
         w: Math.max(8, shape.w * scale),
         h: shape.h * scale,
       };

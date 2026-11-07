@@ -3368,7 +3368,11 @@
     "doneDesc": "{name} downloaded — {pages, plural, =1 {1 page} other {# pages}} of selectable text.",
     "overflowNote": "Some text overflowed its slide boxes — everything is still drawn.",
     "notesHeadingFmt": "Slide {n} — notes",
-    "honestNote": "Honest limits: pictures, charts, SmartArt and tables are not carried over; text, titles, bullets and speaker notes convert faithfully. .pptx only."
+    "honestNote": "Honest limits: pictures, charts, SmartArt and tables are not carried over; text, titles, bullets and speaker notes convert faithfully. .pptx only.",
+    "outlineTitle": "Slide outline",
+    "outlineEmpty": "No text",
+    "outlineMore": "+{n} more",
+    "outlineNotes": "notes"
   },
   "odt": {
     "how1": "Drop an .odt or .ods file in the box — the ZIP signature is checked on your device, no upload ever happens.",

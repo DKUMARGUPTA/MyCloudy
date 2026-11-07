@@ -110,6 +110,32 @@
 
 ## DONE (append-only log)
 
+- **R57 (2026-11-07, cron review):** Tier-B convert-to category round — 4/4
+  e2e PASS, 2 bugs fixed, slide-outline feature + stat-tile styling shipped.
+  **Tools:** powerpoint-to-pdf (deck summary, EN+HI slides with Noto,
+  speaker-notes pages, A4/fit letterbox), excel-to-pdf (VLM-verified table:
+  gray header, gridlines, "Sheet 1 of 1" footer), heic-to-pdf (real HEIF
+  decoded by self-hosted libheif WASM in Chrome, corner-color round-trip
+  vs ffmpeg), webp-to-pdf (VP8 → PNG transcode, text+circle survive).
+  Dispatcher re-check: pptx/xlsx → correct dedicated-tool chain with file
+  carried over. 🔧 **BUG 1 — vertical-mirror render (powerpoint-to-pdf,
+  EVERY slide):** pptx shape y is top-down but PDF y grows upward; the
+  renderer passed shape.y straight through → titles rendered 94% DOWN the
+  page, whole slides mirrored (notes pages were correct — different
+  convention in the same file). Content-level smoke never caught it;
+  VLM e2e position check did. Fix (render.ts): slide loop converts the
+  shape top to PDF space (oy + (slideH − shape.y)·scale), drawTextBox
+  walks DOWN from it. Smoke position-guard added (title must sit at PDF
+  y ∈ (400,530) on the 540pt page; old bug → ~0-5) — 105 checks now.
+  🔧 **BUG 2 — duplicate options panel:** custom "Layout" card AND the
+  generic "Options" aside rendered the same 4 controls twice; fix
+  `fullWidthSurface: true` (excel-to-pdf precedent). ✨ **Feature: Slide
+  outline chips** — numbered pills with each slide's title text + teal
+  "notes" badge + "+N more" overflow (EN+HI). ✨ **Styling:** stat tiles
+  with Lucide icons in teal circular badges, hover states, tabular nums.
+  Mobile 375px no-overflow, lint 0, dev log clean. Docs updated (R57
+  report + 4 tool rows). **NEXT: R58 — Tier B convert-from category
+  (pdf-to-excel, pdf-to-powerpoint, extract-tables, prepare-pdf-for-ai).**
 - **R56 (2026-11-07, cron review):** Tier-B organize-category round — 4/4
   e2e PASS, PageGrid race bug fixed family-wide, Reverse feature +
   move-button labels shipped. **Tools:** split-pdf (full e2e — By-ranges
