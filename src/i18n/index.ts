@@ -49,7 +49,19 @@ function applyParams(value: string, params: TranslateParams): string {
   // this is the hottest function in the app (every t() with params), and on
   // older iPhones it crashed hydration with a white screen. RegExp /g
   // exec-loops + split/join are supported everywhere (ES3+).
-  let out = value.replace(
+  //
+  // Plain {param} interpolation runs FIRST (R59): that also substitutes
+  // params living INSIDE plural branches ("{count, plural, =1 {1 page ·
+  // {size}} other {# pages · {size}}}") — by the time the plural pass
+  // runs, its brace-free branch bodies match cleanly. The plural head
+  // "{count, plural," never collides with a plain "{count}" replacement
+  // (the name is followed by a comma, not a brace), so existing messages
+  // are unaffected either way.
+  let out = value;
+  for (const [name, replacement] of Object.entries(params)) {
+    out = out.split(`{${name}}`).join(String(replacement));
+  }
+  out = out.replace(
     PLURAL_RE,
     (_match, name: string, exacts: string, other: string) => {
       const n = Number(params[name]);
@@ -68,9 +80,6 @@ function applyParams(value: string, params: TranslateParams): string {
       return branch.split("#").join(String(n));
     }
   );
-  for (const [name, replacement] of Object.entries(params)) {
-    out = out.split(`{${name}}`).join(String(replacement));
-  }
   return out;
 }
 

@@ -1606,7 +1606,7 @@ console.log("── 12. wiring + i18n ──────────────
   const hiKeys = Object.keys(i18n.hi.pmd).sort();
   check(
     "tool i18n en/hi key parity (pmd.*)",
-    JSON.stringify(enKeys) === JSON.stringify(hiKeys) && enKeys.length === 38,
+    JSON.stringify(enKeys) === JSON.stringify(hiKeys) && enKeys.length === 46,
     { en: enKeys.length, hi: hiKeys.length }
   );
   check(

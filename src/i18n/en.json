@@ -458,7 +458,8 @@
     "ocrSendInvoice": "Send to invoice",
     "ocrSendInvoiceHint": "No invoice fields found in this text",
     "translatedChars": "{n, plural, =1 {1 character translated} other {# characters translated}}",
-    "translatedBatches": "{n, plural, =1 {1 AI batch} other {# AI batches}}"
+    "translatedBatches": "{n, plural, =1 {1 AI batch} other {# AI batches}}",
+    "attachmentsExtracted": "{n, plural, =1 {1 file extracted byte-exact} other {# files extracted byte-exact}}"
   },
   "feedback": {
     "prompt": "Was this tool useful?",
@@ -797,7 +798,7 @@
     "previewFailed": "This page could not be rendered for preview. The watermark may still apply — try running it.",
     "overChip": "Over content",
     "behindChip": "Behind content",
-    "filePages": "{count} pages · {size}",
+    "filePages": "{count, plural, =1 {1 page · {size}} other {# pages · {size}}}",
     "removeFile": "Remove file",
     "prevPage": "Previous page",
     "nextPage": "Next page",
@@ -877,7 +878,22 @@
     "errorFirstMustBePdf": "The FIRST file must be the PDF — the rest are the attachments."
   },
   "et": {
-    "errorNoAttachments": "No embedded files found in this PDF."
+    "errorNoAttachments": "No embedded files found in this PDF.",
+    "surfaceLabel": "Embedded files inventory",
+    "reading": "Reading the embedded files…",
+    "probeError": "Couldn't preview this PDF — try running anyway; the tool's parser is often more forgiving.",
+    "emptyList": "No files are embedded in this PDF.",
+    "ctaEmpty": "Nothing to extract — this PDF has no embedded files",
+    "countChip": "{count, plural, =1 {1 file inside — byte-exact extraction} other {# files inside — byte-exact extraction}}",
+    "totalSize": "{size} total",
+    "moreRows": "{n, plural, =1 {+1 more file} other {+# more files}}",
+    "typeText": "Text",
+    "typeImage": "Image",
+    "typePdf": "PDF document",
+    "typeSheet": "Spreadsheet",
+    "typeArchive": "Archive",
+    "typeData": "Data",
+    "typeFile": "File"
   },
   "crop": {
     "previewTitle": "Live preview — crop",
@@ -3872,7 +3888,15 @@
     "fileWord": "document",
     "how1": "Drop your PDF — the file is checked by its %PDF signature, never uploaded; everything happens in this browser.",
     "how2": "Pick your pages and switches — one file per page, page rules, a provenance comment or YAML front matter — and press Convert.",
-    "how3": "The clean UTF-8 .md downloads straight to your device with a summary of the pages, paragraphs and headings it found."
+    "how3": "The clean UTF-8 .md downloads straight to your device with a summary of the pages, paragraphs and headings it found.",
+    "statsLabel": "Structure detected",
+    "statHeadings": "{n, plural, =1 {1 heading} other {# headings}}",
+    "statLists": "{n, plural, =1 {1 list item} other {# list items}}",
+    "statQuotes": "{n, plural, =1 {1 quote} other {# quotes}}",
+    "statLinks": "{n, plural, =1 {1 link} other {# links}}",
+    "outlineTitle": "Heading outline",
+    "outlineMore": "{n, plural, =1 {+1 more heading} other {+# more headings}}",
+    "probeCapNote": "Structure detected on the first {n} pages"
   },
   "pub": {
     "how1": "Drop a .pub file in the box — the OLE2 compound-file signature is checked on your device, no upload ever happens.",

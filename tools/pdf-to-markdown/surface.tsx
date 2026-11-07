@@ -24,7 +24,15 @@ import { formatBytes } from "@/lib/storage/recent-files";
 import { PDF_DOC_PARAMS, loadPdfjs } from "@/lib/pdf/pdfjs";
 import type { ToolSurfaceProps } from "@/lib/tools/panel-types";
 import type { WorkerResponse } from "@/lib/workers/protocol";
-import type { PdfToMarkdownDetail } from "./model";
+import { buildFontStyleMap } from "../pdfjs-common/font-style-map";
+import {
+  extractMarkdownModel,
+  linkRectsFor,
+  type MdLinkRect,
+  type PdfTextItemInput,
+  type PdfToMarkdownDetail,
+  type RawAnnotation,
+} from "./model";
 
 /**
  * PDF → Markdown surface (RB4-c — pdf-to-powerpoint precedent, landing
@@ -32,11 +40,13 @@ import type { PdfToMarkdownDetail } from "./model";
  *
  *  - its own DropZone (the shared component sniffs %PDF magic bytes,
  *    never extensions);
- *  - a CHEAP main-thread probe: pdf.js opens the file (page count + the
- *    text of page 1 only, no render) — enough for an honest page-count
- *    preview and a scanned-pages warning. The heading count is NOT
- *    previewed (it needs the full-document extraction) — it lands in
- *    the run summary after the conversion, where it is real;
+ *  - a STRUCTURE probe (R59 upgrade): pdf.js reads every page (up to
+ *      a 30-page cap) on the main thread and the SAME pipeline the
+ *      worker uses — buildFontStyleMap + extractMarkdownModel +
+ *      linkRectsFor — reports what will convert BEFORE you commit:
+ *      heading / list-item / quote / link counts plus a heading
+ *      outline. Scans (no selectable text) warn honestly; unreadable
+ *      files block the run;
  *  - the honest explainer: what converts (headings by size rank,
  *    bold/italic, lists, quotes, links) and what doesn't (tables →
  *    PDF to Excel, images skipped, two-column approximate);
@@ -46,10 +56,33 @@ import type { PdfToMarkdownDetail } from "./model";
  *    the standard pipeline, where multiple outputs also get the ZIP.
  */
 
+/** Structure probe page cap — the pptx outline precedent. */
+const PROBE_PAGE_CAP = 30;
+/** Heading outline pills before the "+N more" fold. */
+const OUTLINE_CAP = 6;
+
+interface StructureStats {
+  headings: number;
+  listItems: number;
+  quotes: number;
+  links: number;
+}
+
+interface OutlineEntry {
+  level: number;
+  text: string;
+}
+
 interface ProbeOk {
   file: File;
   kind: "ok" | "scan";
   pages: number;
+  /** Present when kind === "ok": what the conversion will emit. */
+  stats?: StructureStats;
+  outline?: OutlineEntry[];
+  outlineMore?: number;
+  /** Set when the probe stopped at the 30-page cap. */
+  cappedAt?: number;
 }
 
 interface ProbeFail {
@@ -104,7 +137,7 @@ export function PdfToMarkdownSurface({
     };
   }, [onChange, locale, t]);
 
-  /* -------- cheap probe: page count + scanned-pages warning ------- */
+  /* -------- structure probe (R59): what the conversion will emit ----- */
 
   useEffect(() => {
     if (!file) {
@@ -117,9 +150,10 @@ export function PdfToMarkdownSurface({
     void (async () => {
       try {
         const pdfjs = await loadPdfjs();
-        // Fresh copy — pdf.js DETACHES the buffer it receives.
-        const data = new Uint8Array(await file.arrayBuffer());
-        const doc = await pdfjs.getDocument({ data, ...PDF_DOC_PARAMS })
+        // Fresh copy — pdf.js DETACHES the buffer it receives. The
+        // ORIGINAL bytes must survive for the font-style pass below.
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const doc = await pdfjs.getDocument({ data: bytes.slice(), ...PDF_DOC_PARAMS })
           .promise;
         try {
           const page = await doc.getPage(1);
@@ -134,10 +168,68 @@ export function PdfToMarkdownSurface({
             page.cleanup();
           }
           if (cancelled) return;
+
+          if (chars === 0) {
+            // Scan: no structure to detect — keep the honest old state.
+            setProbe({ file, kind: "scan", pages: doc.numPages });
+            return;
+          }
+
+          // Structure pass: the worker's own pipeline on the main
+          // thread — same items, same font-style map, same model, so
+          // the preview IS the output (up to the page cap).
+          const pageCount = Math.min(doc.numPages, PROBE_PAGE_CAP);
+          const pages: PdfTextItemInput[][] = [];
+          const links: MdLinkRect[][] = [];
+          for (let i = 0; i < pageCount; i += 1) {
+            const pg = await doc.getPage(i + 1);
+            const content = await pg.getTextContent();
+            const annots = (await pg
+              .getAnnotations({ intent: "display" })
+              .catch(() => [])) as readonly RawAnnotation[];
+            pg.cleanup();
+            pages.push(content.items as PdfTextItemInput[]);
+            links.push(linkRectsFor(annots));
+          }
+          const styleMap = await buildFontStyleMap(
+            bytes,
+            pages.map((_p, index) => index),
+            pages
+          );
+          if (cancelled) return;
+          const model = extractMarkdownModel(pages, { styleMap, links });
+
+          let headings = 0;
+          let listItems = 0;
+          let quotes = 0;
+          let linksFound = 0;
+          const outline: OutlineEntry[] = [];
+          for (const block of model.blocks) {
+            if (block.kind === "heading") {
+              headings += 1;
+              if (outline.length < OUTLINE_CAP + 1) {
+                outline.push({ level: block.level, text: block.text });
+              }
+            } else if (block.kind === "bullet" || block.kind === "ordered") {
+              listItems += 1;
+            } else if (block.kind === "quote") {
+              quotes += 1;
+            }
+            if (block.kind !== "heading") {
+              for (const run of block.runs) {
+                if (run.link !== undefined) linksFound += 1;
+              }
+            }
+          }
+          const outlineMore = Math.max(0, headings - OUTLINE_CAP);
           setProbe({
             file,
-            kind: chars > 0 ? "ok" : "scan",
+            kind: "ok",
             pages: doc.numPages,
+            stats: { headings, listItems, quotes, links: linksFound },
+            outline: outline.slice(0, OUTLINE_CAP),
+            outlineMore,
+            cappedAt: doc.numPages > PROBE_PAGE_CAP ? PROBE_PAGE_CAP : undefined,
           });
         } finally {
           await doc.destroy().catch(() => undefined);
@@ -337,9 +429,80 @@ export function PdfToMarkdownSurface({
             {t("pmd.probeWait")}
           </p>
         ) : current.kind === "ok" ? (
-          <p className="px-3 py-3 text-xs font-medium text-foreground">
-            {t("pmd.probeOk", { pages: current.pages })}
-          </p>
+          <div className="space-y-3 px-3 py-3">
+            <p className="text-xs font-medium text-foreground">
+              {t("pmd.probeOk", { pages: current.pages })}
+            </p>
+            {/* Structure stat chips — what the conversion will emit. */}
+            {current.stats ? (
+              <ul className="flex flex-wrap gap-1.5" aria-label={t("pmd.statsLabel")}>
+                <li className="inline-flex items-center gap-1 rounded-chip bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
+                  <Hash className="size-3" aria-hidden="true" />
+                  {t("pmd.statHeadings", { n: current.stats.headings })}
+                </li>
+                {current.stats.listItems > 0 ? (
+                  <li className="inline-flex items-center gap-1 rounded-chip bg-muted px-2.5 py-1 text-[11px] font-medium text-foreground">
+                    <List className="size-3" aria-hidden="true" />
+                    {t("pmd.statLists", { n: current.stats.listItems })}
+                  </li>
+                ) : null}
+                {current.stats.quotes > 0 ? (
+                  <li className="inline-flex items-center gap-1 rounded-chip bg-muted px-2.5 py-1 text-[11px] font-medium text-foreground">
+                    <Quote className="size-3" aria-hidden="true" />
+                    {t("pmd.statQuotes", { n: current.stats.quotes })}
+                  </li>
+                ) : null}
+                {current.stats.links > 0 ? (
+                  <li className="inline-flex items-center gap-1 rounded-chip bg-muted px-2.5 py-1 text-[11px] font-medium text-foreground">
+                    <Link2 className="size-3" aria-hidden="true" />
+                    {t("pmd.statLinks", { n: current.stats.links })}
+                  </li>
+                ) : null}
+              </ul>
+            ) : null}
+            {/* Heading outline — the prospective # structure. */}
+            {current.outline && current.outline.length > 0 ? (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t("pmd.outlineTitle")}
+                </p>
+                <ul className="space-y-1">
+                  {current.outline.map((entry, index) => (
+                    <li
+                      key={`${entry.level}-${index}-${entry.text.slice(0, 12)}`}
+                      className="flex min-w-0 items-center gap-2"
+                      style={{
+                        paddingLeft: `${(Math.max(1, Math.min(6, entry.level)) - 1) * 12}px`,
+                      }}
+                    >
+                      <span
+                        className="shrink-0 font-mono text-[11px] font-bold text-primary"
+                        aria-hidden="true"
+                      >
+                        {"#".repeat(Math.max(1, Math.min(6, entry.level)))}
+                      </span>
+                      <span
+                        className="min-w-0 truncate text-xs text-foreground"
+                        title={entry.text}
+                      >
+                        {entry.text}
+                      </span>
+                    </li>
+                  ))}
+                  {current.outlineMore && current.outlineMore > 0 ? (
+                    <li className="text-[11px] text-muted-foreground">
+                      {t("pmd.outlineMore", { n: current.outlineMore })}
+                    </li>
+                  ) : null}
+                </ul>
+              </div>
+            ) : null}
+            {current.cappedAt ? (
+              <p className="text-[11px] text-muted-foreground">
+                {t("pmd.probeCapNote", { n: current.cappedAt })}
+              </p>
+            ) : null}
+          </div>
         ) : current.kind === "scan" ? (
           <div className="flex items-start gap-2.5 px-3 py-3">
             <TriangleAlert

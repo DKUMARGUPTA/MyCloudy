@@ -432,7 +432,10 @@ export function ToolShell({
   }, [config.options]);
 
   const totalSize = files.reduce((sum, item) => sum + item.file.size, 0);
-  const ctaLabel = `${tool.name[locale]} ${t("tool.ctaArrow")}`;
+  // R59: the sticky + workspace CTAs already render a Lucide ArrowRight
+  // after the label — appending the "→" text glyph too produced a
+  // doubled arrow ("PDF to Markdown → →") on every tool page.
+  const ctaLabel = tool.name[locale];
   const Icon = tool.icon;
 
   return (
@@ -768,8 +771,13 @@ export function ToolShell({
               Hidden for viewer tools — the surface owns its actions. */}
           {!surfaceOnly ? (
           <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85">
-            <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
-              <div className="min-w-0 flex-1">
+            {/* R59 mobile fix: on xs the two touch buttons starved the
+                summary column to ~24px ("1 file · ~1.5 KB" squeezed into
+                "1f…" on EVERY tool page). Below sm the bar now wraps —
+                summary on its own full-width row, Options + a
+                flex-growing CTA beneath; sm+ keeps the single row. */}
+            <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:flex-nowrap">
+              <div className="min-w-0 flex-1 basis-full sm:basis-auto">
                 <p
                   className={cn(
                     "flex items-center gap-1.5 truncate text-xs",
@@ -786,16 +794,22 @@ export function ToolShell({
                       aria-hidden="true"
                     />
                   ) : null}
-                  <span className="truncate">
-                    {runBlockedKey !== null
-                      ? t(runBlockedKey)
-                      : files.length > 0 && files.length < config.minFiles
-                        ? t("tool.summaryMinFiles", { count: config.minFiles })
-                        : t("tool.summary", {
-                            count: files.length,
-                            size: formatBytes(totalSize),
-                          })}
-                  </span>
+                  {runBlockedKey !== null ? (
+                    <span className="truncate">{t(runBlockedKey)}</span>
+                  ) : files.length > 0 && files.length < config.minFiles ? (
+                    <span className="truncate">
+                      {t("tool.summaryMinFiles", {
+                        count: config.minFiles,
+                      })}
+                    </span>
+                  ) : (
+                    <span className="truncate">
+                      {t("tool.summary", {
+                        count: files.length,
+                        size: formatBytes(totalSize),
+                      })}
+                    </span>
+                  )}
                 </p>
                 {chainFrom ? (
                   <p className="truncate text-[11px] text-primary">
@@ -807,7 +821,7 @@ export function ToolShell({
                 type="button"
                 variant="outline"
                 size="touch"
-                className="rounded-btn lg:hidden"
+                className="ml-auto rounded-btn lg:hidden sm:ml-0"
                 onClick={() => setOptionsOpen(true)}
                 hidden={fullWidth}
               >
@@ -816,7 +830,7 @@ export function ToolShell({
               <Button
                 type="button"
                 size="touch"
-                className="rounded-btn font-semibold"
+                className="flex-1 rounded-btn font-semibold sm:flex-none"
                 onClick={startRun}
                 disabled={runDisabled}
               >

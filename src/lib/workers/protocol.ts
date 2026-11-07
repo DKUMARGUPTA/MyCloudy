@@ -90,6 +90,9 @@ export interface RunDetail {
   renamed?: number;
   /** Attachments deleted (edit-attachments). */
   deleted?: number;
+  /** Files pulled byte-exact out of the /EmbeddedFiles tree
+   *  (extract-attachments R59 — filter chain applied). */
+  attachmentsExtracted?: number;
   /** Layers toggled (pdf-layers). */
   toggled?: number;
   /** Layers added (pdf-layers). */

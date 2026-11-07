@@ -1,110 +1,25 @@
 import {
-  PdfError,
-  asDict,
-  parsePdf,
-  resolve,
-  type PdfObj,
-} from "@/lib/own/pdf";
-import {
   type WorkerRunRequest,
   type WorkerResponse,
 } from "@/lib/workers/protocol";
+import { runExtractAttachments } from "./worker-lib";
 
 /**
- * Extract attachments worker (PHASE-3): walks the catalog's
- * /Names /EmbeddedFiles tree (Kids-aware), reads each Filespec's /EF
- * /F stream and writes the bytes out byte-exact — one output per
- * embedded file, on OUR OWN parser. Never touches the network.
+ * Extract attachments worker (PHASE-3 → R59): the pipeline lives in
+ * worker-lib (PURE — the surface's pre-run inventory probe runs the
+ * same code on the main thread, so the preview IS the output). This
+ * module is only the Worker boundary: file → bytes → pipeline →
+ * outputs, on OUR OWN parser, never the network.
+ *
+ * R59 fix (in worker-lib): the stream's /Filter chain is now APPLIED
+ * (FlateDecode and friends) — real-world PDFs (Acrobat, pdf-lib
+ * attach(), Word) store attachment streams Flate-compressed, and the
+ * pre-R59 worker shipped the still-compressed bytes, breaking the
+ * "byte-exact" promise.
  */
 
 function post(response: WorkerResponse): void {
   self.postMessage(response);
-}
-
-export interface ExtractedAttachment {
-  name: string;
-  bytes: Uint8Array;
-}
-
-/** Walk the EmbeddedFiles tree; collect (name, stream bytes) pairs. */
-export function collectAttachments(
-  doc: ReturnType<typeof parsePdf>
-): ExtractedAttachment[] {
-  const out: ExtractedAttachment[] = [];
-  const rootObj = doc.trailer.get("Root");
-  const catalog = rootObj?.k === "ref" ? doc.getObject(rootObj.num) : rootObj;
-  const catalogDict = asDict(catalog);
-  if (!catalogDict) return out;
-  const namesDict = asDict(resolve(doc, catalogDict.get("Names")));
-  if (!namesDict) return out;
-  const efTree = resolve(doc, namesDict.get("EmbeddedFiles"));
-
-  const seen = new Set<number>();
-  const walk = (node: PdfObj | undefined, depth: number): void => {
-    if (depth > 32 || node === undefined) return;
-    const dict = asDict(node);
-    if (!dict) return;
-    const kids = dict.get("Kids");
-    if (kids?.k === "arr") {
-      for (const kid of kids.items) {
-        const resolved = resolve(doc, kid);
-        if (resolved !== undefined) walk(resolved, depth + 1);
-      }
-      return;
-    }
-    const namesArr = dict.get("Names");
-    if (namesArr?.k !== "arr") return;
-    for (let i = 0; i + 1 < namesArr.items.length; i += 2) {
-      const key = namesArr.items[i];
-      const specRef = namesArr.items[i + 1]!;
-      let keyText = `attachment-${out.length + 1}`;
-      if (key?.k === "str" || key?.k === "lstr" || key?.k === "hstr") {
-        const decoded = new TextDecoder().decode(key.b).trim();
-        if (decoded.length > 0) keyText = decoded;
-      }
-      const spec = resolve(doc, specRef);
-      const specDict = asDict(spec);
-      if (!specDict) continue;
-      // /F filename overrides the tree key when present.
-      const f = specDict.get("F");
-      if (f && (f.k === "str" || f.k === "lstr" || f.k === "hstr")) {
-        const decoded = new TextDecoder().decode(f.b).trim();
-        if (decoded.length > 0) keyText = decoded;
-      }
-      const efDict = asDict(resolve(doc, specDict.get("EF")));
-      const fRef = efDict?.get("F");
-      if (!fRef) continue;
-      const stream = resolve(doc, fRef);
-      if (stream?.k !== "stream") continue;
-      if (fRef.k === "ref") {
-        if (seen.has(fRef.num)) continue;
-        seen.add(fRef.num);
-      }
-      out.push({ name: keyText, bytes: stream.raw });
-    }
-  };
-  walk(efTree, 0);
-  return out;
-}
-
-export interface ExtractResult {
-  attachments: ExtractedAttachment[];
-}
-
-/** The whole pipeline, smoke-testable without a Worker. */
-export async function runExtractAttachments(
-  pdfBytes: Uint8Array
-): Promise<ExtractResult> {
-  let doc: ReturnType<typeof parsePdf>;
-  try {
-    doc = parsePdf(pdfBytes);
-  } catch (error) {
-    if (error instanceof PdfError && error.code === "encrypted") {
-      throw new Error("tool.errorEncrypted");
-    }
-    throw new Error("tool.errorCorrupt");
-  }
-  return { attachments: collectAttachments(doc) };
 }
 
 function safeName(raw: string): string {
@@ -136,7 +51,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
       post({ type: "error", runId, code: "tool.errorCorrupt" });
       return;
     }
-    let result: ExtractResult;
+    let result: Awaited<ReturnType<typeof runExtractAttachments>>;
     try {
       result = await runExtractAttachments(bytes);
     } catch (error) {
@@ -156,9 +71,9 @@ async function run(request: WorkerRunRequest): Promise<void> {
     for (const att of result.attachments) {
       outputs.push({
         name: safeName(att.name),
-        mime: "application/octet-stream",
+        mime: att.mime,
         blob: new Blob([att.bytes as unknown as BlobPart], {
-          type: "application/octet-stream",
+          type: att.mime,
         }),
       });
       total += 1;
@@ -170,7 +85,7 @@ async function run(request: WorkerRunRequest): Promise<void> {
     type: "result",
     runId,
     outputs,
-    detail: { files: outputs.length, pages: total },
+    detail: { files: outputs.length, attachmentsExtracted: total },
   });
 }
 

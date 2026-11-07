@@ -24,7 +24,7 @@ import {
 } from "../tools/add-attachments/worker";
 import {
   runExtractAttachments,
-} from "../tools/extract-attachments/worker";
+} from "../tools/extract-attachments/worker-lib";
 import {
   parseOps,
   runEditAttachments,
@@ -263,7 +263,7 @@ console.log("4. registry — live tool count");
 
 {
   // 127 live + 3 AI-deferred (R23) = 130 registered — 6 new in this batch.
-  check("registry: 141 live tools", liveToolCount === 141, String(liveToolCount));
+  check("registry: 144 live tools", liveToolCount === 144, String(liveToolCount));
 }
 
 /* ------------------------------------------------------------------ */

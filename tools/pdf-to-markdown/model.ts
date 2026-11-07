@@ -75,6 +75,54 @@ export interface MdLinkRect {
   url: string;
 }
 
+/* ------------------------------------------------------------------ */
+/* Link-annotation coercion (moved here from the worker in R59 so the */
+/* surface's pre-run structure probe can import it WITHOUT dragging   */
+/* the Worker module's self.onmessage side effect into the window).   */
+/* ------------------------------------------------------------------ */
+
+/** Link-annotation data shape pdf.js getAnnotations reports (loose on
+ * purpose — unknown fields ignored). */
+export interface RawAnnotation {
+  subtype?: unknown;
+  url?: unknown;
+  unsafeUrl?: unknown;
+  rect?: unknown;
+}
+
+/** The URL schemes we are honest about (javascript: never passes). */
+const URL_RE = /^(https?|mailto|ftp):/i;
+
+/** Link rects with a usable URL for one page (empty on any damage). */
+export function linkRectsFor(annots: readonly RawAnnotation[]): MdLinkRect[] {
+  const out: MdLinkRect[] = [];
+  for (const annotation of annots) {
+    if (annotation?.subtype !== "Link") continue;
+    const url =
+      typeof annotation.url === "string"
+        ? annotation.url
+        : typeof annotation.unsafeUrl === "string"
+          ? annotation.unsafeUrl
+          : "";
+    if (!URL_RE.test(url)) continue;
+    const rect = annotation.rect;
+    if (!Array.isArray(rect) || rect.length < 4) continue;
+    const x1 = Number(rect[0]);
+    const y1 = Number(rect[1]);
+    const x2 = Number(rect[2]);
+    const y2 = Number(rect[3]);
+    if (![x1, y1, x2, y2].every(Number.isFinite)) continue;
+    out.push({
+      x1: Math.min(x1, x2),
+      y1: Math.min(y1, y2),
+      x2: Math.max(x1, x2),
+      y2: Math.max(y1, y2),
+      url: url.slice(0, 2000),
+    });
+  }
+  return out;
+}
+
 /** The style enrichment the worker resolves per pdf.js internal font id. */
 export interface MdFontStyle {
   bold: boolean;

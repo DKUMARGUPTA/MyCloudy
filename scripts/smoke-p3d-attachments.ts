@@ -95,66 +95,66 @@ section("0 · wiring");
 {
   const deferred = ALL_TOOLS.filter((t) => !t.enabled).map((t) => t.id);
   check(
-    "tool counts: 137 total / 136 live / 1 deferred AI (translate)",
-    ALL_TOOLS.length === 137 && liveToolCount === 136 && deferred.join(",") === "translate-pdf",
+    "tool counts: 147 total / 144 live / 3 deferred (chat, summarize, translate)",
+    ALL_TOOLS.length === 147 && liveToolCount === 144 &&
+      deferred.join(",") === "chat-with-pdf,summarize-pdf,translate-pdf",
     `${ALL_TOOLS.length}/${liveToolCount}/${deferred.length}`,
   );
 
   const byId = new Map(ALL_TOOLS.map((t) => [t.id, t]));
   const add = byId.get("add-attachments");
   check(
-    "add-attachments def: edit/D/any/enabled",
-    add !== undefined && add.category === "edit" && add.mode === "D" &&
+    "add-attachments def: organize/D/any/enabled",
+    add !== undefined && add.category === "organize" && add.mode === "D" &&
       add.accepts === "any" && add.enabled === true,
   );
   const extract = byId.get("extract-attachments");
   check(
-    "extract-attachments def: organize/D/pdf/enabled",
-    extract !== undefined && extract.category === "organize" && extract.mode === "D" &&
+    "extract-attachments def: convert-from/D/pdf/enabled (moved from organize in the R58-era registry reshuffle)",
+    extract !== undefined && extract.category === "convert-from" && extract.mode === "D" &&
       extract.accepts === "pdf" && extract.enabled === true,
   );
-  const remove = byId.get("remove-attachments");
+  const editAt = byId.get("edit-attachments");
   check(
-    "remove-attachments def: edit/D/pdf/enabled",
-    remove !== undefined && remove.category === "edit" && remove.mode === "D" &&
-      remove.accepts === "pdf" && remove.enabled === true,
+    "edit-attachments def: organize/D/pdf/enabled (absorbed remove-attachments)",
+    editAt !== undefined && editAt.category === "organize" && editAt.mode === "D" &&
+      editAt.accepts === "pdf" && editAt.enabled === true,
   );
 
   const addCfg = TOOL_CONFIGS["add-attachments"];
   const extractCfg = TOOL_CONFIGS["extract-attachments"];
-  const removeCfg = TOOL_CONFIGS["remove-attachments"];
+  const editAtCfg = TOOL_CONFIGS["edit-attachments"];
   check(
-    "configs: add 2..16 + 3 options; extract/remove 1..5",
-    addCfg !== undefined && addCfg.minFiles === 2 && addCfg.maxFiles === 16 &&
-      addCfg.options.length === 3 && addCfg.outputKind === "pdf" &&
+    "configs: add 1..1 + 1 option (the wizard surface owns the rest); extract 1..5; edit-attachments 1..1",
+    addCfg !== undefined && addCfg.minFiles === 1 && addCfg.maxFiles === 1 &&
+      addCfg.options.length === 1 && addCfg.outputKind === "pdf" &&
       extractCfg !== undefined && extractCfg.minFiles === 1 && extractCfg.maxFiles === 5 &&
-      extractCfg.outputKind === "zip" &&
-      removeCfg !== undefined && removeCfg.minFiles === 1 && removeCfg.maxFiles === 5 &&
-      removeCfg.outputKind === "pdf",
+      extractCfg.outputKind === "pdf" &&
+      editAtCfg !== undefined && editAtCfg.minFiles === 1 && editAtCfg.maxFiles === 1 &&
+      editAtCfg.outputKind === "pdf",
   );
   check(
-    "chains: add→extract, extract→remove, remove→sanitize",
-    addCfg.chainToolIds?.includes("extract-attachments") === true &&
-      extractCfg.chainToolIds?.includes("remove-attachments") === true &&
-      removeCfg.chainToolIds?.includes("sanitize-pdf") === true,
+    "chains: edit-attachments→extract/add (the remove-attachments tool was consolidated into it)",
+    editAtCfg.chainToolIds?.includes("extract-attachments") === true &&
+      editAtCfg.chainToolIds?.includes("add-attachments") === true,
   );
 
   check(
     "seo: 3 honest entries",
     getToolSeo("add-attachments") !== null &&
       getToolSeo("extract-attachments") !== null &&
-      getToolSeo("remove-attachments") !== null,
+      getToolSeo("edit-attachments") !== null,
   );
 
   const root = join(import.meta.dir, "..");
   const en = JSON.parse(readFileSync(join(root, "src/i18n/en.json"), "utf8"));
   const hi = JSON.parse(readFileSync(join(root, "src/i18n/hi.json"), "utf8"));
   check(
-    "i18n: errorBasePdfFirst en+hi",
-    typeof en.tool.errorBasePdfFirst === "string" &&
-      typeof hi.tool.errorBasePdfFirst === "string" &&
-      en.tool.errorBasePdfFirst.length > 10 &&
-      hi.tool.errorBasePdfFirst.length > 10,
+    "i18n: et.errorNoAttachments en+hi (errorBasePdfFirst was retired with the old add-attachments error flow)",
+    typeof en.et?.errorNoAttachments === "string" &&
+      typeof hi.et?.errorNoAttachments === "string" &&
+      en.et.errorNoAttachments.length > 10 &&
+      hi.et.errorNoAttachments.length > 10,
   );
 }
 

@@ -20,15 +20,23 @@ import {
   coerceRunOptions,
   extractMarkdownModel,
   firstHeadingText,
+  linkRectsFor,
   markdownStats,
   MD_MIME,
   outputBaseName,
   pageSlice,
   pdfErrorMessageToCode,
+  type RawAnnotation,
   type MdFontStyle,
   type MdLinkRect,
   type PdfTextItemInput,
 } from "./model";
+
+// Re-exported for the smoke, which drives the same enrichment on real
+// fixtures through the worker's own surface (R59: linkRectsFor now LIVES
+// in model.ts — the surface's structure probe imports it from there,
+// without this module's self.onmessage side effect).
+export { linkRectsFor };
 
 /**
  * PDF → Markdown worker (RB4-c) — 100% on-device, EN+हिंदी.
@@ -72,54 +80,6 @@ interface RawTextItem {
   transform?: unknown;
   width?: unknown;
   fontName?: unknown;
-}
-/* ------------------------------------------------------------------ */
-/* Link annotations (pdf.js display intent)                              */
-/* ------------------------------------------------------------------ */
-
-/** Link-annotation data shape pdf.js getAnnotations reports (loose on
- * purpose — unknown fields ignored). Exported with linkRectsFor so the
- * smoke drives the REAL coercion on real fixtures. */
-export interface RawAnnotation {
-  subtype?: unknown;
-  url?: unknown;
-  unsafeUrl?: unknown;
-  rect?: unknown;
-}
-
-/** The URL schemes we are honest about (javascript: never passes). */
-const URL_RE = /^(https?|mailto|ftp):/i;
-
-/** Link rects with a usable URL for one page (empty on any damage).
- * Exported for the smoke, which drives the same coercion on real
- * fixtures. */
-export function linkRectsFor(annots: readonly RawAnnotation[]): MdLinkRect[] {
-  const out: MdLinkRect[] = [];
-  for (const annotation of annots) {
-    if (annotation?.subtype !== "Link") continue;
-    const url =
-      typeof annotation.url === "string"
-        ? annotation.url
-        : typeof annotation.unsafeUrl === "string"
-          ? annotation.unsafeUrl
-          : "";
-    if (!URL_RE.test(url)) continue;
-    const rect = annotation.rect;
-    if (!Array.isArray(rect) || rect.length < 4) continue;
-    const x1 = Number(rect[0]);
-    const y1 = Number(rect[1]);
-    const x2 = Number(rect[2]);
-    const y2 = Number(rect[3]);
-    if (![x1, y1, x2, y2].every(Number.isFinite)) continue;
-    out.push({
-      x1: Math.min(x1, x2),
-      y1: Math.min(y1, y2),
-      x2: Math.max(x1, x2),
-      y2: Math.max(y1, y2),
-      url: url.slice(0, 2000),
-    });
-  }
-  return out;
 }
 
 /* ------------------------------------------------------------------ */

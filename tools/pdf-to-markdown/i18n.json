@@ -38,7 +38,15 @@
       "fileWord": "document",
       "how1": "Drop your PDF — the file is checked by its %PDF signature, never uploaded; everything happens in this browser.",
       "how2": "Pick your pages and switches — one file per page, page rules, a provenance comment or YAML front matter — and press Convert.",
-      "how3": "The clean UTF-8 .md downloads straight to your device with a summary of the pages, paragraphs and headings it found."
+      "how3": "The clean UTF-8 .md downloads straight to your device with a summary of the pages, paragraphs and headings it found.",
+      "statsLabel": "Structure detected",
+      "statHeadings": "{n, plural, =1 {1 heading} other {# headings}}",
+      "statLists": "{n, plural, =1 {1 list item} other {# list items}}",
+      "statQuotes": "{n, plural, =1 {1 quote} other {# quotes}}",
+      "statLinks": "{n, plural, =1 {1 link} other {# links}}",
+      "outlineTitle": "Heading outline",
+      "outlineMore": "{n, plural, =1 {+1 more heading} other {+# more headings}}",
+      "probeCapNote": "Structure detected on the first {n} pages"
     }
   },
   "hi": {
@@ -80,7 +88,15 @@
       "fileWord": "दस्तावेज़",
       "how1": "अपनी PDF डालें — फ़ाइल %PDF हस्ताक्षर से जाँची जाती है, कहीं अपलोड नहीं होती; सब कुछ इसी ब्राउज़र में होता है।",
       "how2": "पेज और स्विच चुनें — हर पेज की अलग फ़ाइल, पेज-रेखा, स्रोत टिप्पणी या YAML फ़्रंट मैटर — और Convert दबाएँ।",
-      "how3": "साफ़ UTF-8 .md सीधे आपके डिवाइस पर डाउनलोड होती है, साथ में पेज, पैराग्राफ़ और हेडिंग की गिनती।"
+      "how3": "साफ़ UTF-8 .md सीधे आपके डिवाइस पर डाउनलोड होती है, साथ में पेज, पैराग्राफ़ और हेडिंग की गिनती।",
+      "statsLabel": "मिली संरचना",
+      "statHeadings": "{n, plural, =1 {1 हेडिंग} other {# हेडिंग}}",
+      "statLists": "{n, plural, =1 {1 सूची आइटम} other {# सूची आइटम}}",
+      "statQuotes": "{n, plural, =1 {1 कोट} other {# कोट}}",
+      "statLinks": "{n, plural, =1 {1 लिंक} other {# लिंक}}",
+      "outlineTitle": "हेडिंग रूपरेखा",
+      "outlineMore": "{n, plural, =1 {+1 हेडिंग और} other {+# हेडिंग और}}",
+      "probeCapNote": "पहले {n} पेजों पर मिली संरचना"
     }
   }
 }

@@ -27,6 +27,7 @@ import { SearchSurface } from "../../../tools/search-pdf/surface";
 import { CopyFromPdfSurface } from "../../../tools/copy-from-pdf/surface";
 import { BookmarkSurface } from "../../../tools/bookmark-pdf/surface";
 import { EditAttachmentsSurface } from "../../../tools/edit-attachments/surface";
+import { ExtractAttachmentsSurface } from "../../../tools/extract-attachments/surface";
 import { EditTextSurface } from "../../../tools/edit-pdf-text/surface";
 import { PdfLayersSurface } from "../../../tools/pdf-layers/surface";
 import { OverlaySurface } from "../../../tools/overlay-pdf/surface";
@@ -155,6 +156,7 @@ export const TOOL_SURFACES: Record<string, ComponentType<ToolSurfaceProps>> = {
   "copy-from-pdf": CopyFromPdfSurface,
   "bookmark-pdf": BookmarkSurface,
   "edit-attachments": EditAttachmentsSurface,
+  "extract-attachments": ExtractAttachmentsSurface,
   "edit-pdf-text": EditTextSurface,
   "pdf-layers": PdfLayersSurface,
   "overlay-pdf": OverlaySurface,

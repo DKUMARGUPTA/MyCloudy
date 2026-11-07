@@ -110,6 +110,44 @@
 
 ## DONE (append-only log)
 
+- **R59 (2026-11-07, cron review):** Tier-B convert-from remainder — 5/5
+  e2e PASS (incl. dispatcher), 1 CRITICAL bug + 3 site-wide UI bugs fixed,
+  2 probe features shipped. **Tools:** pdf-to-markdown (full structure e2e —
+  headings/bold/italic/lists/quotes + link byte-verified), pdf-to-webp
+  (1240×1754 exactly as promised, PIL + content verified), pdf-to-zip
+  (ordered page-NNN.png ZIP), extract-attachments (byte-exact after the
+  fix), convert-from-pdf (12-target dispatcher routing + chain carry-over).
+  🔧 **CRITICAL — Flate-compressed attachments shipped compressed:** the
+  worker returned `stream.raw` without applying the /Filter chain —
+  real-world PDFs (Acrobat/Word/pdf-lib attach()) embed attachments
+  Flate-packed, so outputs were zlib blobs. Our round-trip smoke missed it
+  (our add-attachments writes uncompressed) — classic test-vs-product gap.
+  Fix: pipeline extracted to PURE worker-lib, streams decoded via own-engine
+  `decodeStreamBytes` (DCT etc. degrade to raw honestly); smoke-attachments
+  gained pdf-lib-attach() regression guards (31/31).
+  ✨ **Feature: attachments inventory surface** — pre-run probe runs the
+  worker's own pipeline on the main thread (probe/worker parity by
+  construction): MIME-sniffed Lucide icons per file, decoded sizes, emerald
+  count + total-size chips, empty PDF → honest empty state + BLOCKED CTA
+  (no wasted runs), sniffed MIME on downloads. ✨ **Feature: markdown
+  structure probe** — buildFontStyleMap + extractMarkdownModel (linkRectsFor
+  moved worker→model for side-effect-free import) run on upload: stat chips
+  (headings/list items/quotes/links) + heading outline with per-level
+  indents, +N fold, 30-page cap. 🔧 **Site-wide UI fixes:** (1) sticky CTA
+  mobile starvation — at 375px the summary column was ~24px wide ("1f…");
+  the bar now wraps below sm (summary row + Options/flex-CTA row), single
+  row at sm+; (2) doubled CTA arrow ("→ →") — text glyph + Lucide icon
+  both rendered; (3) "1 pages" plural + FIRST i18n-engine upgrade —
+  `applyParams` interpolates params BEFORE the plural pass so params can
+  nest inside plural branches (all existing plurals verified unchanged).
+  Smokes truthed to 2026 reality: p3d-attachments 7 stale P3-era assertions
+  updated (147/144/3 tools, convert-from category, edit-attachments
+  consolidation) — battery 31+160+41+69 all green, lint 0, dev log clean,
+  i18n parity 5388=5388. QA lessons pinned: verify byte-claims with `od -c`
+  (terminal display strips `[h` as ANSI), settle VLM text disputes with DOM
+  rect+scrollWidth measurements. **NEXT: R60 — Tier B security category
+  (redact-pdf, generate-password, remove-pdf-metadata, sanitize-pdf).**
+
 - **R58 (2026-11-07, cron review):** Tier-B convert-from category round — 4/4 e2e
   PASS, 1 display bug fixed, 3 features shipped. **Tools:** pdf-to-excel
   (bordered invoice → real .xlsx, numeric cells t="n", ruled lattice exact),

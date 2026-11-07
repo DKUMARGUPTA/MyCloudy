@@ -22,7 +22,7 @@ import {
 import {
   collectAttachments,
   runExtractAttachments,
-} from "../tools/extract-attachments/worker";
+} from "../tools/extract-attachments/worker-lib";
 import { pageFacts, renderReport } from "../tools/page-dimensions/worker";
 import {
   latin1,
@@ -130,6 +130,54 @@ console.log("3. extract: no-attachments honesty");
   const pdfBytes = await markerPdf(1);
   const back = await runExtractAttachments(pdfBytes);
   check("plain PDF: zero attachments", back.attachments.length === 0);
+}
+
+/* ------------------------------------------------------------------ */
+console.log("3b. extract: Flate-compressed attachments (R59 regression)");
+
+{
+  // pdf-lib attach() writes EmbeddedFile streams with /Filter
+  // /FlateDecode — exactly what Acrobat and Word produce. The pre-R59
+  // worker shipped the still-COMPRESSED bytes; this guards the fix.
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  doc.addPage([300, 400]).drawText("Host", { x: 40, y: 200, size: 16, font });
+  const txt = new TextEncoder().encode("FLATE-UNIQUE-R59-4242\ncompressed attachment payload\n");
+  const png = new TextEncoder().encode("\u0089PNG\r\n\u001a\nfake-png-body");
+  await doc.attach(txt, "notes.txt", { mimeType: "text/plain" });
+  await doc.attach(png, "logo.png", { mimeType: "image/png" });
+  const bytes = new Uint8Array(await doc.save());
+
+  const back = await runExtractAttachments(bytes);
+  check("flate: 2 files", back.attachments.length === 2, JSON.stringify(back.attachments.map((a) => a.name)));
+  const notes = back.attachments.find((a) => a.name === "notes.txt");
+  check(
+    "flate: text decoded byte-exact",
+    notes !== undefined &&
+      Buffer.compare(Buffer.from(notes.bytes), Buffer.from(txt)) === 0,
+    notes ? `len=${notes.bytes.length}` : "missing",
+  );
+  check(
+    "flate: text mime sniffed",
+    notes?.mime === "text/plain",
+    notes?.mime ?? "",
+  );
+  const logo = back.attachments.find((a) => a.name === "logo.png");
+  check(
+    "flate: binary decoded byte-exact",
+    logo !== undefined &&
+      Buffer.compare(Buffer.from(logo.bytes), Buffer.from(png)) === 0,
+  );
+  check(
+    "flate: png mime sniffed from magic bytes",
+    logo?.mime === "image/png",
+    logo?.mime ?? "",
+  );
+  // The raw stream must NOT be what we hand back (zlib header = 0x78).
+  check(
+    "flate: output is NOT still-compressed",
+    notes === undefined || notes.bytes[0] !== 0x78,
+  );
 }
 
 /* ------------------------------------------------------------------ */

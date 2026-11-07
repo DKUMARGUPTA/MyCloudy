@@ -78,6 +78,7 @@ export function ResultView({
         tablesExtracted?: number;
         aiDocs?: number;
         aiTokens?: number;
+        attachmentsExtracted?: number;
         textBlocksRecolored?: number;
         textOutlined?: number;
         textEditsApplied?: number;
@@ -400,6 +401,15 @@ export function ResultView({
         {runSummary?.tablesExtracted ? (
           <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
             {t("result.tablesExtracted", { n: runSummary.tablesExtracted })}
+          </p>
+        ) : null}
+        {/* extract-attachments (R59): files pulled byte-exact out of
+            the /EmbeddedFiles tree, filter chain applied. */}
+        {runSummary?.attachmentsExtracted ? (
+          <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+            {t("result.attachmentsExtracted", {
+              n: runSummary.attachmentsExtracted,
+            })}
           </p>
         ) : null}
         {/* prepare-pdf-for-ai (R58): AI-ready documents + honest
