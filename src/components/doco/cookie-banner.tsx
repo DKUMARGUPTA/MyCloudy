@@ -122,10 +122,18 @@ export function CookieBanner() {
   return (
     <div
       role="dialog"
+      aria-modal="true"
       aria-label={t("consent.title")}
-      className="fixed inset-x-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-50 md:inset-x-auto md:bottom-6 md:left-6 md:max-w-md"
+      className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4"
     >
-      <div className="rounded-card border border-border bg-card p-4 shadow-lg sm:p-5">
+      {/* Dimmed backdrop — makes the overlay an intentional modal, not a floating card */}
+      <div
+        className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px] motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200"
+        aria-hidden="true"
+      />
+      <div
+        className="relative w-full rounded-t-card border border-border bg-card p-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-lg sm:max-w-md sm:rounded-card sm:p-5 sm:pb-5 motion-safe:animate-in motion-safe:slide-in-from-bottom-4 motion-safe:fade-in motion-safe:duration-200"
+      >
         <div className="flex items-start gap-3">
           <span
             className="flex size-10 shrink-0 items-center justify-center rounded-btn bg-primary/10 text-primary"

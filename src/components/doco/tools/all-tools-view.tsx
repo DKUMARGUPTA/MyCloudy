@@ -171,9 +171,10 @@ export function AllToolsView({
       <div
         role="tablist"
         aria-label={t("header.categories")}
-        className="sticky top-16 z-30 -mx-4 mt-4 border-y border-border bg-background/90 px-4 py-2.5 backdrop-blur-md"
+        className="sticky top-16 z-30 -mx-4 mt-4 border-y border-border bg-background/90 py-2.5 backdrop-blur-md"
       >
-        <div className="flex gap-2 overflow-x-auto scrollbar-thin">
+        <div className="group/chips relative">
+          <div className="flex gap-2 overflow-x-auto px-4 pb-0.5 scrollbar-thin">
           {favoriteTools.length > 0 ? (
             <CategoryChip
               active={chip.kind === "favorites"}
@@ -206,6 +207,12 @@ export function AllToolsView({
               {category.name[locale]}
             </CategoryChip>
           ))}
+          </div>
+          {/* Right-edge fade: signals the chip strip scrolls horizontally */}
+          <div
+            className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-background to-transparent"
+            aria-hidden="true"
+          />
         </div>
       </div>
 

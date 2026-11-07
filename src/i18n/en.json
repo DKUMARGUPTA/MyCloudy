@@ -343,6 +343,7 @@
     "errorInvalidPages": "That page selection isn't valid. Use ranges like 1-3, 5. {detail}",
     "errorEncrypted": "This PDF is password-protected. Unlock it first, then try again. {detail}",
     "errorCorrupt": "This PDF couldn't be read — it may be damaged",
+    "errorNotPdf": "That file isn't a PDF or a JPG/PNG scan we can read.",
     "workerCrash": "The tool hit an unexpected error while running. Please try again — if it keeps failing, this file is probably the trigger.",
     "notConfigured": "This tool isn't available right now — please refresh the page.",
     "errorWebpUnsupported": "This browser can't create WEBP images. Use PDF to PNG instead — Chrome, Edge and Firefox support WEBP.",

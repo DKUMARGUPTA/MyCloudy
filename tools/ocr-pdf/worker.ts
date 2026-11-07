@@ -6,6 +6,8 @@ import {
   type OrganizeSource,
   type ParsedPdf,
 } from "@/lib/own/pdf";
+import { CreateContext } from "@/lib/own/pdf";
+import { sniffEmbedKind } from "@/lib/pdf/embed-image-own";
 import {
   parsePageSpec,
   type WorkerRunRequest,
@@ -324,11 +326,45 @@ async function run(request: WorkerRunRequest): Promise<void> {
   for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
     const file = files[fileIndex];
     const base = file.name
-      .replace(/\.(pdf)$/i, "")
+      .replace(/\.(pdf|jpe?g|png)$/i, "")
       .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
       .slice(0, 120);
 
-    const data = new Uint8Array(await file.arrayBuffer());
+    let data = new Uint8Array(await file.arrayBuffer());
+
+    // R54: image inputs (scan-pdf "Detect text" chains raw JPG/PNG scans
+    // here) — wrap each image into a fit-to-image single-page PDF first so
+    // the rest of the pipeline (pdf.js + OCR + searchable-text layer) runs
+    // unchanged. PDF inputs take the original path.
+    const isPdfBytes =
+      data.length >= 4 &&
+      data[0] === 0x25 &&
+      data[1] === 0x50 &&
+      data[2] === 0x44 &&
+      data[3] === 0x46;
+    if (!isPdfBytes) {
+      const kind = sniffEmbedKind(data);
+      if (kind !== "png" && kind !== "jpg") {
+        post({ type: "error", runId, code: "tool.errorNotPdf" });
+        return;
+      }
+      try {
+        const ctx = new CreateContext();
+        const image =
+          kind === "png" ? ctx.embedPng(data) : ctx.embedJpeg(data);
+        const page = ctx.addPage(image.width, image.height);
+        page.drawImage(image, {
+          x: 0,
+          y: 0,
+          width: image.width,
+          height: image.height,
+        });
+        data = ctx.write();
+      } catch {
+        post({ type: "error", runId, code: "tool.errorNotPdf" });
+        return;
+      }
+    }
 
     // FIX-1b (AUD-C): encrypted-input guard — every mode, before any
     // pass-through/merge can touch the bytes. The probe is STRUCTURAL

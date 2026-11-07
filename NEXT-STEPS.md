@@ -110,6 +110,32 @@
 
 ## DONE (append-only log)
 
+- **R54 (2026-11-07):** Layout-audit round + Tier-A round 4 — 6/6 e2e PASS,
+  1 CRITICAL bug fixed, 3 layout fixes shipped. **Layout audit** (user
+  "ab layout issue ho rah hai"): VLM screenshot audit (home/tools/tool ×
+  375/1280 × light/dark) found the cookie-consent floating card covering
+  dropzones/cards + the Next dev "N" button overlapping mobile bottom-nav.
+  Fixes: (1) consent banner → centered modal (desktop) / bottom-sheet
+  (mobile) with dimmed backdrop + slide/fade anims, aria-modal,
+  safe-area-aware; (2) `devIndicators: false` in next.config; (3) category
+  chip strip 40px right-edge fade (scroll affordance). JS overflow check
+  scrollWidth==375 on home+tools. **Tools:** pdf-to-txt (flow layout, all
+  pages + UNIQUE-MARKER extracted), view-pdf (nav/zoom/fit/rotate full
+  cycle 0→360° render-verified), scan-pdf (Scan→PDF A4), convert-to-pdf
+  (smart dispatcher → images-to-pdf chain), images-to-pdf (2 PNGs →
+  auto-landscape A4, VLM both pages), png-to-pdf (A4 landscape). 🔧
+  **CRITICAL FIX — scan-pdf "Detect text" chain was broken:** raw JPG
+  chained into ocr-pdf (accepts pdf) → silent "PDF damaged" error, revert
+  to workspace. Fix in tools/ocr-pdf/worker.ts: image inputs (JPG/PNG
+  magic bytes) wrapped into fit-to-image single-page PDF via own engine
+  (CreateContext embedJpeg/embedPng) before the pdf.js+OCR pipeline; added
+  tool.errorNotPdf (EN+HI) for unsupported types; base name strips image
+  extensions. Verified: chain completes at 92% OCR confidence, pdftotext
+  extracts full scan text incl. UNIQUE-MARKER-XYZ-9981; native-PDF input
+  regression PASS (93%). Lint 0, dev log clean. Docs updated
+  (TOOL-TESTING-PLAN R54 + layout-audit reports, 6 tool rows). **NEXT:
+  R55 — Tier A remainder + Tier B start (watermark, fill, page numbers,
+  crop).**
 - **R54-fix (2026-11-04):** Header layout overflow FIXED (user-reported via
   screenshot). Diagnosis: header row needed ~1400px (logo 113 + nav 718 +
   right group 427 + search text) but `max-w-6xl` capped the container at

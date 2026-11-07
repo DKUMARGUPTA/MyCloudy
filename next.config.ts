@@ -70,6 +70,9 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: [
     "https://preview-chat-1f1cf917-1c49-4677-81af-7bc31d9a4be1.space-z.ai",
   ],
+  // Hide the floating dev indicator ("N" button) — it overlapped the
+  // mobile bottom nav and consent bottom-sheet (layout audit round).
+  devIndicators: false,
   async headers() {
     return [
       {

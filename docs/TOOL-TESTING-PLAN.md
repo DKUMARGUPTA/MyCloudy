@@ -40,7 +40,7 @@
 | R51 | **QR & Barcodes (all 3)** + mega-menu QR category + Tier-A spot-check (merge e2e, split, compress routes) | ✅ done |
 | R52 | Tier A: edit-pdf, sign-pdf, word-to-pdf, pdf-to-jpg, pdf-to-word | ✅ done — 5/5 e2e PASS + 1 UX fix shipped |
 | R53 | Tier A: lock-pdf, unlock-pdf, jpg-to-pdf, pdf-to-png, rotate-pdf-pages | ✅ done — 5/5 e2e PASS (security round-trip verified) |
-| R54 | Tier A: pdf-to-txt, scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf | ⬜ |
+| R54 | Tier A: pdf-to-txt, scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf | ✅ done — 6/6 e2e PASS + 1 critical bug fixed (scan→OCR chain) + layout-audit fixes |
 | R55 | Tier A remainder + Tier B start (edit category: watermark, fill, page numbers, crop) | ⬜ |
 | R56–R62 | Tier B by category (organize → edit → convert-to → convert-from → security → optimize → create) | ⬜ |
 | R63–R66 | Tier C by category (incl. invoices, view, images) — smoke level | ⬜ |
@@ -67,6 +67,23 @@
 - ✅ Dark mode: readable; minor contrast note — active "एक QR" tab teal-on-dark-teal slightly low contrast (cosmetic, not blocking).
 - 🟡 Cookie consent banner covers download buttons until dismissed (expected; first-visit UX only).
 - 🟡 scan-qr-code description wording: "read the QR or barcode inside" → soften to "read the QR inside" for accuracy (low priority).
+
+**R54 round report (2026-11-07) — Tier-A convert/create 6, 6/6 e2e PASS + 1 critical bug fixed:**
+- ✅ `pdf-to-txt`: 3-page fixture → flow layout output; every page extracted incl. UNIQUE-MARKER-XYZ-9981; page-preview shows live word count (21 words p.1); options (Layout flow/lines, Pages ranges, Mark page breaks) all present. Download `.txt` verified.
+- ✅ `view-pdf`: full-featured viewer — page nav (→ p.2 with UNIQUE-MARKER), zoom in/out, fit width, **rotate cycle 0→90→180→270→360° all render correctly** (full-canvas pixel + VLM verified), text layer in a11y tree, thumbnails/outline, presentation mode, print, dark reading mode buttons.
+- 🔧 **CRITICAL BUG FIXED — scan-pdf "Detect text" chain broken:** chaining raw JPG scans into `ocr-pdf` (accepts: pdf) failed with silent "This PDF couldn't be read — it may be damaged" toast and reverted to workspace. **Fix (tools/ocr-pdf/worker.ts):** image inputs (JPG/PNG by magic bytes) are now wrapped into a fit-to-image single-page PDF via our own engine (CreateContext embedJpeg/embedPng) before the pdf.js+OCR pipeline; non-PDF/non-image → clean `tool.errorNotPdf` error (EN+HI added); output base name strips .jpg/.jpeg/.png. **Verified:** chain now completes — 92% OCR confidence, `pdftotext` on the output extracts the full scan text (UNIQUE-MARKER-XYZ-9981 present). Regression: native PDF input still works (93%).
+- ✅ `scan-pdf` main flow: JPG → "Scan to PDF →" → 1-page A4 PDF, visual render verified (title + text + teal rect).
+- ✅ `convert-to-pdf`: smart dispatcher — JPG input correctly recommends "Images to PDF"; click chains ("Chained from Universal converter") → images-to-pdf → A4 output. Router logic verified.
+- ✅ `images-to-pdf`: 2 PNGs (portrait + landscape) → 2-page **auto-landscape A4** PDF; per-image rotate/reorder controls present; both pages VLM-verified (green rect + text; orange + yellow circle).
+- ✅ `png-to-pdf`: single PNG → 1-page A4 landscape PDF, image placed with margins, VLM-verified.
+- ✅ Lint: 0 errors. Dev log: clean. Console: only pre-existing dev-only warnings (GA boot script tag, Next dev overlay).
+
+**Layout-audit round (2026-11-07, user-reported "layout issue"):** VLM-driven screenshot audit (home/tools/tool pages × 375px/1280px × light/dark) — 3 fixes shipped:
+- 🔧 **Cookie consent banner → centered modal** (desktop) / **bottom-sheet** (mobile) with dimmed backdrop + slide/fade animation. Was a floating bottom-left card that awkwardly covered dropzones/cards (VLM: "blocking overlap"). Now role=dialog aria-modal, safe-area-aware, VLM-verified PASS both breakpoints.
+- 🔧 **Next.js dev indicator ("N" floating button) disabled** (`devIndicators: false`) — was overlapping the mobile bottom-nav "Home" tab and the consent bottom-sheet.
+- 🔧 **Category chip strip right-edge fade** (all-tools-view) — 40px white gradient signals horizontal scroll on mobile; VLM-verified ("Convert to PDF" chip fades out gradually).
+- ✅ Horizontal-overflow JS check: scrollWidth == 375 on home + tools (no overflow).
+- ℹ️ Toast z-index (z-100) correctly stacks above the consent modal (z-50) — no collision with centered modal/bottom-sheet.
 
 **R53 round report (2026-11-04) — Tier-A security/convert/organize 5, 5/5 e2e PASS:**
 - ✅ `lock-pdf`: sample.pdf + pw `r53secret` → qpdf confirms AESv3/R=6 encryption, `/Encrypt` present, no-password load rejected, password decrypts to 3 pages. Permission defaults sensible (print ✓, copy ✗). 26% size growth = encryption overhead, correctly shown.
@@ -158,8 +175,8 @@
 |------|----|-----|--------|
 | Word to PDF | `word-to-pdf` | 85 | ✅ R52: e2e — DOCX (own-zip fixture) → 1-page PDF, text run verified ("Second paragraph for conversion verification."), Helvetica embedded |
 | JPG to PDF | `jpg-to-pdf` | 72 | ✅ R53: e2e — text-bearing JPG → PDF round-trip (VLM: text readable), A4 **auto-landscape** for 800×560 image, JPEG embedded via DCTDecode, centered with margins |
-| Convert to PDF | `convert-to-pdf` | 58 | ⬜ |
-| PNG to PDF | `png-to-pdf` | 56 | ⬜ |
+| Convert to PDF | `convert-to-pdf` | 58 | ✅ R54: e2e — smart dispatcher routes JPG → Images to PDF chain, A4 output |
+| PNG to PDF | `png-to-pdf` | 56 | ✅ R54: e2e — PNG → 1-page A4 landscape, image placed with margins, VLM-verified |
 | PowerPoint to PDF | `powerpoint-to-pdf` | 30 | ⬜ |
 | Excel to PDF | `excel-to-pdf` | 28 | ⬜ |
 | HEIC to PDF | `heic-to-pdf` | 26 | ⬜ |
@@ -186,7 +203,7 @@
 | PDF to JPG | `pdf-to-jpg` | 84 | ✅ R52: e2e — 3 pages → 625×417 JPEGs, VLM-verified text ("R52 Test Page 1" readable), DPI info shown pre-run |
 | PDF to Word | `pdf-to-word` | 83 | ✅ R52: e2e — 3-page PDF → DOCX, all 6 text runs preserved (R52 Test Page 1/2/3 + subtitles), auto-download works; **UX fix shipped:** re-download button on result card (blocked/missed saves ke liye) |
 | PDF to PNG | `pdf-to-png` | 70 | ✅ R53: e2e — 3 pages → 875×583 RGBA PNGs (exactly as DPI preview promised), ZIP download + per-file downloads work, VLM-verified content |
-| PDF to TXT | `pdf-to-txt` | 65 | ⬜ |
+| PDF to TXT | `pdf-to-txt` | 65 | ✅ R54: e2e — flow layout, all pages + UNIQUE-MARKER extracted, options (layout/pages/marks) present |
 | Convert from PDF | `convert-from-pdf` | 44 | ⬜ |
 | PDF to Excel | `pdf-to-excel` | 24 | ⬜ |
 | Prepare PDF for AI | `prepare-pdf-for-ai` | 22 | ⬜ |
@@ -237,8 +254,8 @@
 
 | Tool | ID | Pop | Status |
 |------|----|-----|--------|
-| Images to PDF | `images-to-pdf` | 80 | ⬜ |
-| Scan PDF | `scan-pdf` | 62 | ⬜ |
+| Images to PDF | `images-to-pdf` | 80 | ✅ R54: e2e — 2 PNGs → 2-page auto-landscape A4, per-image rotate/reorder, both pages VLM-verified |
+| Scan PDF | `scan-pdf` | 62 | ✅ R54: e2e — Scan→PDF A4 verified; "Detect text" OCR chain FIXED (image-wrap in ocr-pdf worker, 92% conf, searchable text confirmed) |
 | Create PDF | `create-pdf` | 28 | ⬜ |
 | Write PDF | `write-pdf` | 26 | ⬜ |
 | Webpage to PDF | `webpage-to-pdf` | 24 | ⬜ |
@@ -262,7 +279,7 @@
 
 | Tool | ID | Pop | Status |
 |------|----|-----|--------|
-| View PDF | `view-pdf` | 60 | ⬜ |
+| View PDF | `view-pdf` | 60 | ✅ R54: e2e — page nav/zoom/fit/rotate-full-cycle/thumbnails/print/presentation all verified; text layer in a11y |
 | Search PDF | `search-pdf` | 18 | ⬜ |
 | Compare PDF | `compare-pdf` | 16 | ⬜ |
 | View metadata | `view-metadata` | 14 | ⬜ |
