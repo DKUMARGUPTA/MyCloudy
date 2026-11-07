@@ -43,6 +43,7 @@ import { BugsTab } from "@/components/doco/admin/bugs-tab";
 import { MessagesTab } from "@/components/doco/admin/messages-tab";
 import { FeedbackTab } from "@/components/doco/admin/feedback-tab";
 import { AnalyticsTab } from "@/components/doco/admin/analytics-tab";
+import { VisitorsTab } from "@/components/doco/admin/visitors-tab";
 import { AuditTab } from "@/components/doco/admin/audit-tab";
 import { SettingsTab } from "@/components/doco/admin/settings-tab";
 
@@ -290,6 +291,10 @@ function Console() {
             <Activity className="size-4" aria-hidden="true" />
             {t("admin.tab.analytics")}
           </TabsTrigger>
+          <TabsTrigger value="visitors" className="gap-1.5 rounded-btn">
+            <Users className="size-4" aria-hidden="true" />
+            {t("admin.tab.visitors")}
+          </TabsTrigger>
           <TabsTrigger value="audit" className="gap-1.5 rounded-btn">
             <ScrollText className="size-4" aria-hidden="true" />
             {t("admin.tab.audit")}
@@ -317,6 +322,9 @@ function Console() {
         </TabsContent>
         <TabsContent value="analytics">
           <AnalyticsTab />
+        </TabsContent>
+        <TabsContent value="visitors">
+          <VisitorsTab />
         </TabsContent>
         <TabsContent value="audit">
           <AuditTab />

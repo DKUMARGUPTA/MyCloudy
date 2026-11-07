@@ -21,6 +21,7 @@ export interface SafeUser {
   plan: string;
   locale: string;
   createdAt: string;
+  birthYear?: number | null; // R60 — optional, powers admin age analytics
 }
 
 export type AuthErrorCode =
@@ -84,6 +85,25 @@ export function bootstrapAuth(): void {
       set({ user: d.user ?? null, status: "ready" })
     )
     .catch(() => set({ user: null, status: "ready" }));
+}
+
+/** R60 — save the optional profile birth year via PATCH /api/auth/me. */
+export async function saveBirthYear(
+  birthYear: number | null
+): Promise<{ ok: boolean }> {
+  try {
+    const res = await fetch("/api/auth/me", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ birthYear }),
+    });
+    if (!res.ok) return { ok: false };
+    const d = (await res.json()) as { user?: SafeUser | null };
+    if (d.user) set({ user: d.user });
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
 }
 
 export function useAuth(): AuthState {

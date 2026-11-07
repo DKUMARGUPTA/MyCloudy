@@ -24,6 +24,7 @@ model User {
   locale       String    @default("en")
   role         String    @default("user")
   tokenVersion Int       @default(0)
+  birthYear    Int? // optional — powers the admin age-group analytics
   bannedAt     DateTime?
   createdAt    DateTime  @default(now())
   deletedAt    DateTime?
@@ -32,6 +33,7 @@ model User {
   subscriptions Subscription[]
   payments      Payment[]
   bugReports     BugReport[]
+  visitorSessions VisitorSession[]
 
   @@map("users")
 }
@@ -66,10 +68,58 @@ model PageView {
   visitorId String // same anonymous localStorage id as the usage beacon
   day       String // YYYY-MM-DD
   createdAt DateTime @default(now())
+  // R60 advanced visitor analytics — nullable: legacy rows keep working.
+  sessionId String? // VisitorSession.id (server-side 30-min session)
+  userId    String? // logged-in user id (null = anonymous visit)
+  country   String? // ISO-3166 alpha-2 ("IN") from IP geolocation
+  city      String? // coarse city label from IP geolocation
 
   @@index([day])
   @@index([visitorId, day])
+  @@index([sessionId])
+  @@index([userId])
+  @@index([country, day])
   @@map("page_views")
+}
+
+/// One row per visit (30-minute activity window per anonymous visitor).
+/// Powers the admin "Visitors" console: who, from where, on what device,
+/// how long, how deep. Raw IP is never stored — only a salted hash for
+/// dedup + the resolved coarse geo labels (country/region/city).
+model VisitorSession {
+  id            String   @id @default(uuid())
+  visitorId     String // anonymous localStorage id (client)
+  userId        String? // logged-in user at visit time (null = guest)
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  ipHash        String // sha256(ip + daily salt) — dedup only, not PII
+  country       String   @default("unknown") // ISO alpha-2
+  countryName   String   @default("Unknown")
+  region        String? // state / province label
+  city          String? // coarse city label
+  timezone      String? // IANA tz from geo resolution
+  browser       String   @default("Unknown") // "Chrome 126"
+  browserName   String   @default("unknown") // "chrome"
+  os            String   @default("Unknown") // "Windows 11"
+  osName        String   @default("unknown") // "windows"
+  device        String   @default("desktop") // mobile | tablet | desktop
+  deviceBrand   String? // "Apple" | "Samsung" … from UA
+  screen        String? // "1920x1080" (client-reported)
+  language      String? // navigator.language ("en-IN")
+  referrer      String   @default("direct") // bucketed label
+  referrerHost  String? // "google.com" when external
+  landingPath   String // first path of the visit
+  pageviews     Int      @default(1)
+  isBounce      Boolean  @default(true) // single-pageview session
+  firstSeen     DateTime @default(now())
+  lastSeen      DateTime @default(now())
+  day           String // YYYY-MM-DD (UTC) of firstSeen
+
+  @@index([day])
+  @@index([visitorId, lastSeen])
+  @@index([userId])
+  @@index([country])
+  @@index([lastSeen])
+  @@map("visitor_sessions")
 }
 
 model UsageEvent {

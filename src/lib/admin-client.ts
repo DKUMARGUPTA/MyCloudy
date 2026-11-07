@@ -123,6 +123,84 @@ export interface AdminAnalyticsDto {
   };
 }
 
+/* ── R60: advanced visitor analytics (/api/admin/visitors) ───────────── */
+
+export interface VisitorsFilter {
+  range?: "today" | "yesterday" | "7d" | "30d" | "90d" | "all" | "custom";
+  from?: string;
+  to?: string;
+  country?: string;
+  city?: string;
+  device?: string;
+  browser?: string;
+  os?: string;
+  referrer?: string;
+  userType?: "all" | "known" | "anon";
+  q?: string;
+  minViews?: number;
+}
+
+export interface VisitorSessionDto {
+  id: string;
+  visitor: {
+    email: string | null;
+    name: string | null;
+    plan: string;
+    age: number | null;
+  } | null;
+  visitorId: string;
+  country: string;
+  countryName: string;
+  region: string | null;
+  city: string | null;
+  timezone: string | null;
+  browser: string;
+  os: string;
+  device: string;
+  deviceBrand: string | null;
+  screen: string | null;
+  language: string | null;
+  referrer: string;
+  referrerHost: string | null;
+  landingPath: string;
+  pageviews: number;
+  isBounce: boolean;
+  firstSeen: string;
+  lastSeen: string;
+  durationMin: number;
+}
+
+export interface AdminVisitorsDto {
+  range: { kind: string; from: string; to: string };
+  kpis: {
+    visitors: number;
+    sessions: number;
+    pageviews: number;
+    avgPagesPerSession: number;
+    bounceRate: number;
+    knownSessions: number;
+    avgSessionMin: number;
+    countries: number;
+  };
+  series: Array<{ day: string; sessions: number; views: number }>;
+  countries: Array<{ label: string; name: string; count: number }>;
+  cities: Array<{ label: string; count: number }>;
+  devices: Array<{ label: string; count: number }>;
+  browsers: Array<{ label: string; name: string; count: number }>;
+  osList: Array<{ label: string; name: string; count: number }>;
+  referrers: Array<{ label: string; count: number }>;
+  languages: Array<{ label: string; count: number }>;
+  topPages: Array<{ label: string; count: number }>;
+  ageGroups: Array<{ label: string; count: number }>;
+  sessions: VisitorSessionDto[];
+  filters: {
+    countries: Array<{ code: string; name: string }>;
+    cities: string[];
+    browsers: string[];
+    os: string[];
+  };
+}
+
 /* ------------------------------ fetchers ------------------------------ */
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T | null> {
@@ -163,6 +241,23 @@ export const fetchSettings = () =>
 
 export const fetchAnalytics = () =>
   jsonFetch<AdminAnalyticsDto>("/api/admin/analytics");
+
+export function fetchVisitors(filter: VisitorsFilter): Promise<AdminVisitorsDto | null> {
+  const params = new URLSearchParams();
+  if (filter.range) params.set("range", filter.range);
+  if (filter.from) params.set("from", filter.from);
+  if (filter.to) params.set("to", filter.to);
+  if (filter.country) params.set("country", filter.country);
+  if (filter.city) params.set("city", filter.city);
+  if (filter.device) params.set("device", filter.device);
+  if (filter.browser) params.set("browser", filter.browser);
+  if (filter.os) params.set("os", filter.os);
+  if (filter.referrer) params.set("referrer", filter.referrer);
+  if (filter.userType && filter.userType !== "all") params.set("userType", filter.userType);
+  if (filter.q) params.set("q", filter.q);
+  if (filter.minViews != null) params.set("minViews", String(filter.minViews));
+  return jsonFetch<AdminVisitorsDto>(`/api/admin/visitors?${params.toString()}`);
+}
 
 /* ------------------------------- mutators ----------------------------- */
 

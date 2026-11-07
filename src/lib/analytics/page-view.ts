@@ -96,11 +96,29 @@ export function trackPageView(routeKey: string, locale: "en" | "hi"): void {
         device: deviceClass(),
         referrer: referrerBucket(),
         visitorId: readAnonId(),
+        // R60 enrichments — coarse, non-identifying device context for the
+        // owner's visitor console. All optional server-side.
+        screen: `${window.screen?.width ?? 0}x${window.screen?.height ?? 0}`,
+        language: (navigator.language || "").slice(0, 16) || undefined,
+        referrerHost: referrerHostLabel(),
       }),
       keepalive: true,
       cache: "no-store",
     }).catch(() => undefined);
   } catch {
     /* storage/network unavailable — analytics is best-effort only */
+  }
+}
+
+/** External referrer hostname ("google.com"), when present. */
+function referrerHostLabel(): string | undefined {
+  try {
+    const ref = document.referrer;
+    if (!ref) return undefined;
+    const url = new URL(ref, window.location.origin);
+    if (url.origin === window.location.origin) return undefined;
+    return url.hostname.replace(/^www\./, "").toLowerCase().slice(0, 100);
+  } catch {
+    return undefined;
   }
 }

@@ -204,6 +204,7 @@ export interface SafeUser {
   plan: string;
   locale: string;
   createdAt: string;
+  birthYear: number | null; // R60 — powers admin age-group analytics (optional)
 }
 
 type UserRow = {
@@ -214,6 +215,7 @@ type UserRow = {
   plan: string;
   locale: string;
   createdAt: Date;
+  birthYear?: number | null;
 };
 
 export function toSafeUser(u: UserRow): SafeUser {
@@ -225,6 +227,7 @@ export function toSafeUser(u: UserRow): SafeUser {
     plan: u.plan,
     locale: u.locale,
     createdAt: u.createdAt.toISOString(),
+    birthYear: u.birthYear ?? null,
   };
 }
 

@@ -9,6 +9,7 @@ import {
   Loader2,
   LogIn,
   ReceiptText,
+  Save,
   ShieldCheck,
   Sparkles,
   TriangleAlert,
@@ -21,6 +22,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Modal } from "@/components/doco/modal";
 import { EmptyState } from "@/components/doco/empty-state";
 import { PageShell } from "@/components/doco/page/page-shell";
@@ -33,6 +41,7 @@ import {
   deleteAccount,
   fetchBillingStatus,
   openAuthModal,
+  saveBirthYear,
   useAuth,
   type AuthErrorCode,
   type BillingErrorCode,
@@ -171,46 +180,121 @@ function AdminCard() {
 function ProfileCard() {
   const { t, locale } = useI18n();
   const { user } = useAuth();
+  const { toast } = useToast();
+  const [birthYear, setBirthYear] = useState<string>("");
+  const [savingAge, setSavingAge] = useState(false);
+  useEffect(() => {
+    setBirthYear(user?.birthYear ? String(user.birthYear) : "");
+  }, [user?.birthYear]);
   if (!user) return null;
+
+  const years: number[] = [];
+  const nowYear = new Date().getFullYear();
+  for (let y = nowYear; y >= nowYear - 100; y--) years.push(y);
+
+  const handleSaveAge = async () => {
+    if (savingAge) return;
+    setSavingAge(true);
+    const value =
+      birthYear && birthYear !== "none" ? Number(birthYear) : null;
+    const res = await saveBirthYear(value);
+    setSavingAge(false);
+    if (res.ok) {
+      toast({ title: t("account.birthYearSaved") });
+    } else {
+      toast({ title: t("admin.toast.failed"), variant: "destructive" });
+    }
+  };
 
   return (
     <Card className="rounded-card">
       <CardHeader>
         <CardTitle className="text-base">{t("account.sectionProfile")}</CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-wrap items-center gap-4">
-        <Avatar className="size-14 border border-border">
-          <AvatarFallback className="bg-primary/10 text-base font-semibold text-primary">
-            {initialsOf(user.name?.trim() || user.email)}
-          </AvatarFallback>
-        </Avatar>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-foreground">
-            {user.name?.trim() || user.email}
-          </p>
-          <p className="truncate text-sm text-muted-foreground">{user.email}</p>
-          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <CalendarDays className="size-3.5" aria-hidden="true" />
-            {t("account.memberSince", { date: formatDate(user.createdAt, locale) })}
-          </p>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <Avatar className="size-14 border border-border">
+            <AvatarFallback className="bg-primary/10 text-base font-semibold text-primary">
+              {initialsOf(user.name?.trim() || user.email)}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-foreground">
+              {user.name?.trim() || user.email}
+            </p>
+            <p className="truncate text-sm text-muted-foreground">{user.email}</p>
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <CalendarDays className="size-3.5" aria-hidden="true" />
+              {t("account.memberSince", { date: formatDate(user.createdAt, locale) })}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {user.plan === "pro" ? (
+              <Badge variant="pro" className="rounded-chip">
+                <Sparkles className="size-3" aria-hidden="true" />
+                {t("auth.menuPlanPro")}
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="rounded-chip">
+                {t("auth.menuPlanFree")}
+              </Badge>
+            )}
+            {user.role === "admin" ? (
+              <Badge variant="secondary" className="rounded-chip">
+                <ShieldCheck className="size-3" aria-hidden="true" />
+                {t("auth.menuAdmin")}
+              </Badge>
+            ) : null}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {user.plan === "pro" ? (
-            <Badge variant="pro" className="rounded-chip">
-              <Sparkles className="size-3" aria-hidden="true" />
-              {t("auth.menuPlanPro")}
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="rounded-chip">
-              {t("auth.menuPlanFree")}
-            </Badge>
-          )}
-          {user.role === "admin" ? (
-            <Badge variant="secondary" className="rounded-chip">
-              <ShieldCheck className="size-3" aria-hidden="true" />
-              {t("auth.menuAdmin")}
-            </Badge>
-          ) : null}
+        {/* R60 — optional birth year (powers age analytics; never public) */}
+        <div className="flex flex-wrap items-end gap-3 rounded-card border border-border bg-muted/30 p-3">
+          <div className="space-y-1">
+            <label
+              htmlFor="birth-year"
+              className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+            >
+              {t("account.birthYearLabel")}
+            </label>
+            <Select value={birthYear} onValueChange={setBirthYear}>
+              <SelectTrigger id="birth-year" className="h-9 w-40 text-sm">
+                <SelectValue placeholder={t("account.birthYearPh")} />
+              </SelectTrigger>
+              <SelectContent className="max-h-72">
+                <SelectItem value="none" className="text-sm">
+                  {t("account.birthYearNone")}
+                </SelectItem>
+                {years.map((y) => (
+                  <SelectItem key={y} value={String(y)} className="text-sm">
+                    {y}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+            {t("account.birthYearHint")}
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-9 shrink-0"
+            onClick={handleSaveAge}
+            disabled={
+              savingAge ||
+              birthYear === "" ||
+              (birthYear === "none" && !user.birthYear) ||
+              (birthYear !== "none" && Number(birthYear) === user.birthYear)
+            }
+          >
+            {savingAge ? (
+              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <Save className="size-3.5" aria-hidden="true" />
+            )}
+            <span className="ml-1.5">{t("account.birthYearSave")}</span>
+          </Button>
         </div>
       </CardContent>
     </Card>
