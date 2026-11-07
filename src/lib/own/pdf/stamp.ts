@@ -3501,9 +3501,14 @@ function mkColorScaled(color: ChromeColor, factor: number): ChromeColor {
 
 /** A fill op converted to its stroke flavor ("0 0 0 rg" → "0 0 0 RG"). */
 function fillOpToStrokeOp(op: string): string {
-  if (/g$/.test(op)) return `${op.slice(0, -1)}G`;
+  // Order matters: `rg` must be tested before `g`, and `k`/`scn` before
+  // their shorter suffixes — otherwise "0 0 0 rg" matches /g$/ first and
+  // mangles into the invalid operator "0 0 0 rG" (R55 fill-out-pdf bug:
+  // Poppler "Unknown operator 'rG'" on every colored checkbox mark).
   if (/rg$/.test(op)) return `${op.slice(0, -2)}RG`;
+  if (/scn$/.test(op)) return `${op.slice(0, -1)}SCN`;
   if (/k$/.test(op)) return `${op.slice(0, -1)}K`;
+  if (/g$/.test(op)) return `${op.slice(0, -1)}G`;
   return op;
 }
 

@@ -41,7 +41,7 @@
 | R52 | Tier A: edit-pdf, sign-pdf, word-to-pdf, pdf-to-jpg, pdf-to-word | ✅ done — 5/5 e2e PASS + 1 UX fix shipped |
 | R53 | Tier A: lock-pdf, unlock-pdf, jpg-to-pdf, pdf-to-png, rotate-pdf-pages | ✅ done — 5/5 e2e PASS (security round-trip verified) |
 | R54 | Tier A: pdf-to-txt, scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf | ✅ done — 6/6 e2e PASS + 1 critical bug fixed (scan→OCR chain) + layout-audit fixes |
-| R55 | Tier A remainder + Tier B start (edit category: watermark, fill, page numbers, crop) | ⬜ |
+| R55 | Tier A remainder + Tier B start (edit category: watermark, fill, page numbers, crop) | ✅ done — 4/4 e2e PASS + rG operator bug fixed + success-badge polish + Copy-text feature |
 | R56–R62 | Tier B by category (organize → edit → convert-to → convert-from → security → optimize → create) | ⬜ |
 | R63–R66 | Tier C by category (incl. invoices, view, images) — smoke level | ⬜ |
 | R67 | Full regression: home, /tools, all 11 category pages EN+HI, search palette, footer | ⬜ |
@@ -67,6 +67,16 @@
 - ✅ Dark mode: readable; minor contrast note — active "एक QR" tab teal-on-dark-teal slightly low contrast (cosmetic, not blocking).
 - 🟡 Cookie consent banner covers download buttons until dismissed (expected; first-visit UX only).
 - 🟡 scan-qr-code description wording: "read the QR or barcode inside" → soften to "read the QR inside" for accuracy (low priority).
+
+**R55 round report (2026-11-07) — Tier-B edit category 4, 4/4 e2e PASS + 1 PDF-spec bug fixed:**
+- ✅ `add-watermark`: live preview ("3 of 3 pages marked"), default CONFIDENTIAL red diagonal semi-transparent stamp VLM-verified on all pages; custom text "DRAFT R55" round-trips; options: font/size/color presets/opacity slider/rotation/tilt.
+- 🔧 **PDF-SPEC BUG FIXED — invalid `rG` operator in checkbox appearance streams:** every colored checkbox/radio "on" mark written by our engine emitted `0 0 0 rG` (invalid mixed-case) instead of `0 0 0 RG` — Poppler: "Unknown operator 'rG'"; strict viewers could drop the checkmark. Root cause: `fillOpToStrokeOp()` regex order — `/g$/` matched `rg` endings before the `/rg$/` branch. Fix (src/lib/own/pdf/stamp.ts): longest-suffix-first matching (`rg` → `RG`, `scn` → `SCN`, `k` → `K`, `g` → `G`). Verified: fill-out-pdf output streams all emit valid `RG`; pdftotext clean.
+- ✅ `fill-out-pdf`: custom form fixture (2 text fields + checkbox) — fields auto-detected (3/3), click-to-jump boxes, "Auto-fill my details", typed values + checked box all render in output (VLM 3/3 PASS); Flatten toggle present; FDF import option.
+- ✅ `add-page-numbers`: live preview, 3 pages stamped 1/2/3 bottom-right (pdftotext + VLM verified), formats/fonts/positions/pages selectors present.
+- ✅ `crop-pdf`: margins Top 80/Left 150/Right 60/Bottom 120 → exact 385×642 pt output (595−150−60 × 842−80−120), content intact; drag handles + auto-detect + Before/After + per-page picker. Note: margin spinbuttons commit on blur/Tab (by design; agent-browser typing needs explicit Tab).
+- ✅ New feature: **Copy text button** on single text/plain outputs (pdf-to-txt, OCR .txt) — one-tap clipboard copy with Copied! state + toast; EN+HI verified ("टेक्स्ट कॉपी करें" → "कॉपी हो गया!"); NOT shown on PDF outputs (conditional verified).
+- ✅ Styling: result success badge upgraded to draw-in animated SVG (circle traces → checkmark draws, soft emerald halo ping, reduced-motion safe).
+- ✅ Lint 0 errors. Dev log clean.
 
 **R54 round report (2026-11-07) — Tier-A convert/create 6, 6/6 e2e PASS + 1 critical bug fixed:**
 - ✅ `pdf-to-txt`: 3-page fixture → flow layout output; every page extracted incl. UNIQUE-MARKER-XYZ-9981; page-preview shows live word count (21 words p.1); options (Layout flow/lines, Pages ranges, Mark page breaks) all present. Download `.txt` verified.
@@ -144,10 +154,10 @@
 | Tool | ID | Pop | Status |
 |------|----|-----|--------|
 | Edit PDF | `edit-pdf` | 90 | ✅ R52: e2e — editor loads (11 tools, undo/redo, zoom, thumbnails), text object added via real-mouse canvas click, "R52 EDIT TEST" embedded, 3-page edited PDF downloaded |
-| Add watermark | `add-watermark` | 55 | ⬜ |
-| Fill out PDF | `fill-out-pdf` | 50 | ⬜ |
-| Add page numbers | `add-page-numbers` | 38 | ⬜ |
-| Crop PDF | `crop-pdf` | 34 | ⬜ |
+| Add watermark | `add-watermark` | 55 | ✅ R55: e2e — default + custom text stamps, all 3 pages, VLM-verified semi-transparent diagonal |
+| Fill out PDF | `fill-out-pdf` | 50 | ✅ R55: e2e — 3/3 fields detected+filled+checked (VLM); rG appearance-stream bug FIXED |
+| Add page numbers | `add-page-numbers` | 38 | ✅ R55: e2e — 3 pages stamped bottom-right, pdftotext+VLM verified |
+| Crop PDF | `crop-pdf` | 34 | ✅ R55: e2e — margins exact (385×642 pt), content intact, auto-detect + drag handles |
 | Add header & footer | `add-header-footer` | 30 | ⬜ |
 | Annotate PDF | `annotate-pdf` | 25 | ⬜ |
 | Edit PDF text | `edit-pdf-text` | 20 | ⬜ |

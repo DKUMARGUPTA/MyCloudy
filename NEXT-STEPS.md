@@ -110,6 +110,24 @@
 
 ## DONE (append-only log)
 
+- **R55 (2026-11-07, cron review):** Tier-B edit-category round — 4/4 e2e
+  PASS, 1 PDF-spec bug fixed, styling polish + new feature shipped.
+  **Tools:** add-watermark (live preview, default + custom stamps,
+  VLM-verified), fill-out-pdf (3/3 fields, custom form fixture),
+  add-page-numbers (1/2/3 bottom-right), crop-pdf (margins exact 385×642,
+  content intact). 🔧 **BUG FIXED — invalid `rG` PDF operator:** every
+  colored checkbox/radio "on" mark from our engine wrote `0 0 0 rG`
+  (invalid) instead of `RG` — Poppler warned, strict viewers could drop
+  checkmarks. Root cause: fillOpToStrokeOp regex order (/g$/ matched
+  before /rg$/). Fix: longest-suffix-first (rg→RG, scn→SCN, k→K, g→G) in
+  src/lib/own/pdf/stamp.ts; verified clean streams + pdftotext. ✨
+  **Styling:** result success badge → draw-in animated SVG (circle trace
+  → checkmark draw + emerald halo ping, reduced-motion safe).
+  **Feature:** Copy-text button on single text/plain results (pdf-to-txt,
+  OCR .txt) — clipboard copy with Copied! state + toast, EN+HI verified,
+  correctly hidden on PDF outputs. Lint 0, dev log clean. Docs updated
+  (R55 report + 4 tool rows). **NEXT: R56 — Tier B organize category
+  (split full e2e, organize presets, page-labels).**
 - **R54 (2026-11-07):** Layout-audit round + Tier-A round 4 — 6/6 e2e PASS,
   1 CRITICAL bug fixed, 3 layout fixes shipped. **Layout audit** (user
   "ab layout issue ho rah hai"): VLM screenshot audit (home/tools/tool ×

@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import {
   Check,
-  CheckCircle2,
+  Copy,
   Download,
   ExternalLink,
   FileDown,
@@ -123,12 +123,38 @@ export function ResultView({
   const [draft, setDraft] = useState("");
   const [rating, setRating] = useState<1 | -1 | null>(null);
   const [reason, setReason] = useState<string | null>(null);
+  const [copiedText, setCopiedText] = useState(false);
 
   const totalOut = outputs.reduce((sum, output) => sum + output.blob.size, 0);
   const savedPct = inputBytes > 0 ? Math.round((1 - totalOut / inputBytes) * 100) : 0;
   const shrinkable = inputBytes > 0 && totalOut < inputBytes && savedPct >= 1;
   const shareable = useMemo(() => canShareFiles(outputs), [outputs]);
   const pickerAvailable = canUseSavePicker();
+  /* Copy-text shows for a single plain-text output (pdf-to-txt, OCR .txt). */
+  const singleTextOutput =
+    outputs.length === 1 &&
+    (outputs[0].mime === "text/plain" ||
+      /\.txt$/i.test(outputs[0].name));
+
+  /* R55 feature: text outputs (pdf-to-txt, OCR .txt, extract) get a
+   * one-tap Copy — no round-trip through a download + editor. */
+  const copyTextOutput = async () => {
+    const output = outputs[0];
+    if (!output) return;
+    try {
+      const text = await output.blob.text();
+      await navigator.clipboard.writeText(text);
+      setCopiedText(true);
+      toast({ title: t("result.copiedToast") });
+      setTimeout(() => setCopiedText(false), 2000);
+    } catch {
+      toast({
+        title: t("tool.errorTitle"),
+        description: t("result.copyFailed"),
+        variant: "destructive",
+      });
+    }
+  };
 
   const commitRename = (index: number) => {
     const ext = (outputs[index].name.split(".").pop() ?? "pdf").toLowerCase();
@@ -209,10 +235,37 @@ export function ResultView({
       ) : null}
 
       <div className="flex flex-col items-center gap-2 text-center">
-        <CheckCircle2
-          className="size-11 animate-in fade-in-50 zoom-in-75 text-emerald-500 duration-300"
+        {/* R55: draw-in success badge — circle traces, then the check
+            draws itself; soft emerald halo ping completes the moment. */}
+        <span
+          className="relative flex size-14 items-center justify-center"
           aria-hidden="true"
-        />
+        >
+          <span className="absolute inset-0 rounded-full bg-emerald-500/20 doco-success-halo" />
+          <svg
+            viewBox="0 0 52 52"
+            className="size-14 text-emerald-500"
+            fill="none"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle
+              cx="26"
+              cy="26"
+              r="23"
+              stroke="currentColor"
+              className="doco-success-ring"
+              style={{ ["--doco-draw" as string]: "145" }}
+            />
+            <path
+              d="M15 27l7.5 7.5L37 20"
+              stroke="currentColor"
+              className="doco-success-check"
+              style={{ ["--doco-draw" as string]: "34" }}
+            />
+          </svg>
+        </span>
         <h2 className="text-xl font-bold text-foreground sm:text-2xl">
           {t("result.title")}
         </h2>
@@ -555,6 +608,24 @@ export function ResultView({
           >
             <Share2 className="size-4" aria-hidden="true" />
             {t("result.share")}
+          </Button>
+        ) : null}
+        {singleTextOutput ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="touch"
+            className="w-full rounded-btn sm:w-auto"
+            onClick={() => {
+              void copyTextOutput();
+            }}
+          >
+            {copiedText ? (
+              <Check className="size-4 text-emerald-500" aria-hidden="true" />
+            ) : (
+              <Copy className="size-4" aria-hidden="true" />
+            )}
+            {copiedText ? t("result.copied") : t("result.copyText")}
           </Button>
         ) : null}
         <Button
