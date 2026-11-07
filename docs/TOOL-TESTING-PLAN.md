@@ -42,7 +42,7 @@
 | R53 | Tier A: lock-pdf, unlock-pdf, jpg-to-pdf, pdf-to-png, rotate-pdf-pages | ✅ done — 5/5 e2e PASS (security round-trip verified) |
 | R54 | Tier A: pdf-to-txt, scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf | ✅ done — 6/6 e2e PASS + 1 critical bug fixed (scan→OCR chain) + layout-audit fixes |
 | R55 | Tier A remainder + Tier B start (edit category: watermark, fill, page numbers, crop) | ✅ done — 4/4 e2e PASS + rG operator bug fixed + success-badge polish + Copy-text feature |
-| R56–R62 | Tier B by category (organize → edit → convert-to → convert-from → security → optimize → create) | ⬜ |
+| R56–R62 | Tier B by category (organize → edit → convert-to → convert-from → security → optimize → create) | 🔄 R56 done — organize: split/rearrange/remove/extract 4/4 PASS + rapid-move race bug fixed + Reverse feature |
 | R63–R66 | Tier C by category (incl. invoices, view, images) — smoke level | ⬜ |
 | R67 | Full regression: home, /tools, all 11 category pages EN+HI, search palette, footer | ⬜ |
 
@@ -67,6 +67,16 @@
 - ✅ Dark mode: readable; minor contrast note — active "एक QR" tab teal-on-dark-teal slightly low contrast (cosmetic, not blocking).
 - 🟡 Cookie consent banner covers download buttons until dismissed (expected; first-visit UX only).
 - 🟡 scan-qr-code description wording: "read the QR or barcode inside" → soften to "read the QR inside" for accuracy (low priority).
+
+**R56 round report (2026-11-07, cron review) — Tier-B organize category 4, 4/4 e2e PASS + PageGrid race bug fixed + Reverse feature:**
+- ✅ `split-pdf` (full e2e, was spot-check only): By-ranges "1-2, 3-5" → 2 exact parts (pages 1-2 / 3-5, pdftotext-verified); Every-N (N=2) → 3 parts 1-2/3-4/5 with descriptive filenames (five-part-1-pages-1-2.pdf…); per-part downloads + Download-all-ZIP all verified.
+- 🔧 **RACE BUG FIXED — PageGrid rapid-move data loss:** tapping "Move selection earlier/later" N times rapidly collapsed into 1 effective move — every click read the same stale React closure snapshot (pages + selection), so identical inputs no-op'd; worse, a late-resolving async page-count probe then re-installed the PRISTINE grid, silently discarding user edits made while detection was in flight (4 rapid clicks → output showed only 1 move). **Fix (tools/pagegrid/grid-surface.tsx, family-wide):** (1) eager `pagesRef`/`selectionRef` mirrors updated inside apply()/changeSelection()/install() so consecutive clicks always compute from the latest committed state; (2) moveSelected remaps the selection by page uid after the permutation (selection follows moved pages, not fixed indices); (3) install() preserves user edits when the probe resolves late (gridTouchedRef + same-file/same-count guard) instead of clobbering them. Verified: 4 rapid earlier-moves → page 5 slides to position 1, output order 5,1,2,3,4 exact; regression on rotate-pdf-pages rapid later-moves PASS.
+- ✅ `rearrange-pdf-pages`: select + rapid moves (fixed), output order verified; dnd drag handles, undo/redo, duplicate/blank-page/delete actions present.
+- ✅ `remove-pdf-pages`: range select "2-3" → deleted → output 1,4,5 exact.
+- ✅ `extract-pdf-pages`: range select "1,3" → output pages 1,3 exact.
+- ✅ New feature: **Reverse page order** — one-tap toolbar action (whole PageGrid family: rearrange/rotate/remove/extract/halve/divide/booklet/duplex-collate) for the classic "last page first" scan fix; toast confirmation; EN ("Reverse") + HI ("उलटें") labels verified.
+- ✅ Styling: move earlier/later buttons now show visible labels on md+ ("Move up"/"Move down" — icon-only buttons were ambiguous in QA); disabled when no selection.
+- ✅ Lint 0 errors. Dev log clean.
 
 **R55 round report (2026-11-07) — Tier-B edit category 4, 4/4 e2e PASS + 1 PDF-spec bug fixed:**
 - ✅ `add-watermark`: live preview ("3 of 3 pages marked"), default CONFIDENTIAL red diagonal semi-transparent stamp VLM-verified on all pages; custom text "DRAFT R55" round-trips; options: font/size/color presets/opacity slider/rotation/tilt.
@@ -123,11 +133,11 @@
 | Tool | ID | Pop | Status |
 |------|----|-----|--------|
 | Merge PDF | `merge-pdf` | 100 | ✅ R51: e2e pass (2+2 → 4-page merged download) |
-| Split PDF | `split-pdf` | 95 | 🟡 R51: route loads (split route spot-check only — full e2e pending R52) |
+| Split PDF | `split-pdf` | 95 | ✅ R56: e2e — By-ranges (1-2,3-5 → exact 2 parts) + Every-N (N=2 → 1-2/3-4/5), ZIP + per-part downloads |
 | Rotate PDF pages | `rotate-pdf-pages` | 68 | ✅ R53: e2e — full feature matrix verified (scope=All rotates all, scope=Selected rotates only selection, per-page buttons work); 180° metadata + visual render both correct |
-| Rearrange PDF pages | `rearrange-pdf-pages` | 45 | ⬜ |
-| Remove PDF pages | `remove-pdf-pages` | 42 | ⬜ |
-| Extract PDF pages | `extract-pdf-pages` | 40 | ⬜ |
+| Rearrange PDF pages | `rearrange-pdf-pages` | 45 | ✅ R56: e2e — rapid-move race FIXED family-wide, output order exact; new Reverse action |
+| Remove PDF pages | `remove-pdf-pages` | 42 | ✅ R56: e2e — range 2-3 removed → output 1,4,5 exact |
+| Extract PDF pages | `extract-pdf-pages` | 40 | ✅ R56: e2e — pages 1,3 extracted exact |
 | Workflow builder | `workflow-builder` | 34 | ⬜ |
 | Multi-tool PDF | `multi-tool-pdf` | 30 | ⬜ |
 | Copy from PDF | `copy-from-pdf` | 24 | ⬜ |

@@ -110,6 +110,31 @@
 
 ## DONE (append-only log)
 
+- **R56 (2026-11-07, cron review):** Tier-B organize-category round — 4/4
+  e2e PASS, PageGrid race bug fixed family-wide, Reverse feature +
+  move-button labels shipped. **Tools:** split-pdf (full e2e — By-ranges
+  "1-2, 3-5" → 2 exact parts + Every-N N=2 → 3 parts with descriptive
+  filenames, per-part + ZIP downloads), rearrange-pdf-pages,
+  remove-pdf-pages (2-3 → output 1,4,5), extract-pdf-pages (1,3 →
+  exact). 🔧 **RACE BUG FIXED — PageGrid rapid-move data loss (family
+  bug, 9+ tools):** tapping "Move earlier/later" N times rapidly
+  collapsed into 1 move — stale React closure reads (every click saw the
+  same pages/selection snapshot) + a late-resolving async page-count
+  probe re-installing the pristine grid silently discarded user edits
+  made during detection. Fix (grid-surface.tsx): eager pagesRef/
+  selectionRef mirrors (apply/changeSelection/install all write them),
+  moveSelected remaps selection by page uid after the permutation, and
+  install() preserves touched edits when the probe resolves late
+  (gridTouchedRef + same-file/same-count guard). Verified: 4 rapid
+  earlier-moves → page 5 at position 1 (output 5,1,2,3,4 exact);
+  rotate-pdf-pages rapid-move regression PASS. ✨ **Feature:** Reverse
+  page order — one-tap toolbar action for the classic "last page first"
+  scan fix, whole PageGrid family, toast + EN/HI labels ("उलटें").
+  **Styling:** move earlier/later buttons show "Move up"/"Move down"
+  labels on md+ (icon-only was ambiguous in QA). Lint 0, dev log clean.
+  Docs updated (R56 report + 4 tool rows). **NEXT: R57 — Tier B
+  convert-to category (powerpoint-to-pdf, excel-to-pdf, heic-to-pdf,
+  webp-to-pdf).**
 - **R55 (2026-11-07, cron review):** Tier-B edit-category round — 4/4 e2e
   PASS, 1 PDF-spec bug fixed, styling polish + new feature shipped.
   **Tools:** add-watermark (live preview, default + custom stamps,

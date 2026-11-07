@@ -169,6 +169,16 @@ export function deleteIndices(
   return pages.filter((_, index) => !touched.has(index));
 }
 
+/**
+ * R56 feature: reverses the whole page order (5,4,3,2,1). A one-tap
+ * preset for the classic "last page first" scan/fix need — dragging each
+ * page by hand is misery on large documents.
+ */
+export function reverseAll(pages: GridPage[]): GridPage[] {
+  if (pages.length < 2) return pages;
+  return [...pages].reverse();
+}
+
 /** Duplicates each selected page right after itself (1,2,3 sel 2,3 → 1,2,2,3,3). */
 export function duplicateIndices(
   pages: GridPage[],

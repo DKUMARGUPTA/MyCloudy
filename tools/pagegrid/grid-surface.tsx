@@ -26,6 +26,7 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import {
+  ArrowDownUp,
   ArrowLeftToLine,
   ArrowRightToLine,
   CopyPlus,
@@ -77,6 +78,7 @@ import {
   parseGridOption,
   parseGridRange,
   parseNumberListOption,
+  reverseAll,
   rotateIndices,
   serializeGrid,
   type GridPage,
@@ -152,7 +154,25 @@ export function GridSurface({
     redo,
   } = useGridHistory([]);
 
+  /* R56 race fix: latest grid mirrored into a ref so the async page-count
+   * probe can detect user edits that happened while detection was in
+   * flight. Without this, a user move/drag made before the probe resolved
+   * was silently overwritten by install() restoring the pristine grid
+   * (syncActiveGrid's in-flight guard had skipped the ref write). The ref
+   * ALSO makes rapid repeat clicks ("tap Move earlier 4× to slide a page")
+   * compute from the latest committed grid instead of a stale closure. */
+  const pagesRef = useRef<GridPage[]>([]);
+  pagesRef.current = pages;
+  /* True once the user has touched this grid (move/rotate/delete/…).
+   * Cleared by install() — a fresh install legitimately resets it. */
+  const gridTouchedRef = useRef(false);
+
   const [selection, setSelection] = useState<Set<number>>(new Set());
+  /* Same mirror for the selection — apply()/changeSelection() keep it
+   * eager so back-to-back clicks never read a pre-render snapshot
+   * (declared after its state; apply()/changeSelection() write it). */
+  const selectionRef = useRef<ReadonlySet<number>>(selection);
+  selectionRef.current = selection;
   const [focusIndex, setFocusIndex] = useState(0);
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
   const [scope, setScope] = useState<ScopeId>("all");
@@ -258,8 +278,32 @@ export function GridSurface({
       initialSelection: ReadonlySet<number>,
       problem: ProbeProblem | null = null
     ): void => {
+      /* R56 race fix: if the user edited the grid while this file's probe
+       * was still in flight (the grid currently rendered IS this file's —
+       * same page count — and has been touched), keep those edits instead
+       * of clobbering them with the pristine re-install. */
+      if (
+        gridTouchedRef.current &&
+        docInfo?.file === file &&
+        pagesRef.current.length === count &&
+        pagesRef.current.length > 0
+      ) {
+        gridsByFileRef.current[activeId as string] = serializeGrid(
+          pagesRef.current
+        );
+        setDocInfo({ file, count, aspect: fileAspect, problem });
+        onChange("grids", JSON.stringify(gridsByFileRef.current));
+        onChange("grid", serializeGrid(pagesRef.current));
+        onChange("originalCount", count);
+        syncBatchBlocked(filesRef.current);
+        return;
+      }
+      gridTouchedRef.current = false;
       reset(initial);
       setDocInfo({ file, count, aspect: fileAspect, problem });
+      // R56: eager ref sync — rapid post-install clicks read fresh state.
+      pagesRef.current = initial;
+      selectionRef.current = initialSelection;
       setSelection(new Set(initialSelection));
       setFocusIndex(0);
       setAnchorIndex(null);
@@ -527,9 +571,16 @@ export function GridSurface({
   };
 
   const apply = (next: GridPage[], nextSelection?: Set<number>) => {
+    // R56 race fix: mark the grid as user-touched so a late-resolving
+    // detection probe preserves these edits (see install()).
+    gridTouchedRef.current = true;
     const clamped =
       nextSelection ??
       new Set([...selection].filter((index) => index < next.length));
+    // Eager ref mirrors: rapid follow-up clicks read the fresh state
+    // before React re-renders (R56 rapid-move fix).
+    pagesRef.current = next;
+    selectionRef.current = clamped;
     commit(next);
     setSelection(clamped);
     setFocusIndex((prev) => Math.min(prev, Math.max(0, next.length - 1)));
@@ -541,6 +592,7 @@ export function GridSurface({
   };
 
   const changeSelection = (next: Set<number>) => {
+    selectionRef.current = next;
     setSelection(next);
     onChange("selected", serializeSelection(next));
     syncActiveSelection(next);
@@ -579,9 +631,35 @@ export function GridSurface({
     apply(insertBlankAfter(pages, selectedIndices));
   };
 
+  /* R56 feature: one-tap whole-grid reverse (classic "last page first"
+   * scan fix). Uses the latest committed grid from the eager ref so it
+   * composes with rapid prior actions. */
+  const reverseGrid = () => {
+    const next = reverseAll(pagesRef.current);
+    if (next === pagesRef.current) return;
+    apply(next, new Set());
+    toast({ title: t("grid.reverseToast") });
+  };
+
   const moveSelected = (direction: -1 | 1) => {
-    if (selection.size === 0) return;
-    apply(moveSelectionByOne(pages, selectedIndices, direction));
+    // R56 rapid-move fix: read the LATEST committed grid + selection from
+    // the eager refs — repeated clicks ("slide page to front by tapping
+    // Move earlier N times") each saw the same stale closure snapshot,
+    // so N clicks collapsed into a single move and later clicks silently
+    // moved whatever page had drifted into the stale selected indices.
+    const sel = selectionRef.current;
+    if (sel.size === 0) return;
+    const indices = [...sel].sort((a, b) => a - b);
+    const current = pagesRef.current;
+    const moved = moveSelectionByOne(current, indices, direction);
+    // Selection follows the moved PAGES (stable uid), not fixed indices —
+    // a move is a permutation, so remap by identity after it.
+    const movedUids = new Set(indices.map((index) => current[index]?.uid));
+    const nextSelection = new Set<number>();
+    moved.forEach((page, index) => {
+      if (movedUids.has(page.uid)) nextSelection.add(index);
+    });
+    apply(moved, nextSelection);
   };
 
   const handleUndo = () => {
@@ -1209,6 +1287,19 @@ export function GridSurface({
             <CopyPlus className="size-4" aria-hidden="true" />
             <span className="hidden md:inline">{t("grid.duplicate")}</span>
           </Button>
+          {/* R56 feature: one-tap reverse (classic "last page first" fix) */}
+          <Button
+            type="button"
+            variant="outline"
+            className={TOOL_BTN}
+            onClick={reverseGrid}
+            disabled={pages.length < 2}
+            aria-label={t("grid.reverseLabel")}
+            title={t("grid.reverseLabel")}
+          >
+            <ArrowDownUp className="size-4" aria-hidden="true" />
+            <span className="hidden md:inline">{t("grid.reverse")}</span>
+          </Button>
           <Button
             type="button"
             variant="outline"
@@ -1276,28 +1367,33 @@ export function GridSurface({
             className="mx-1 hidden h-6 w-px bg-border sm:block"
           />
 
-          {/* Move — the always-available reorder path (keyboard + large docs) */}
+          {/* Move — the always-available reorder path (keyboard + large docs).
+           * R56 polish: visible labels on md+ — icon-only move buttons were
+           * ambiguous in QA (testers expected “drag only”); the labels make
+           * the “tap repeatedly to slide” interaction discoverable. */}
           <Button
             type="button"
             variant="outline"
-            className={TOOL_BTN}
+            className={cn(TOOL_BTN, "has-[>svg]:px-2.5")}
             onClick={() => moveSelected(-1)}
             disabled={selection.size === 0}
             aria-label={t("grid.moveEarlier")}
             title={t("grid.moveEarlier")}
           >
             <ArrowLeftToLine className="size-4" aria-hidden="true" />
+            <span className="hidden md:inline">{t("grid.moveEarlierShort")}</span>
           </Button>
           <Button
             type="button"
             variant="outline"
-            className={TOOL_BTN}
+            className={cn(TOOL_BTN, "has-[>svg]:px-2.5")}
             onClick={() => moveSelected(1)}
             disabled={selection.size === 0}
             aria-label={t("grid.moveLater")}
             title={t("grid.moveLater")}
           >
             <ArrowRightToLine className="size-4" aria-hidden="true" />
+            <span className="hidden md:inline">{t("grid.moveLaterShort")}</span>
           </Button>
 
           {/* History + zoom */}
