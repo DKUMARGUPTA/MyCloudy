@@ -76,6 +76,8 @@ export function ResultView({
         deskewedPages?: number;
         straightenedPages?: number;
         tablesExtracted?: number;
+        aiDocs?: number;
+        aiTokens?: number;
         textBlocksRecolored?: number;
         textOutlined?: number;
         textEditsApplied?: number;
@@ -398,6 +400,22 @@ export function ResultView({
         {runSummary?.tablesExtracted ? (
           <p className="rounded-chip bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
             {t("result.tablesExtracted", { n: runSummary.tablesExtracted })}
+          </p>
+        ) : null}
+        {/* prepare-pdf-for-ai (R58): AI-ready documents + honest
+            chars/4 token estimate of the exported text. */}
+        {runSummary?.aiDocs ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.aiDocs", { n: runSummary.aiDocs })}
+          </p>
+        ) : null}
+        {runSummary?.aiTokens ? (
+          <p className="rounded-chip bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {t("result.aiTokens", {
+              n: new Intl.NumberFormat(locale, {
+                notation: "compact",
+              }).format(runSummary.aiTokens),
+            })}
           </p>
         ) : null}
         {/* text-color (P7): text objects repainted. */}

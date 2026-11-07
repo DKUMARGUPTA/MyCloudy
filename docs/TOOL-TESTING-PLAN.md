@@ -42,7 +42,7 @@
 | R53 | Tier A: lock-pdf, unlock-pdf, jpg-to-pdf, pdf-to-png, rotate-pdf-pages | ✅ done — 5/5 e2e PASS (security round-trip verified) |
 | R54 | Tier A: pdf-to-txt, scan-pdf, view-pdf, convert-to-pdf, images-to-pdf, png-to-pdf | ✅ done — 6/6 e2e PASS + 1 critical bug fixed (scan→OCR chain) + layout-audit fixes |
 | R55 | Tier A remainder + Tier B start (edit category: watermark, fill, page numbers, crop) | ✅ done — 4/4 e2e PASS + rG operator bug fixed + success-badge polish + Copy-text feature |
-| R56–R62 | Tier B by category (organize → edit → convert-to → convert-from → security → optimize → create) | 🔄 R56 done — organize 4/4; R57 done — convert-to 4/4 PASS + vertical-mirror render bug fixed + duplicate options panel fixed |
+| R56–R62 | Tier B by category (organize → edit → convert-to → convert-from → security → optimize → create) | 🔄 R56 done — organize 4/4; R57 done — convert-to 4/4 PASS + vertical-mirror render bug fixed + duplicate options panel fixed; R58 done — convert-from 4/4 PASS + probe-cols bug fixed + mini-grid/outline/AI-chips features |
 | R63–R66 | Tier C by category (incl. invoices, view, images) — smoke level | ⬜ |
 | R67 | Full regression: home, /tools, all 11 category pages EN+HI, search palette, footer | ⬜ |
 
@@ -67,6 +67,18 @@
 - ✅ Dark mode: readable; minor contrast note — active "एक QR" tab teal-on-dark-teal slightly low contrast (cosmetic, not blocking).
 - 🟡 Cookie consent banner covers download buttons until dismissed (expected; first-visit UX only).
 - 🟡 scan-qr-code description wording: "read the QR or barcode inside" → soften to "read the QR inside" for accuracy (low priority).
+
+**R58 round report (2026-11-07, cron review) — Tier-B convert-from category 4, 4/4 e2e PASS + probe display bug fixed + 3 features shipped:**
+- 🔧 **PROBE-COLS DISPLAY BUG FIXED (pdf-to-excel):** the "Page 1 grid" readout used `finalGrid[0].length` for its column count — a ruled table with prose above it (title line, 1 cell) reported "7 rows × 1 columns" for a 4-column table. The grid itself was always correct (the xlsx proved it); only the pre-run readout lied. **Fix:** cols = max row length across the grid (plus out-of-table rows now span like merged cells in the preview).
+- ✅ `pdf-to-excel` e2e: bordered invoice fixture (4 cols × 5 rows + prose) → real .xlsx workbook — OOXML inlineStr cells, numbers as true numeric cells (`t="n"`: 3, 42.5, 127.5), bold header row, ruled lattice read cell-for-cell; per-page vs single-sheet modes present; JPG rejected by the %PDF sniff. Borderless fixture → "No borders — position clustering" badge path verified.
+- ✅ `extract-tables` e2e: same fixture → "1 table found and exported", ZIP contains `tables-p1-t1.csv` with exact RFC-style rows (Item,Qty,Unit Price,Total + 4 data rows), prose above the table correctly excluded; Comma/ZIP options present.
+- ✅ `pdf-to-powerpoint` e2e: 3-page text PDF → 3-slide .pptx, each slide 2 shapes (title + body), UNIQUE-R58 markers + em-dash intact in slide XML, 16:9 default (12192000×6858000 EMU), Calibri typeface refs; images-mode and Match-page options present; scan warning state verified with an image-only PDF.
+- ✅ `prepare-pdf-for-ai` e2e: 3-page PDF → `_llm.json` with 3 LlamaIndex documents {text, metadata: page_id / total_pages / file_path / format / type / dates}; chunked granularity + JSONL rendering verified at worker-lib level (2 chunks, valid JSONL lines).
+- ✨ **Feature: Live mini-grid preview (pdf-to-excel):** the "Detected layout" card now renders the actual detected page-1 grid as a mini spreadsheet — first 6 rows × 8 cols, short rows span like merged cells, header row highlighted, cell truncation with title tooltips, "+N more rows/cols" overflow notes (ICU-pluralized — "+1 more row" not "+1 more rows"). A detector badge names the winning path: emerald "Bordered table — exact cell grid" vs muted "No borders — position clustering". VLM-reviewed clean (merged-cell rendering confirmed).
+- ✨ **Feature: Pre-run slide outline (pdf-to-powerpoint):** numbered pill chips (R57 powerpoint-to-pdf pattern) showing each page's prospective slide title — largest text item per page (height heuristic, tie-break by y), blank pages show italic "No text on this page", "+N more" fold after 8 chips, 30-page probe cap. Works in both text and images mode; EN + HI.
+- ✨ **Feature: AI stat chips (prepare-pdf-for-ai result):** "3 AI-ready documents" + "~63 tokens of text (estimate)" (chars/4, Intl-compact formatted) on the result card — the honesty signal for the RAG use case; EN + HI verified.
+- ✅ Cross-checks: Hindi workspace for all 3 surfaces (पेज 1 ग्रिड: 7 पंक्तियाँ × 4 कॉलम, बॉर्डर वाली टेबल — सटीक सेल-ग्रिड, स्लाइड आउटलाइन, इस पेज पर टेक्स्ट नहीं, +1 पंक्ति और, 3 AI-तैयार दस्तावेज़, ~63 टोकन); mobile 375px no-overflow on all 4 tools (outline chips wrap 2-per-row, VLM-verified); i18n parity 5364=5364; lint 0; dev log clean.
+- 📝 Note: my first pptx test fixture was invalid (fonts embedded in doc A used in doc B — cross-document refs → "font resource is not a dictionary"), which initially looked like a tool bug; regenerated cleanly. Lesson: pdf-lib fixtures must embed fonts per document.
 
 **R57 round report (2026-11-07, cron review) — Tier-B convert-to category 4, 4/4 e2e PASS + 2 bugs fixed + slide-outline feature:**
 - 🔧 **VERTICAL-MIRROR RENDER BUG FIXED — every PowerPoint slide's text was drawn upside-down:** pptx slide geometry is top-down (y from the slide's top edge) but PDF y grows upward from the bottom-left origin; the renderer passed `shape.y` straight through, so a title at y=30 rendered 94% DOWN the page (bottom-left) and body text stacked upward — the whole slide vertically mirrored. Content-level asserts (pdftotext, smoke 104-check) never caught it because the text was all there, just positioned wrong — a VLM e2e position check ("Cover Title at bottom-left?") exposed it. **Fix (tools/powerpoint-to-pdf/render.ts):** the slide loop now converts the shape's top edge to PDF space (`oy + (slideH − shape.y)·scale`) and `drawTextBox` walks paragraphs DOWN the page from it — the same PDF-space convention the speaker-notes path already used (which is why notes pages were correct while slides mirrored). Verified: "Cover Title" now at 7-11% down (was 95-99%), slide-native + A4-letterbox + fit + notes paths all pixel-checked. **Smoke guard added:** the first text draw (the title) must sit at PDF y ∈ (400, 530) on the 540pt page — the old bug lands it at ~0-5, so this class of regression can never pass silently again (105 checks now).
@@ -238,10 +250,10 @@
 | PDF to PNG | `pdf-to-png` | 70 | ✅ R53: e2e — 3 pages → 875×583 RGBA PNGs (exactly as DPI preview promised), ZIP download + per-file downloads work, VLM-verified content |
 | PDF to TXT | `pdf-to-txt` | 65 | ✅ R54: e2e — flow layout, all pages + UNIQUE-MARKER extracted, options (layout/pages/marks) present |
 | Convert from PDF | `convert-from-pdf` | 44 | ⬜ |
-| PDF to Excel | `pdf-to-excel` | 24 | ⬜ |
-| Prepare PDF for AI | `prepare-pdf-for-ai` | 22 | ⬜ |
-| PDF to PowerPoint | `pdf-to-powerpoint` | 22 | ⬜ |
-| Extract tables | `extract-tables` | 18 | ⬜ |
+| PDF to Excel | `pdf-to-excel` | 24 | ✅ R58: e2e — bordered invoice fixture → real .xlsx (OOXML inlineStr), numeric cells `t="n"` (3, 42.5, 127.5), bold header, 4-col ruled grid exact; probe-cols display bug fixed + live mini-grid preview + detector badge shipped (see R58 report) |
+| Prepare PDF for AI | `prepare-pdf-for-ai` | 22 | ✅ R58: e2e — 3-page PDF → `_llm.json`, 3 LlamaIndex docs {text, metadata: page_id/total_pages/file_path/format/dates}, JSONL/chunked verified at lib level; NEW result chips: AI-ready documents + ~tokens estimate (EN+HI) |
+| PDF to PowerPoint | `pdf-to-powerpoint` | 22 | ✅ R58: e2e — 3 slides, 2 shapes each (title + body), UNIQUE markers + em-dash intact, 16:9 default; NEW pre-run slide-outline chips (largest-text-item titles, blank-page "No text" state, +N more fold, EN+HI, mobile-clean) |
+| Extract tables | `extract-tables` | 18 | ✅ R58: e2e — bordered invoice → "1 table found and exported", ZIP with `tables-p1-t1.csv` exact RFC-style rows, prose correctly excluded; comma/format options present |
 | PDF to greyscale | `pdf-to-greyscale` | 16 | ⬜ |
 | PDF to WEBP | `pdf-to-webp` | 16 | ⬜ |
 | PDF to ZIP | `pdf-to-zip` | 12 | ⬜ |
@@ -353,4 +365,4 @@
 
 ---
 
-*Last updated: R57 (Tier-B convert-to: powerpoint/excel/heic/webp-to-pdf — 4/4 pass, vertical-mirror bug fixed). Next: R58 — Tier B convert-from category (pdf-to-excel, pdf-to-powerpoint, extract-tables, prepare-pdf-for-ai).*
+*Last updated: R58 (Tier-B convert-from: pdf-to-excel / pdf-to-powerpoint / extract-tables / prepare-pdf-for-ai — 4/4 pass, probe-cols bug fixed, mini-grid preview + slide outline + AI stat chips shipped). Next: R59 — Tier B convert-from remainder (pdf-to-webp, pdf-to-zip, extract-attachments, pdf-to-markdown, convert-from-pdf dispatcher).*

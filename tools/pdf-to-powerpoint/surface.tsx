@@ -47,6 +47,8 @@ interface ProbeOk {
   file: File;
   kind: "ok" | "scan";
   pages: number;
+  /** Best-effort title per probed page (largest text item). */
+  titles: string[];
 }
 
 interface ProbeFail {
@@ -55,6 +57,12 @@ interface ProbeFail {
 }
 
 type Probe = ProbeOk | ProbeFail | null;
+
+/** Pages probed for the outline (large decks fold into "+N more"). */
+const PROBE_PAGE_LIMIT = 30;
+/** Outline chips shown before the "+N more" fold. */
+const OUTLINE_CHIPS = 8;
+const OUTLINE_LABEL = 42;
 
 interface DoneSummary {
   name: string;
@@ -121,22 +129,57 @@ export function PdfToPowerpointSurface({
           ...PDF_DOC_PARAMS,
         }).promise;
         try {
-          const page = await doc.getPage(1);
-          let chars = 0;
-          try {
-            const content = await page.getTextContent();
-            for (const item of content.items as unknown[]) {
-              const str = (item as { str?: unknown }).str;
-              if (typeof str === "string") chars += str.trim().length;
+          /* Probe every page (capped) in one pass: page 1 decides the
+           * scan/no-text verdict, every page donates its largest text
+           * item as the prospective slide title for the outline chips. */
+          const limit = Math.min(doc.numPages, PROBE_PAGE_LIMIT);
+          const titles: string[] = [];
+          let firstPageChars = 0;
+          for (let p = 1; p <= limit; p += 1) {
+            const page = await doc.getPage(p);
+            let best: { str: string; h: number; y: number } | null = null;
+            try {
+              const content = await page.getTextContent();
+              for (const item of content.items as unknown[]) {
+                const it = item as {
+                  str?: unknown;
+                  height?: unknown;
+                  transform?: unknown;
+                };
+                const str = typeof it.str === "string" ? it.str.trim() : "";
+                if (str.length === 0) continue;
+                const h =
+                  typeof it.height === "number"
+                    ? it.height
+                    : Array.isArray(it.transform) &&
+                        typeof it.transform[3] === "number"
+                      ? (it.transform[3] as number)
+                      : 0;
+                const y =
+                  Array.isArray(it.transform) &&
+                  typeof it.transform[5] === "number"
+                    ? (it.transform[5] as number)
+                    : 0;
+                if (
+                  best === null ||
+                  h > best.h ||
+                  (h === best.h && y > best.y)
+                ) {
+                  best = { str, h, y };
+                }
+                if (p === 1) firstPageChars += str.length;
+              }
+            } finally {
+              page.cleanup();
             }
-          } finally {
-            page.cleanup();
+            titles.push(best ? best.str : "");
           }
           if (cancelled) return;
           setProbe({
             file,
-            kind: chars > 0 ? "ok" : "scan",
+            kind: firstPageChars > 0 ? "ok" : "scan",
             pages: doc.numPages,
+            titles,
           });
         } finally {
           await doc.destroy().catch(() => undefined);
@@ -333,9 +376,56 @@ export function PdfToPowerpointSurface({
             {t("p2ppt.probeWait")}
           </p>
         ) : current.kind === "ok" ? (
-          <p className="px-3 py-3 text-xs font-medium text-foreground">
-            {t("p2ppt.probeOk", { pages: current.pages })}
-          </p>
+          <div className="flex flex-col gap-2.5 px-3 py-3">
+            <p className="text-xs font-medium text-foreground">
+              {t("p2ppt.probeOk", { pages: current.pages })}
+            </p>
+            {current.titles.length > 0 ? (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t("p2ppt.outlineTitle")}
+                </p>
+                <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                  {current.titles.slice(0, OUTLINE_CHIPS).map((raw, i) => {
+                    const label =
+                      raw.length > OUTLINE_LABEL
+                        ? `${raw.slice(0, OUTLINE_LABEL).trimEnd()}…`
+                        : raw;
+                    const hasText = label.length > 0;
+                    return (
+                      <li
+                        key={i}
+                        className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border bg-background py-1 pl-1 pr-2.5 text-xs text-foreground"
+                      >
+                        <span
+                          className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-bold tabular-nums text-primary"
+                          aria-hidden="true"
+                        >
+                          {i + 1}
+                        </span>
+                        <span
+                          className={
+                            hasText
+                              ? "min-w-0 truncate"
+                              : "min-w-0 truncate italic text-muted-foreground"
+                          }
+                        >
+                          {hasText ? label : t("p2ppt.outlineEmpty")}
+                        </span>
+                      </li>
+                    );
+                  })}
+                  {current.titles.length > OUTLINE_CHIPS ? (
+                    <li className="flex items-center rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground">
+                      {t("p2ppt.outlineMore", {
+                        n: current.titles.length - OUTLINE_CHIPS,
+                      })}
+                    </li>
+                  ) : null}
+                </ul>
+              </div>
+            ) : null}
+          </div>
         ) : current.kind === "scan" ? (
           <div className="flex items-start gap-2.5 px-3 py-3">
             <TriangleAlert

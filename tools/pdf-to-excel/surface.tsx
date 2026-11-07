@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlignLeft,
   FileDown,
   FileSpreadsheet,
+  Grid3x3,
   Loader2,
   Table2,
   TriangleAlert,
@@ -55,6 +57,10 @@ interface ProbeOk {
   pages: number;
   rows: number;
   cols: number;
+  /** Which detector won: true = ruled lattice (exact cells). */
+  ruled: boolean;
+  /** First rows of the detected grid for the live mini-preview. */
+  sample: string[][];
 }
 
 interface ProbeBad {
@@ -63,6 +69,11 @@ interface ProbeBad {
 }
 
 type Probe = ProbeOk | ProbeBad | null;
+
+/** Mini-preview caps — wider/taller grids scroll or fold with a note. */
+const PROBE_SAMPLE_ROWS = 6;
+const PROBE_SAMPLE_COLS = 8;
+const PROBE_SAMPLE_CELL = 14;
 
 export function PdfToExcelSurface({
   files,
@@ -140,7 +151,16 @@ export function PdfToExcelSurface({
             kind: "ok",
             pages: doc.numPages,
             rows: finalGrid.length,
-            cols: finalGrid[0]?.length ?? 0,
+            // Honest column count: out-of-table prose rows above a ruled
+            // table carry a single cell — the widest row names the grid.
+            cols: finalGrid.reduce(
+              (max, row) => Math.max(max, row.length),
+              0
+            ),
+            ruled: grid !== null,
+            sample: finalGrid
+              .slice(0, PROBE_SAMPLE_ROWS)
+              .map((row) => row.slice(0, PROBE_SAMPLE_COLS)),
           });
         } finally {
           await doc.destroy().catch(() => undefined);
@@ -328,12 +348,94 @@ export function PdfToExcelSurface({
             {t("pdfxcel.probeWait")}
           </p>
         ) : current.kind === "ok" ? (
-          <p className="px-3 py-3 text-xs font-medium text-foreground">
-            {t("pdfxcel.probeGrid", {
-              rows: current.rows,
-              cols: current.cols,
-            })}
-          </p>
+          <div className="flex flex-col gap-2.5 px-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-medium text-foreground">
+                {t("pdfxcel.probeGrid", {
+                  rows: current.rows,
+                  cols: current.cols,
+                })}
+              </p>
+              <span
+                className={
+                  current.ruled
+                    ? "inline-flex shrink-0 items-center gap-1 rounded-chip bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400"
+                    : "inline-flex shrink-0 items-center gap-1 rounded-chip bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                }
+              >
+                {current.ruled ? (
+                  <Grid3x3 className="size-3" aria-hidden="true" />
+                ) : (
+                  <AlignLeft className="size-3" aria-hidden="true" />
+                )}
+                {t(current.ruled ? "pdfxcel.probeRuled" : "pdfxcel.probeClustered")}
+              </span>
+            </div>
+            {current.sample.length > 0 ? (
+              <div className="overflow-x-auto rounded-btn border border-border/70 bg-background">
+                <table className="w-full border-collapse text-[11px] leading-tight">
+                  <caption className="sr-only">
+                    {t("pdfxcel.probeSample")}
+                  </caption>
+                  <tbody>
+                    {current.sample.map((row, r) => {
+                      /* short rows span their last cell across the
+                       * remaining columns — merged-cell look, like the
+                       * prose lines above a ruled table really are */
+                      const span = Math.max(
+                        1,
+                        Math.min(current.cols, PROBE_SAMPLE_COLS) - row.length + 1
+                      );
+                      return (
+                        <tr
+                          key={r}
+                          className={
+                            r === 0
+                              ? "bg-muted/70 font-semibold"
+                              : undefined
+                          }
+                        >
+                          {row.map((cell, c) => (
+                            <td
+                              key={c}
+                              colSpan={
+                                c === row.length - 1 && span > 1 ? span : 1
+                              }
+                              title={cell}
+                              className="max-w-[9rem] truncate border-r border-b border-border/50 px-2 py-1.5 text-foreground/90 last:border-r-0"
+                            >
+                              {cell.length > PROBE_SAMPLE_CELL
+                                ? `${cell.slice(0, PROBE_SAMPLE_CELL - 1)}…`
+                                : cell || "\u00A0"}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+            {current.rows > current.sample.length ||
+            current.cols > PROBE_SAMPLE_COLS ? (
+              <p className="text-[11px] text-muted-foreground">
+                {current.rows > current.sample.length
+                  ? t("pdfxcel.probeMoreRows", {
+                      more: current.rows - current.sample.length,
+                    })
+                  : null}
+                {current.rows > current.sample.length &&
+                current.cols > PROBE_SAMPLE_COLS
+                  ? " · "
+                  : null}
+                {current.cols > PROBE_SAMPLE_COLS
+                  ? t("pdfxcel.probeMoreCols", {
+                      more: current.cols - PROBE_SAMPLE_COLS,
+                    })
+                  : null}
+              </p>
+            ) : null}
+          </div>
         ) : (
           <div className="flex items-start gap-2.5 px-3 py-3">
             <TriangleAlert

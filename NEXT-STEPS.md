@@ -110,6 +110,32 @@
 
 ## DONE (append-only log)
 
+- **R58 (2026-11-07, cron review):** Tier-B convert-from category round — 4/4 e2e
+  PASS, 1 display bug fixed, 3 features shipped. **Tools:** pdf-to-excel
+  (bordered invoice → real .xlsx, numeric cells t="n", ruled lattice exact),
+  extract-tables (1 table found, ZIP with exact CSV, prose excluded),
+  pdf-to-powerpoint (3 slides, title+body shapes, markers intact),
+  prepare-pdf-for-ai (3 LlamaIndex docs, full metadata). 🔧 **BUG FIXED —
+  probe-cols readout (pdf-to-excel):** "Page 1 grid: 7 rows × 1 columns" for
+  a 4-column table — the readout took `finalGrid[0].length` (first row =
+  1-cell prose line above the ruled table). Grid + xlsx were always right;
+  only the pre-run display lied. Fix: cols = max row length; short rows now
+  span like merged cells in the preview. ✨ **Feature: live mini-grid
+  preview** — the Detected-layout card renders the actual page-1 grid as a
+  mini spreadsheet (6×8 cap, merged-cell spans, header highlight, ICU-
+  plural "+1 more row") + detector badge (emerald "Bordered table — exact
+  cell grid" / muted "No borders — position clustering"), EN+HI. ✨
+  **Feature: pre-run slide outline** (pdf-to-powerpoint) — numbered pill
+  chips with each page's largest text item as the prospective slide title,
+  blank-page "No text" state, "+N more" fold, 30-page probe cap. ✨
+  **Feature: AI stat chips** (prepare-pdf-for-ai result) — "3 AI-ready
+  documents" + "~63 tokens of text (estimate)" (chars/4, Intl-compact),
+  EN+HI. Cross-checks: Hindi all 3 surfaces, mobile 375px no-overflow,
+  i18n parity 5364=5364, lint 0, dev log clean. Docs updated (R58 report +
+  4 tool rows). **NEXT: R59 — Tier B convert-from remainder (pdf-to-webp,
+  pdf-to-zip, extract-attachments, pdf-to-markdown, convert-from-pdf
+  dispatcher).**
+
 - **R57 (2026-11-07, cron review):** Tier-B convert-to category round — 4/4
   e2e PASS, 2 bugs fixed, slide-outline feature + stat-tile styling shipped.
   **Tools:** powerpoint-to-pdf (deck summary, EN+HI slides with Noto,

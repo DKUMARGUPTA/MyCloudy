@@ -156,6 +156,10 @@ async function run(request: WorkerRunRequest): Promise<void> {
   const pdfjs: PdfjsModule = await loadPdfjsInWorker();
   const outputs: { name: string; mime: string; blob: Blob }[] = [];
   let pageCount = 0;
+  /* R58 honesty stats for the result summary: documents emitted and
+   * the chars/4 token estimate of their combined text. */
+  let aiDocs = 0;
+  let aiChars = 0;
 
   for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
     const file = files[fileIndex]!;
@@ -214,6 +218,8 @@ async function run(request: WorkerRunRequest): Promise<void> {
       perPage,
       includeMeta,
     });
+    aiDocs += docs.length;
+    for (const d of docs) aiChars += d.text.length;
     const json = JSON.stringify(docs, null, 2);
     outputs.push({
       name: `${base}_llm.json`,
@@ -227,7 +233,13 @@ async function run(request: WorkerRunRequest): Promise<void> {
     type: "result",
     runId,
     outputs,
-    detail: { files: outputs.length, pages: pageCount },
+    detail: {
+      files: outputs.length,
+      pages: pageCount,
+      ...(aiDocs > 0
+        ? { aiDocs, aiTokens: Math.max(1, Math.round(aiChars / 4)) }
+        : {}),
+    },
   });
 }
 
